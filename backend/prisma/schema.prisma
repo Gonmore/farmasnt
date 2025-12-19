@@ -1,0 +1,412 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum ModuleCode {
+  WAREHOUSE
+  SALES
+  PRODUCTION
+  DISTRIBUTION
+  RND
+}
+
+enum LocationType {
+  BIN
+  SHELF
+  FLOOR
+}
+
+enum StockMovementType {
+  IN
+  OUT
+  TRANSFER
+  ADJUSTMENT
+}
+
+enum SalesOrderStatus {
+  DRAFT
+  CONFIRMED
+  FULFILLED
+  CANCELLED
+}
+
+enum ThemeMode {
+  LIGHT
+  DARK
+}
+
+model Tenant {
+  id        String   @id @default(uuid())
+  name      String
+  isActive  Boolean  @default(true)
+  logoUrl   String?
+  brandPrimary  String?
+  brandSecondary String?
+  brandTertiary  String?
+  defaultTheme ThemeMode @default(LIGHT)
+  branchLimit Int    @default(1)
+  version   Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  createdBy String?
+
+  users   User[]
+  roles   Role[]
+  modules TenantModule[]
+  domains TenantDomain[]
+
+  @@index([isActive])
+}
+
+model TenantDomain {
+  id        String   @id @default(uuid())
+  tenantId  String
+  domain    String
+  isPrimary Boolean  @default(false)
+  verifiedAt DateTime?
+  verificationToken String?
+  verificationTokenExpiresAt DateTime?
+  createdAt DateTime @default(now())
+  createdBy String?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([domain])
+  @@index([tenantId])
+}
+
+model User {
+  id           String   @id @default(uuid())
+  tenantId     String
+  email        String
+  passwordHash String
+  fullName     String?
+  isActive     Boolean  @default(true)
+  version      Int      @default(1)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  createdBy    String?
+
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  roles        UserRole[]
+  refreshTokens RefreshToken[]
+  auditEvents  AuditEvent[] @relation("AuditActor")
+
+  @@unique([tenantId, email])
+  @@index([tenantId])
+  @@index([email])
+}
+
+model Role {
+  id        String   @id @default(uuid())
+  tenantId  String
+  code      String
+  name      String
+  isSystem  Boolean  @default(false)
+  version   Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  createdBy String?
+
+  tenant      Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  users       UserRole[]
+  permissions RolePermission[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+}
+
+model Permission {
+  id          String     @id @default(uuid())
+  code        String     @unique
+  module      ModuleCode
+  description String?
+  isSystem    Boolean    @default(true)
+  createdAt   DateTime   @default(now())
+
+  roles RolePermission[]
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+}
+
+model UserRole {
+  userId String
+  roleId String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+}
+
+model TenantModule {
+  id       String     @id @default(uuid())
+  tenantId String
+  module   ModuleCode
+  enabled  Boolean    @default(true)
+  version  Int        @default(1)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  createdBy String?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, module])
+  @@index([tenantId])
+}
+
+model Customer {
+  id        String   @id @default(uuid())
+  tenantId  String
+  name      String
+  nit       String?
+  email     String?
+  phone     String?
+  address   String?
+  isActive  Boolean  @default(true)
+  version   Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  createdBy String?
+
+  salesOrders SalesOrder[]
+
+  @@index([tenantId])
+  @@index([tenantId, name])
+}
+
+model Product {
+  id          String   @id @default(uuid())
+  tenantId    String
+  sku         String
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  version     Int      @default(1)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdBy   String?
+
+  batches Batch[]
+  balances InventoryBalance[]
+  stockMovements StockMovement[]
+  salesOrderLines SalesOrderLine[]
+
+  @@unique([tenantId, sku])
+  @@index([tenantId])
+  @@index([tenantId, name])
+}
+
+model Batch {
+  id               String   @id @default(uuid())
+  tenantId         String
+  productId        String
+  batchNumber      String
+  manufacturingDate DateTime?
+  expiresAt        DateTime?
+  status           String   @default("RELEASED")
+  version          Int      @default(1)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  createdBy        String?
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  balances InventoryBalance[]
+  stockMovements StockMovement[]
+  salesOrderLines SalesOrderLine[]
+
+  @@unique([tenantId, productId, batchNumber])
+  @@index([tenantId])
+  @@index([tenantId, productId])
+  @@index([expiresAt])
+}
+
+model Warehouse {
+  id        String   @id @default(uuid())
+  tenantId  String
+  code      String
+  name      String
+  isActive  Boolean  @default(true)
+  version   Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  createdBy String?
+
+  locations Location[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+}
+
+model Location {
+  id          String       @id @default(uuid())
+  tenantId    String
+  warehouseId String
+  code        String
+  type        LocationType @default(BIN)
+  isActive    Boolean      @default(true)
+  version     Int          @default(1)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  createdBy   String?
+
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  balances  InventoryBalance[]
+
+  @@unique([tenantId, warehouseId, code])
+  @@index([tenantId])
+  @@index([warehouseId])
+}
+
+model InventoryBalance {
+  id         String   @id @default(uuid())
+  tenantId   String
+  locationId String
+  productId  String
+  batchId    String?
+  quantity   Decimal  @default(0)
+  version    Int      @default(1)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  createdBy  String?
+
+  location Location @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  product  Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+  batch    Batch?   @relation(fields: [batchId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, locationId, productId, batchId])
+  @@index([tenantId])
+  @@index([productId])
+  @@index([batchId])
+}
+
+model StockMovement {
+  id             String           @id @default(uuid())
+  tenantId       String
+  type           StockMovementType
+  productId      String
+  batchId        String?
+  fromLocationId String?
+  toLocationId   String?
+  quantity       Decimal
+  referenceType  String?
+  referenceId    String?
+  note           String?
+  version        Int      @default(1)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  createdBy      String?
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  batch   Batch?  @relation(fields: [batchId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId])
+  @@index([productId])
+  @@index([batchId])
+  @@index([createdAt])
+}
+
+model SalesOrder {
+  id         String           @id @default(uuid())
+  tenantId   String
+  number     String
+  customerId String
+  status     SalesOrderStatus @default(DRAFT)
+  note       String?
+  version    Int              @default(1)
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+  createdBy  String?
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  lines    SalesOrderLine[]
+
+  @@unique([tenantId, number])
+  @@index([tenantId])
+  @@index([customerId])
+  @@index([status])
+}
+
+model SalesOrderLine {
+  id           String   @id @default(uuid())
+  tenantId     String
+  salesOrderId String
+  productId    String
+  batchId      String?
+  quantity     Decimal
+  unitPrice    Decimal  @default(0)
+  version      Int      @default(1)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  createdBy    String?
+
+  salesOrder SalesOrder @relation(fields: [salesOrderId], references: [id], onDelete: Cascade)
+  product    Product    @relation(fields: [productId], references: [id], onDelete: Restrict)
+  batch      Batch?     @relation(fields: [batchId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId])
+  @@index([salesOrderId])
+  @@index([productId])
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  tenantId  String
+  userId    String
+  tokenHash String
+  expiresAt DateTime
+  revokedAt DateTime?
+  version   Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  createdBy String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model AuditEvent {
+  id          String   @id @default(uuid())
+  tenantId    String
+  actorUserId String?
+  action      String
+  entityType  String
+  entityId    String?
+  before      Json?
+  after       Json?
+  metadata    Json?
+  version     Int      @default(1)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdBy   String?
+
+  actor User? @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([actorUserId])
+  @@index([entityType])
+  @@index([createdAt])
+}
