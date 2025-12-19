@@ -69,13 +69,34 @@ SaaS **multi-tenant** con **single DB** (row-level `tenantId`), backend Node.js/
 - El frontend se alineó para usar `127.0.0.1` como default de API/WS en desarrollo.
 
 ## Estado actual del MVP
-- Backend: endpoints operativos para auth, catálogo/búsqueda, productos, stock, warehouses/locations, customers, sales orders, admin y audit.
-- Frontend: UI operable de validación (incluye administración y auditoría), y conexión realtime.
+- Backend: endpoints operativos para auth, catálogo/búsqueda, productos, batches, stock, warehouses/locations, customers, sales orders, admin, audit, y read-sides de reportes.
+- Frontend: UI operable para validación (home/login, administración, auditoría, reportes), conexión realtime, y dashboard de vencimientos.
 
 ## Reportes (Phase 1)
 Se incorporaron endpoints read-only de reportes para acelerar dashboards y pantallas operativas sin exigir múltiples llamadas y joins en el frontend.
 - Ventas: resumen diario y top productos.
 - Stock: balances “expanded” (con joins a warehouse/location/product/batch) y movimientos “expanded” (con metadata de ubicaciones).
+- Vencimientos: read-side de alertas por lote con semáforo (EXPIRED/RED/YELLOW/GREEN) y soporte de FEFO.
+
+## Vencimientos (expiry) + FEFO (operación segura)
+- Se incorporó control de vencimientos por lote (`Batch.expiresAt`) con semáforo de alertas (cálculo por inicio de día UTC).
+- Se agregaron endpoints:
+  - `GET /api/v1/stock/expiry/summary` (alertas + paginación + filtros).
+  - `GET /api/v1/stock/fefo-suggestions` (sugerencias FEFO por ubicación o warehouse).
+- Reglas de negocio (bloqueos):
+  - Se bloquean movimientos de stock que reduzcan cantidad (`OUT/TRANSFER/ADJUSTMENT negativo`) si el lote está vencido.
+  - Se bloquea fulfillment de ventas si el lote explícito está vencido.
+  - Se registra auditoría `stock.expiry.blocked` cuando aplica.
+- FEFO auto-pick en fulfillment:
+  - Si una línea viene con `batchId: null`, el backend intenta auto-seleccionar (FEFO) un lote no vencido con stock suficiente en `fromLocationId`.
+
+## Branding “pre-login” por dominio
+- Para dominios por tenant, se habilitó cargar branding sin sesión (logo/colores/tema) en base al `Host`.
+  - Endpoint: `GET /api/v1/public/tenant/branding`.
+  - El frontend lo usa para pintar la pantalla de login con el logo/nombre del tenant.
+
+## Handoff para UI completa
+- Se dejó `referencias_para_claude.md` con el mapa de pantallas + endpoints + consideraciones multi-tenant, para acelerar la construcción de interfaces visuales.
 
 ## Tenant Branding (logos + colores + tema)
 - Se decidió usar **object storage S3-compatible** para logos (y futuros adjuntos/exportaciones), evitando acoplarse a AWS.

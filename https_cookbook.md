@@ -259,7 +259,8 @@ En PharmaFlow, el backend puede exponer un token por dominio en:
 Hoy el tenant se determina por el JWT (claims). Para dar una UX más “nativa” por dominio:
 - Mantener un mapeo `domain -> tenantId` en DB.
 - En el backend, al login, inferir el tenant por `Host` (ej. `farmacia.febsa.com`) y emitir token con ese `tenantId`.
-- En el frontend, antes de login, cargar branding/tenant name por `Host` (opcional) para que la pantalla de login ya sea “de Febsa”.
+- En el frontend, antes de login, cargar branding/tenant name por `Host` para que la pantalla de login ya sea “de Febsa”.
+  - Implementado: `GET /api/v1/public/tenant/branding`.
 
 Modelo sugerido (futuro):
 - Tabla `TenantDomain`:

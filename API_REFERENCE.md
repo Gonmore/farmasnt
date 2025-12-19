@@ -99,12 +99,41 @@ Response 200
 ---
 
 ## Tenant Branding
+Branding del tenant (logo/colores/tema). Hay 2 variantes:
+- Pública (sin JWT) para pintar la pantalla de login según el `Host`.
+- Protegida (con JWT) para el tenant autenticado.
+
+### GET /api/v1/public/tenant/branding
+Sin JWT.
+
+Notas
+- El backend resuelve el tenant por `Host`/`X-Forwarded-Host` usando `TenantDomain` (solo dominios verificados).
+- Si no puede resolver por `Host`, hace fallback **solo** si existe un único tenant activo.
+- `404` si no se puede resolver el tenant.
+
+Response 200
+```json
+{
+  "tenantId": "00000000-0000-0000-0000-000000000001",
+  "tenantName": "Supernovatel",
+  "logoUrl": "https://.../tenant-logos/<tenantId>.png",
+  "brandPrimary": "#0f172a",
+  "brandSecondary": "#334155",
+  "brandTertiary": "#64748b",
+  "defaultTheme": "LIGHT"
+}
+```
+
+---
+
 Requiere JWT (cualquier usuario autenticado del tenant).
 
 ### GET /api/v1/tenant/branding
 Response 200
 ```json
 {
+  "tenantId": "00000000-0000-0000-0000-000000000001",
+  "tenantName": "Supernovatel",
   "logoUrl": "https://.../tenant-logos/<tenantId>.png",
   "brandPrimary": "#0f172a",
   "brandSecondary": "#334155",
@@ -121,6 +150,9 @@ Requiere JWT + permiso: `admin:users:manage`.
 ### GET /api/v1/admin/tenant/branding
 Response 200 (mismo shape que `GET /tenant/branding`).
 
+Nota
+- Además incluye `version` y `updatedAt` (optimistic locking / auditoría de cambios del tenant).
+
 ### PUT /api/v1/admin/tenant/branding
 Body
 ```json
@@ -130,6 +162,15 @@ Body
   "brandSecondary": "#334155",
   "brandTertiary": "#64748b",
   "defaultTheme": "LIGHT"
+}
+```
+
+Response 200
+```json
+{
+  "tenantId": "00000000-0000-0000-0000-000000000001",
+  "version": 2,
+  "updatedAt": "2025-12-19T00:00:00.000Z"
 }
 ```
 
