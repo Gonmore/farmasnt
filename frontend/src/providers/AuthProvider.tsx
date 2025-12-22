@@ -1,4 +1,5 @@
 import { createContext, useContext, useMemo, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import {
   clearAccessToken,
   clearRefreshToken,
@@ -22,6 +23,7 @@ export type AuthContextValue = {
 const AuthContext = createContext<AuthContextValue | null>(null)
 
 export function AuthProvider(props: { children: React.ReactNode }) {
+  const queryClient = useQueryClient()
   const [accessTokenState, setAccessTokenState] = useState<string | null>(() => getAccessToken())
   const [refreshTokenState, setRefreshTokenState] = useState<string | null>(() => getRefreshToken())
 
@@ -36,12 +38,17 @@ export function AuthProvider(props: { children: React.ReactNode }) {
         setRefreshToken(res.refreshToken)
         setAccessTokenState(res.accessToken)
         setRefreshTokenState(res.refreshToken)
+        // Invalidar queries de autenticación y permisos para forzar refetch
+        queryClient.invalidateQueries({ queryKey: ['auth'] })
+        queryClient.invalidateQueries({ queryKey: ['tenant'] })
       },
       logout: () => {
         clearAccessToken()
         clearRefreshToken()
         setAccessTokenState(null)
         setRefreshTokenState(null)
+        // Limpiar todas las queries al hacer logout
+        queryClient.clear()
       },
       refresh: async () => {
         const rt = getRefreshToken()
@@ -51,9 +58,12 @@ export function AuthProvider(props: { children: React.ReactNode }) {
         setRefreshToken(res.refreshToken)
         setAccessTokenState(res.accessToken)
         setRefreshTokenState(res.refreshToken)
+        // Invalidar queries después de refresh
+        queryClient.invalidateQueries({ queryKey: ['auth'] })
+        queryClient.invalidateQueries({ queryKey: ['tenant'] })
       },
     }
-  }, [accessTokenState, refreshTokenState])
+  }, [accessTokenState, refreshTokenState, queryClient])
 
   return <AuthContext.Provider value={value}>{props.children}</AuthContext.Provider>
 }
@@ -63,3 +73,4 @@ export function useAuth(): AuthContextValue {
   if (!ctx) throw new Error('useAuth must be used within <AuthProvider>')
   return ctx
 }
+

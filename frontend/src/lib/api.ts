@@ -1,11 +1,30 @@
 // Prefer same-origin (works with Vite proxy and custom local domains via hosts file).
 // Allow overriding with VITE_API_BASE_URL when backend is on a different origin.
-const envBase = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? ''
-const API_BASE_URL = envBase.trim() ? envBase.trim() : window.location.origin
+import axios from 'axios';
+
+const envBase = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '';
+const API_BASE_URL = envBase.trim() ? envBase.trim() : window.location.origin;
 
 export function getApiBaseUrl(): string {
-  return API_BASE_URL
+  return API_BASE_URL;
 }
+
+// Axios instance with auth token injection
+export const api = axios.create({
+  baseURL: API_BASE_URL,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
+
+// Add auth token to requests
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('pf.accessToken');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
 
 export async function apiFetch<T>(path: string, init?: RequestInit & { token?: string | null }): Promise<T> {
   const url = `${API_BASE_URL}${path}`

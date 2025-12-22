@@ -56,6 +56,13 @@ model Tenant {
   brandTertiary  String?
   defaultTheme ThemeMode @default(LIGHT)
   branchLimit Int    @default(1)
+  
+  // Subscription Management Fields
+  contactName   String?
+  contactEmail  String?
+  contactPhone  String?
+  subscriptionExpiresAt DateTime?
+  
   version   Int      @default(1)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -65,8 +72,20 @@ model Tenant {
   roles   Role[]
   modules TenantModule[]
   domains TenantDomain[]
+  passwordResetTokens PasswordResetToken[]
 
   @@index([isActive])
+  @@index([subscriptionExpiresAt])
+}
+
+model ContactInfo {
+  id        String   @id @default(uuid())
+  // Solo debe haber un registro activo
+  modalHeader String  @default("Contactos")
+  modalBody   String  @default("Únete a este sistema o solicita el tuyo personalizado:\n- 📧 contactos@supernovatel.com\n- 💬 +591 65164773")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  updatedBy String?
 }
 
 model TenantDomain {
@@ -101,11 +120,31 @@ model User {
   tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   roles        UserRole[]
   refreshTokens RefreshToken[]
+  passwordResetTokens PasswordResetToken[]
   auditEvents  AuditEvent[] @relation("AuditActor")
 
   @@unique([tenantId, email])
   @@index([tenantId])
   @@index([email])
+}
+
+model PasswordResetToken {
+  id        String   @id @default(uuid())
+  tenantId  String
+  userId    String
+  tokenHash String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+  createdBy String?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([tokenHash])
+  @@index([tenantId])
+  @@index([userId])
+  @@index([expiresAt])
 }
 
 model Role {

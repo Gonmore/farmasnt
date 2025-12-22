@@ -13,6 +13,14 @@ const envSchema = z.object({
   JWT_ACCESS_SECRET: z.string().min(16),
   JWT_REFRESH_SECRET: z.string().min(16),
 
+  // SMTP (for password reset emails)
+  SMTP_HOST: z.preprocess(emptyStringToUndefined, z.string().min(1).optional()),
+  SMTP_PORT: z.coerce.number().int().positive().optional().default(587),
+  SMTP_SECURE: z.coerce.boolean().optional().default(false),
+  SMTP_USER: z.preprocess(emptyStringToUndefined, z.string().min(1).optional()),
+  SMTP_PASS: z.preprocess(emptyStringToUndefined, z.string().min(1).optional()),
+  SMTP_FROM: z.preprocess(emptyStringToUndefined, z.string().min(3).optional()),
+
   // S3-compatible object storage (for tenant logos)
   S3_ENDPOINT: z.preprocess(emptyStringToUndefined, z.string().url().optional()),
   S3_REGION: z.string().default('us-east-1'),

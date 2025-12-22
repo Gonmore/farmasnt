@@ -4,8 +4,12 @@ import { prisma } from '../../db/prisma.js'
 import { requireAuth, requireModuleEnabled, requirePermission } from '../../../application/security/rbac.js'
 import { Permissions } from '../../../application/security/permissions.js'
 
+const updateWarehouseSchema = z.object({
+  name: z.string().trim().min(1).max(200),
+})
+
 const listQuerySchema = z.object({
-  take: z.coerce.number().int().min(1).max(100).default(50),
+  take: z.coerce.number().int().min(1).max(50).default(20),
   cursor: z.string().uuid().optional(),
 })
 
@@ -42,7 +46,41 @@ export async function registerWarehouseRoutes(app: FastifyInstance): Promise<voi
     },
   )
 
-  // List locations for a warehouse (keyset by id)
+  // Update warehouse
+  app.patch(
+    '/api/v1/warehouses/:id',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.StockManage)],
+    },
+    async (request, reply) => {
+      const warehouseId = (request.params as any).id as string
+      const parsed = updateWarehouseSchema.safeParse(request.body)
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid request', issues: parsed.error.issues })
+
+      const tenantId = request.auth!.tenantId
+      const userId = request.auth!.userId
+
+      const warehouse = await db.warehouse.findFirst({
+        where: { id: warehouseId, tenantId },
+        select: { id: true, version: true }
+      })
+
+      if (!warehouse) return reply.status(404).send({ message: 'Warehouse not found' })
+
+      const updated = await db.warehouse.update({
+        where: {
+          id: warehouseId,
+          version: warehouse.version // Optimistic locking
+        },
+        data: {
+          name: parsed.data.name,
+        },
+        select: { id: true, code: true, name: true, isActive: true, version: true, updatedAt: true },
+      })
+
+      return reply.send(updated)
+    },
+  )
   app.get(
     '/api/v1/warehouses/:id/locations',
     {

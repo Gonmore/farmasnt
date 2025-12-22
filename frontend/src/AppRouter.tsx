@@ -1,18 +1,211 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
-import App from './App'
+import { ProtectedRoute } from './components/ProtectedRoute'
+import {
+  LoginPage,
+  ResetPasswordPage,
+  DashboardPage,
+  ProductsListPage,
+  ProductDetailPage,
+  CatalogSearchPage,
+  WarehousesPage,
+  LocationsPage,
+  BalancesPage,
+  MovementsPage,
+  ExpiryPage,
+  CustomersPage,
+  OrdersPage,
+  SalesReportsPage,
+  StockReportsPage,
+  AuditListPage,
+  UsersPage,
+  RolesPage,
+  BrandingPage,
+  TenantsPage,
+  ContactSettingsPage,
+} from './pages'
 
 /**
- * Router wrapper.
- * Step 1: keep the existing MVP UX intact (single App view with tabs)
- * while we progressively migrate each tab into a real route/page.
+ * Main application router with all routes
  */
 export function AppRouter() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<App />} />
-        <Route path="/admin" element={<App />} />
-        <Route path="/admin/:tab" element={<App />} />
+        {/* Public routes */}
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
+
+        {/* Protected routes */}
+        <Route
+          path="/"
+          element={
+            <ProtectedRoute>
+              <DashboardPage />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Catalog routes */}
+        <Route
+          path="/catalog/products"
+          element={
+            <ProtectedRoute>
+              <ProductsListPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/catalog/products/:id"
+          element={
+            <ProtectedRoute>
+              <ProductDetailPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/catalog/search"
+          element={
+            <ProtectedRoute>
+              <CatalogSearchPage />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Warehouse routes */}
+        <Route
+          path="/warehouse/warehouses"
+          element={
+            <ProtectedRoute>
+              <WarehousesPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/warehouse/warehouses/:warehouseId/locations"
+          element={
+            <ProtectedRoute>
+              <LocationsPage />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Stock routes */}
+        <Route
+          path="/stock/balances"
+          element={
+            <ProtectedRoute>
+              <BalancesPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/stock/movements"
+          element={
+            <ProtectedRoute>
+              <MovementsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/stock/expiry"
+          element={
+            <ProtectedRoute>
+              <ExpiryPage />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Sales routes */}
+        <Route
+          path="/sales/customers"
+          element={
+            <ProtectedRoute>
+              <CustomersPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/sales/orders"
+          element={
+            <ProtectedRoute>
+              <OrdersPage />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Reports routes */}
+        <Route
+          path="/reports/sales"
+          element={
+            <ProtectedRoute>
+              <SalesReportsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/reports/stock"
+          element={
+            <ProtectedRoute>
+              <StockReportsPage />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Audit routes */}
+        <Route
+          path="/audit/events"
+          element={
+            <ProtectedRoute>
+              <AuditListPage />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Admin routes */}
+        <Route
+          path="/admin/users"
+          element={
+            <ProtectedRoute>
+              <UsersPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/roles"
+          element={
+            <ProtectedRoute>
+              <RolesPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/branding"
+          element={
+            <ProtectedRoute>
+              <BrandingPage />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Platform routes */}
+        <Route
+          path="/platform/tenants"
+          element={
+            <ProtectedRoute>
+              <TenantsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/platform/contact"
+          element={
+            <ProtectedRoute>
+              <ContactSettingsPage />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Fallback */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

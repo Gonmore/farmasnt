@@ -25,7 +25,35 @@ const createTenantSchema = z.object({
     .max(255)
     .optional()
     .transform((v) => (v ? v.toLowerCase() : v)),
+  // Subscription fields
+  contactName: z.string().trim().min(2).max(200),
+  contactEmail: z.string().email().max(200),
+  contactPhone: z.string().trim().min(8).max(20),
+  subscriptionMonths: z.coerce.number().int().min(1).max(36).default(12), // 1-36 meses
 })
+
+  const platformTenantAdminCreateSchema = z.object({
+    tenantId: z.string().uuid(),
+    email: z.string().email().max(200),
+    password: z.string().min(6).max(200),
+    fullName: z.string().trim().max(200).optional(),
+  })
+
+  const platformUserStatusUpdateSchema = z.object({
+    isActive: z.coerce.boolean(),
+  })
+
+  const platformUserResetPasswordSchema = z.object({
+    newPassword: z.string().min(6).max(200).optional(),
+  })
+
+  function normalizeEmail(raw: string): string {
+    return raw.trim().toLowerCase()
+  }
+
+  function generateTempPassword(): string {
+    return crypto.randomBytes(12).toString('base64url')
+  }
 
 function normalizeDomain(input: string): string {
   const v = input.trim().toLowerCase()
@@ -136,6 +164,10 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
           name: true,
           isActive: true,
           branchLimit: true,
+          contactName: true,
+          contactEmail: true,
+          contactPhone: true,
+          subscriptionExpiresAt: true,
           createdAt: true,
           updatedAt: true,
           domains: { select: { domain: true, isPrimary: true, verifiedAt: true } },
@@ -155,13 +187,23 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
       if (!parsed.success) return reply.status(400).send({ message: 'Invalid request', issues: parsed.error.issues })
 
       const actor = request.auth!
-      const { name, branchCount, adminEmail, adminPassword } = parsed.data
+        const { name, branchCount, adminEmail, adminPassword, contactName, contactEmail, contactPhone, subscriptionMonths } = parsed.data
       const primaryDomain = parsed.data.primaryDomain ? normalizeDomain(parsed.data.primaryDomain) : null
+
+        const normalizedAdminEmail = normalizeEmail(adminEmail)
+
+        // Prevent duplicate emails across the whole system.
+        const anyExisting = await db.user.findFirst({ where: { email: normalizedAdminEmail }, select: { id: true } })
+        if (anyExisting) return reply.status(409).send({ message: 'Admin email already exists' })
 
       if (primaryDomain) {
         const exists = await db.tenantDomain.findFirst({ where: { domain: primaryDomain }, select: { id: true } })
         if (exists) return reply.status(409).send({ message: 'Domain already in use' })
       }
+
+      // Calculate subscription expiration
+      const now = new Date()
+      const subscriptionExpiresAt = new Date(now.getFullYear(), now.getMonth() + subscriptionMonths, now.getDate())
 
       const passwordHash = await bcrypt.hash(adminPassword, 12)
 
@@ -170,9 +212,13 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
           data: {
             name,
             branchLimit: branchCount,
+            contactName,
+            contactEmail,
+            contactPhone,
+            subscriptionExpiresAt,
             createdBy: actor.userId,
           },
-          select: { id: true, name: true },
+          select: { id: true, name: true, subscriptionExpiresAt: true },
         })
 
         // Enable default modules
@@ -199,6 +245,7 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
           Permissions.CatalogRead,
           Permissions.CatalogWrite,
           Permissions.StockRead,
+          Permissions.StockManage,
           Permissions.StockMove,
           Permissions.SalesOrderRead,
           Permissions.SalesOrderWrite,
@@ -219,13 +266,164 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
         const user = await tx.user.create({
           data: {
             tenantId: t.id,
-            email: adminEmail.toLowerCase(),
+            email: normalizedAdminEmail,
             passwordHash,
             isActive: true,
             createdBy: actor.userId,
           },
           select: { id: true },
         })
+
+  // Platform: list users (cross-tenant)
+  app.get('/api/v1/platform/users', { preHandler: guard }, async (request, reply) => {
+    const parsed = z
+      .object({
+        take: z.coerce.number().int().min(1).max(50).default(20),
+        cursor: z.string().uuid().optional(),
+        q: z.string().trim().min(1).max(200).optional(),
+        tenantId: z.string().uuid().optional(),
+      })
+      .safeParse(request.query)
+    if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
+
+    const where: any = {}
+    if (parsed.data.tenantId) where.tenantId = parsed.data.tenantId
+    if (parsed.data.q) where.email = { contains: parsed.data.q, mode: 'insensitive' }
+
+    const items = await db.user.findMany({
+      where,
+      take: parsed.data.take,
+      ...(parsed.data.cursor ? { skip: 1, cursor: { id: parsed.data.cursor } } : {}),
+      orderBy: { id: 'asc' },
+      select: {
+        id: true,
+        email: true,
+        fullName: true,
+        isActive: true,
+        createdAt: true,
+        tenant: { select: { id: true, name: true } },
+        roles: { select: { role: { select: { id: true, code: true, name: true } } } },
+      },
+    })
+
+    const mapped = items.map((u) => ({
+      id: u.id,
+      email: u.email,
+      fullName: u.fullName,
+      isActive: u.isActive,
+      createdAt: u.createdAt,
+      tenant: u.tenant,
+      roles: u.roles.map((ur) => ur.role),
+    }))
+
+    const nextCursor = items.length === parsed.data.take ? items[items.length - 1]!.id : null
+    return reply.send({ items: mapped, nextCursor })
+  })
+
+  // Platform: create tenant admin user in a tenant
+  app.post('/api/v1/platform/tenant-admins', { preHandler: guard }, async (request, reply) => {
+    const parsed = platformTenantAdminCreateSchema.safeParse(request.body)
+    if (!parsed.success) return reply.status(400).send({ message: 'Invalid request', issues: parsed.error.issues })
+
+    const actor = request.auth!
+    const email = normalizeEmail(parsed.data.email)
+
+    const anyExisting = await db.user.findFirst({ where: { email }, select: { id: true } })
+    if (anyExisting) return reply.status(409).send({ message: 'Email already exists' })
+
+    const tenant = await db.tenant.findFirst({ where: { id: parsed.data.tenantId }, select: { id: true, isActive: true } })
+    if (!tenant) return reply.status(404).send({ message: 'Tenant not found' })
+
+    const role = await db.role.findFirst({ where: { tenantId: tenant.id, code: 'TENANT_ADMIN' }, select: { id: true } })
+    if (!role) return reply.status(404).send({ message: 'TENANT_ADMIN role not found for tenant' })
+
+    const passwordHash = await bcrypt.hash(parsed.data.password, 12)
+
+    const created = await db.$transaction(async (tx) => {
+      const user = await tx.user.create({
+        data: {
+          tenantId: tenant.id,
+          email,
+          passwordHash,
+          fullName: parsed.data.fullName ?? null,
+          isActive: true,
+          createdBy: actor.userId,
+        },
+        select: { id: true, email: true },
+      })
+      await tx.userRole.create({ data: { userId: user.id, roleId: role.id } })
+      return user
+    })
+
+    await audit.append({
+      tenantId: tenant.id,
+      actorUserId: actor.userId,
+      action: 'platform.tenant_admin.create',
+      entityType: 'User',
+      entityId: created.id,
+      metadata: { email: created.email },
+    })
+
+    return reply.status(201).send({ id: created.id, email: created.email })
+  })
+
+  // Platform: activate/deactivate user
+  app.patch('/api/v1/platform/users/:id/status', { preHandler: guard }, async (request, reply) => {
+    const id = (request.params as any).id as string
+    const parsed = platformUserStatusUpdateSchema.safeParse(request.body)
+    if (!parsed.success) return reply.status(400).send({ message: 'Invalid request', issues: parsed.error.issues })
+
+    const actor = request.auth!
+    const user = await db.user.findFirst({ where: { id }, select: { id: true, tenantId: true, email: true, isActive: true } })
+    if (!user) return reply.status(404).send({ message: 'User not found' })
+
+    const updated = await db.user.update({ where: { id }, data: { isActive: parsed.data.isActive, version: { increment: 1 }, createdBy: actor.userId } })
+    await db.refreshToken.updateMany({ where: { userId: id, revokedAt: null }, data: { revokedAt: new Date() } })
+
+    await audit.append({
+      tenantId: user.tenantId,
+      actorUserId: actor.userId,
+      action: 'platform.user.status.update',
+      entityType: 'User',
+      entityId: id,
+      before: { isActive: user.isActive },
+      after: { isActive: updated.isActive },
+      metadata: { email: user.email },
+    })
+
+    return reply.send({ id: updated.id, isActive: updated.isActive })
+  })
+
+  // Platform: reset user password
+  app.post('/api/v1/platform/users/:id/reset-password', { preHandler: guard }, async (request, reply) => {
+    const id = (request.params as any).id as string
+    const parsed = platformUserResetPasswordSchema.safeParse(request.body ?? {})
+    if (!parsed.success) return reply.status(400).send({ message: 'Invalid request', issues: parsed.error.issues })
+
+    const actor = request.auth!
+    const user = await db.user.findFirst({ where: { id }, select: { id: true, tenantId: true, email: true } })
+    if (!user) return reply.status(404).send({ message: 'User not found' })
+
+    const tempPassword = parsed.data.newPassword ?? generateTempPassword()
+    const passwordHash = await bcrypt.hash(tempPassword, 12)
+    const now = new Date()
+
+    await db.$transaction(async (tx) => {
+      await tx.user.update({ where: { id }, data: { passwordHash, version: { increment: 1 }, createdBy: actor.userId } })
+      await tx.refreshToken.updateMany({ where: { userId: id, revokedAt: null }, data: { revokedAt: now } })
+    })
+
+    await audit.append({
+      tenantId: user.tenantId,
+      actorUserId: actor.userId,
+      action: 'platform.user.password.reset',
+      entityType: 'User',
+      entityId: id,
+      metadata: { email: user.email },
+    })
+
+    return reply.send({ userId: id, temporaryPassword: tempPassword })
+  })
 
         await tx.userRole.create({ data: { userId: user.id, roleId: role.id } })
 
@@ -274,10 +472,23 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
         action: 'platform.tenant.create',
         entityType: 'Tenant',
         entityId: tenant.id,
-        metadata: { name: tenant.name, branchCount, primaryDomain },
+        metadata: { 
+          name: tenant.name, 
+          branchCount, 
+          primaryDomain, 
+          contactName, 
+          contactEmail, 
+          contactPhone, 
+          subscriptionMonths,
+          subscriptionExpiresAt: tenant.subscriptionExpiresAt,
+        },
       })
 
-      return reply.status(201).send({ id: tenant.id, name: tenant.name })
+      return reply.status(201).send({ 
+        id: tenant.id, 
+        name: tenant.name,
+        subscriptionExpiresAt: tenant.subscriptionExpiresAt,
+      })
     },
   )
 
@@ -438,6 +649,131 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
       })
 
       return reply.send({ ok: true, verifiedAt })
+    },
+  )
+
+  // --- Update tenant (isActive, branchLimit) ---
+  app.patch(
+    '/api/v1/platform/tenants/:tenantId',
+    { preHandler: guard },
+    async (request, reply) => {
+      const actor = request.auth!
+      const tenantId = (request.params as any)?.tenantId as string | undefined
+      if (!tenantId) return reply.status(400).send({ message: 'Invalid tenantId' })
+
+      const bodySchema = z.object({
+        isActive: z.boolean().optional(),
+        branchLimit: z.coerce.number().int().min(1).max(100).optional(),
+      })
+
+      const parsed = bodySchema.safeParse(request.body)
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid request', issues: parsed.error.issues })
+
+      const { isActive, branchLimit } = parsed.data
+      if (isActive === undefined && branchLimit === undefined) {
+        return reply.status(400).send({ message: 'At least one field must be provided' })
+      }
+
+      const tenant = await db.tenant.findFirst({ where: { id: tenantId }, select: { id: true, name: true } })
+      if (!tenant) return reply.status(404).send({ message: 'Tenant not found' })
+
+      const updated = await db.tenant.update({
+        where: { id: tenantId },
+        data: {
+          ...(isActive !== undefined ? { isActive } : {}),
+          ...(branchLimit !== undefined ? { branchLimit } : {}),
+        },
+        select: {
+          id: true,
+          name: true,
+          isActive: true,
+          branchLimit: true,
+          contactName: true,
+          contactEmail: true,
+          contactPhone: true,
+          subscriptionExpiresAt: true,
+          createdAt: true,
+          updatedAt: true,
+          domains: { select: { domain: true, isPrimary: true, verifiedAt: true } },
+        },
+      })
+
+      await audit.append({
+        tenantId: actor.tenantId,
+        actorUserId: actor.userId,
+        action: 'platform.tenant.update',
+        entityType: 'Tenant',
+        entityId: tenantId,
+        metadata: { isActive, branchLimit },
+      })
+
+      return reply.send(updated)
+    },
+  )
+
+  // --- Extend tenant subscription ---
+  app.patch(
+    '/api/v1/platform/tenants/:tenantId/subscription',
+    { preHandler: guard },
+    async (request, reply) => {
+      const actor = request.auth!
+      const tenantId = (request.params as any)?.tenantId as string | undefined
+      if (!tenantId) return reply.status(400).send({ message: 'Invalid tenantId' })
+
+      const bodySchema = z.object({
+        extensionMonths: z.coerce.number().int().min(1).max(48),
+      })
+
+      const parsed = bodySchema.safeParse(request.body)
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid request', issues: parsed.error.issues })
+
+      const { extensionMonths } = parsed.data
+
+      const tenant = await db.tenant.findFirst({
+        where: { id: tenantId },
+        select: { id: true, name: true, subscriptionExpiresAt: true },
+      })
+      if (!tenant) return reply.status(404).send({ message: 'Tenant not found' })
+
+      // Extend from current expiration (or now if expired)
+      const baseDate = tenant.subscriptionExpiresAt && tenant.subscriptionExpiresAt > new Date()
+        ? tenant.subscriptionExpiresAt
+        : new Date()
+
+      const newExpiration = new Date(baseDate.getFullYear(), baseDate.getMonth() + extensionMonths, baseDate.getDate())
+
+      const updated = await db.tenant.update({
+        where: { id: tenantId },
+        data: { subscriptionExpiresAt: newExpiration },
+        select: {
+          id: true,
+          name: true,
+          isActive: true,
+          branchLimit: true,
+          contactName: true,
+          contactEmail: true,
+          contactPhone: true,
+          subscriptionExpiresAt: true,
+          createdAt: true,
+          updatedAt: true,
+          domains: { select: { domain: true, isPrimary: true, verifiedAt: true } },
+        },
+      })
+
+      await audit.append({
+        tenantId: actor.tenantId,
+        actorUserId: actor.userId,
+        action: 'platform.tenant.subscription.extend',
+        entityType: 'Tenant',
+        entityId: tenantId,
+        metadata: { 
+          extensionMonths, 
+          previousExpiration: tenant.subscriptionExpiresAt, 
+          newExpiration,
+        },
+      })
+
+      return reply.send(updated)
     },
   )
 }

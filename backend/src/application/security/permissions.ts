@@ -2,6 +2,7 @@ export const Permissions = {
   CatalogRead: 'catalog:read',
   CatalogWrite: 'catalog:write',
   StockRead: 'stock:read',
+  StockManage: 'stock:manage',
   StockMove: 'stock:move',
   SalesOrderRead: 'sales:order:read',
   SalesOrderWrite: 'sales:order:write',

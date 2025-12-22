@@ -97,6 +97,24 @@ const userCreateSchema = z.object({
   roleIds: z.array(z.string().uuid()).optional(),
 })
 
+const userStatusUpdateSchema = z.object({
+  isActive: z.coerce.boolean(),
+})
+
+const userResetPasswordSchema = z.object({
+  // optional override; if omitted, a random password is generated and returned.
+  newPassword: z.string().min(6).max(200).optional(),
+})
+
+function normalizeEmail(raw: string): string {
+  return raw.trim().toLowerCase()
+}
+
+function generateTempPassword(): string {
+  // 16 chars base64url-ish
+  return crypto.randomBytes(12).toString('base64url')
+}
+
 const userRolesReplaceSchema = z.object({
   roleIds: z.array(z.string().uuid()),
 })
@@ -537,6 +555,12 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
 
     const tenantId = request.auth!.tenantId
     const userId = request.auth!.userId
+    const email = normalizeEmail(parsed.data.email)
+
+    // Prevent duplicate emails across the whole system (email is the login identifier).
+    // If you ever need same email across tenants, relax this check.
+    const anyExisting = await db.user.findFirst({ where: { email }, select: { id: true } })
+    if (anyExisting) return reply.status(409).send({ message: 'Email already exists' })
 
     try {
       const created = await db.$transaction(async (tx) => {
@@ -545,7 +569,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
         const user = await tx.user.create({
           data: {
             tenantId,
-            email: parsed.data.email,
+            email,
             passwordHash,
             fullName: parsed.data.fullName ?? null,
             createdBy: userId,
@@ -581,6 +605,152 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
       if (typeof e?.code === 'string' && e.code === 'P2002') return reply.status(409).send({ message: 'Email already exists' })
       throw e
     }
+    },
+  )
+
+  app.patch(
+    '/api/v1/admin/users/:id/status',
+    {
+      preHandler: guard,
+      schema: {
+        tags: ['Admin'],
+        summary: 'Activate/deactivate user',
+        security: [{ bearerAuth: [] }],
+        params: {
+          type: 'object',
+          properties: { id: { type: 'string' } },
+          required: ['id'],
+          additionalProperties: false,
+        },
+        body: {
+          type: 'object',
+          properties: { isActive: { type: 'boolean' } },
+          required: ['isActive'],
+          additionalProperties: false,
+        },
+        response: {
+          200: userListItemSchema,
+          400: errorResponseSchema,
+          404: errorResponseSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      const id = (request.params as any).id as string
+      const parsed = userStatusUpdateSchema.safeParse(request.body)
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid request', issues: parsed.error.issues })
+
+      const tenantId = request.auth!.tenantId
+      const actorUserId = request.auth!.userId
+
+      if (id === actorUserId && parsed.data.isActive === false) {
+        return reply.status(400).send({ message: 'Cannot deactivate your own user' })
+      }
+
+      const before = await db.user.findFirst({ where: { id, tenantId }, select: { id: true, email: true, isActive: true } })
+      if (!before) return reply.status(404).send({ message: 'User not found' })
+
+      const updated = await db.user.update({
+        where: { id },
+        data: { isActive: parsed.data.isActive, version: { increment: 1 }, createdBy: actorUserId },
+        select: {
+          id: true,
+          email: true,
+          fullName: true,
+          isActive: true,
+          createdAt: true,
+          roles: { select: { role: { select: { id: true, code: true, name: true } } } },
+        },
+      })
+
+      await db.refreshToken.updateMany({ where: { userId: id, revokedAt: null }, data: { revokedAt: new Date() } })
+
+      await audit.append({
+        tenantId,
+        actorUserId,
+        action: 'admin.user.status.update',
+        entityType: 'User',
+        entityId: id,
+        before,
+        after: { id: updated.id, isActive: updated.isActive },
+      })
+
+      return reply.send({
+        id: updated.id,
+        email: updated.email,
+        fullName: updated.fullName,
+        isActive: updated.isActive,
+        createdAt: updated.createdAt,
+        roleIds: updated.roles.map((ur) => ur.role.id),
+        roles: updated.roles.map((ur) => ur.role),
+      })
+    },
+  )
+
+  app.post(
+    '/api/v1/admin/users/:id/reset-password',
+    {
+      preHandler: guard,
+      schema: {
+        tags: ['Admin'],
+        summary: 'Reset user password',
+        security: [{ bearerAuth: [] }],
+        params: {
+          type: 'object',
+          properties: { id: { type: 'string' } },
+          required: ['id'],
+          additionalProperties: false,
+        },
+        body: {
+          type: 'object',
+          properties: { newPassword: { type: 'string' } },
+          additionalProperties: false,
+        },
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              userId: { type: 'string' },
+              temporaryPassword: { type: 'string' },
+            },
+            required: ['userId', 'temporaryPassword'],
+            additionalProperties: false,
+          },
+          400: errorResponseSchema,
+          404: errorResponseSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      const id = (request.params as any).id as string
+      const parsed = userResetPasswordSchema.safeParse(request.body ?? {})
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid request', issues: parsed.error.issues })
+
+      const tenantId = request.auth!.tenantId
+      const actorUserId = request.auth!.userId
+
+      const user = await db.user.findFirst({ where: { id, tenantId }, select: { id: true, email: true } })
+      if (!user) return reply.status(404).send({ message: 'User not found' })
+
+      const tempPassword = parsed.data.newPassword ?? generateTempPassword()
+      const passwordHash = await bcrypt.hash(tempPassword, 12)
+      const now = new Date()
+
+      await db.$transaction(async (tx) => {
+        await tx.user.update({ where: { id }, data: { passwordHash, version: { increment: 1 }, createdBy: actorUserId } })
+        await tx.refreshToken.updateMany({ where: { userId: id, revokedAt: null }, data: { revokedAt: now } })
+      })
+
+      await audit.append({
+        tenantId,
+        actorUserId,
+        action: 'admin.user.password.reset',
+        entityType: 'User',
+        entityId: id,
+        metadata: { targetEmail: user.email },
+      })
+
+      return reply.send({ userId: id, temporaryPassword: tempPassword })
     },
   )
 

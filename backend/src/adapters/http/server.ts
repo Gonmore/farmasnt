@@ -19,6 +19,7 @@ import { registerAuditRoutes } from './routes/audit.js'
 import { registerReportRoutes } from './routes/reports.js'
 import { registerTenantRoutes } from './routes/tenant.js'
 import { registerPlatformRoutes } from './routes/platform.js'
+import { registerContactRoutes } from './routes/contact.js'
 import { registerWellKnownRoutes } from './routes/wellKnown.js'
 
 export async function createHttpServer() {
@@ -134,6 +135,7 @@ export async function createHttpServer() {
   await registerReportRoutes(app)
   await registerTenantRoutes(app)
   await registerPlatformRoutes(app)
+  await registerContactRoutes(app)
 
   return app
 }
