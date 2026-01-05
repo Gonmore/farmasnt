@@ -12,6 +12,7 @@ import {
   BalancesPage,
   MovementsPage,
   ExpiryPage,
+  InventoryPage,
   CustomersPage,
   OrdersPage,
   SalesReportsPage,
@@ -90,6 +91,14 @@ export function AppRouter() {
         />
 
         {/* Stock routes */}
+        <Route
+          path="/stock/inventory"
+          element={
+            <ProtectedRoute>
+              <InventoryPage />
+            </ProtectedRoute>
+          }
+        />
         <Route
           path="/stock/balances"
           element={

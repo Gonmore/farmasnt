@@ -1,0 +1,623 @@
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMemo, useState } from 'react'
+import { apiFetch } from '../../lib/api'
+import { useAuth } from '../../providers/AuthProvider'
+import {
+  MainLayout,
+  PageContainer,
+  Table,
+  Loading,
+  ErrorState,
+  EmptyState,
+  Button,
+  Modal,
+  Input,
+  Select,
+} from '../../components'
+import { useNavigation } from '../../hooks'
+
+type BalanceExpandedItem = {
+  id: string
+  quantity: string
+  updatedAt: string
+  productId: string
+  batchId: string | null
+  locationId: string
+  product: { sku: string; name: string }
+  batch: { batchNumber: string; expiresAt: string | null; status: string } | null
+  location: {
+    id: string
+    code: string
+    warehouse: { id: string; code: string; name: string }
+  }
+}
+
+type WarehouseListItem = {
+  id: string
+  code: string
+  name: string
+  isActive: boolean
+}
+
+type LocationListItem = {
+  id: string
+  warehouseId: string
+  code: string
+  isActive: boolean
+}
+
+type ProductGroup = {
+  productId: string
+  sku: string
+  name: string
+  totalQuantity: number
+  warehouses: Array<{
+    warehouseId: string
+    warehouseCode: string
+    warehouseName: string
+    quantity: number
+    batches: Array<{
+      batchId: string | null
+      batchNumber: string
+      expiresAt: string | null
+      quantity: number
+      locationId: string
+      locationCode: string
+    }>
+  }>
+}
+
+type WarehouseGroup = {
+  warehouseId: string
+  warehouseCode: string
+  warehouseName: string
+  totalQuantity: number
+  products: Array<{
+    productId: string
+    sku: string
+    name: string
+    quantity: number
+    batches: Array<{
+      batchId: string | null
+      batchNumber: string
+      expiresAt: string | null
+      quantity: number
+      locationId: string
+      locationCode: string
+    }>
+  }>
+}
+
+async function fetchBalances(token: string): Promise<{ items: BalanceExpandedItem[] }> {
+  const params = new URLSearchParams({ take: '200' })
+  return apiFetch(`/api/v1/reports/stock/balances-expanded?${params}`, { token })
+}
+
+async function listWarehouses(token: string): Promise<{ items: WarehouseListItem[] }> {
+  const params = new URLSearchParams({ take: '100' })
+  return apiFetch(`/api/v1/warehouses?${params}`, { token })
+}
+
+async function listWarehouseLocations(token: string, warehouseId: string): Promise<{ items: LocationListItem[] }> {
+  const params = new URLSearchParams({ take: '100' })
+  return apiFetch(`/api/v1/warehouses/${warehouseId}/locations?${params}`, { token })
+}
+
+async function createTransferMovement(
+  token: string,
+  data: {
+    productId: string
+    batchId: string | null
+    fromLocationId: string
+    toLocationId: string
+    quantity: string
+    note?: string
+  },
+): Promise<any> {
+  return apiFetch(`/api/v1/stock/movements`, {
+    token,
+    method: 'POST',
+    body: JSON.stringify({ type: 'TRANSFER', ...data }),
+  })
+}
+
+export function InventoryPage() {
+  const auth = useAuth()
+  const navGroups = useNavigation()
+  const queryClient = useQueryClient()
+
+  const [groupBy, setGroupBy] = useState<'product' | 'warehouse'>('product')
+  const [expandedProduct, setExpandedProduct] = useState<string | null>(null)
+  const [expandedWarehouse, setExpandedWarehouse] = useState<string | null>(null)
+  const [movingItem, setMovingItem] = useState<{
+    productId: string
+    productName: string
+    batchId: string | null
+    batchNumber: string
+    fromLocationId: string
+    fromWarehouseCode: string
+    fromLocationCode: string
+    availableQty: string
+  } | null>(null)
+
+  const [moveQty, setMoveQty] = useState('')
+  const [moveToWarehouseId, setMoveToWarehouseId] = useState('')
+  const [moveToLocationId, setMoveToLocationId] = useState('')
+  const [moveError, setMoveError] = useState('')
+
+  const balancesQuery = useQuery({
+    queryKey: ['balances', 'inventory'],
+    queryFn: () => fetchBalances(auth.accessToken!),
+    enabled: !!auth.accessToken,
+  })
+
+  const warehousesQuery = useQuery({
+    queryKey: ['warehouses', 'forInventory'],
+    queryFn: () => listWarehouses(auth.accessToken!),
+    enabled: !!auth.accessToken,
+  })
+
+  const destinationLocationsQuery = useQuery({
+    queryKey: ['warehouseLocations', 'forInventoryMove', moveToWarehouseId],
+    queryFn: () => listWarehouseLocations(auth.accessToken!, moveToWarehouseId),
+    enabled: !!auth.accessToken && !!moveToWarehouseId,
+  })
+
+  const moveMutation = useMutation({
+    mutationFn: async () => {
+      if (!movingItem) throw new Error('Seleccioná una existencia para mover')
+
+      const qtyNum = Number(moveQty)
+      if (!Number.isFinite(qtyNum) || qtyNum <= 0) throw new Error('Ingresá una cantidad válida (mayor a 0)')
+      if (!moveToWarehouseId) throw new Error('Seleccioná el almacén destino')
+      if (!moveToLocationId) throw new Error('Seleccioná la ubicación destino')
+
+      return createTransferMovement(auth.accessToken!, {
+        productId: movingItem.productId,
+        batchId: movingItem.batchId,
+        fromLocationId: movingItem.fromLocationId,
+        toLocationId: moveToLocationId,
+        quantity: String(qtyNum),
+      })
+    },
+    onSuccess: async () => {
+      await balancesQuery.refetch()
+      queryClient.invalidateQueries({ queryKey: ['balances'] })
+      setMovingItem(null)
+      setMoveQty('')
+      setMoveToWarehouseId('')
+      setMoveToLocationId('')
+      setMoveError('')
+      alert('Movimiento realizado')
+    },
+    onError: (err: any) => {
+      setMoveError(err instanceof Error ? err.message : 'Error al mover')
+    },
+  })
+
+  const productGroups = useMemo<ProductGroup[]>(() => {
+    if (!balancesQuery.data?.items) return []
+
+    const map = new Map<string, ProductGroup>()
+
+    for (const item of balancesQuery.data.items) {
+      const qty = Number(item.quantity)
+      if (!Number.isFinite(qty) || qty <= 0) continue
+
+      let productGroup = map.get(item.productId)
+      if (!productGroup) {
+        productGroup = {
+          productId: item.productId,
+          sku: item.product.sku,
+          name: item.product.name,
+          totalQuantity: 0,
+          warehouses: [],
+        }
+        map.set(item.productId, productGroup)
+      }
+
+      productGroup.totalQuantity += qty
+
+      let whGroup = productGroup.warehouses.find((w) => w.warehouseId === item.location.warehouse.id)
+      if (!whGroup) {
+        whGroup = {
+          warehouseId: item.location.warehouse.id,
+          warehouseCode: item.location.warehouse.code,
+          warehouseName: item.location.warehouse.name,
+          quantity: 0,
+          batches: [],
+        }
+        productGroup.warehouses.push(whGroup)
+      }
+
+      whGroup.quantity += qty
+      whGroup.batches.push({
+        batchId: item.batchId,
+        batchNumber: item.batch?.batchNumber ?? '-',
+        expiresAt: item.batch?.expiresAt ?? null,
+        quantity: qty,
+        locationId: item.locationId,
+        locationCode: item.location.code,
+      })
+    }
+
+    return Array.from(map.values()).sort((a, b) => a.sku.localeCompare(b.sku))
+  }, [balancesQuery.data])
+
+  const warehouseGroups = useMemo<WarehouseGroup[]>(() => {
+    if (!balancesQuery.data?.items) return []
+
+    const map = new Map<string, WarehouseGroup>()
+
+    for (const item of balancesQuery.data.items) {
+      const qty = Number(item.quantity)
+      if (!Number.isFinite(qty) || qty <= 0) continue
+
+      let whGroup = map.get(item.location.warehouse.id)
+      if (!whGroup) {
+        whGroup = {
+          warehouseId: item.location.warehouse.id,
+          warehouseCode: item.location.warehouse.code,
+          warehouseName: item.location.warehouse.name,
+          totalQuantity: 0,
+          products: [],
+        }
+        map.set(item.location.warehouse.id, whGroup)
+      }
+
+      whGroup.totalQuantity += qty
+
+      let prodGroup = whGroup.products.find((p) => p.productId === item.productId)
+      if (!prodGroup) {
+        prodGroup = {
+          productId: item.productId,
+          sku: item.product.sku,
+          name: item.product.name,
+          quantity: 0,
+          batches: [],
+        }
+        whGroup.products.push(prodGroup)
+      }
+
+      prodGroup.quantity += qty
+      prodGroup.batches.push({
+        batchId: item.batchId,
+        batchNumber: item.batch?.batchNumber ?? '-',
+        expiresAt: item.batch?.expiresAt ?? null,
+        quantity: qty,
+        locationId: item.locationId,
+        locationCode: item.location.code,
+      })
+    }
+
+    return Array.from(map.values()).sort((a, b) => a.warehouseCode.localeCompare(b.warehouseCode))
+  }, [balancesQuery.data])
+
+  const activeWarehouses = useMemo(
+    () => (warehousesQuery.data?.items ?? []).filter((w) => w.isActive),
+    [warehousesQuery.data],
+  )
+
+  return (
+    <MainLayout navGroups={navGroups}>
+      <PageContainer
+        title="📦 Inventario Completo"
+        actions={
+          <div className="flex gap-2">
+            <Button
+              variant={groupBy === 'product' ? 'primary' : 'secondary'}
+              onClick={() => setGroupBy('product')}
+            >
+              📊 Por Producto
+            </Button>
+            <Button
+              variant={groupBy === 'warehouse' ? 'primary' : 'secondary'}
+              onClick={() => setGroupBy('warehouse')}
+            >
+              🏢 Por Sucursal
+            </Button>
+            <Button variant="secondary" onClick={() => balancesQuery.refetch()}>
+              🔄 Actualizar
+            </Button>
+          </div>
+        }
+      >
+        <div className="space-y-4">
+          {balancesQuery.isLoading && <Loading />}
+          {balancesQuery.error && (
+            <ErrorState
+              message={
+                balancesQuery.error instanceof Error ? balancesQuery.error.message : 'Error al cargar inventario'
+              }
+              retry={balancesQuery.refetch}
+            />
+          )}
+
+          {balancesQuery.data && balancesQuery.data.items.length === 0 && (
+            <EmptyState message="No hay existencias en el inventario" />
+          )}
+
+          {/* Vista por Producto */}
+          {groupBy === 'product' && productGroups.length > 0 && (
+            <div className="space-y-3">
+              {productGroups.map((pg) => (
+                <div
+                  key={pg.productId}
+                  className="rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"
+                >
+                  <button
+                    onClick={() => setExpandedProduct(expandedProduct === pg.productId ? null : pg.productId)}
+                    className="flex w-full items-center justify-between p-4 text-left hover:bg-slate-50 dark:hover:bg-slate-800"
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="text-2xl">{expandedProduct === pg.productId ? '📂' : '📁'}</span>
+                      <div>
+                        <div className="font-medium text-slate-900 dark:text-slate-100">
+                          {pg.sku} - {pg.name}
+                        </div>
+                        <div className="text-sm text-slate-600 dark:text-slate-400">
+                          {pg.warehouses.length} sucursal{pg.warehouses.length !== 1 ? 'es' : ''}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-2xl font-bold text-[var(--pf-primary)]">{pg.totalQuantity}</div>
+                      <div className="text-xs text-slate-600 dark:text-slate-400">unidades</div>
+                    </div>
+                  </button>
+
+                  {expandedProduct === pg.productId && (
+                    <div className="border-t border-slate-200 p-4 dark:border-slate-700">
+                      {pg.warehouses.map((wh) => (
+                        <div
+                          key={wh.warehouseId}
+                          className="mb-4 last:mb-0 rounded border border-slate-100 bg-slate-50 p-3 dark:border-slate-600 dark:bg-slate-800"
+                        >
+                          <div className="mb-2 flex items-center justify-between">
+                            <div className="font-medium text-slate-900 dark:text-slate-100">
+                              🏢 {wh.warehouseCode} - {wh.warehouseName}
+                            </div>
+                            <div className="text-lg font-semibold text-slate-700 dark:text-slate-300">
+                              {wh.quantity}
+                            </div>
+                          </div>
+
+                          <Table
+                            columns={[
+                              { header: '🏷️ Lote', accessor: (b) => b.batchNumber },
+                              {
+                                header: '📅 Vence',
+                                accessor: (b) =>
+                                  b.expiresAt ? new Date(b.expiresAt).toLocaleDateString() : '-',
+                              },
+                              { header: '📍 Ubicación', accessor: (b) => b.locationCode },
+                              { header: '📊 Cantidad', accessor: (b) => b.quantity },
+                              {
+                                header: '⚡ Acción',
+                                accessor: (b) => (
+                                  <button
+                                    onClick={() =>
+                                      setMovingItem({
+                                        productId: pg.productId,
+                                        productName: `${pg.sku} - ${pg.name}`,
+                                        batchId: b.batchId,
+                                        batchNumber: b.batchNumber,
+                                        fromLocationId: b.locationId,
+                                        fromWarehouseCode: wh.warehouseCode,
+                                        fromLocationCode: b.locationCode,
+                                        availableQty: String(b.quantity),
+                                      })
+                                    }
+                                    className="rounded bg-[var(--pf-primary)] px-3 py-1 text-sm text-white hover:opacity-80"
+                                  >
+                                    🚚 Mover
+                                  </button>
+                                ),
+                              },
+                            ]}
+                            data={wh.batches}
+                            keyExtractor={(b) => `${b.batchId ?? 'null'}-${b.locationId}`}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Vista por Sucursal */}
+          {groupBy === 'warehouse' && warehouseGroups.length > 0 && (
+            <div className="space-y-3">
+              {warehouseGroups.map((wg) => (
+                <div
+                  key={wg.warehouseId}
+                  className="rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"
+                >
+                  <button
+                    onClick={() =>
+                      setExpandedWarehouse(expandedWarehouse === wg.warehouseId ? null : wg.warehouseId)
+                    }
+                    className="flex w-full items-center justify-between p-4 text-left hover:bg-slate-50 dark:hover:bg-slate-800"
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="text-2xl">{expandedWarehouse === wg.warehouseId ? '🏢' : '🏬'}</span>
+                      <div>
+                        <div className="font-medium text-slate-900 dark:text-slate-100">
+                          {wg.warehouseCode} - {wg.warehouseName}
+                        </div>
+                        <div className="text-sm text-slate-600 dark:text-slate-400">
+                          {wg.products.length} producto{wg.products.length !== 1 ? 's' : ''}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-2xl font-bold text-[var(--pf-primary)]">{wg.totalQuantity}</div>
+                      <div className="text-xs text-slate-600 dark:text-slate-400">unidades</div>
+                    </div>
+                  </button>
+
+                  {expandedWarehouse === wg.warehouseId && (
+                    <div className="border-t border-slate-200 p-4 dark:border-slate-700">
+                      {wg.products.map((prod) => (
+                        <div
+                          key={prod.productId}
+                          className="mb-4 last:mb-0 rounded border border-slate-100 bg-slate-50 p-3 dark:border-slate-600 dark:bg-slate-800"
+                        >
+                          <div className="mb-2 flex items-center justify-between">
+                            <div className="font-medium text-slate-900 dark:text-slate-100">
+                              📦 {prod.sku} - {prod.name}
+                            </div>
+                            <div className="text-lg font-semibold text-slate-700 dark:text-slate-300">
+                              {prod.quantity}
+                            </div>
+                          </div>
+
+                          <Table
+                            columns={[
+                              { header: '🏷️ Lote', accessor: (b) => b.batchNumber },
+                              {
+                                header: '📅 Vence',
+                                accessor: (b) =>
+                                  b.expiresAt ? new Date(b.expiresAt).toLocaleDateString() : '-',
+                              },
+                              { header: '📍 Ubicación', accessor: (b) => b.locationCode },
+                              { header: '📊 Cantidad', accessor: (b) => b.quantity },
+                              {
+                                header: '⚡ Acción',
+                                accessor: (b) => (
+                                  <button
+                                    onClick={() =>
+                                      setMovingItem({
+                                        productId: prod.productId,
+                                        productName: `${prod.sku} - ${prod.name}`,
+                                        batchId: b.batchId,
+                                        batchNumber: b.batchNumber,
+                                        fromLocationId: b.locationId,
+                                        fromWarehouseCode: wg.warehouseCode,
+                                        fromLocationCode: b.locationCode,
+                                        availableQty: String(b.quantity),
+                                      })
+                                    }
+                                    className="rounded bg-[var(--pf-primary)] px-3 py-1 text-sm text-white hover:opacity-80"
+                                  >
+                                    🚚 Mover
+                                  </button>
+                                ),
+                              },
+                            ]}
+                            data={prod.batches}
+                            keyExtractor={(b) => `${b.batchId ?? 'null'}-${b.locationId}`}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </PageContainer>
+
+      {/* Modal Mover */}
+      <Modal
+        isOpen={!!movingItem}
+        onClose={() => {
+          setMovingItem(null)
+          setMoveQty('')
+          setMoveToWarehouseId('')
+          setMoveToLocationId('')
+          setMoveError('')
+        }}
+        title="🚚 Mover Existencia"
+        maxWidth="lg"
+      >
+        {movingItem && (
+          <div className="space-y-4">
+            <div className="rounded-md border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800">
+              <div className="text-sm font-medium text-slate-900 dark:text-slate-100 mb-2">📦 Origen</div>
+              <div className="text-sm text-slate-700 dark:text-slate-300">
+                <div>
+                  <strong>Producto:</strong> {movingItem.productName}
+                </div>
+                <div>
+                  <strong>Lote:</strong> {movingItem.batchNumber}
+                </div>
+                <div>
+                  <strong>Ubicación:</strong> {movingItem.fromWarehouseCode} / {movingItem.fromLocationCode}
+                </div>
+                <div>
+                  <strong>Disponible:</strong> {movingItem.availableQty} unidades
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-2">
+              <Input
+                label="📊 Cantidad a mover"
+                type="number"
+                value={moveQty}
+                onChange={(e) => setMoveQty(e.target.value)}
+                min={0}
+                max={Number(movingItem.availableQty)}
+                disabled={moveMutation.isPending}
+              />
+              <Select
+                label="🏢 Almacén destino"
+                value={moveToWarehouseId}
+                onChange={(e) => {
+                  setMoveToWarehouseId(e.target.value)
+                  setMoveToLocationId('')
+                }}
+                options={[
+                  { value: '', label: 'Seleccioná...' },
+                  ...activeWarehouses.map((w) => ({ value: w.id, label: `${w.code} - ${w.name}` })),
+                ]}
+                disabled={moveMutation.isPending || warehousesQuery.isLoading}
+              />
+              <Select
+                label="📍 Ubicación destino"
+                value={moveToLocationId}
+                onChange={(e) => setMoveToLocationId(e.target.value)}
+                options={[
+                  { value: '', label: 'Seleccioná...' },
+                  ...(destinationLocationsQuery.data?.items ?? [])
+                    .filter((l) => l.isActive)
+                    .map((l) => ({ value: l.id, label: l.code })),
+                ]}
+                disabled={moveMutation.isPending || !moveToWarehouseId || destinationLocationsQuery.isLoading}
+              />
+            </div>
+
+            {moveError && (
+              <div className="rounded-md bg-red-50 p-3 text-sm text-red-600 dark:bg-red-900/20 dark:text-red-400">
+                ❌ {moveError}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setMovingItem(null)
+                  setMoveQty('')
+                  setMoveToWarehouseId('')
+                  setMoveToLocationId('')
+                  setMoveError('')
+                }}
+                disabled={moveMutation.isPending}
+              >
+                ❌ Cancelar
+              </Button>
+              <Button onClick={() => moveMutation.mutate()} disabled={moveMutation.isPending}>
+                {moveMutation.isPending ? '⏳ Moviendo...' : '✅ Confirmar Movimiento'}
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+    </MainLayout>
+  )
+}

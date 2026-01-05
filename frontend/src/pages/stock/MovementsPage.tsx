@@ -287,7 +287,7 @@ export function MovementsPage() {
 
   return (
     <MainLayout navGroups={navGroups}>
-      <PageContainer title="Crear Movimiento de Stock">
+      <PageContainer title="🚚 Crear Movimiento de Stock">
         <div className="rounded-lg border border-slate-200 bg-white p-6 dark:border-slate-700 dark:bg-slate-900">
           <form onSubmit={handleSubmit} className="space-y-4">
             <Select

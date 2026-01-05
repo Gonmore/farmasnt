@@ -45,10 +45,10 @@ export function ProductsListPage() {
   return (
     <MainLayout navGroups={navGroups}>
       <PageContainer
-        title="Productos"
+        title="🏷️ Productos"
         actions={
           <Button onClick={() => navigate('/catalog/products/new')}>
-            Crear Producto
+            ➕ Crear Producto
           </Button>
         }
       >
@@ -65,7 +65,7 @@ export function ProductsListPage() {
               message="No hay productos"
               action={
                 <Button onClick={() => navigate('/catalog/products/new')}>
-                  Crear primer producto
+                  ➕ Crear primer producto
                 </Button>
               }
             />

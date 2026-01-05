@@ -190,10 +190,10 @@ export function WarehousesPage() {
   return (
     <MainLayout navGroups={navGroups}>
       <PageContainer
-        title="Almacenes"
+        title="🏬 Sucursales"
         actions={
           <Button onClick={() => setShowCreate(true)}>
-            Crear Sucursal
+            ➕ Crear Sucursal
           </Button>
         }
       >
@@ -237,19 +237,19 @@ export function WarehousesPage() {
                           }}
                           className="text-sm text-[var(--pf-primary)] hover:underline"
                         >
-                          Ver stock
+                          📊 Ver stock
                         </button>
                         <button
                           onClick={() => handleEdit(w)}
                           className="text-sm text-blue-600 hover:underline dark:text-blue-400"
                         >
-                          Editar
+                          ✏️ Editar
                         </button>
                         <button
                           onClick={() => navigate(`/warehouse/warehouses/${w.id}/locations`)}
                           className="text-sm text-[var(--pf-primary)] hover:underline"
                         >
-                          Ver Ubicaciones
+                          📍 Ver Ubicaciones
                         </button>
                       </div>
                     ),

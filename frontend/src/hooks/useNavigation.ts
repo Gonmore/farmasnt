@@ -25,10 +25,10 @@ export function useNavigation(): NavGroup[] {
   // Platform Admin: solo gestión de tenants
   if (isPlatformAdmin) {
     groups.push({
-      title: 'Plataforma',
+      title: '🌐 Plataforma',
       items: [
-        { to: '/platform/tenants', label: 'Tenants' },
-        { to: '/platform/contact', label: 'Configuración Contacto' },
+        { to: '/platform/tenants', label: '🏢 Tenants' },
+        { to: '/platform/contact', label: '📞 Configuración Contacto' },
       ],
     });
     return groups; // Platform Admin no ve módulos de tenant
@@ -39,10 +39,10 @@ export function useNavigation(): NavGroup[] {
   // Catálogo
   if (hasPermission('catalog:read')) {
     groups.push({
-      title: 'Catálogo',
+      title: '📦 Catálogo',
       items: [
-        { to: '/catalog/products', label: 'Productos' },
-        { to: '/catalog/search', label: 'Búsqueda' },
+        { to: '/catalog/products', label: '🏷️ Productos' },
+        { to: '/catalog/search', label: '🔍 Búsqueda' },
       ],
     });
   }
@@ -50,12 +50,12 @@ export function useNavigation(): NavGroup[] {
   // Almacén
   if (hasPermission('stock:read')) {
     groups.push({
-      title: 'Almacén',
+      title: '🏢 Almacén',
       items: [
-        { to: '/warehouse/warehouses', label: 'Sucursales' },
-        { to: '/stock/balances', label: 'Balances' },
-        { to: '/stock/movements', label: 'Movimientos' },
-        { to: '/stock/expiry', label: 'Vencimientos' },
+        { to: '/stock/inventory', label: '📊 Inventario' },
+        { to: '/warehouse/warehouses', label: '🏬 Sucursales' },
+        { to: '/stock/movements', label: '🚚 Movimientos' },
+        { to: '/stock/expiry', label: '⏰ Vencimientos' },
       ],
     });
   }
@@ -63,20 +63,20 @@ export function useNavigation(): NavGroup[] {
   // Ventas
   if (hasPermission('sales:order:read')) {
     groups.push({
-      title: 'Ventas',
+      title: '💰 Ventas',
       items: [
-        { to: '/sales/customers', label: 'Clientes' },
-        { to: '/sales/orders', label: 'Órdenes' },
+        { to: '/sales/customers', label: '👥 Clientes' },
+        { to: '/sales/orders', label: '📋 Órdenes' },
       ],
     });
   }
 
   // Reportes (todos pueden ver)
   groups.push({
-    title: 'Reportes',
+    title: '📈 Reportes',
     items: [
-      { to: '/reports/sales', label: 'Ventas' },
-      { to: '/reports/stock', label: 'Stock' },
+      { to: '/reports/sales', label: '💵 Ventas' },
+      { to: '/reports/stock', label: '📦 Stock' },
     ],
   });
 
@@ -84,27 +84,27 @@ export function useNavigation(): NavGroup[] {
   const systemItems = [];
   
   if (hasPermission('audit:read')) {
-    systemItems.push({ to: '/audit/events', label: 'Auditoría' });
+    systemItems.push({ to: '/audit/events', label: '📜 Auditoría' });
   }
   
   if (hasPermission('admin:users:manage')) {
-    systemItems.push({ to: '/admin/users', label: 'Usuarios' });
-    systemItems.push({ to: '/admin/roles', label: 'Roles' });
+    systemItems.push({ to: '/admin/users', label: '👤 Usuarios' });
+    systemItems.push({ to: '/admin/roles', label: '🔐 Roles' });
   }
   
   // Branding siempre disponible para Tenant users (no Platform Admin)
   if (!isPlatformAdmin) {
-    systemItems.push({ to: '/admin/branding', label: 'Branding' });
+    systemItems.push({ to: '/admin/branding', label: '🎨 Branding' });
     
     // Siempre agregar grupo Sistema para Tenant users
     groups.push({
-      title: 'Sistema',
+      title: '⚙️ Sistema',
       items: systemItems,
     });
   } else if (systemItems.length > 0) {
     // Platform Admin solo ve Sistema si tiene otros permisos
     groups.push({
-      title: 'Sistema',
+      title: '⚙️ Sistema',
       items: systemItems,
     });
   }

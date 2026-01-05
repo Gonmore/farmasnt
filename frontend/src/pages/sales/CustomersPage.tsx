@@ -39,8 +39,8 @@ export function CustomersPage() {
   return (
     <MainLayout navGroups={navGroups}>
       <PageContainer
-        title="Clientes"
-        actions={<Button onClick={() => navigate('/sales/customers/new')}>Crear Cliente</Button>}
+        title="👥 Clientes"
+        actions={<Button onClick={() => navigate('/sales/customers/new')}>➕ Crear Cliente</Button>}
       >
         <div className="rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
           {customersQuery.isLoading && <Loading />}
@@ -58,7 +58,7 @@ export function CustomersPage() {
                     header: 'Acciones',
                     accessor: (c) => (
                       <Button size="sm" variant="ghost" onClick={() => navigate(`/sales/customers/${c.id}`)}>
-                        Ver
+                        👁️ Ver
                       </Button>
                     ),
                   },
