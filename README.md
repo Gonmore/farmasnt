@@ -2,6 +2,12 @@
 
 MVP: **Almacén + Ventas B2B** · SaaS **multi-tenant** (row-level `tenantId`) con auditoría (GxP-friendly).
 
+## Funcionalidades clave (stock)
+- Almacenes: listado + ubicaciones.
+- Ver stock por almacén: lista de existencias (producto + lote + ubicación + cantidad).
+- Mover existencias entre almacenes: desde el stock del almacén se genera un movimiento `TRANSFER` (origen por lote/ubicación, destino por ubicación).
+- UX: cuando hay una única opción (ej. un solo almacén o un solo producto), se autoselecciona para evitar bloqueos en selects.
+
 ## Puertos
 - Backend: `http://localhost:6000`
 - Frontend: `http://localhost:6001`
@@ -15,7 +21,7 @@ MVP: **Almacén + Ventas B2B** · SaaS **multi-tenant** (row-level `tenantId`) c
 - Parar: `docker compose down`
 
 ### S3-compatible (logos públicos) con Docker (opcional)
-Para habilitar subida de logos por tenant (Branding), el backend emite una URL firmada (presigned PUT) y el frontend sube el archivo directo al storage.
+Para habilitar subida de archivos (Branding y **foto de producto**), el backend emite una URL firmada (presigned PUT) y el frontend sube el archivo directo al storage.
 
 - Levantar MinIO: `docker compose up -d minio minio-init`
 - Consola MinIO: `http://localhost:9001` (user/pass: `minioadmin` / `minioadmin`)
@@ -32,6 +38,9 @@ S3_SECRET_ACCESS_KEY=minioadmin
 S3_PUBLIC_BASE_URL=http://127.0.0.1:9000/farmasnt-assets
 S3_FORCE_PATH_STYLE=true
 ```
+
+Notas
+- Sin S3 configurado, el sistema funciona igual; solo se deshabilita el upload (logo/foto).
 
 ## Backend (Clean/Hex)
 Ubicación: `backend/`
@@ -106,6 +115,20 @@ En `Administración` → `Usuarios` puedes crear usuarios con emails `@febsa.com
   - `POST /api/v1/auth/refresh`
 - Catalog (requiere JWT + permisos):
   - `GET /api/v1/catalog/search?q=...`
+
+## Productos: foto + lotes con ingreso inicial
+- Foto de producto:
+  - `POST /api/v1/products/:id/photo-upload` → retorna `uploadUrl` (PUT) + `publicUrl` + `key`.
+  - `PATCH /api/v1/products/:id` para guardar `photoUrl` + `photoKey`.
+- Lote con ingreso inicial:
+  - `POST /api/v1/products/:id/batches` acepta `initialStock` opcional.
+  - Si viene `initialStock`, se crea un `StockMovement IN` y se actualiza `InventoryBalance`.
+
+## Numeración operativa (V2 foundations)
+- Los `StockMovement` ahora tienen:
+  - `number`: string tipo `MS2025-1`
+  - `numberYear`: int
+- La secuencia es por tenant+año (tabla `TenantSequence`).
 
 ## Contratos / Docs
 - Swagger UI: `GET /api/v1/docs`

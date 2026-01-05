@@ -147,6 +147,18 @@ Se incorporaron endpoints read-only de reportes para acelerar dashboards y panta
 
 ---
 
+## **[05 Ene 2026] Operación por existencias (stock por almacén) + mejoras UX**
+
+### Almacenes: ver stock y mover
+- Se ajustó la UI de Almacenes para priorizar el stock real por producto/lote/ubicación.
+- Se agregó acción **"Ver stock"** por almacén para listar existencias usando el reporte `GET /api/v1/reports/stock/balances-expanded?warehouseId=...`.
+- Desde cada registro de stock se habilitó **"Mover"** (TRANSFER) solicitando solo cantidad y destino (almacén/ubicación), tomando el origen desde la existencia seleccionada.
+
+### UX: selects con una sola opción
+- Se agregó auto-selección cuando solo existe una opción disponible (ej. un único producto o un único almacén), evitando que la UI quede bloqueada esperando un `onChange` que nunca ocurrirá.
+
+---
+
 ## **[19 Dic 2025] Sistema de Administración Multi-nivel + Gestión de Suscripciones**
 
 ### **Contexto**
@@ -258,6 +270,33 @@ Se implementó un sistema completo de administración de dos niveles con gestió
 
 - Modal "Solicitar Extensión":
   - Selector: cantidad de sucursales (mantener/aumentar/reducir)
+
+---
+
+## **[22 Dic 2025] Fundaciones V2: numeración operativa + foto de producto + ingreso inicial de lote**
+
+### **Numeración operativa (StockMovement)**
+- Se añadió numeración por tenant+año para movimientos de stock:
+  - Formato: `MSYYYY-N` (ej. `MS2025-251`).
+  - Campos en `StockMovement`: `number`, `numberYear` (único por tenant).
+- Se incorporó `TenantSequence` como contador atómico por `{ tenantId, year, key }`.
+- Se refactorizó la creación de movimientos a un servicio transaccional para centralizar reglas y evitar duplicación.
+
+### **Catálogo/Productos**
+- Se agregó soporte de foto de producto (`photoUrl`, `photoKey`) en `Product`.
+- Se implementó presign S3-compatible para subir foto de producto (PUT directo al storage) y persistir la URL en `Product`.
+- Se desacopló Catálogo (search/productos/lotes) del “módulo `WAREHOUSE`” para evitar bloqueos por suscripción:
+  - Catálogo se controla por permisos `catalog:*`.
+  - `WAREHOUSE` queda para stock/warehouses/locations.
+
+### **Lotes (Batch) con ingreso inicial**
+- `POST /api/v1/products/:id/batches` soporta `initialStock` opcional.
+- Si se envía, el backend crea un movimiento `IN` numerado y actualiza balances dentro de la misma transacción.
+
+### **Frontend**
+- Se añadió UI mínima para:
+  - Subir/quitar foto de producto.
+  - Crear lote con ingreso inicial (seleccionando warehouse + location).
   - Selector: tiempo de extensión (3/6/12/24/36 meses)
   - Preview del mensaje generado para Platform Admin
   - Envío de solicitud con confirmación visual
@@ -311,6 +350,25 @@ Contact: Administrador Demo (+591 71111111)
 - ✅ Navegación filtrada por permisos
 - ✅ UI Platform Tenants con CRUD completo
 - ✅ Widget Dashboard suscripción con modal extensión
+
+---
+
+## **[23 Dic 2025] Recetario de elaboración por producto (V2)**
+
+### **Backend (Prisma + API)**
+- Se incorporaron modelos:
+  - `Recipe` (1:1 con `Product`, multi-tenant)
+  - `RecipeItem` (insumos por receta)
+- Endpoints:
+  - `GET /api/v1/products/:id/recipe`
+  - `PUT /api/v1/products/:id/recipe` (create/update con optimistic locking por `version`)
+  - `DELETE /api/v1/products/:id/recipe`
+- Se añadieron eventos de auditoría: `recipe.create`, `recipe.update`, `recipe.delete`.
+
+### **Frontend**
+- En el detalle de producto se añadió sección "Recetario de elaboración":
+  - Generar/editar recetario.
+  - Listado simple de insumos (nombre, cantidad, unidad, nota) con agregar/quitar.
 - 🔲 Integración real de envío WhatsApp/Email (actualmente solo preview)
 - 🔲 Cron job para notificaciones automáticas (3 meses y 1 mes antes de vencer)
 - 🔲 Página Branding funcional con upload S3 y color pickers

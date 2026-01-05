@@ -1,13 +1,57 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { apiFetch } from '../../lib/api'
 import { useAuth } from '../../providers/AuthProvider'
-import { MainLayout, PageContainer, Table, Loading, ErrorState, EmptyState, PaginationCursor, Button, Modal, Input } from '../../components'
+import { MainLayout, PageContainer, Table, Loading, ErrorState, EmptyState, PaginationCursor, Button, Modal, Input, Select } from '../../components'
 import { useNavigation } from '../../hooks'
 
-type WarehouseListItem = { id: string; code: string; name: string; isActive: boolean }
+type WarehouseListItem = { id: string; code: string; name: string; isActive: boolean; totalQuantity: string }
 type ListResponse = { items: WarehouseListItem[]; nextCursor: string | null }
+
+type WarehouseStockRow = {
+  id: string
+  quantity: string
+  updatedAt: string
+  productId: string
+  batchId: string
+  locationId: string
+  product: { sku: string; name: string }
+  batch: { batchNumber: string; expiresAt: string | null; status: string }
+  location: { id: string; code: string; warehouse: { id: string; code: string; name: string } }
+}
+
+type WarehouseStockResponse = { items: WarehouseStockRow[] }
+
+type LocationListItem = { id: string; warehouseId: string; code: string; isActive: boolean }
+
+async function fetchWarehouseStock(token: string, warehouseId: string): Promise<WarehouseStockResponse> {
+  const params = new URLSearchParams({ warehouseId, take: '200' })
+  return apiFetch(`/api/v1/reports/stock/balances-expanded?${params}`, { token })
+}
+
+async function listWarehouseLocations(token: string, warehouseId: string): Promise<{ items: LocationListItem[] }> {
+  const params = new URLSearchParams({ take: '100' })
+  return apiFetch(`/api/v1/warehouses/${warehouseId}/locations?${params}`, { token })
+}
+
+async function createTransferMovement(
+  token: string,
+  data: {
+    productId: string
+    batchId: string
+    fromLocationId: string
+    toLocationId: string
+    quantity: string
+    note?: string
+  },
+): Promise<any> {
+  return apiFetch(`/api/v1/stock/movements`, {
+    token,
+    method: 'POST',
+    body: JSON.stringify({ type: 'TRANSFER', ...data }),
+  })
+}
 
 async function fetchWarehouses(token: string, take: number, cursor?: string): Promise<ListResponse> {
   const params = new URLSearchParams({ take: String(take) })
@@ -23,6 +67,16 @@ export function WarehousesPage() {
   const [cursor, setCursor] = useState<string | undefined>()
   const [editingWarehouse, setEditingWarehouse] = useState<WarehouseListItem | null>(null)
   const [editName, setEditName] = useState('')
+  const [showCreate, setShowCreate] = useState(false)
+  const [createCode, setCreateCode] = useState('')
+  const [createName, setCreateName] = useState('')
+
+  const [stockWarehouse, setStockWarehouse] = useState<WarehouseListItem | null>(null)
+  const [movingRow, setMovingRow] = useState<WarehouseStockRow | null>(null)
+  const [moveQty, setMoveQty] = useState('')
+  const [moveToWarehouseId, setMoveToWarehouseId] = useState('')
+  const [moveToLocationId, setMoveToLocationId] = useState('')
+  const [moveError, setMoveError] = useState('')
   const take = 50
 
   const warehousesQuery = useQuery({
@@ -30,6 +84,23 @@ export function WarehousesPage() {
     queryFn: () => fetchWarehouses(auth.accessToken!, take, cursor),
     enabled: !!auth.accessToken,
   })
+
+  const warehouseStockQuery = useQuery({
+    queryKey: ['warehouseStock', stockWarehouse?.id],
+    queryFn: () => fetchWarehouseStock(auth.accessToken!, stockWarehouse!.id),
+    enabled: !!auth.accessToken && !!stockWarehouse?.id,
+  })
+
+  const destinationLocationsQuery = useQuery({
+    queryKey: ['warehouseLocations', 'forWarehouseMove', moveToWarehouseId],
+    queryFn: () => listWarehouseLocations(auth.accessToken!, moveToWarehouseId),
+    enabled: !!auth.accessToken && !!moveToWarehouseId,
+  })
+
+  const activeWarehouses = useMemo(
+    () => (warehousesQuery.data?.items ?? []).filter((w) => w.isActive),
+    [warehousesQuery.data],
+  )
 
   const updateWarehouseMutation = useMutation({
     mutationFn: async ({ id, name }: { id: string; name: string }) => {
@@ -43,6 +114,54 @@ export function WarehousesPage() {
       queryClient.invalidateQueries({ queryKey: ['warehouses'] })
       setEditingWarehouse(null)
       setEditName('')
+    },
+  })
+
+  const createWarehouseMutation = useMutation({
+    mutationFn: async ({ code, name }: { code: string; name: string }) => {
+      return apiFetch(`/api/v1/warehouses`, {
+        token: auth.accessToken!,
+        method: 'POST',
+        body: JSON.stringify({ code, name }),
+      })
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['warehouses'] })
+      setShowCreate(false)
+      setCreateCode('')
+      setCreateName('')
+    },
+  })
+
+  const moveMutation = useMutation({
+    mutationFn: async () => {
+      if (!movingRow) throw new Error('Seleccioná una existencia para mover')
+
+      const qtyNum = Number(moveQty)
+      if (!Number.isFinite(qtyNum) || qtyNum <= 0) throw new Error('Ingresá una cantidad válida (mayor a 0)')
+      if (!moveToWarehouseId) throw new Error('Seleccioná el almacén destino')
+      if (!moveToLocationId) throw new Error('Seleccioná la ubicación destino')
+
+      return createTransferMovement(auth.accessToken!, {
+        productId: movingRow.productId,
+        batchId: movingRow.batchId,
+        fromLocationId: movingRow.locationId,
+        toLocationId: moveToLocationId,
+        quantity: String(qtyNum),
+      })
+    },
+    onSuccess: async () => {
+      await warehouseStockQuery.refetch()
+      queryClient.invalidateQueries({ queryKey: ['balances'] })
+      setMovingRow(null)
+      setMoveQty('')
+      setMoveToWarehouseId('')
+      setMoveToLocationId('')
+      setMoveError('')
+      alert('Movimiento realizado')
+    },
+    onError: (err: any) => {
+      setMoveError(err instanceof Error ? err.message : 'Error al mover')
     },
   })
 
@@ -70,7 +189,14 @@ export function WarehousesPage() {
 
   return (
     <MainLayout navGroups={navGroups}>
-      <PageContainer title="Almacenes">
+      <PageContainer
+        title="Almacenes"
+        actions={
+          <Button onClick={() => setShowCreate(true)}>
+            Crear Sucursal
+          </Button>
+        }
+      >
         <div className="rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
           {warehousesQuery.isLoading && <Loading />}
           {warehousesQuery.error && (
@@ -100,6 +226,19 @@ export function WarehousesPage() {
                     header: 'Acciones',
                     accessor: (w) => (
                       <div className="flex gap-2">
+                        <button
+                          onClick={() => {
+                            setStockWarehouse(w)
+                            setMovingRow(null)
+                            setMoveQty('')
+                            setMoveToWarehouseId('')
+                            setMoveToLocationId('')
+                            setMoveError('')
+                          }}
+                          className="text-sm text-[var(--pf-primary)] hover:underline"
+                        >
+                          Ver stock
+                        </button>
                         <button
                           onClick={() => handleEdit(w)}
                           className="text-sm text-blue-600 hover:underline dark:text-blue-400"
@@ -165,6 +304,197 @@ export function WarehousesPage() {
               {updateWarehouseMutation.isPending ? 'Guardando...' : 'Guardar'}
             </Button>
           </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={showCreate}
+        onClose={() => {
+          setShowCreate(false)
+          setCreateCode('')
+          setCreateName('')
+        }}
+        title="Crear Sucursal"
+        maxWidth="sm"
+      >
+        <div className="space-y-4">
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Código</label>
+            <Input
+              value={createCode}
+              onChange={(e) => setCreateCode(e.target.value)}
+              placeholder="Ej: WH-02"
+              disabled={createWarehouseMutation.isPending}
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Nombre</label>
+            <Input
+              value={createName}
+              onChange={(e) => setCreateName(e.target.value)}
+              placeholder="Ej: Sucursal Norte"
+              disabled={createWarehouseMutation.isPending}
+            />
+          </div>
+
+          {createWarehouseMutation.error && (
+            <div className="rounded-md bg-red-50 p-3 text-sm text-red-600 dark:bg-red-900/20 dark:text-red-400">
+              Error: {createWarehouseMutation.error instanceof Error ? createWarehouseMutation.error.message : 'Error al crear sucursal'}
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setShowCreate(false)
+                setCreateCode('')
+                setCreateName('')
+              }}
+              disabled={createWarehouseMutation.isPending}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={() =>
+                createWarehouseMutation.mutate({ code: createCode.trim(), name: createName.trim() })
+              }
+              disabled={createWarehouseMutation.isPending || !createCode.trim() || !createName.trim()}
+            >
+              {createWarehouseMutation.isPending ? 'Creando...' : 'Crear'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={!!stockWarehouse}
+        onClose={() => {
+          setStockWarehouse(null)
+          setMovingRow(null)
+          setMoveQty('')
+          setMoveToWarehouseId('')
+          setMoveToLocationId('')
+          setMoveError('')
+        }}
+        title={stockWarehouse ? `Stock: ${stockWarehouse.code} - ${stockWarehouse.name}` : 'Stock'}
+        maxWidth="xl"
+      >
+        <div className="space-y-4">
+          {warehouseStockQuery.isLoading && <Loading />}
+          {warehouseStockQuery.error && (
+            <ErrorState
+              message={
+                warehouseStockQuery.error instanceof Error
+                  ? warehouseStockQuery.error.message
+                  : 'Error al cargar stock'
+              }
+              retry={warehouseStockQuery.refetch}
+            />
+          )}
+
+          {warehouseStockQuery.data && warehouseStockQuery.data.items.length === 0 && (
+            <EmptyState message="No hay existencias en este almacén" />
+          )}
+
+          {warehouseStockQuery.data && warehouseStockQuery.data.items.length > 0 && (
+            <Table
+              columns={[
+                { header: 'Producto', accessor: (r) => `${r.product.sku} - ${r.product.name}` },
+                { header: 'Lote', accessor: (r) => r.batch.batchNumber },
+                {
+                  header: 'Vence',
+                  accessor: (r) => (r.batch.expiresAt ? new Date(r.batch.expiresAt).toLocaleDateString() : '-'),
+                },
+                { header: 'Ubicación', accessor: (r) => r.location.code },
+                { header: 'Cantidad', accessor: (r) => r.quantity },
+                {
+                  header: 'Acciones',
+                  accessor: (r) => (
+                    <button
+                      onClick={() => {
+                        setMovingRow(r)
+                        setMoveQty('')
+                        setMoveToWarehouseId('')
+                        setMoveToLocationId('')
+                        setMoveError('')
+                      }}
+                      className="text-sm text-[var(--pf-primary)] hover:underline"
+                    >
+                      Mover
+                    </button>
+                  ),
+                },
+              ]}
+              data={warehouseStockQuery.data.items}
+              keyExtractor={(r) => r.id}
+            />
+          )}
+
+          {movingRow && (
+            <div className="rounded-md border border-slate-200 p-4 dark:border-slate-700">
+              <div className="mb-3 text-sm font-medium text-slate-900 dark:text-slate-100">Mover existencia</div>
+
+              <div className="mb-3 text-sm text-slate-600 dark:text-slate-400">
+                Origen: {movingRow.location.warehouse.code} / {movingRow.location.code} · {movingRow.product.sku} · Lote {movingRow.batch.batchNumber} · Disponible {movingRow.quantity}
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2">
+                <Input
+                  label="Cantidad"
+                  type="number"
+                  value={moveQty}
+                  onChange={(e) => setMoveQty(e.target.value)}
+                  min={0}
+                  disabled={moveMutation.isPending}
+                />
+                <Select
+                  label="Almacén destino"
+                  value={moveToWarehouseId}
+                  onChange={(e) => {
+                    setMoveToWarehouseId(e.target.value)
+                    setMoveToLocationId('')
+                  }}
+                  options={activeWarehouses.map((w) => ({ value: w.id, label: `${w.code} - ${w.name}` }))}
+                  disabled={moveMutation.isPending || warehousesQuery.isLoading}
+                />
+                <Select
+                  label="Ubicación destino"
+                  value={moveToLocationId}
+                  onChange={(e) => setMoveToLocationId(e.target.value)}
+                  options={(destinationLocationsQuery.data?.items ?? [])
+                    .filter((l) => l.isActive)
+                    .map((l) => ({ value: l.id, label: l.code }))}
+                  disabled={moveMutation.isPending || !moveToWarehouseId || destinationLocationsQuery.isLoading}
+                />
+              </div>
+
+              {moveError && (
+                <div className="mt-3 rounded-md bg-red-50 p-3 text-sm text-red-600 dark:bg-red-900/20 dark:text-red-400">
+                  {moveError}
+                </div>
+              )}
+
+              <div className="mt-4 flex justify-end gap-2">
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setMovingRow(null)
+                    setMoveQty('')
+                    setMoveToWarehouseId('')
+                    setMoveToLocationId('')
+                    setMoveError('')
+                  }}
+                  disabled={moveMutation.isPending}
+                >
+                  Cancelar
+                </Button>
+                <Button onClick={() => moveMutation.mutate()} disabled={moveMutation.isPending}>
+                  {moveMutation.isPending ? 'Moviendo...' : 'Mover'}
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
       </Modal>
     </MainLayout>

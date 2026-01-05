@@ -23,8 +23,11 @@ Varios listados usan keyset pagination:
 
 ## Módulos por tenant
 Algunos endpoints requieren módulo habilitado:
-- `WAREHOUSE` para catálogo/stock/warehouses.
+- `WAREHOUSE` para stock/warehouses (movimientos, balances, vencimientos, etc.).
 - `SALES` para customers y sales orders.
+
+Notas
+- **Catálogo/Productos** no requiere módulo: se controla por permisos `catalog:*`.
 
 ## Permissions (RBAC)
 Códigos usados por los guards:
@@ -340,7 +343,7 @@ Response 200
 ---
 
 ## Catalog / Search
-Requiere: módulo `WAREHOUSE` + permiso `catalog:read`.
+Requiere permiso `catalog:read`.
 
 ### GET /api/v1/catalog/search
 Query
@@ -357,7 +360,7 @@ Response 200
 ---
 
 ## Products
-Requiere: módulo `WAREHOUSE`.
+Requiere permisos `catalog:*`.
 
 ### POST /api/v1/products
 Requiere permiso: `catalog:write`.
@@ -395,7 +398,7 @@ Query
 Response 200
 ```json
 {
-  "items": [{ "id": "...", "sku": "...", "name": "...", "isActive": true, "version": 1, "updatedAt": "..." }],
+  "items": [{ "id": "...", "sku": "...", "name": "...", "photoUrl": "https://..." , "isActive": true, "version": 1, "updatedAt": "..." }],
   "nextCursor": "..."
 }
 ```
@@ -410,6 +413,7 @@ Response 200
   "sku": "...",
   "name": "...",
   "description": null,
+  "photoUrl": "https://...",
   "isActive": true,
   "version": 1,
   "updatedAt": "..."
@@ -423,6 +427,8 @@ Body
 - `version` (int, requerido)
 - `name` (opcional)
 - `description` (opcional, puede ser `null`)
+- `photoUrl` (opcional, puede ser `null`)
+- `photoKey` (opcional, puede ser `null`)
 - `isActive` (opcional)
 
 Ejemplo
@@ -432,20 +438,161 @@ Ejemplo
 
 Notas
 - `409` si `version` no coincide.
+- `photoUrl` y `photoKey` deben enviarse **juntos**.
+
+### POST /api/v1/products/:id/photo-upload
+Requiere permiso: `catalog:write`.
+
+Genera una URL presignada para subir la **foto del producto** a S3-compatible.
+
+Body
+```json
+{
+  "fileName": "foto.webp",
+  "contentType": "image/webp"
+}
+```
+
+Response 200
+```json
+{
+  "uploadUrl": "https://...",
+  "publicUrl": "https://...",
+  "key": "tenants/<tenantId>/products/<productId>/photo-...webp",
+  "expiresInSeconds": 300,
+  "method": "PUT"
+}
+```
+
+Notas
+- El cliente debe hacer `PUT uploadUrl` con el archivo (y `Content-Type` acorde).
+- Luego debe persistir `publicUrl` y `key` en `PATCH /api/v1/products/:id` (`photoUrl`/`photoKey`).
+- Requiere configurar env vars S3 (ver README).
+
+### GET /api/v1/products/:id/recipe
+Requiere permiso: `catalog:read`.
+
+Response 200
+```json
+{
+  "id": "...",
+  "productId": "...",
+  "name": "Receta de Omeprazol 50 comprimidos",
+  "outputQuantity": "50",
+  "outputUnit": "comprimidos",
+  "version": 1,
+  "updatedAt": "...",
+  "items": [
+    {
+      "id": "...",
+      "ingredientProductId": null,
+      "ingredientName": "Agua",
+      "quantity": "10",
+      "unit": "L",
+      "sortOrder": 0,
+      "note": null
+    }
+  ]
+}
+```
+
+Notas
+- `404` si el producto no tiene recetario.
+
+### PUT /api/v1/products/:id/recipe
+Requiere permiso: `catalog:write`.
+
+Body
+- `name` (requerido)
+- `outputQuantity` (opcional, puede ser `null`)
+- `outputUnit` (opcional, puede ser `null`)
+- `items` (opcional) lista de insumos
+  - `ingredientName` (string) **o** `ingredientProductId` (uuid)
+  - `quantity` (number)
+  - `unit` (string)
+  - `sortOrder` (opcional)
+  - `note` (opcional)
+- `version` (int, requerido para updates)
+
+Ejemplo (create)
+```json
+{
+  "name": "Receta de Omeprazol 50 comprimidos",
+  "outputQuantity": 50,
+  "outputUnit": "comprimidos",
+  "items": [
+    { "ingredientName": "Agua", "quantity": 10, "unit": "L" },
+    { "ingredientName": "Harina", "quantity": 2, "unit": "kg" }
+  ]
+}
+```
+
+Notas
+- `409` si `version` no coincide.
+
+### DELETE /api/v1/products/:id/recipe
+Requiere permiso: `catalog:write`.
+
+Response
+- `204` si elimina.
+- `404` si no existe.
 
 ---
 
 ## Batches
-Requiere: módulo `WAREHOUSE` + permiso `catalog:write`.
+Requiere permiso `catalog:write`.
+
+### GET /api/v1/products/:id/batches
+Requiere permiso: `catalog:read`.
+
+Query
+- `take` (1..100, default 50)
+
+Response 200
+```json
+{
+  "hasStockRead": true,
+  "items": [
+    {
+      "id": "...",
+      "batchNumber": "LOT-2026-0001",
+      "manufacturingDate": "2026-01-01T00:00:00.000Z",
+      "expiresAt": "2027-01-01T00:00:00.000Z",
+      "status": "RELEASED",
+      "version": 1,
+      "createdAt": "2026-01-05T00:00:00.000Z",
+      "updatedAt": "2026-01-05T00:00:00.000Z",
+      "totalQuantity": "30",
+      "locations": [
+        {
+          "warehouseId": "...",
+          "warehouseCode": "WH-01",
+          "warehouseName": "Almacén",
+          "locationId": "...",
+          "locationCode": "BIN-01",
+          "quantity": "30"
+        }
+      ]
+    }
+  ]
+}
+```
+
+Notas
+- `hasStockRead=false` si el usuario no tiene `stock:read`; en ese caso `totalQuantity` es `null` y `locations` viene vacío.
 
 ### POST /api/v1/products/:id/batches
 Body
 ```json
 {
-  "batchNumber": "B-2025-0001",
   "manufacturingDate": "2025-01-01T00:00:00.000Z",
   "expiresAt": "2026-01-01T00:00:00.000Z",
-  "status": "RELEASED"
+  "status": "RELEASED",
+  "initialStock": {
+    "warehouseId": "<uuid>",
+    "quantity": 30,
+    "note": "Ingreso inicial"
+  }
 }
 ```
 
@@ -454,7 +601,7 @@ Response 201
 {
   "id": "...",
   "productId": "...",
-  "batchNumber": "B-2025-0001",
+  "batchNumber": "LOT-2025-0001",
   "expiresAt": "2026-01-01T00:00:00.000Z",
   "status": "RELEASED",
   "version": 1,
@@ -463,7 +610,40 @@ Response 201
 ```
 
 Notas
-- `409` si el batchNumber ya existe para el producto.
+- El `batchNumber` se autogenera si no se envía.
+- `409` si el `batchNumber` ya existe para el producto.
+- Si se envía `initialStock`, se crea además un `StockMovement` tipo `IN` (numerado `MSYYYY-N`) y se actualiza `InventoryBalance`.
+  - Si se envía `warehouseId`, el backend resuelve automáticamente una ubicación activa dentro del almacén.
+  - También se acepta `toLocationId` (compatibilidad), pero la UI usa `warehouseId`.
+
+### GET /api/v1/products/:productId/batches/:batchId/movements
+Requiere permisos: `catalog:read` + `stock:read`.
+
+Response 200
+```json
+{
+  "batch": { "id": "...", "batchNumber": "LOT-2026-0001" },
+  "items": [
+    {
+      "id": "...",
+      "number": "MS2026-0001",
+      "numberYear": 2026,
+      "createdAt": "2026-01-05T00:00:00.000Z",
+      "type": "IN",
+      "quantity": "30",
+      "referenceType": null,
+      "referenceId": null,
+      "note": "Ingreso inicial",
+      "from": null,
+      "to": {
+        "id": "...",
+        "code": "BIN-01",
+        "warehouse": { "id": "...", "code": "WH-01", "name": "Almacén" }
+      }
+    }
+  ]
+}
+```
 
 ---
 
@@ -478,10 +658,14 @@ Query
 Response 200
 ```json
 {
-  "items": [{ "id": "...", "code": "WH-01", "name": "Almacén", "isActive": true, "version": 1, "updatedAt": "..." }],
+  "items": [{ "id": "...", "code": "WH-01", "name": "Almacén", "isActive": true, "version": 1, "updatedAt": "...", "totalQuantity": "10" }],
   "nextCursor": "..."
 }
 ```
+
+Notas
+- `totalQuantity` es la suma de `InventoryBalance.quantity` de todas las ubicaciones del almacén.
+- Para ver **qué productos/lotes** componen ese stock, usar el reporte `GET /api/v1/reports/stock/balances-expanded?warehouseId=...`.
 
 ### GET /api/v1/warehouses/:id/locations
 Query
@@ -620,10 +804,14 @@ Notas de reglas
 - `409` si stock insuficiente.
 - `409` si intenta descontar stock de un lote vencido (`batch.expiresAt` < hoy UTC).
 
+Nota de uso (operación por “existencias”)
+- Para mover existencias reales (lote + ubicación), primero listar balances con `GET /api/v1/reports/stock/balances-expanded` (filtrando por `warehouseId`, `productId` o `locationId`).
+- Luego usar `productId`, `batchId` y `locationId` del registro como origen (`fromLocationId`) y definir el destino (`toLocationId`) con `type: "TRANSFER"`.
+
 Response 201 (estructura)
 ```json
 {
-  "createdMovement": { "id": "...", "type": "IN", "productId": "...", "batchId": null, "fromLocationId": null, "toLocationId": "...", "quantity": "5", "createdAt": "...", "referenceType": "MANUAL", "referenceId": "REF-1" },
+  "createdMovement": { "id": "...", "number": "MS2025-1", "numberYear": 2025, "type": "IN", "productId": "...", "batchId": null, "fromLocationId": null, "toLocationId": "...", "quantity": "5", "createdAt": "...", "referenceType": "MANUAL", "referenceId": "REF-1" },
   "fromBalance": null,
   "toBalance": { "id": "...", "quantity": "5", "locationId": "...", "productId": "...", "batchId": null, "version": 1, "updatedAt": "..." }
 }

@@ -4,6 +4,7 @@ import { prisma } from '../../db/prisma.js'
 import { AuditService } from '../../../application/audit/auditService.js'
 import { requireAuth, requireModuleEnabled, requirePermission } from '../../../application/security/rbac.js'
 import { Permissions } from '../../../application/security/permissions.js'
+import { currentYearUtc, nextSequence } from '../../../application/shared/sequence.js'
 
 const listQuerySchema = z.object({
   take: z.coerce.number().int().min(1).max(50).default(20),
@@ -410,6 +411,7 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
 
         const changedBalances: any[] = []
         const createdMovements: any[] = []
+        const year = currentYearUtc()
 
         for (const line of lines) {
           const batchId = effectiveBatchIdByLineId.get(line.id) ?? null
@@ -447,9 +449,12 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
 
           changedBalances.push(balance)
 
+          const seq = await nextSequence(tx, { tenantId, year, key: 'MS' })
           const movement = await tx.stockMovement.create({
             data: {
               tenantId,
+              number: seq.number,
+              numberYear: year,
               type: 'OUT',
               productId: line.productId,
               batchId,
@@ -463,6 +468,8 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
             },
             select: {
               id: true,
+              number: true,
+              numberYear: true,
               type: true,
               productId: true,
               batchId: true,

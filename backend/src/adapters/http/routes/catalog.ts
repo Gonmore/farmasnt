@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../db/prisma.js'
-import { requireAuth, requireModuleEnabled, requirePermission } from '../../../application/security/rbac.js'
+import { requireAuth, requirePermission } from '../../../application/security/rbac.js'
 import { Permissions } from '../../../application/security/permissions.js'
 
 const searchQuerySchema = z.object({
@@ -14,7 +14,7 @@ export async function registerCatalogRoutes(app: FastifyInstance): Promise<void>
 
   app.get(
     '/api/v1/catalog/search',
-    { preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.CatalogRead)] },
+    { preHandler: [requireAuth(), requirePermission(Permissions.CatalogRead)] },
     async (request, reply) => {
       const parsed = searchQuerySchema.safeParse(request.query)
       if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })

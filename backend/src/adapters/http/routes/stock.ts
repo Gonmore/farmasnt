@@ -4,6 +4,7 @@ import { prisma } from '../../db/prisma.js'
 import { AuditService } from '../../../application/audit/auditService.js'
 import { requireAuth, requireModuleEnabled, requirePermission } from '../../../application/security/rbac.js'
 import { Permissions } from '../../../application/security/permissions.js'
+import { createStockMovementTx } from '../../../application/stock/stockMovementService.js'
 
 const movementCreateSchema = z.object({
   type: z.enum(['IN', 'OUT', 'TRANSFER', 'ADJUSTMENT']),
@@ -31,16 +32,6 @@ const fefoSuggestionsQuerySchema = z.object({
   warehouseId: z.string().uuid().optional(),
   take: z.coerce.number().int().min(1).max(50).default(10),
 })
-
-type LockedBalanceRow = {
-  id: string
-  quantity: string
-}
-
-function decimalFromNumber(value: number): string {
-  // Postgres DECIMAL: pass as string for precision safety
-  return value.toString()
-}
 
 function startOfTodayUtc(): Date {
   const now = new Date()
@@ -288,182 +279,22 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
       const userId = request.auth!.userId
 
       const input = parsed.data
-      const batchId = input.batchId ?? null
-
-      const todayUtc = startOfTodayUtc()
-
-      // Validate location rules
-      if (input.type === 'IN' && !input.toLocationId) return reply.status(400).send({ message: 'toLocationId is required' })
-      if (input.type === 'OUT' && !input.fromLocationId) return reply.status(400).send({ message: 'fromLocationId is required' })
-      if (input.type === 'TRANSFER' && (!input.fromLocationId || !input.toLocationId)) {
-        return reply.status(400).send({ message: 'fromLocationId and toLocationId are required' })
-      }
-      if (input.type === 'ADJUSTMENT' && !(input.fromLocationId ?? input.toLocationId)) {
-        return reply.status(400).send({ message: 'fromLocationId or toLocationId is required' })
-      }
-
-      const quantity = input.quantity
-      const qtyStr = decimalFromNumber(quantity)
 
       try {
         const result = await db.$transaction(async (tx) => {
-        // Ensure tenant-bound entities exist
-        const product = await tx.product.findFirst({ where: { id: input.productId, tenantId, isActive: true }, select: { id: true } })
-        if (!product) {
-          const err = new Error('Product not found') as Error & { statusCode?: number }
-          err.statusCode = 404
-          throw err
-        }
-
-        // Expiry rule: block moving stock out of an expired batch.
-        const decreasesStock = input.type === 'OUT' || input.type === 'TRANSFER' || (input.type === 'ADJUSTMENT' && !input.toLocationId)
-        if (decreasesStock && batchId) {
-          const batch = await tx.batch.findFirst({
-            where: { id: batchId, tenantId, productId: input.productId },
-            select: { id: true, expiresAt: true, batchNumber: true },
-          })
-          if (!batch) {
-            const err = new Error('Batch not found') as Error & { statusCode?: number }
-            err.statusCode = 404
-            throw err
-          }
-          if (batch.expiresAt && batch.expiresAt < todayUtc) {
-            const err = new Error('Batch is expired') as Error & { statusCode?: number; code?: string; meta?: any }
-            err.statusCode = 409
-            err.code = 'BATCH_EXPIRED'
-            err.meta = { batchId: batch.id, batchNumber: batch.batchNumber, expiresAt: batch.expiresAt.toISOString() }
-            throw err
-          }
-        }
-
-        const fromLocationId = input.fromLocationId ?? null
-        const toLocationId = input.toLocationId ?? null
-
-        const ensureLocation = async (locationId: string) => {
-          const loc = await tx.location.findFirst({ where: { id: locationId, tenantId, isActive: true }, select: { id: true } })
-          if (!loc) {
-            const err = new Error('Location not found') as Error & { statusCode?: number }
-            err.statusCode = 404
-            throw err
-          }
-        }
-
-        if (fromLocationId) await ensureLocation(fromLocationId)
-        if (toLocationId) await ensureLocation(toLocationId)
-
-        // Lock relevant balances to avoid concurrent updates (FOR UPDATE)
-        const lockBalance = async (locationId: string) => {
-          const rows = await tx.$queryRaw<LockedBalanceRow[]>`
-            SELECT "id", "quantity"
-            FROM "InventoryBalance"
-            WHERE "tenantId" = ${tenantId} AND "locationId" = ${locationId} AND "productId" = ${input.productId} AND "batchId" ${batchId === null ? 'IS NULL' : `= ${batchId}`}
-            FOR UPDATE
-          `
-          return rows[0] ?? null
-        }
-
-        // NOTE: Prisma's tagged template cannot conditionally inject raw SQL safely for batchId.
-        // We'll instead lock via two queries depending on null/non-null.
-        const lockBalanceSafe = async (locationId: string) => {
-          if (batchId === null) {
-            const rows = await tx.$queryRaw<LockedBalanceRow[]>`
-              SELECT "id", "quantity" FROM "InventoryBalance"
-              WHERE "tenantId" = ${tenantId} AND "locationId" = ${locationId} AND "productId" = ${input.productId} AND "batchId" IS NULL
-              FOR UPDATE
-            `
-            return rows[0] ?? null
-          }
-          const rows = await tx.$queryRaw<LockedBalanceRow[]>`
-            SELECT "id", "quantity" FROM "InventoryBalance"
-            WHERE "tenantId" = ${tenantId} AND "locationId" = ${locationId} AND "productId" = ${input.productId} AND "batchId" = ${batchId}
-            FOR UPDATE
-          `
-          return rows[0] ?? null
-        }
-
-        if (fromLocationId) await lockBalanceSafe(fromLocationId)
-        if (toLocationId && toLocationId !== fromLocationId) await lockBalanceSafe(toLocationId)
-
-        const upsertBalance = async (locationId: string, delta: number) => {
-          const current = await tx.inventoryBalance.findFirst({
-            where: { tenantId, locationId, productId: input.productId, batchId },
-            select: { id: true, quantity: true },
-          })
-
-          const currentQty = current ? Number(current.quantity) : 0
-          const nextQty = currentQty + delta
-
-          if (nextQty < 0) {
-            const err = new Error('Insufficient stock') as Error & { statusCode?: number }
-            err.statusCode = 409
-            throw err
-          }
-
-          if (!current) {
-            return tx.inventoryBalance.create({
-              data: {
-                tenantId,
-                locationId,
-                productId: input.productId,
-                batchId,
-                quantity: decimalFromNumber(nextQty),
-                createdBy: userId,
-              },
-              select: { id: true, quantity: true, locationId: true, productId: true, batchId: true, version: true, updatedAt: true },
-            })
-          }
-
-          return tx.inventoryBalance.update({
-            where: { id: current.id },
-            data: { quantity: decimalFromNumber(nextQty), version: { increment: 1 }, createdBy: userId },
-            select: { id: true, quantity: true, locationId: true, productId: true, batchId: true, version: true, updatedAt: true },
-          })
-        }
-
-        let fromBalance: any = null
-        let toBalance: any = null
-
-        if (input.type === 'IN') {
-          toBalance = await upsertBalance(toLocationId!, +quantity)
-        } else if (input.type === 'OUT') {
-          fromBalance = await upsertBalance(fromLocationId!, -quantity)
-        } else if (input.type === 'TRANSFER') {
-          fromBalance = await upsertBalance(fromLocationId!, -quantity)
-          toBalance = await upsertBalance(toLocationId!, +quantity)
-        } else if (input.type === 'ADJUSTMENT') {
-          const locationId = (toLocationId ?? fromLocationId)!
-          // For MVP: ADJUSTMENT acts as delta (positive adds, negative removes) but request.quantity is positive.
-          // We treat adjustments as adding to toLocation; if fromLocation provided but no toLocation, we subtract.
-          const delta = toLocationId ? +quantity : -quantity
-          toBalance = await upsertBalance(locationId, delta)
-        }
-
-        const createdMovement = await tx.stockMovement.create({
-          data: {
+          return createStockMovementTx(tx, {
             tenantId,
+            userId,
             type: input.type,
             productId: input.productId,
-            batchId,
-            fromLocationId,
-            toLocationId,
-            quantity: qtyStr,
+            batchId: input.batchId ?? null,
+            fromLocationId: input.fromLocationId ?? null,
+            toLocationId: input.toLocationId ?? null,
+            quantity: input.quantity,
             referenceType: input.referenceType ?? null,
             referenceId: input.referenceId ?? null,
             note: input.note ?? null,
-            createdBy: userId,
-          },
-          select: {
-            id: true,
-            type: true,
-            productId: true,
-            batchId: true,
-            fromLocationId: true,
-            toLocationId: true,
-            quantity: true,
-            createdAt: true,
-            referenceType: true,
-            referenceId: true,
-          },
+          })
         })
 
         await audit.append({
@@ -471,11 +302,8 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
           actorUserId: userId,
           action: 'stock.movement.create',
           entityType: 'StockMovement',
-          entityId: createdMovement.id,
-          after: { movement: createdMovement, fromBalance, toBalance },
-        })
-
-        return { createdMovement, fromBalance, toBalance }
+          entityId: result.createdMovement.id,
+          after: { movement: result.createdMovement, fromBalance: result.fromBalance, toBalance: result.toBalance },
         })
 
       // Emit realtime events (per tenant room)

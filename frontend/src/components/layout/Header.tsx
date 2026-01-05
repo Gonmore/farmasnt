@@ -12,7 +12,13 @@ export function Header() {
     <header className="sticky top-0 z-50 border-b border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
       <div className="flex h-16 items-center justify-between px-6">
         <Link to="/" className="flex items-center gap-3">
-          {tenant.branding?.logoUrl && (
+          {tenant.branding?.logoUrl ? (
+            <img 
+              src={tenant.branding.logoUrl} 
+              alt={tenant.branding.tenantName || 'Logo'} 
+              className="h-10 w-auto" 
+            />
+          ) : (
             <img 
               src={theme.mode === 'dark' ? '/Logo_Blanco.png' : '/Logo_Azul.png'} 
               alt="Logo" 

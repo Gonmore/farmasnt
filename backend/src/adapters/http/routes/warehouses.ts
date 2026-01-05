@@ -1,8 +1,14 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
+import { Prisma } from '../../../generated/prisma/client.js'
 import { prisma } from '../../db/prisma.js'
 import { requireAuth, requireModuleEnabled, requirePermission } from '../../../application/security/rbac.js'
 import { Permissions } from '../../../application/security/permissions.js'
+
+const createWarehouseSchema = z.object({
+  code: z.string().trim().min(1).max(32),
+  name: z.string().trim().min(1).max(200),
+})
 
 const updateWarehouseSchema = z.object({
   name: z.string().trim().min(1).max(200),
@@ -41,8 +47,57 @@ export async function registerWarehouseRoutes(app: FastifyInstance): Promise<voi
         select: { id: true, code: true, name: true, isActive: true, version: true, updatedAt: true },
       })
 
+      const warehouseIds = items.map((w) => w.id)
+      type WarehouseTotalRow = { warehouseId: string; quantity: string | null }
+      const totals = warehouseIds.length
+        ? await db.$queryRaw<WarehouseTotalRow[]>(Prisma.sql`
+            SELECT l."warehouseId" as "warehouseId", COALESCE(SUM(b."quantity"), 0) as "quantity"
+            FROM "InventoryBalance" b
+            JOIN "Location" l ON l.id = b."locationId"
+            WHERE b."tenantId" = ${tenantId}
+              AND l."warehouseId" IN (${Prisma.join(warehouseIds)})
+            GROUP BY l."warehouseId"
+          `)
+        : []
+
+      const totalByWarehouseId = new Map((totals ?? []).map((r) => [r.warehouseId, String(r.quantity ?? '0')]))
+      const itemsWithTotals = items.map((w) => ({ ...w, totalQuantity: totalByWarehouseId.get(w.id) ?? '0' }))
+
       const nextCursor = items.length === parsed.data.take ? items[items.length - 1]!.id : null
-      return reply.send({ items, nextCursor })
+      return reply.send({ items: itemsWithTotals, nextCursor })
+    },
+  )
+
+  // Create warehouse
+  app.post(
+    '/api/v1/warehouses',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.StockManage)],
+    },
+    async (request, reply) => {
+      const parsed = createWarehouseSchema.safeParse(request.body)
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid request', issues: parsed.error.issues })
+
+      const tenantId = request.auth!.tenantId
+      const userId = request.auth!.userId
+
+      try {
+        const created = await db.warehouse.create({
+          data: {
+            tenantId,
+            code: parsed.data.code,
+            name: parsed.data.name,
+            createdBy: userId,
+          },
+          select: { id: true, code: true, name: true, isActive: true, version: true, updatedAt: true },
+        })
+        return reply.status(201).send({ ...created, totalQuantity: '0' })
+      } catch (e: any) {
+        if (typeof e?.code === 'string' && e.code === 'P2002') {
+          return reply.status(409).send({ message: 'Warehouse code already exists' })
+        }
+        throw e
+      }
     },
   )
 

@@ -239,6 +239,8 @@ model Product {
   sku         String
   name        String
   description String?
+  photoUrl    String?
+  photoKey    String?
   isActive    Boolean  @default(true)
   version     Int      @default(1)
   createdAt   DateTime @default(now())
@@ -246,6 +248,8 @@ model Product {
   createdBy   String?
 
   batches Batch[]
+  recipe Recipe?
+  recipeItemsAsIngredient RecipeItem[] @relation("RecipeItemIngredientProduct")
   balances InventoryBalance[]
   stockMovements StockMovement[]
   salesOrderLines SalesOrderLine[]
@@ -253,6 +257,48 @@ model Product {
   @@unique([tenantId, sku])
   @@index([tenantId])
   @@index([tenantId, name])
+}
+
+model Recipe {
+  id             String   @id @default(uuid())
+  tenantId       String
+  productId      String   @unique
+  name           String
+  outputQuantity Decimal?
+  outputUnit     String?
+  version        Int      @default(1)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  createdBy      String?
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  items   RecipeItem[]
+
+  @@unique([tenantId, productId])
+  @@index([tenantId])
+  @@index([productId])
+}
+
+model RecipeItem {
+  id                 String   @id @default(uuid())
+  tenantId           String
+  recipeId           String
+  ingredientProductId String?
+  ingredientName     String?
+  quantity           Decimal
+  unit               String
+  sortOrder          Int      @default(0)
+  note               String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  createdBy          String?
+
+  recipe            Recipe  @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  ingredientProduct Product? @relation("RecipeItemIngredientProduct", fields: [ingredientProductId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId])
+  @@index([recipeId])
+  @@index([ingredientProductId])
 }
 
 model Batch {
@@ -292,9 +338,30 @@ model Warehouse {
   createdBy String?
 
   locations Location[]
+  laboratories Laboratory[]
 
   @@unique([tenantId, code])
   @@index([tenantId])
+}
+
+model Laboratory {
+  id                String   @id @default(uuid())
+  tenantId          String
+  warehouseId       String
+  name              String
+  isActive          Boolean  @default(true)
+  defaultLocationId String?
+  version           Int      @default(1)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  createdBy         String?
+
+  warehouse       Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  defaultLocation Location? @relation("LaboratoryDefaultLocation", fields: [defaultLocationId], references: [id], onDelete: SetNull)
+
+  @@unique([tenantId, warehouseId])
+  @@index([tenantId])
+  @@index([warehouseId])
 }
 
 model Location {
@@ -311,6 +378,7 @@ model Location {
 
   warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
   balances  InventoryBalance[]
+  laboratoryDefaultFor Laboratory[] @relation("LaboratoryDefaultLocation")
 
   @@unique([tenantId, warehouseId, code])
   @@index([tenantId])
@@ -342,6 +410,8 @@ model InventoryBalance {
 model StockMovement {
   id             String           @id @default(uuid())
   tenantId       String
+  number         String
+  numberYear     Int
   type           StockMovementType
   productId      String
   batchId        String?
@@ -359,10 +429,24 @@ model StockMovement {
   product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
   batch   Batch?  @relation(fields: [batchId], references: [id], onDelete: Restrict)
 
+  @@unique([tenantId, number])
+
   @@index([tenantId])
   @@index([productId])
   @@index([batchId])
   @@index([createdAt])
+}
+
+model TenantSequence {
+  id           String   @id @default(uuid())
+  tenantId     String
+  year         Int
+  key          String
+  currentValue Int      @default(0)
+  updatedAt    DateTime @updatedAt
+
+  @@unique([tenantId, year, key])
+  @@index([tenantId])
 }
 
 model SalesOrder {

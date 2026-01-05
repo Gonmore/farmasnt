@@ -3,6 +3,15 @@ import { useQuery } from '@tanstack/react-query'
 import { useAuth } from './AuthProvider'
 import { apiFetch } from '../lib/api'
 
+// Helper para ajustar brillo de colores hex
+function adjustBrightness(hex: string, percent: number): string {
+  const num = parseInt(hex.replace('#', ''), 16)
+  const r = Math.max(0, Math.min(255, ((num >> 16) & 0xff) + percent))
+  const g = Math.max(0, Math.min(255, ((num >> 8) & 0xff) + percent))
+  const b = Math.max(0, Math.min(255, (num & 0xff) + percent))
+  return '#' + ((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')
+}
+
 export type TenantBranding = {
   tenantId: string
   tenantName: string
@@ -65,10 +74,26 @@ export function TenantProvider(props: { children: React.ReactNode }) {
     if (!data) return
 
     const root = document.documentElement
-    if (data.brandPrimary) root.style.setProperty('--pf-primary', data.brandPrimary)
-    if (data.brandSecondary) root.style.setProperty('--pf-secondary', data.brandSecondary)
-    if (data.brandTertiary) root.style.setProperty('--pf-tertiary', data.brandTertiary)
-    if (data.logoUrl) root.style.setProperty('--pf-logo-url', `url(${data.logoUrl})`)
+    
+    if (data.brandPrimary) {
+      root.style.setProperty('--pf-primary', data.brandPrimary)
+      // Oscurecer para hover/active en modo claro
+      root.style.setProperty('--pf-primary-dark', adjustBrightness(data.brandPrimary, -20))
+      // Aclarar para modo oscuro
+      root.style.setProperty('--pf-primary-light', adjustBrightness(data.brandPrimary, 40))
+    }
+    
+    if (data.brandSecondary) {
+      root.style.setProperty('--pf-secondary', data.brandSecondary)
+      root.style.setProperty('--pf-secondary-dark', adjustBrightness(data.brandSecondary, -20))
+      root.style.setProperty('--pf-secondary-light', adjustBrightness(data.brandSecondary, 40))
+    }
+    
+    if (data.brandTertiary) {
+      root.style.setProperty('--pf-tertiary', data.brandTertiary)
+      root.style.setProperty('--pf-tertiary-dark', adjustBrightness(data.brandTertiary, -20))
+      root.style.setProperty('--pf-tertiary-light', adjustBrightness(data.brandTertiary, 40))
+    }
   }, [effectiveBranding])
 
   const value = useMemo<TenantContextValue>(() => {

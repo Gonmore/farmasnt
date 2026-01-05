@@ -3,9 +3,16 @@
 @tailwind utilities;
 
 :root {
+  /* Valores por defecto (Supernovatel) */
   --pf-primary: #0f172a;
+  --pf-primary-dark: #000000;
+  --pf-primary-light: #334155;
   --pf-secondary: #334155;
+  --pf-secondary-dark: #1e293b;
+  --pf-secondary-light: #475569;
   --pf-tertiary: #64748b;
+  --pf-tertiary-dark: #475569;
+  --pf-tertiary-light: #94a3b8;
 }
 
 html,
@@ -15,4 +22,47 @@ body {
 
 body {
   @apply bg-slate-50 text-slate-900 dark:bg-slate-900 dark:text-slate-100;
+}
+
+/* Botones primarios adaptados al branding */
+.btn-primary {
+  background-color: var(--pf-primary);
+  color: white;
+}
+
+.btn-primary:hover {
+  background-color: var(--pf-primary-dark);
+}
+
+.dark .btn-primary {
+  background-color: var(--pf-primary-light);
+}
+
+.dark .btn-primary:hover {
+  background-color: var(--pf-primary);
+}
+
+/* Links y acentos */
+.text-brand {
+  color: var(--pf-primary);
+}
+
+.dark .text-brand {
+  color: var(--pf-primary-light);
+}
+
+.bg-brand {
+  background-color: var(--pf-primary);
+}
+
+.dark .bg-brand {
+  background-color: var(--pf-primary-light);
+}
+
+.border-brand {
+  border-color: var(--pf-primary);
+}
+
+.dark .border-brand {
+  border-color: var(--pf-primary-light);
 }
