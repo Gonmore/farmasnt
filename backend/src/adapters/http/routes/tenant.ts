@@ -229,13 +229,15 @@ export async function registerTenantRoutes(app: FastifyInstance): Promise<void> 
           contactEmail: true,
           contactPhone: true,
           subscriptionExpiresAt: true,
-          _count: {
-            select: { users: { where: { isActive: true } } },
-          },
         },
       })
 
       if (!tenant) return reply.status(404).send({ message: 'Tenant not found' })
+
+      // Sucursales = Warehouses activos del tenant
+      const activeBranches = await db.warehouse.count({
+        where: { tenantId: actor.tenantId, isActive: true },
+      })
 
       // Calcular estado de suscripción
       const now = new Date()
@@ -255,7 +257,7 @@ export async function registerTenantRoutes(app: FastifyInstance): Promise<void> 
         id: tenant.id,
         name: tenant.name,
         branchLimit: tenant.branchLimit,
-        activeBranches: tenant._count.users, // Simplificado - podría ser conteo de warehouses
+        activeBranches,
         contactName: tenant.contactName,
         contactEmail: tenant.contactEmail,
         contactPhone: tenant.contactPhone,

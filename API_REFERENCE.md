@@ -680,6 +680,62 @@ Response 200
 }
 ```
 
+### POST /api/v1/warehouses
+Requiere permiso: `stock:manage`.
+
+Body
+```json
+{
+  "code": "WH-01",
+  "name": "Sucursal Central"
+}
+```
+
+Response 201
+```json
+{
+  "id": "...",
+  "code": "WH-01",
+  "name": "Sucursal Central",
+  "isActive": true,
+  "version": 1,
+  "updatedAt": "...",
+  "totalQuantity": "0"
+}
+```
+
+Notas
+- Crea automáticamente una ubicación por defecto (`BIN-01`, tipo `BIN`) en la sucursal.
+- `409` si el código ya existe (único por tenant).
+
+### POST /api/v1/warehouses/:id/locations
+Requiere permiso: `stock:manage`.
+
+Body
+```json
+{
+  "code": "BIN-02",
+  "type": "BIN"
+}
+```
+
+Response 201
+```json
+{
+  "id": "...",
+  "warehouseId": "...",
+  "code": "BIN-02",
+  "type": "BIN",
+  "isActive": true,
+  "version": 1,
+  "updatedAt": "..."
+}
+```
+
+Notas
+- `type` puede ser `BIN`, `SHELF`, `FLOOR`.
+- `409` si el código ya existe en esa sucursal.
+
 ---
 
 ## Stock

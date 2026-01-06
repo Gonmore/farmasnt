@@ -14,6 +14,11 @@ const updateWarehouseSchema = z.object({
   name: z.string().trim().min(1).max(200),
 })
 
+const createLocationSchema = z.object({
+  code: z.string().trim().min(1).max(32),
+  type: z.enum(['BIN', 'SHELF', 'FLOOR']).default('BIN'),
+})
+
 const listQuerySchema = z.object({
   take: z.coerce.number().int().min(1).max(50).default(20),
   cursor: z.string().uuid().optional(),
@@ -82,15 +87,32 @@ export async function registerWarehouseRoutes(app: FastifyInstance): Promise<voi
       const userId = request.auth!.userId
 
       try {
-        const created = await db.warehouse.create({
-          data: {
-            tenantId,
-            code: parsed.data.code,
-            name: parsed.data.name,
-            createdBy: userId,
-          },
-          select: { id: true, code: true, name: true, isActive: true, version: true, updatedAt: true },
+        const created = await db.$transaction(async (tx) => {
+          // Create warehouse
+          const warehouse = await tx.warehouse.create({
+            data: {
+              tenantId,
+              code: parsed.data.code,
+              name: parsed.data.name,
+              createdBy: userId,
+            },
+            select: { id: true, code: true, name: true, isActive: true, version: true, updatedAt: true },
+          })
+
+          // Create default location (BIN-01)
+          await tx.location.create({
+            data: {
+              tenantId,
+              warehouseId: warehouse.id,
+              code: 'BIN-01',
+              type: 'BIN',
+              createdBy: userId,
+            },
+          })
+
+          return warehouse
         })
+
         return reply.status(201).send({ ...created, totalQuantity: '0' })
       } catch (e: any) {
         if (typeof e?.code === 'string' && e.code === 'P2002') {
@@ -166,6 +188,44 @@ export async function registerWarehouseRoutes(app: FastifyInstance): Promise<voi
 
       const nextCursor = items.length === parsed.data.take ? items[items.length - 1]!.id : null
       return reply.send({ items, nextCursor })
+    },
+  )
+
+  // Create location in warehouse
+  app.post(
+    '/api/v1/warehouses/:id/locations',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.StockManage)],
+    },
+    async (request, reply) => {
+      const warehouseId = (request.params as any).id as string
+      const parsed = createLocationSchema.safeParse(request.body)
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid request', issues: parsed.error.issues })
+
+      const tenantId = request.auth!.tenantId
+      const userId = request.auth!.userId
+
+      const warehouse = await db.warehouse.findFirst({ where: { id: warehouseId, tenantId }, select: { id: true } })
+      if (!warehouse) return reply.status(404).send({ message: 'Warehouse not found' })
+
+      try {
+        const created = await db.location.create({
+          data: {
+            tenantId,
+            warehouseId,
+            code: parsed.data.code,
+            type: parsed.data.type,
+            createdBy: userId,
+          },
+          select: { id: true, warehouseId: true, code: true, type: true, isActive: true, version: true, updatedAt: true },
+        })
+        return reply.status(201).send(created)
+      } catch (e: any) {
+        if (typeof e?.code === 'string' && e.code === 'P2002') {
+          return reply.status(409).send({ message: 'Location code already exists in this warehouse' })
+        }
+        throw e
+      }
     },
   )
 }
