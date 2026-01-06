@@ -266,8 +266,48 @@ export function ProductDetailPage() {
   // Form state
   const [sku, setSku] = useState('')
   const [name, setName] = useState('')
+  const [presentation, setPresentation] = useState('')
+  const [customPresentation, setCustomPresentation] = useState('')
   const [description, setDescription] = useState('')
   const [isActive, setIsActive] = useState(true)
+
+  // Available presentations
+  const [presentations, setPresentations] = useState<string[]>(['comprimidos', 'capsulas', 'inyectable'])
+
+  // Generate SKU automatically when name or presentation changes
+  useEffect(() => {
+    if (isNew && name.trim() && presentation) {
+      const generatedSku = generateSku(name, presentation)
+      setSku(generatedSku)
+    }
+  }, [name, presentation, isNew])
+
+  // Function to generate SKU from name and presentation
+  function generateSku(productName: string, productPresentation: string): string {
+    // Clean name: remove special chars, take first 4 letters, uppercase
+    const cleanName = productName
+      .replace(/[^a-zA-Z0-9\s]/g, '') // Remove special chars
+      .split(' ')
+      .filter(word => word.length > 0)
+      .slice(0, 2) // Take first 2 words
+      .map(word => word.substring(0, 4).toUpperCase()) // First 4 chars uppercase
+      .join('-')
+
+    // Get presentation code
+    const presCode = getPresentationCode(productPresentation)
+    
+    return `${cleanName}-${presCode}`
+  }
+
+  // Function to get presentation code
+  function getPresentationCode(pres: string): string {
+    const codes: Record<string, string> = {
+      'comprimidos': 'COMP',
+      'capsulas': 'CAPS',
+      'inyectable': 'INYC',
+    }
+    return codes[pres] || pres.substring(0, 4).toUpperCase()
+  }
 
   // Batch form state
   const [expiresAt, setExpiresAt] = useState('')
@@ -313,6 +353,9 @@ export function ProductDetailPage() {
       setName(productQuery.data.name)
       setDescription(productQuery.data.description || '')
       setIsActive(productQuery.data.isActive)
+      // For existing products, presentation is not stored, so leave empty
+      setPresentation('')
+      setCustomPresentation('')
     }
   }, [productQuery.data])
 
@@ -505,6 +548,17 @@ export function ProductDetailPage() {
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault()
+    
+    // Handle custom presentation
+    let finalPresentation = presentation
+    if (presentation === 'otro' && customPresentation.trim()) {
+      finalPresentation = customPresentation.trim().toLowerCase()
+      // Add to presentations list if not already there
+      if (!presentations.includes(finalPresentation)) {
+        setPresentations(prev => [...prev, finalPresentation])
+      }
+    }
+    
     if (isNew) {
       createMutation.mutate({ sku, name, description: description || undefined })
     } else if (productQuery.data) {
@@ -600,19 +654,54 @@ export function ProductDetailPage() {
             </h3>
             <form onSubmit={handleSubmit} className="space-y-4">
               <Input
-                label="SKU"
-                value={sku}
-                onChange={(e) => setSku(e.target.value)}
-                required
-                disabled={!isNew || createMutation.isPending}
-              />
-              <Input
                 label="Nombre"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
+                placeholder="Ej: Omeprazol 20mg"
                 required
                 disabled={createMutation.isPending || updateMutation.isPending}
               />
+              
+              <div>
+                <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                  Presentación
+                </label>
+                <Select
+                  value={presentation}
+                  onChange={(e) => {
+                    const value = e.target.value
+                    setPresentation(value)
+                    if (value !== 'otro') {
+                      setCustomPresentation('')
+                    }
+                  }}
+                  options={[
+                    ...presentations.map(p => ({ value: p, label: p.charAt(0).toUpperCase() + p.slice(1) })),
+                    { value: 'otro', label: 'Otro' },
+                  ]}
+                  disabled={createMutation.isPending || updateMutation.isPending}
+                  required
+                />
+                {presentation === 'otro' && (
+                  <Input
+                    value={customPresentation}
+                    onChange={(e) => setCustomPresentation(e.target.value)}
+                    placeholder="Especificar presentación"
+                    className="mt-2"
+                    disabled={createMutation.isPending || updateMutation.isPending}
+                    required
+                  />
+                )}
+              </div>
+
+              <Input
+                label="SKU"
+                value={sku}
+                onChange={(e) => setSku(e.target.value)}
+                placeholder="Se genera automáticamente"
+                disabled={createMutation.isPending || updateMutation.isPending}
+              />
+              
               <Input
                 label="Descripción"
                 value={description}
