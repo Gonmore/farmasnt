@@ -3,7 +3,12 @@ import { useAuth } from '../../providers/AuthProvider'
 import { useTenant } from '../../providers/TenantProvider'
 import { useTheme } from '../../providers/ThemeProvider'
 
-export function Header() {
+interface HeaderProps {
+  onMenuClick?: () => void
+  showMenuButton?: boolean
+}
+
+export function Header({ onMenuClick, showMenuButton = false }: HeaderProps) {
   const auth = useAuth()
   const tenant = useTenant()
   const theme = useTheme()
@@ -11,21 +16,34 @@ export function Header() {
   return (
     <header className="sticky top-0 z-50 border-b border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
       <div className="flex h-16 items-center justify-between px-6">
-        <Link to="/" className="flex items-center gap-3">
-          {tenant.branding?.logoUrl ? (
-            <img 
-              src={tenant.branding.logoUrl} 
-              alt={tenant.branding.tenantName || 'Logo'} 
-              className="h-10 w-auto" 
-            />
-          ) : (
-            <img 
-              src={theme.mode === 'dark' ? '/Logo_Blanco.png' : '/Logo_Azul.png'} 
-              alt="Logo" 
-              className="h-10 w-auto" 
-            />
+        <div className="flex items-center gap-3">
+          {showMenuButton && (
+            <button
+              onClick={onMenuClick}
+              className="rounded p-2 text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800 md:hidden"
+              title="Menú"
+            >
+              <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
           )}
-        </Link>
+          <Link to="/" className="flex items-center gap-3">
+            {tenant.branding?.logoUrl ? (
+              <img 
+                src={tenant.branding.logoUrl} 
+                alt={tenant.branding.tenantName || 'Logo'} 
+                className="h-10 w-auto" 
+              />
+            ) : (
+              <img 
+                src={theme.mode === 'dark' ? '/Logo_Blanco.png' : '/Logo_Azul.png'} 
+                alt="Logo" 
+                className="h-10 w-auto" 
+              />
+            )}
+          </Link>
+        </div>
 
         <div className="flex items-center gap-4">
           {auth.isAuthenticated && (
