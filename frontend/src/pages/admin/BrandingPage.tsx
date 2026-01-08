@@ -12,6 +12,7 @@ type BrandingData = {
   brandSecondary: string | null
   brandTertiary: string | null
   defaultTheme: 'LIGHT' | 'DARK'
+  currency: string
 }
 
 export function BrandingPage() {
@@ -23,6 +24,7 @@ export function BrandingPage() {
   const [brandSecondary, setBrandSecondary] = useState('#10b981')
   const [brandTertiary, setBrandTertiary] = useState('#f59e0b')
   const [defaultTheme, setDefaultTheme] = useState<'LIGHT' | 'DARK'>('LIGHT')
+  const [currency, setCurrency] = useState('BOB')
 
   const brandingQuery = useQuery<BrandingData>({
     queryKey: ['tenant', 'branding'],
@@ -35,6 +37,7 @@ export function BrandingPage() {
       setBrandSecondary(data.brandSecondary || '#10b981')
       setBrandTertiary(data.brandTertiary || '#f59e0b')
       setDefaultTheme(data.defaultTheme)
+      setCurrency(data.currency || 'BOB')
       return data
     },
   })
@@ -57,6 +60,7 @@ export function BrandingPage() {
       brandSecondary,
       brandTertiary,
       defaultTheme,
+      currency,
     })
   }
 
@@ -214,6 +218,29 @@ export function BrandingPage() {
               </p>
             </div>
 
+            {/* Divisa */}
+            <div>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                Divisa
+              </label>
+              <select
+                value={currency}
+                onChange={(e) => setCurrency(e.target.value)}
+                className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+              >
+                <option value="BOB">BOB - Boliviano</option>
+                <option value="USD">USD - Dólar</option>
+                <option value="EUR">EUR - Euro</option>
+                <option value="PEN">PEN - Sol Peruano</option>
+                <option value="ARS">ARS - Peso Argentino</option>
+                <option value="CLP">CLP - Peso Chileno</option>
+                <option value="BRL">BRL - Real Brasileño</option>
+              </select>
+              <p className="mt-1 text-xs text-slate-500">
+                Divisa que se mostrará en precios del catálogo comercial
+              </p>
+            </div>
+
             {/* Mensaje de éxito */}
             {updateMutation.isSuccess && (
               <div className="p-4 rounded-lg bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800">
@@ -243,6 +270,7 @@ export function BrandingPage() {
                   setBrandSecondary(brandingQuery.data?.brandSecondary || '#10b981')
                   setBrandTertiary(brandingQuery.data?.brandTertiary || '#f59e0b')
                   setDefaultTheme(brandingQuery.data?.defaultTheme || 'LIGHT')
+                  setCurrency(brandingQuery.data?.currency || 'BOB')
                 }}
                 disabled={updateMutation.isPending}
               >

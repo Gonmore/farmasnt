@@ -13,6 +13,8 @@ type Product = {
   name: string
   description: string | null
   photoUrl?: string | null
+  cost?: string | null
+  price?: string | null
   isActive: boolean
   version: number
   createdAt: string
@@ -269,6 +271,8 @@ export function ProductDetailPage() {
   const [presentation, setPresentation] = useState('')
   const [customPresentation, setCustomPresentation] = useState('')
   const [description, setDescription] = useState('')
+  const [cost, setCost] = useState('')
+  const [price, setPrice] = useState('')
   const [isActive, setIsActive] = useState(true)
 
   // Available presentations
@@ -352,6 +356,8 @@ export function ProductDetailPage() {
       setSku(productQuery.data.sku)
       setName(productQuery.data.name)
       setDescription(productQuery.data.description || '')
+      setCost(productQuery.data.cost || '')
+      setPrice(productQuery.data.price || '')
       setIsActive(productQuery.data.isActive)
       // For existing products, presentation is not stored, so leave empty
       setPresentation('')
@@ -385,7 +391,7 @@ export function ProductDetailPage() {
   }, [recipeQuery.data])
 
   const createMutation = useMutation({
-    mutationFn: (data: { sku: string; name: string; description?: string }) =>
+    mutationFn: (data: { sku: string; name: string; description?: string; cost?: number; price?: number }) =>
       createProduct(auth.accessToken!, data),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['products'] })
@@ -394,7 +400,7 @@ export function ProductDetailPage() {
   })
 
   const updateMutation = useMutation({
-    mutationFn: (data: { version: number; name?: string; description?: string | null; isActive?: boolean }) =>
+    mutationFn: (data: { version: number; name?: string; description?: string | null; cost?: number | null; price?: number | null; isActive?: boolean }) =>
       updateProduct(auth.accessToken!, id!, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['product', id] })
@@ -560,14 +566,20 @@ export function ProductDetailPage() {
     }
     
     if (isNew) {
-      createMutation.mutate({ sku, name, description: description || undefined })
+      const payload: any = { sku, name, description: description || undefined }
+      if (cost) payload.cost = parseFloat(cost)
+      if (price) payload.price = parseFloat(price)
+      createMutation.mutate(payload)
     } else if (productQuery.data) {
-      updateMutation.mutate({
+      const payload: any = {
         version: productQuery.data.version,
         name,
         description: description || null,
         isActive,
-      })
+      }
+      if (cost) payload.cost = parseFloat(cost)
+      if (price) payload.price = parseFloat(price)
+      updateMutation.mutate(payload)
     }
   }
 
@@ -708,6 +720,28 @@ export function ProductDetailPage() {
                 onChange={(e) => setDescription(e.target.value)}
                 disabled={createMutation.isPending || updateMutation.isPending}
               />
+              
+              <div className="grid grid-cols-2 gap-4">
+                <Input
+                  label="Costo (opcional)"
+                  type="number"
+                  step="0.01"
+                  value={cost}
+                  onChange={(e) => setCost(e.target.value)}
+                  placeholder="0.00"
+                  disabled={createMutation.isPending || updateMutation.isPending}
+                />
+                <Input
+                  label="Precio (opcional)"
+                  type="number"
+                  step="0.01"
+                  value={price}
+                  onChange={(e) => setPrice(e.target.value)}
+                  placeholder="0.00"
+                  disabled={createMutation.isPending || updateMutation.isPending}
+                />
+              </div>
+              
               {!isNew && (
                 <Select
                   label="Estado"

@@ -56,6 +56,7 @@ model Tenant {
   brandTertiary  String?
   defaultTheme ThemeMode @default(LIGHT)
   branchLimit Int    @default(1)
+  currency String   @default("BOB")
   
   // Subscription Management Fields
   contactName   String?
@@ -241,6 +242,8 @@ model Product {
   description String?
   photoUrl    String?
   photoKey    String?
+  cost        Decimal?
+  price       Decimal?
   isActive    Boolean  @default(true)
   version     Int      @default(1)
   createdAt   DateTime @default(now())

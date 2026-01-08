@@ -20,6 +20,7 @@ export type TenantBranding = {
   brandSecondary: string | null
   brandTertiary: string | null
   defaultTheme: 'LIGHT' | 'DARK'
+  currency: string
 }
 
 export type TenantContextValue = {

@@ -127,6 +127,7 @@ const tenantBrandingUpdateSchema = z.object({
   brandSecondary: hexColorSchema.nullable().optional(),
   brandTertiary: hexColorSchema.nullable().optional(),
   defaultTheme: z.enum(['LIGHT', 'DARK']).optional(),
+  currency: z.string().trim().min(3).max(3).optional(),
 })
 
 const tenantLogoPresignSchema = z.object({
@@ -844,6 +845,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
               brandSecondary: { type: 'string', nullable: true },
               brandTertiary: { type: 'string', nullable: true },
               defaultTheme: { type: 'string' },
+              currency: { type: 'string' },
               version: { type: 'integer' },
               updatedAt: { type: 'string', format: 'date-time' },
             },
@@ -865,6 +867,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
           brandSecondary: true,
           brandTertiary: true,
           defaultTheme: true,
+          currency: true,
           version: true,
           updatedAt: true,
         },
@@ -882,6 +885,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
         brandSecondary: tenant.brandSecondary,
         brandTertiary: tenant.brandTertiary,
         defaultTheme: tenant.defaultTheme,
+        currency: tenant.currency,
         version: tenant.version,
         updatedAt: tenant.updatedAt.toISOString(),
       }
@@ -955,6 +959,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
           ...(parsed.data.brandSecondary !== undefined ? { brandSecondary: parsed.data.brandSecondary } : {}),
           ...(parsed.data.brandTertiary !== undefined ? { brandTertiary: parsed.data.brandTertiary } : {}),
           ...(parsed.data.defaultTheme !== undefined ? { defaultTheme: parsed.data.defaultTheme as any } : {}),
+          ...(parsed.data.currency !== undefined ? { currency: parsed.data.currency } : {}),
           version: { increment: 1 },
           createdBy: actorUserId,
         },

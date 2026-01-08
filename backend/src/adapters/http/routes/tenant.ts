@@ -30,6 +30,7 @@ export async function registerTenantRoutes(app: FastifyInstance): Promise<void> 
               brandSecondary: { type: 'string', nullable: true },
               brandTertiary: { type: 'string', nullable: true },
               defaultTheme: { type: 'string' },
+              currency: { type: 'string' },
             },
             required: ['tenantId', 'tenantName', 'defaultTheme'],
             additionalProperties: false,
@@ -80,6 +81,7 @@ export async function registerTenantRoutes(app: FastifyInstance): Promise<void> 
           brandSecondary: true,
           brandTertiary: true,
           defaultTheme: true,
+          currency: true,
         },
       })
 
@@ -97,6 +99,7 @@ export async function registerTenantRoutes(app: FastifyInstance): Promise<void> 
         brandSecondary: tenant.brandSecondary,
         brandTertiary: tenant.brandTertiary,
         defaultTheme: tenant.defaultTheme,
+        currency: tenant.currency,
       }
     },
   )
@@ -120,6 +123,7 @@ export async function registerTenantRoutes(app: FastifyInstance): Promise<void> 
               brandSecondary: { type: 'string', nullable: true },
               brandTertiary: { type: 'string', nullable: true },
               defaultTheme: { type: 'string' },
+              currency: { type: 'string' },
             },
             required: ['tenantId', 'tenantName', 'defaultTheme'],
             additionalProperties: false,
@@ -140,6 +144,7 @@ export async function registerTenantRoutes(app: FastifyInstance): Promise<void> 
           brandSecondary: true,
           brandTertiary: true,
           defaultTheme: true,
+          currency: true,
         },
       })
 
@@ -157,6 +162,7 @@ export async function registerTenantRoutes(app: FastifyInstance): Promise<void> 
         brandSecondary: tenant.brandSecondary,
         brandTertiary: tenant.brandTertiary,
         defaultTheme: tenant.defaultTheme,
+        currency: tenant.currency,
       }
     },
   )

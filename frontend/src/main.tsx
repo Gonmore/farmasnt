@@ -6,6 +6,7 @@ import { AppRouter } from './AppRouter'
 import { AuthProvider } from './providers/AuthProvider'
 import { TenantProvider } from './providers/TenantProvider'
 import { ThemeProvider } from './providers/ThemeProvider'
+import { CartProvider } from './providers/CartProvider'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -22,7 +23,9 @@ createRoot(document.getElementById('root')!).render(
       <AuthProvider>
         <TenantProvider>
           <ThemeProvider>
-            <AppRouter />
+            <CartProvider>
+              <AppRouter />
+            </CartProvider>
           </ThemeProvider>
         </TenantProvider>
       </AuthProvider>

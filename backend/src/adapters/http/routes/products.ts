@@ -15,6 +15,8 @@ const productCreateSchema = z.object({
   sku: z.string().trim().min(1).max(64),
   name: z.string().trim().min(1).max(200),
   description: z.string().trim().max(2000).optional(),
+  cost: z.coerce.number().positive().optional(),
+  price: z.coerce.number().positive().optional(),
 })
 
 const productUpdateSchema = z.object({
@@ -23,6 +25,8 @@ const productUpdateSchema = z.object({
   description: z.string().trim().max(2000).nullable().optional(),
   photoUrl: z.string().url().nullable().optional(),
   photoKey: z.string().trim().min(1).max(800).nullable().optional(),
+  cost: z.coerce.number().positive().nullable().optional(),
+  price: z.coerce.number().positive().nullable().optional(),
   isActive: z.boolean().optional(),
 })
 
@@ -153,12 +157,16 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
 
       try {
         const description = parsed.data.description ?? null
+        const cost = parsed.data.cost ?? null
+        const price = parsed.data.price ?? null
         const created = await db.product.create({
           data: {
             tenantId,
             sku: parsed.data.sku,
             name: parsed.data.name,
             description,
+            cost,
+            price,
             createdBy: userId,
           },
           select: { id: true, sku: true, name: true, version: true, createdAt: true },
@@ -206,7 +214,7 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
             }
           : {}),
         orderBy: { id: 'asc' },
-        select: { id: true, sku: true, name: true, photoUrl: true, isActive: true, version: true, updatedAt: true },
+        select: { id: true, sku: true, name: true, photoUrl: true, cost: true, price: true, isActive: true, version: true, updatedAt: true },
       })
 
       const nextCursor = items.length === parsed.data.take ? items[items.length - 1]!.id : null
@@ -226,7 +234,7 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
 
       const product = await db.product.findFirst({
         where: { id, tenantId },
-        select: { id: true, sku: true, name: true, description: true, photoUrl: true, isActive: true, version: true, updatedAt: true },
+        select: { id: true, sku: true, name: true, description: true, photoUrl: true, cost: true, price: true, isActive: true, version: true, updatedAt: true },
       })
 
       if (!product) return reply.status(404).send({ message: 'Not found' })
@@ -503,12 +511,14 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
       if (parsed.data.description !== undefined) updateData.description = parsed.data.description
       if ((parsed.data as any).photoUrl !== undefined) updateData.photoUrl = (parsed.data as any).photoUrl
       if ((parsed.data as any).photoKey !== undefined) updateData.photoKey = (parsed.data as any).photoKey
+      if ((parsed.data as any).cost !== undefined) updateData.cost = (parsed.data as any).cost
+      if ((parsed.data as any).price !== undefined) updateData.price = (parsed.data as any).price
       if (parsed.data.isActive !== undefined) updateData.isActive = parsed.data.isActive
 
       const updated = await db.product.update({
         where: { id },
         data: updateData,
-        select: { id: true, sku: true, name: true, description: true, photoUrl: true, isActive: true, version: true, updatedAt: true },
+        select: { id: true, sku: true, name: true, description: true, photoUrl: true, cost: true, price: true, isActive: true, version: true, updatedAt: true },
       })
 
       await audit.append({

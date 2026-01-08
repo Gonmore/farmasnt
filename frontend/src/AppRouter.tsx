@@ -7,6 +7,7 @@ import {
   ProductsListPage,
   ProductDetailPage,
   CatalogSearchPage,
+  CommercialCatalogPage,
   WarehousesPage,
   LocationsPage,
   BalancesPage,
@@ -68,6 +69,14 @@ export function AppRouter() {
           element={
             <ProtectedRoute>
               <CatalogSearchPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/catalog/commercial"
+          element={
+            <ProtectedRoute>
+              <CommercialCatalogPage />
             </ProtectedRoute>
           }
         />
