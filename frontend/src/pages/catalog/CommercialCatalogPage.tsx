@@ -116,7 +116,7 @@ export function CommercialCatalogPage() {
   return (
     <MainLayout navGroups={navGroups}>
       <PageContainer title="🛒 Catálogo Comercial">
-        <div className="rounded-xl border-2 border-gradient-to-r from-blue-500/20 to-purple-500/20 bg-gradient-to-br from-slate-50 to-blue-50/30 dark:from-slate-900 dark:to-slate-800/50 dark:border-slate-700 p-6 shadow-lg">
+        <div className="rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-gradient-to-br from-slate-50 to-blue-50/30 dark:from-slate-900 dark:to-slate-800/50 p-6 shadow-lg">
           {productsQuery.isLoading && <Loading />}
           {productsQuery.error && (
             <ErrorState
