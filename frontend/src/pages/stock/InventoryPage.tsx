@@ -15,6 +15,7 @@ import {
   Select,
 } from '../../components'
 import { useNavigation } from '../../hooks'
+import type { ExpiryStatus } from '../../components/common/ExpiryBadge'
 
 type BalanceExpandedItem = {
   id: string
@@ -119,6 +120,30 @@ async function createTransferMovement(
     method: 'POST',
     body: JSON.stringify({ type: 'TRANSFER', ...data }),
   })
+}
+
+function calculateExpiryStatus(expiresAt: string): ExpiryStatus {
+  const expiryDate = new Date(expiresAt)
+  const today = new Date()
+  const daysToExpire = Math.ceil((expiryDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
+
+  if (daysToExpire < 0) return 'EXPIRED'
+  if (daysToExpire <= 30) return 'RED'
+  if (daysToExpire <= 90) return 'YELLOW'
+  return 'GREEN'
+}
+
+function getExpiryColors(status: ExpiryStatus): { bg: string; border: string; text: string } {
+  switch (status) {
+    case 'EXPIRED':
+      return { bg: 'bg-red-50 dark:bg-red-900/20', border: 'border-red-300 dark:border-red-700', text: 'text-red-700 dark:text-red-300' }
+    case 'RED':
+      return { bg: 'bg-red-50 dark:bg-red-900/20', border: 'border-red-300 dark:border-red-700', text: 'text-red-700 dark:text-red-300' }
+    case 'YELLOW':
+      return { bg: 'bg-yellow-50 dark:bg-yellow-900/20', border: 'border-yellow-300 dark:border-yellow-700', text: 'text-yellow-700 dark:text-yellow-300' }
+    case 'GREEN':
+      return { bg: 'bg-green-50 dark:bg-green-900/20', border: 'border-green-300 dark:border-green-700', text: 'text-green-700 dark:text-green-300' }
+  }
 }
 
 export function InventoryPage() {
@@ -391,8 +416,16 @@ export function InventoryPage() {
                               { header: '🏷️ Lote', accessor: (b) => b.batchNumber },
                               {
                                 header: '📅 Vence',
-                                accessor: (b) =>
-                                  b.expiresAt ? new Date(b.expiresAt).toLocaleDateString() : '-',
+                                accessor: (b) => {
+                                  if (!b.expiresAt) return '-'
+                                  const expiryStatus = calculateExpiryStatus(b.expiresAt)
+                                  const colors = getExpiryColors(expiryStatus)
+                                  return (
+                                    <span className={`inline-block px-2 py-1 rounded-md border text-xs font-medium ${colors.bg} ${colors.border} ${colors.text}`}>
+                                      {new Date(b.expiresAt).toLocaleDateString()}
+                                    </span>
+                                  )
+                                },
                               },
                               { header: '📍 Ubicación', accessor: (b) => b.locationCode },
                               { header: '📊 Cantidad', accessor: (b) => b.quantity },
@@ -487,8 +520,16 @@ export function InventoryPage() {
                               { header: '🏷️ Lote', accessor: (b) => b.batchNumber },
                               {
                                 header: '📅 Vence',
-                                accessor: (b) =>
-                                  b.expiresAt ? new Date(b.expiresAt).toLocaleDateString() : '-',
+                                accessor: (b) => {
+                                  if (!b.expiresAt) return '-'
+                                  const expiryStatus = calculateExpiryStatus(b.expiresAt)
+                                  const colors = getExpiryColors(expiryStatus)
+                                  return (
+                                    <span className={`inline-block px-2 py-1 rounded-md border text-xs font-medium ${colors.bg} ${colors.border} ${colors.text}`}>
+                                      {new Date(b.expiresAt).toLocaleDateString()}
+                                    </span>
+                                  )
+                                },
                               },
                               { header: '📍 Ubicación', accessor: (b) => b.locationCode },
                               { header: '📊 Cantidad', accessor: (b) => b.quantity },

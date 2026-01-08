@@ -660,21 +660,24 @@ export function ProductDetailPage() {
       >
         <div className="grid gap-6 md:grid-cols-2">
           {/* Product Form */}
-          <div className="rounded-lg border border-slate-200 bg-white p-6 dark:border-slate-700 dark:bg-slate-900">
+          <div className="rounded-lg border border-slate-200 bg-gradient-to-br from-white to-slate-50/50 dark:from-slate-900 dark:to-slate-800/50 p-6 dark:border-slate-700">
             <h3 className="mb-4 text-lg font-semibold text-slate-900 dark:text-slate-100">
               {isNew ? 'Datos del Producto' : 'Editar Producto'}
             </h3>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <Input
-                label="Nombre"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Ej: Omeprazol 20mg"
-                required
-                disabled={createMutation.isPending || updateMutation.isPending}
-              />
+            <form onSubmit={handleSubmit} className="space-y-6">
+                <div className="group">
+                <Input
+                  label="Nombre"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="Ej: Omeprazol 20mg"
+                  required
+                  disabled={createMutation.isPending || updateMutation.isPending}
+                  className="transition-all duration-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
               
-              <div>
+              <div className="group">
                 <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
                   Presentación
                 </label>
@@ -693,89 +696,108 @@ export function ProductDetailPage() {
                   ]}
                   disabled={createMutation.isPending || updateMutation.isPending}
                   required
+                  className="transition-all duration-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 />
                 {presentation === 'otro' && (
                   <Input
                     value={customPresentation}
                     onChange={(e) => setCustomPresentation(e.target.value)}
                     placeholder="Especificar presentación"
-                    className="mt-2"
+                    className="mt-2 transition-all duration-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     disabled={createMutation.isPending || updateMutation.isPending}
                     required
                   />
                 )}
               </div>
 
-              <Input
-                label="SKU"
-                value={sku}
-                onChange={(e) => setSku(e.target.value)}
-                placeholder="Se genera automáticamente"
-                disabled={createMutation.isPending || updateMutation.isPending}
-              />
-              
-              <Input
-                label="Descripción"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                disabled={createMutation.isPending || updateMutation.isPending}
-              />
-              
-              <div className="grid grid-cols-2 gap-4">
+              <div className="group">
                 <Input
-                  label="Costo (opcional)"
-                  type="number"
-                  step="0.01"
-                  value={cost}
-                  onChange={(e) => setCost(e.target.value)}
-                  placeholder="0.00"
+                  label="SKU"
+                  value={sku}
+                  onChange={(e) => setSku(e.target.value)}
+                  placeholder="Se genera automáticamente"
                   disabled={createMutation.isPending || updateMutation.isPending}
-                />
-                <Input
-                  label="Precio (opcional)"
-                  type="number"
-                  step="0.01"
-                  value={price}
-                  onChange={(e) => setPrice(e.target.value)}
-                  placeholder="0.00"
-                  disabled={createMutation.isPending || updateMutation.isPending}
+                  className="transition-all duration-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 />
               </div>
               
-              {!isNew && (
-                <Select
-                  label="Estado"
-                  value={isActive ? 'true' : 'false'}
-                  onChange={(e) => setIsActive(e.target.value === 'true')}
-                  options={[
-                    { value: 'true', label: 'Activo' },
-                    { value: 'false', label: 'Inactivo' },
-                  ]}
-                  disabled={updateMutation.isPending}
+              <div className="group">
+                <Input
+                  label="Descripción"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  disabled={createMutation.isPending || updateMutation.isPending}
+                  className="transition-all duration-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 />
+              </div>
+              
+              <div className="grid grid-cols-2 gap-4">
+                <div className="group">
+                  <Input
+                    label="Costo (opcional)"
+                    type="number"
+                    step="0.01"
+                    value={cost}
+                    onChange={(e) => setCost(e.target.value)}
+                    placeholder="0.00"
+                    disabled={createMutation.isPending || updateMutation.isPending}
+                    className="transition-all duration-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+                <div className="group">
+                  <Input
+                    label="Precio (opcional)"
+                    type="number"
+                    step="0.01"
+                    value={price}
+                    onChange={(e) => setPrice(e.target.value)}
+                    placeholder="0.00"
+                    disabled={createMutation.isPending || updateMutation.isPending}
+                    className="transition-all duration-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+              </div>
+              
+              {!isNew && (
+                <div className="group">
+                  <Select
+                    label="Estado"
+                    value={isActive ? 'true' : 'false'}
+                    onChange={(e) => setIsActive(e.target.value === 'true')}
+                    options={[
+                      { value: 'true', label: 'Activo' },
+                      { value: 'false', label: 'Inactivo' },
+                    ]}
+                    disabled={updateMutation.isPending}
+                    className="transition-all duration-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
               )}
 
               {!isNew && (
-                <div className="rounded-md border border-slate-200 p-3 dark:border-slate-700">
-                  <div className="mb-2 text-sm font-medium text-slate-900 dark:text-slate-100">Foto del producto</div>
+                <div className="rounded-lg border-2 border-dashed border-slate-300 bg-gradient-to-br from-slate-50 to-slate-100 p-4 dark:border-slate-600 dark:from-slate-800 dark:to-slate-700">
+                  <div className="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100">📸 Foto del Producto</div>
                   {productQuery.data?.photoUrl ? (
                     <img
                       src={productQuery.data.photoUrl}
                       alt="Foto del producto"
-                      className="mb-3 h-40 w-full rounded object-contain bg-slate-50 dark:bg-slate-800"
+                      className="mb-3 h-40 w-full rounded-lg object-contain bg-white shadow-md dark:bg-slate-900"
                     />
                   ) : (
-                    <div className="mb-3 flex h-40 w-full items-center justify-center rounded bg-slate-50 text-sm text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                    <div className="mb-3 flex h-40 w-full items-center justify-center rounded-lg bg-white text-sm text-slate-500 shadow-md dark:bg-slate-900 dark:text-slate-400">
                       Sin foto
                     </div>
                   )}
 
-                  <input
-                    type="file"
-                    accept="image/png,image/jpeg,image/webp"
-                    onChange={(e) => setSelectedPhoto(e.target.files?.[0] ?? null)}
-                    disabled={uploadPhotoMutation.isPending || removePhotoMutation.isPending || updateMutation.isPending}
-                  />
+                  <div className="flex gap-2">
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                      onChange={(e) => setSelectedPhoto(e.target.files?.[0] ?? null)}
+                      disabled={uploadPhotoMutation.isPending || removePhotoMutation.isPending || updateMutation.isPending}
+                      className="transition-all duration-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                  </div>
 
                   <div className="mt-3 flex gap-2">
                     <Button
@@ -814,8 +836,12 @@ export function ProductDetailPage() {
               )}
 
               <div className="flex gap-2">
-                <Button type="submit" loading={createMutation.isPending || updateMutation.isPending}>
-                  {isNew ? 'Crear' : 'Guardar'}
+                <Button
+                  type="submit"
+                  loading={createMutation.isPending || updateMutation.isPending}
+                  className="w-full bg-gradient-to-r from-blue-500 to-purple-600 py-3 text-lg font-semibold shadow-lg hover:from-blue-600 hover:to-purple-700 hover:shadow-xl"
+                >
+                  {isNew ? '✨ Crear Producto' : '💾 Guardar Cambios'}
                 </Button>
                 {(createMutation.error || updateMutation.error) && (
                   <span className="text-sm text-red-600">
