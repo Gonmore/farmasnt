@@ -268,7 +268,7 @@ export function ProductDetailPage() {
   // Form state
   const [sku, setSku] = useState('')
   const [name, setName] = useState('')
-  const [presentation, setPresentation] = useState('')
+  const [presentation, setPresentation] = useState(isNew ? 'comprimidos' : '')
   const [customPresentation, setCustomPresentation] = useState('')
   const [description, setDescription] = useState('')
   const [cost, setCost] = useState('')

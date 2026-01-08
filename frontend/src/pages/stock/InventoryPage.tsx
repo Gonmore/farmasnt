@@ -343,7 +343,11 @@ export function InventoryPage() {
               {productGroups.map((pg) => (
                 <div
                   key={pg.productId}
-                  className="rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"
+                  className={`rounded-lg border-2 ${
+                    expandedProduct === pg.productId
+                      ? 'border-blue-500 bg-blue-100/70 dark:border-blue-400 dark:bg-blue-800/40'
+                      : 'border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900'
+                  }`}
                 >
                   <button
                     onClick={() => setExpandedProduct(expandedProduct === pg.productId ? null : pg.productId)}
@@ -433,7 +437,11 @@ export function InventoryPage() {
               {warehouseGroups.map((wg) => (
                 <div
                   key={wg.warehouseId}
-                  className="rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"
+                  className={`rounded-lg border-2 ${
+                    expandedWarehouse === wg.warehouseId
+                      ? 'border-blue-500 bg-blue-100/70 dark:border-blue-400 dark:bg-blue-800/40'
+                      : 'border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900'
+                  }`}
                 >
                   <button
                     onClick={() =>
