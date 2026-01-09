@@ -1,9 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
-import type { FormEvent } from 'react'
+import { useState } from 'react'
 import { apiFetch } from '../../lib/api'
 import { useAuth } from '../../providers/AuthProvider'
-import { MainLayout, PageContainer, Button, Input, Select, Table, Loading, ErrorState } from '../../components'
+import { MainLayout, PageContainer, Select, Input, Button, Table, Loading, ErrorState } from '../../components'
 import { useNavigation } from '../../hooks'
 
 type ProductListItem = {
@@ -12,8 +11,6 @@ type ProductListItem = {
   name: string
   isActive: boolean
 }
-
-type ListResponse = { items: ProductListItem[]; nextCursor: string | null }
 
 type WarehouseListItem = {
   id: string
@@ -24,7 +21,6 @@ type WarehouseListItem = {
 
 type LocationListItem = {
   id: string
-  warehouseId: string
   code: string
   isActive: boolean
 }
@@ -34,8 +30,6 @@ type ProductBatchListItem = {
   batchNumber: string
   expiresAt: string | null
   manufacturingDate: string | null
-  status: string
-  totalQuantity: string | null
   locations: {
     warehouseId: string
     warehouseCode: string
@@ -46,11 +40,20 @@ type ProductBatchListItem = {
   }[]
 }
 
-type ProductBatchesResponse = { items: ProductBatchListItem[]; hasStockRead: boolean }
+type ClientListItem = {
+  id: string
+  commercialName: string
+  fiscalName: string
+  isActive: boolean
+}
 
-async function fetchProducts(token: string): Promise<ListResponse> {
+async function fetchProducts(token: string): Promise<{ items: ProductListItem[] }> {
   const params = new URLSearchParams({ take: '50' })
   return apiFetch(`/api/v1/products?${params}`, { token })
+}
+
+async function listProductBatches(token: string, productId: string): Promise<{ items: ProductBatchListItem[]; hasStockRead: boolean }> {
+  return apiFetch(`/api/v1/products/${productId}/batches?take=100`, { token })
 }
 
 async function listWarehouses(token: string): Promise<{ items: WarehouseListItem[] }> {
@@ -61,29 +64,31 @@ async function listWarehouseLocations(token: string, warehouseId: string): Promi
   return apiFetch(`/api/v1/warehouses/${warehouseId}/locations?take=100`, { token })
 }
 
-async function listProductBatches(token: string, productId: string): Promise<ProductBatchesResponse> {
-  return apiFetch(`/api/v1/products/${productId}/batches?take=100`, { token })
+async function listClients(token: string): Promise<{ items: ClientListItem[] }> {
+  return apiFetch(`/api/v1/clients?take=100`, { token })
 }
 
-async function createMovement(
+async function createBatch(
   token: string,
+  productId: string,
   data: {
-    type: string
-    productId: string
-    batchId?: string
-    fromLocationId?: string
-    toLocationId?: string
-    quantity: string
-    referenceType?: string
-    referenceId?: string
-    note?: string
+    batchNumber?: string
+    expiresAt?: string
+    manufacturingDate?: string
+    status: string
+    initialStock?: { warehouseId: string; quantity: number; note?: string }
   },
 ): Promise<any> {
-  return apiFetch(`/api/v1/stock/movements`, {
+  return apiFetch(`/api/v1/products/${productId}/batches`, {
     method: 'POST',
     token,
     body: JSON.stringify(data),
   })
+}
+
+function dateOnlyToUtcIso(dateString: string): string {
+  const [year, month, day] = dateString.split('-')
+  return new Date(parseInt(year), parseInt(month) - 1, parseInt(day)).toISOString().split('T')[0]
 }
 
 export function MovementsPage() {
@@ -91,21 +96,33 @@ export function MovementsPage() {
   const navGroups = useNavigation()
   const queryClient = useQueryClient()
 
-  const [type, setType] = useState('IN')
+  const [type, setType] = useState('')
   const [productId, setProductId] = useState('')
-  const [batchId, setBatchId] = useState('')
-  const [toLocationId, setToLocationId] = useState('')
-  const [toWarehouseId, setToWarehouseId] = useState('')
-  const [quantity, setQuantity] = useState('')
-  const [note, setNote] = useState('')
-
-  // UX helpers
   const [selectedStockKey, setSelectedStockKey] = useState('')
+  const [quantity, setQuantity] = useState('')
+  const [manufacturingDate, setManufacturingDate] = useState('')
+  const [expirationDate, setExpirationDate] = useState('')
+  const [moveAllStock, setMoveAllStock] = useState(true)
+  const [toWarehouseId, setToWarehouseId] = useState('')
+  const [toLocationId, setToLocationId] = useState('')
+  const [createBatchError, setCreateBatchError] = useState('')
+
+  // Estados para SALIDA (OUT)
+  const [outReasonType, setOutReasonType] = useState<'SALE' | 'DISCARD' | ''>('')
+  const [clientId, setClientId] = useState('')
+  const [discardReason, setDiscardReason] = useState('')
+  const [outError, setOutError] = useState('')
+
+  // Estados para AJUSTE (ADJUSTMENT)
+  const [adjustedQuantity, setAdjustedQuantity] = useState('')
+  const [adjustedManufacturingDate, setAdjustedManufacturingDate] = useState('')
+  const [adjustedExpirationDate, setAdjustedExpirationDate] = useState('')
+  const [adjustmentError, setAdjustmentError] = useState('')
 
   const productsQuery = useQuery({
     queryKey: ['products', 'forMovements'],
     queryFn: () => fetchProducts(auth.accessToken!),
-    enabled: !!auth.accessToken,
+    enabled: !!auth.accessToken && !!type,
   })
 
   const productBatchesQuery = useQuery({
@@ -117,321 +134,732 @@ export function MovementsPage() {
   const warehousesQuery = useQuery({
     queryKey: ['warehouses', 'forMovements'],
     queryFn: () => listWarehouses(auth.accessToken!),
-    enabled: !!auth.accessToken && (type === 'IN' || type === 'TRANSFER'),
+    enabled: !!auth.accessToken && (type === 'TRANSFER' || type === 'IN'),
   })
 
   const locationsQuery = useQuery({
     queryKey: ['warehouseLocations', 'forMovements', toWarehouseId],
     queryFn: () => listWarehouseLocations(auth.accessToken!, toWarehouseId),
-    enabled: !!auth.accessToken && !!toWarehouseId && (type === 'IN' || type === 'TRANSFER'),
+    enabled: !!auth.accessToken && !!toWarehouseId,
   })
 
-  const movementMutation = useMutation({
-    mutationFn: (data: any) => createMovement(auth.accessToken!, data),
+  const clientsQuery = useQuery({
+    queryKey: ['clients', 'forMovements'],
+    queryFn: () => listClients(auth.accessToken!),
+    enabled: !!auth.accessToken && (type === 'OUT' && outReasonType === 'SALE'),
+  })
+
+  const batchMutation = useMutation({
+    mutationFn: (data: {
+      batchNumber?: string
+      expiresAt?: string
+      manufacturingDate?: string
+      status: string
+      initialStock?: { warehouseId: string; quantity: number; note?: string }
+    }) => createBatch(auth.accessToken!, productId, data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['balances'] })
-      alert('Movimiento creado exitosamente')
-      // Reset form
-      setProductId('')
-      setBatchId('')
-      setToLocationId('')
-      setToWarehouseId('')
       setQuantity('')
-      setNote('')
-      setSelectedStockKey('')
+      setManufacturingDate('')
+      setExpirationDate('')
+      setCreateBatchError('')
+      queryClient.invalidateQueries({ queryKey: ['productBatches', 'forMovements', productId] })
+      alert('Lote creado exitosamente')
+    },
+    onError: (error: any) => {
+      setCreateBatchError(error instanceof Error ? error.message : 'Error al crear lote')
     },
   })
 
   const handleTypeChange = (nextType: string) => {
     setType(nextType)
-    // Reset fields that depend on the movement type
-    setBatchId('')
-    setToLocationId('')
-    setToWarehouseId('')
+    setProductId('')
     setSelectedStockKey('')
+    setQuantity('')
+    setManufacturingDate('')
+    setExpirationDate('')
+    setToWarehouseId('')
+    setToLocationId('')
+    setCreateBatchError('')
+    setOutReasonType('')
+    setClientId('')
+    setDiscardReason('')
+    setOutError('')
+    setAdjustedQuantity('')
+    setAdjustedManufacturingDate('')
+    setAdjustedExpirationDate('')
+    setAdjustmentError('')
   }
 
   const handleProductChange = (nextProductId: string) => {
     setProductId(nextProductId)
-    setBatchId('')
-    setToLocationId('')
-    setToWarehouseId('')
     setSelectedStockKey('')
+    setQuantity('')
   }
 
-  // If there is only one active product, auto-select it so stock loads.
-  useEffect(() => {
-    if (productId) return
-    const activeProducts = (productsQuery.data?.items ?? []).filter((p) => p.isActive)
-    if (activeProducts.length === 1) {
-      handleProductChange(activeProducts[0]!.id)
-    }
-  }, [productsQuery.data, productId])
-
-  // If there is only one active warehouse (for IN/TRANSFER), auto-select it.
-  useEffect(() => {
-    if (!(type === 'IN' || type === 'TRANSFER')) return
-    if (toWarehouseId) return
-    const activeWarehouses = (warehousesQuery.data?.items ?? []).filter((w) => w.isActive)
-    if (activeWarehouses.length === 1) {
-      setToWarehouseId(activeWarehouses[0]!.id)
-    }
-  }, [type, warehousesQuery.data, toWarehouseId])
-
-  // If there is only one active destination location (for IN/TRANSFER), auto-select it.
-  useEffect(() => {
-    if (!(type === 'IN' || type === 'TRANSFER')) return
-    if (toLocationId) return
-    const activeLocations = (locationsQuery.data?.items ?? []).filter((l) => l.isActive)
-    if (activeLocations.length === 1) {
-      setToLocationId(activeLocations[0]!.id)
-    }
-  }, [type, locationsQuery.data, toLocationId])
-
-  const stockOptions = (() => {
-    const data = productBatchesQuery.data
-    if (!data?.hasStockRead) return [] as { value: string; label: string }[]
-
-    const opts: { value: string; label: string }[] = []
-    for (const b of data.items) {
-      for (const loc of b.locations ?? []) {
-        const qty = Number(loc.quantity ?? '0')
-        if (!Number.isFinite(qty) || qty <= 0) continue
-        const exp = b.expiresAt ? new Date(b.expiresAt).toLocaleDateString() : '-'
-        opts.push({
-          value: `${b.id}::${loc.locationId}`,
-          label: `${b.batchNumber} · Vence ${exp} · Qty ${loc.quantity} · ${loc.warehouseCode}/${loc.locationCode}`,
-        })
-      }
-    }
-    return opts
-  })()
-
+  // Obtener existencias por lote/ubicación para mostrar en tabla
   const stockRows = (() => {
     const data = productBatchesQuery.data
-    if (!data?.hasStockRead) return [] as Array<{
-      id: string
-      batchNumber: string
-      expiresAt: string | null
-      quantity: string
-      warehouseName: string
-      warehouseCode: string
-      locationCode: string
-    }>
+    if (!data?.hasStockRead) return []
 
-    const rows: Array<{
-      id: string
-      batchNumber: string
-      expiresAt: string | null
-      quantity: string
-      warehouseName: string
-      warehouseCode: string
-      locationCode: string
-    }> = []
-
-    for (const b of data.items) {
-      for (const loc of b.locations ?? []) {
+    const rows: any[] = []
+    for (const batch of data.items) {
+      for (const loc of batch.locations ?? []) {
         rows.push({
-          id: `${b.id}:${loc.locationId}`,
-          batchNumber: b.batchNumber,
-          expiresAt: b.expiresAt,
+          id: `${batch.id}::${loc.locationId}`,
+          batchNumber: batch.batchNumber,
+          manufacturingDate: batch.manufacturingDate ? new Date(batch.manufacturingDate).toLocaleDateString() : '-',
+          expiresAt: batch.expiresAt ? new Date(batch.expiresAt).toLocaleDateString() : '-',
           quantity: loc.quantity,
-          warehouseName: loc.warehouseName,
-          warehouseCode: loc.warehouseCode,
-          locationCode: loc.locationCode,
+          warehouse: `${loc.warehouseCode} - ${loc.warehouseName}`,
+          location: loc.locationCode,
+          batchId: batch.id,
+          locationId: loc.locationId,
         })
       }
     }
-
-    // Show positive stock first
-    rows.sort((a, b) => Number(b.quantity) - Number(a.quantity))
     return rows
   })()
 
-  const batchOptions = (() => {
-    const data = productBatchesQuery.data
-    if (!data) return [] as { value: string; label: string }[]
-    return data.items.map((b) => {
-      const exp = b.expiresAt ? new Date(b.expiresAt).toLocaleDateString() : '-'
-      return { value: b.id, label: `${b.batchNumber} · Vence ${exp}` }
-    })
+  // Calcular el próximo número de lote
+  const nextBatchNumber = (() => {
+    if (!productBatchesQuery.data?.items) return '001'
+    const batches = productBatchesQuery.data.items
+    if (batches.length === 0) return '001'
+    const numbers = batches
+      .map((b) => {
+        const match = b.batchNumber.match(/(\d+)$/)
+        return match ? parseInt(match[1], 10) : 0
+      })
+      .filter((n) => n > 0)
+    const maxNumber = Math.max(...numbers, 0)
+    return String(maxNumber + 1).padStart(3, '0')
   })()
 
-  const handleSubmit = (e: FormEvent) => {
+  const handleCreateBatch = (e: React.FormEvent) => {
     e.preventDefault()
+    setCreateBatchError('')
+
+    const qty = Number(quantity)
+    if (!Number.isFinite(qty) || qty <= 0) {
+      setCreateBatchError('Ingresá una cantidad válida (mayor a 0).')
+      return
+    }
+
+    if (!manufacturingDate) {
+      setCreateBatchError('Ingresá la fecha de elaboración.')
+      return
+    }
+
+    if (!expirationDate) {
+      setCreateBatchError('Ingresá la fecha de vencimiento.')
+      return
+    }
+
+    if (!toWarehouseId) {
+      setCreateBatchError('Seleccioná el almacén destino.')
+      return
+    }
+
+    if (!toLocationId) {
+      setCreateBatchError('Seleccioná la ubicación destino.')
+      return
+    }
 
     const payload: any = {
-      type,
-      productId,
-      quantity,
-      note: note || undefined,
+      status: 'RELEASED',
+      expiresAt: dateOnlyToUtcIso(expirationDate),
+      manufacturingDate: dateOnlyToUtcIso(manufacturingDate),
+      initialStock: {
+        warehouseId: toWarehouseId,
+        quantity: qty,
+      },
     }
 
-    if (type === 'IN') {
-      payload.batchId = batchId || undefined
-      payload.toLocationId = toLocationId || undefined
-    } else {
-      if (!selectedStockKey) return
-      const [bId, locId] = selectedStockKey.split('::')
-      if (!bId || !locId) return
-      payload.batchId = bId
-      payload.fromLocationId = locId
-
-      if (type === 'TRANSFER') {
-        payload.toLocationId = toLocationId || undefined
-      }
-    }
-
-    movementMutation.mutate(payload)
+    batchMutation.mutate(payload)
   }
 
   return (
     <MainLayout navGroups={navGroups}>
       <PageContainer title="🚚 Crear Movimiento de Stock">
         <div className="rounded-lg border border-slate-200 bg-white p-6 dark:border-slate-700 dark:bg-slate-900">
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form className="space-y-6">
+            {/* Selector de tipo - Siempre visible */}
             <Select
               label="Tipo de Movimiento"
               value={type}
               onChange={(e) => handleTypeChange(e.target.value)}
               options={[
-                { value: 'IN', label: 'Entrada (IN)' },
-                { value: 'OUT', label: 'Salida (OUT)' },
-                { value: 'TRANSFER', label: 'Transferencia (TRANSFER)' },
-                { value: 'ADJUSTMENT', label: 'Ajuste (ADJUSTMENT)' },
+                { value: '', label: 'Selecciona tipo de movimiento' },
+                { value: 'IN', label: '📥 Entrada (creación de nuevo lote)' },
+                { value: 'TRANSFER', label: '🔄 Transferencia (cambiar ubicación de existencias)' },
+                { value: 'OUT', label: '📤 Salida (venta o baja de existencias)' },
+                { value: 'ADJUSTMENT', label: '⚖️ Ajuste (modificar lote)' },
               ]}
-              disabled={movementMutation.isPending}
-            />
-            <Select
-              label="Producto"
-              value={productId}
-              onChange={(e) => handleProductChange(e.target.value)}
-              options={(productsQuery.data?.items ?? [])
-                .filter((p) => p.isActive)
-                .map((p) => ({ value: p.id, label: `${p.sku} - ${p.name}` }))}
-              disabled={movementMutation.isPending || productsQuery.isLoading}
             />
 
-            {!!productId && (
-              <div className="rounded-md border border-slate-200 p-3 dark:border-slate-700">
-                <div className="mb-2 text-sm font-medium text-slate-900 dark:text-slate-100">Existencias</div>
+            {/* ENTRADA */}
+            {type === 'IN' && (
+              <div className="space-y-4 border-t border-slate-200 pt-6 dark:border-slate-700">
+                <h3 className="font-semibold text-slate-900 dark:text-slate-100">Crear Nuevo Lote</h3>
 
-                {productBatchesQuery.isLoading && <Loading />}
-                {productBatchesQuery.error && (
-                  <ErrorState
-                    message={productBatchesQuery.error instanceof Error ? productBatchesQuery.error.message : 'Error cargando existencias'}
-                    retry={productBatchesQuery.refetch}
-                  />
-                )}
+                {/* Selector de producto */}
+                <Select
+                  label="Producto"
+                  value={productId}
+                  onChange={(e) => handleProductChange(e.target.value)}
+                  options={[
+                    { value: '', label: 'Selecciona un producto' },
+                    ...(productsQuery.data?.items ?? [])
+                      .filter((p) => p.isActive)
+                      .map((p) => ({ value: p.id, label: `${p.sku} - ${p.name}` })),
+                  ]}
+                  disabled={productsQuery.isLoading}
+                />
 
-                {productBatchesQuery.data && !productBatchesQuery.data.hasStockRead && (
-                  <div className="text-sm text-slate-600 dark:text-slate-400">
-                    No tenés permiso `stock:read`, por eso no se pueden listar existencias por lote.
+                {/* Mostrar existencias actuales si hay producto seleccionado */}
+                {productId && (
+                  <div className="rounded-md border border-blue-200 bg-blue-50 p-4 dark:border-blue-800 dark:bg-blue-900/20">
+                    <h4 className="mb-3 font-medium text-slate-900 dark:text-slate-100">Existencias Actuales</h4>
+                    {productBatchesQuery.isLoading && <Loading />}
+                    {productBatchesQuery.error && (
+                      <ErrorState
+                        message="Error cargando existencias"
+                        retry={productBatchesQuery.refetch}
+                      />
+                    )}
+                    {productBatchesQuery.data?.hasStockRead && stockRows.length > 0 && (
+                      <Table
+                        columns={[
+                          { header: 'Lote', accessor: (r) => r.batchNumber },
+                          { header: 'Elaboración', accessor: (r) => r.manufacturingDate },
+                          { header: 'Vence', accessor: (r) => r.expiresAt },
+                          { header: 'Cantidad', accessor: (r) => r.quantity },
+                          { header: 'Ubicación', accessor: (r) => `${r.warehouse} / ${r.location}` },
+                        ]}
+                        data={stockRows}
+                        keyExtractor={(r) => r.id}
+                      />
+                    )}
+                    {productBatchesQuery.data?.hasStockRead && stockRows.length === 0 && (
+                      <div className="text-sm text-slate-600 dark:text-slate-400">Sin existencias</div>
+                    )}
                   </div>
                 )}
 
-                {productBatchesQuery.data?.hasStockRead && stockRows.length === 0 && (
-                  <div className="text-sm text-slate-600 dark:text-slate-400">No hay existencias para este producto.</div>
-                )}
+                {/* Campos de entrada para nuevo lote */}
+                {productId && (
+                  <form onSubmit={handleCreateBatch} className="space-y-4">
+                    <div className="rounded-md border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/50">
+                      <p className="text-sm text-slate-600 dark:text-slate-400">
+                        Próximo lote: <span className="font-semibold text-slate-900 dark:text-slate-100">{nextBatchNumber}</span>
+                      </p>
+                    </div>
 
-                {productBatchesQuery.data?.hasStockRead && stockRows.length > 0 && (
-                  <Table
-                    columns={[
-                      { header: 'Lote', accessor: (r) => r.batchNumber },
-                      { header: 'Vence', accessor: (r) => (r.expiresAt ? new Date(r.expiresAt).toLocaleDateString() : '-') },
-                      { header: 'Cantidad', accessor: (r) => r.quantity },
-                      { header: 'Sucursal', accessor: (r) => `${r.warehouseCode} - ${r.warehouseName}` },
-                      { header: 'Ubicación', accessor: (r) => r.locationCode },
-                    ]}
-                    data={stockRows}
-                    keyExtractor={(r) => r.id}
-                  />
+                    <Input
+                      label="Cantidad"
+                      type="number"
+                      value={quantity}
+                      onChange={(e) => setQuantity(e.target.value)}
+                      placeholder="Cantidad a ingresar"
+                      required
+                      disabled={batchMutation.isPending}
+                    />
+
+                    <Input
+                      label="Fecha de Elaboración"
+                      type="date"
+                      value={manufacturingDate}
+                      onChange={(e) => setManufacturingDate(e.target.value)}
+                      required
+                      disabled={batchMutation.isPending}
+                    />
+
+                    <Input
+                      label="Fecha de Vencimiento"
+                      type="date"
+                      value={expirationDate}
+                      onChange={(e) => setExpirationDate(e.target.value)}
+                      required
+                      disabled={batchMutation.isPending}
+                    />
+
+                    <Select
+                      label="Almacén Destino"
+                      value={toWarehouseId}
+                      onChange={(e) => {
+                        setToWarehouseId(e.target.value)
+                        setToLocationId('')
+                      }}
+                      options={[
+                        { value: '', label: 'Selecciona almacén' },
+                        ...(warehousesQuery.data?.items ?? [])
+                          .filter((w) => w.isActive)
+                          .map((w) => ({ value: w.id, label: `${w.code} - ${w.name}` })),
+                      ]}
+                      disabled={warehousesQuery.isLoading || batchMutation.isPending}
+                    />
+
+                    {toWarehouseId && (
+                      <Select
+                        label="Ubicación Destino"
+                        value={toLocationId}
+                        onChange={(e) => setToLocationId(e.target.value)}
+                        options={[
+                          { value: '', label: 'Selecciona ubicación' },
+                          ...(locationsQuery.data?.items ?? [])
+                            .filter((l) => l.isActive)
+                            .map((l) => ({ value: l.id, label: l.code })),
+                        ]}
+                        disabled={locationsQuery.isLoading || batchMutation.isPending}
+                      />
+                    )}
+
+                    {createBatchError && (
+                      <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-200">
+                        {createBatchError}
+                      </div>
+                    )}
+
+                    <Button type="submit" className="w-full" loading={batchMutation.isPending}>
+                      Crear Lote
+                    </Button>
+                  </form>
                 )}
               </div>
             )}
 
-            {type === 'IN' && (
-              <Select
-                label="Lote"
-                value={batchId}
-                onChange={(e) => setBatchId(e.target.value)}
-                options={batchOptions}
-                disabled={movementMutation.isPending || productBatchesQuery.isLoading || !productId}
-              />
-            )}
+            {/* TRANSFERENCIA */}
+            {type === 'TRANSFER' && (
+              <div className="space-y-4 border-t border-slate-200 pt-6 dark:border-slate-700">
+                <h3 className="font-semibold text-slate-900 dark:text-slate-100">Transferir Existencias</h3>
 
-            {(type === 'OUT' || type === 'TRANSFER' || type === 'ADJUSTMENT') && (
-              <Select
-                label="Existencias (lote / sucursal)"
-                value={selectedStockKey}
-                onChange={(e) => {
-                  const key = e.target.value
-                  setSelectedStockKey(key)
-                  const bId = key.split('::')[0] ?? ''
-                  setBatchId(bId)
-                }}
-                options={stockOptions}
-                disabled={
-                  movementMutation.isPending ||
-                  productBatchesQuery.isLoading ||
-                  !productId ||
-                  !productBatchesQuery.data?.hasStockRead
-                }
-              />
-            )}
-
-            {(type === 'IN' || type === 'TRANSFER') && (
-              <>
+                {/* Selector de producto */}
                 <Select
-                  label="Sucursal/Almacén destino"
-                  value={toWarehouseId}
-                  onChange={(e) => {
-                    setToWarehouseId(e.target.value)
-                    setToLocationId('')
-                  }}
-                  options={(warehousesQuery.data?.items ?? [])
-                    .filter((w) => w.isActive)
-                    .map((w) => ({ value: w.id, label: `${w.code} - ${w.name}` }))}
-                  disabled={movementMutation.isPending || warehousesQuery.isLoading}
+                  label="Producto"
+                  value={productId}
+                  onChange={(e) => handleProductChange(e.target.value)}
+                  options={[
+                    { value: '', label: 'Selecciona un producto' },
+                    ...(productsQuery.data?.items ?? [])
+                      .filter((p) => p.isActive)
+                      .map((p) => ({ value: p.id, label: `${p.sku} - ${p.name}` })),
+                  ]}
+                  disabled={productsQuery.isLoading}
                 />
-                <Select
-                  label="Ubicación destino"
-                  value={toLocationId}
-                  onChange={(e) => setToLocationId(e.target.value)}
-                  options={(locationsQuery.data?.items ?? [])
-                    .filter((l) => l.isActive)
-                    .map((l) => ({ value: l.id, label: l.code }))}
-                  disabled={movementMutation.isPending || !toWarehouseId || locationsQuery.isLoading}
-                />
-              </>
+
+                {/* Tabla de existencias con radio button */}
+                {productId && (
+                  <div className="rounded-md border border-slate-200 p-4 dark:border-slate-700">
+                    <h4 className="mb-3 font-medium text-slate-900 dark:text-slate-100">Seleccionar Lote/Ubicación</h4>
+
+                    {productBatchesQuery.isLoading && <Loading />}
+                    {productBatchesQuery.error && (
+                      <ErrorState
+                        message="Error cargando existencias"
+                        retry={productBatchesQuery.refetch}
+                      />
+                    )}
+
+                    {productBatchesQuery.data?.hasStockRead && stockRows.length > 0 && (
+                      <Table
+                        columns={[
+                          {
+                            header: 'Seleccionar',
+                            accessor: (r) => (
+                              <input
+                                type="radio"
+                                name="stockSelection"
+                                value={r.id}
+                                checked={selectedStockKey === r.id}
+                                onChange={(e) => setSelectedStockKey(e.target.value)}
+                              />
+                            ),
+                            className: 'w-16',
+                          },
+                          { header: 'Lote', accessor: (r) => r.batchNumber },
+                          { header: 'Elaboración', accessor: (r) => r.manufacturingDate },
+                          { header: 'Vence', accessor: (r) => r.expiresAt },
+                          { header: 'Cantidad', accessor: (r) => r.quantity },
+                          { header: 'Ubicación', accessor: (r) => `${r.warehouse} / ${r.location}` },
+                        ]}
+                        data={stockRows}
+                        keyExtractor={(r) => r.id}
+                      />
+                    )}
+
+                    {productBatchesQuery.data?.hasStockRead && stockRows.length === 0 && (
+                      <div className="text-sm text-slate-600 dark:text-slate-400">Sin existencias disponibles</div>
+                    )}
+                  </div>
+                )}
+
+                {/* Opciones de transferencia */}
+                {selectedStockKey && (
+                  <div className="space-y-4 rounded-md border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/50">
+                    <div>
+                      <label className="mb-2 block text-sm font-medium text-slate-900 dark:text-slate-100">
+                        ¿Mover todo el lote?
+                      </label>
+                      <div className="flex gap-4">
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="radio"
+                            checked={moveAllStock}
+                            onChange={() => setMoveAllStock(true)}
+                          />
+                          <span className="text-sm text-slate-700 dark:text-slate-300">Sí, todo el lote</span>
+                        </label>
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="radio"
+                            checked={!moveAllStock}
+                            onChange={() => setMoveAllStock(false)}
+                          />
+                          <span className="text-sm text-slate-700 dark:text-slate-300">No, cantidad específica</span>
+                        </label>
+                      </div>
+                    </div>
+
+                    {!moveAllStock && (
+                      <Input
+                        label="Cantidad a Transferir"
+                        type="number"
+                        value={quantity}
+                        onChange={(e) => setQuantity(e.target.value)}
+                        placeholder="Cantidad"
+                        required
+                      />
+                    )}
+
+                    <Select
+                      label="Almacén Destino"
+                      value={toWarehouseId}
+                      onChange={(e) => {
+                        setToWarehouseId(e.target.value)
+                        setToLocationId('')
+                      }}
+                      options={[
+                        { value: '', label: 'Selecciona almacén' },
+                        ...(warehousesQuery.data?.items ?? [])
+                          .filter((w) => w.isActive)
+                          .map((w) => ({ value: w.id, label: `${w.code} - ${w.name}` })),
+                      ]}
+                      disabled={warehousesQuery.isLoading}
+                    />
+
+                    {toWarehouseId && (
+                      <Select
+                        label="Ubicación Destino"
+                        value={toLocationId}
+                        onChange={(e) => setToLocationId(e.target.value)}
+                        options={[
+                          { value: '', label: 'Selecciona ubicación' },
+                          ...(locationsQuery.data?.items ?? [])
+                            .filter((l) => l.isActive)
+                            .map((l) => ({ value: l.id, label: l.code })),
+                        ]}
+                        disabled={locationsQuery.isLoading}
+                      />
+                    )}
+
+                    {toLocationId && (
+                      <Button type="button" className="w-full">
+                        Realizar Transferencia
+                      </Button>
+                    )}
+                  </div>
+                )}
+              </div>
             )}
 
-            <Input
-              label="Cantidad"
-              type="number"
-              value={quantity}
-              onChange={(e) => setQuantity(e.target.value)}
-              required
-              disabled={movementMutation.isPending}
-              placeholder="0"
-            />
-            <Input
-              label="Nota (opcional)"
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              disabled={movementMutation.isPending}
-              placeholder="Descripción del movimiento"
-            />
-            <div className="flex gap-2">
-              <Button type="submit" loading={movementMutation.isPending}>
-                Crear Movimiento
-              </Button>
-              {movementMutation.error && (
-                <span className="text-sm text-red-600">
-                  {movementMutation.error instanceof Error ? movementMutation.error.message : 'Error'}
-                </span>
-              )}
-            </div>
+            {/* SALIDA */}
+            {type === 'OUT' && (
+              <div className="space-y-4 border-t border-slate-200 pt-6 dark:border-slate-700">
+                <h3 className="font-semibold text-slate-900 dark:text-slate-100">Registrar Salida de Stock</h3>
+
+                {/* Selector de producto */}
+                <Select
+                  label="Producto"
+                  value={productId}
+                  onChange={(e) => handleProductChange(e.target.value)}
+                  options={[
+                    { value: '', label: 'Selecciona un producto' },
+                    ...(productsQuery.data?.items ?? [])
+                      .filter((p) => p.isActive)
+                      .map((p) => ({ value: p.id, label: `${p.sku} - ${p.name}` })),
+                  ]}
+                  disabled={productsQuery.isLoading}
+                />
+
+                {/* Tabla de lotes con radio button */}
+                {productId && (
+                  <div className="rounded-md border border-slate-200 p-4 dark:border-slate-700">
+                    <h4 className="mb-3 font-medium text-slate-900 dark:text-slate-100">Seleccionar Lote/Ubicación</h4>
+
+                    {productBatchesQuery.isLoading && <Loading />}
+                    {productBatchesQuery.error && (
+                      <ErrorState
+                        message="Error cargando existencias"
+                        retry={productBatchesQuery.refetch}
+                      />
+                    )}
+
+                    {productBatchesQuery.data?.hasStockRead && stockRows.length > 0 && (
+                      <Table
+                        columns={[
+                          {
+                            header: 'Seleccionar',
+                            accessor: (r) => (
+                              <input
+                                type="radio"
+                                name="stockSelectionOut"
+                                value={r.id}
+                                checked={selectedStockKey === r.id}
+                                onChange={(e) => setSelectedStockKey(e.target.value)}
+                              />
+                            ),
+                            className: 'w-16',
+                          },
+                          { header: 'Lote', accessor: (r) => r.batchNumber },
+                          { header: 'Elaboración', accessor: (r) => r.manufacturingDate },
+                          { header: 'Vence', accessor: (r) => r.expiresAt },
+                          { header: 'Cantidad', accessor: (r) => r.quantity },
+                          { header: 'Ubicación', accessor: (r) => `${r.warehouse} / ${r.location}` },
+                        ]}
+                        data={stockRows}
+                        keyExtractor={(r) => r.id}
+                      />
+                    )}
+
+                    {productBatchesQuery.data?.hasStockRead && stockRows.length === 0 && (
+                      <div className="text-sm text-slate-600 dark:text-slate-400">Sin existencias disponibles</div>
+                    )}
+                  </div>
+                )}
+
+                {/* Opciones de salida */}
+                {selectedStockKey && (
+                  <div className="space-y-4 rounded-md border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/50">
+                    <div>
+                      <label className="mb-2 block text-sm font-medium text-slate-900 dark:text-slate-100">
+                        ¿Sacar todo el lote?
+                      </label>
+                      <div className="flex gap-4">
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="radio"
+                            checked={moveAllStock}
+                            onChange={() => setMoveAllStock(true)}
+                          />
+                          <span className="text-sm text-slate-700 dark:text-slate-300">Sí, todo el lote</span>
+                        </label>
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="radio"
+                            checked={!moveAllStock}
+                            onChange={() => setMoveAllStock(false)}
+                          />
+                          <span className="text-sm text-slate-700 dark:text-slate-300">No, cantidad específica</span>
+                        </label>
+                      </div>
+                    </div>
+
+                    {!moveAllStock && (
+                      <Input
+                        label="Cantidad a Sacar"
+                        type="number"
+                        value={quantity}
+                        onChange={(e) => setQuantity(e.target.value)}
+                        placeholder="Cantidad"
+                        required
+                      />
+                    )}
+
+                    <div>
+                      <label className="mb-2 block text-sm font-medium text-slate-900 dark:text-slate-100">
+                        Tipo de Salida
+                      </label>
+                      <div className="flex gap-4">
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="radio"
+                            value="SALE"
+                            checked={outReasonType === 'SALE'}
+                            onChange={(e) => {
+                              setOutReasonType(e.target.value as 'SALE' | 'DISCARD')
+                              setDiscardReason('')
+                            }}
+                          />
+                          <span className="text-sm text-slate-700 dark:text-slate-300">Venta</span>
+                        </label>
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="radio"
+                            value="DISCARD"
+                            checked={outReasonType === 'DISCARD'}
+                            onChange={(e) => {
+                              setOutReasonType(e.target.value as 'SALE' | 'DISCARD')
+                              setClientId('')
+                            }}
+                          />
+                          <span className="text-sm text-slate-700 dark:text-slate-300">Baja</span>
+                        </label>
+                      </div>
+                    </div>
+
+                    {outReasonType === 'SALE' && (
+                      <Select
+                        label="Cliente"
+                        value={clientId}
+                        onChange={(e) => setClientId(e.target.value)}
+                        options={[
+                          { value: '', label: 'Selecciona cliente' },
+                          ...(clientsQuery.data?.items ?? [])
+                            .filter((c) => c.isActive)
+                            .map((c) => ({ value: c.id, label: c.commercialName || c.fiscalName })),
+                        ]}
+                        disabled={clientsQuery.isLoading}
+                      />
+                    )}
+
+                    {outReasonType === 'DISCARD' && (
+                      <Input
+                        label="Motivo de la Baja"
+                        type="text"
+                        value={discardReason}
+                        onChange={(e) => setDiscardReason(e.target.value)}
+                        placeholder="Ej: Producto dañado, expirado, etc."
+                        required
+                      />
+                    )}
+
+                    {outError && (
+                      <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-200">
+                        {outError}
+                      </div>
+                    )}
+
+                    {((outReasonType === 'SALE' && clientId) || (outReasonType === 'DISCARD' && discardReason)) && (
+                      <Button type="button" className="w-full">
+                        Registrar Salida
+                      </Button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* AJUSTE */}
+            {type === 'ADJUSTMENT' && (
+              <div className="space-y-4 border-t border-slate-200 pt-6 dark:border-slate-700">
+                <h3 className="font-semibold text-slate-900 dark:text-slate-100">Ajustar Lote</h3>
+
+                {/* Selector de producto */}
+                <Select
+                  label="Producto"
+                  value={productId}
+                  onChange={(e) => handleProductChange(e.target.value)}
+                  options={[
+                    { value: '', label: 'Selecciona un producto' },
+                    ...(productsQuery.data?.items ?? [])
+                      .filter((p) => p.isActive)
+                      .map((p) => ({ value: p.id, label: `${p.sku} - ${p.name}` })),
+                  ]}
+                  disabled={productsQuery.isLoading}
+                />
+
+                {/* Tabla de lotes con radio button */}
+                {productId && (
+                  <div className="rounded-md border border-slate-200 p-4 dark:border-slate-700">
+                    <h4 className="mb-3 font-medium text-slate-900 dark:text-slate-100">Seleccionar Lote</h4>
+
+                    {productBatchesQuery.isLoading && <Loading />}
+                    {productBatchesQuery.error && (
+                      <ErrorState
+                        message="Error cargando lotes"
+                        retry={productBatchesQuery.refetch}
+                      />
+                    )}
+
+                    {productBatchesQuery.data?.hasStockRead && stockRows.length > 0 && (
+                      <Table
+                        columns={[
+                          {
+                            header: 'Seleccionar',
+                            accessor: (r) => (
+                              <input
+                                type="radio"
+                                name="stockSelectionAdj"
+                                value={r.id}
+                                checked={selectedStockKey === r.id}
+                                onChange={(e) => {
+                                  setSelectedStockKey(e.target.value)
+                                  setAdjustedQuantity(r.quantity)
+                                  const mfgDate = r.manufacturingDate ? new Date(r.manufacturingDate).toISOString().split('T')[0] : ''
+                                  const expDate = r.expiresAt ? new Date(r.expiresAt).toISOString().split('T')[0] : ''
+                                  setAdjustedManufacturingDate(mfgDate)
+                                  setAdjustedExpirationDate(expDate)
+                                }}
+                              />
+                            ),
+                            className: 'w-16',
+                          },
+                          { header: 'Lote', accessor: (r) => r.batchNumber },
+                          { header: 'Elaboración', accessor: (r) => r.manufacturingDate },
+                          { header: 'Vence', accessor: (r) => r.expiresAt },
+                          { header: 'Cantidad', accessor: (r) => r.quantity },
+                          { header: 'Ubicación', accessor: (r) => `${r.warehouse} / ${r.location}` },
+                        ]}
+                        data={stockRows}
+                        keyExtractor={(r) => r.id}
+                      />
+                    )}
+
+                    {productBatchesQuery.data?.hasStockRead && stockRows.length === 0 && (
+                      <div className="text-sm text-slate-600 dark:text-slate-400">Sin lotes disponibles</div>
+                    )}
+                  </div>
+                )}
+
+                {/* Formulario de ajuste */}
+                {selectedStockKey && (
+                  <form className="space-y-4 rounded-md border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/50">
+                    <Input
+                      label="Existencias"
+                      type="number"
+                      value={adjustedQuantity}
+                      onChange={(e) => setAdjustedQuantity(e.target.value)}
+                      placeholder="Nueva cantidad"
+                      required
+                    />
+
+                    <Input
+                      label="Fecha de Elaboración"
+                      type="date"
+                      value={adjustedManufacturingDate}
+                      onChange={(e) => setAdjustedManufacturingDate(e.target.value)}
+                    />
+
+                    <Input
+                      label="Fecha de Vencimiento"
+                      type="date"
+                      value={adjustedExpirationDate}
+                      onChange={(e) => setAdjustedExpirationDate(e.target.value)}
+                    />
+
+                    {adjustmentError && (
+                      <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-200">
+                        {adjustmentError}
+                      </div>
+                    )}
+
+                    <Button type="button" className="w-full">
+                      Guardar Ajuste
+                    </Button>
+                  </form>
+                )}
+              </div>
+            )}
           </form>
         </div>
       </PageContainer>

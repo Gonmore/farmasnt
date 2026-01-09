@@ -15,6 +15,7 @@ import {
   ExpiryPage,
   InventoryPage,
   CustomersPage,
+  CustomerDetailPage,
   OrdersPage,
   SalesReportsPage,
   StockReportsPage,
@@ -139,6 +140,22 @@ export function AppRouter() {
           element={
             <ProtectedRoute>
               <CustomersPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/sales/customers/new"
+          element={
+            <ProtectedRoute>
+              <CustomerDetailPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/sales/customers/:customerId"
+          element={
+            <ProtectedRoute>
+              <CustomerDetailPage />
             </ProtectedRoute>
           }
         />
