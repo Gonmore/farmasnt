@@ -62,6 +62,11 @@ const batchCreateSchema = z.object({
     .optional(),
 })
 
+const batchUpdateStatusSchema = z.object({
+  status: z.enum(['RELEASED', 'QUARANTINE']),
+  version: z.number().int().min(1),
+})
+
 const listBatchesQuerySchema = z.object({
   take: z.coerce.number().int().min(1).max(100).default(50),
 })
@@ -828,6 +833,55 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
         }
         throw e
       }
+    },
+  )
+
+  // Update batch status
+  app.patch(
+    '/api/v1/products/:productId/batches/:batchId/status',
+    {
+      preHandler: [requireAuth(), requirePermission(Permissions.CatalogWrite)],
+    },
+    async (request, reply) => {
+      const productId = (request.params as any).productId as string
+      const batchId = (request.params as any).batchId as string
+      const parsed = batchUpdateStatusSchema.safeParse(request.body)
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid request', issues: parsed.error.issues })
+
+      const tenantId = request.auth!.tenantId
+      const userId = request.auth!.userId
+
+      const batch = await db.batch.findFirst({
+        where: { id: batchId, productId, tenantId },
+        select: { id: true, batchNumber: true, status: true, version: true },
+      })
+      if (!batch) return reply.status(404).send({ message: 'Batch not found' })
+
+      if (batch.version !== parsed.data.version) {
+        return reply.status(409).send({ message: 'Version conflict' })
+      }
+
+      const updated = await db.batch.update({
+        where: { id: batchId },
+        data: {
+          status: parsed.data.status,
+          version: { increment: 1 },
+          updatedAt: new Date(),
+        },
+        select: { id: true, batchNumber: true, status: true, version: true, updatedAt: true },
+      })
+
+      await audit.append({
+        tenantId,
+        actorUserId: userId,
+        action: 'batch.update_status',
+        entityType: 'Batch',
+        entityId: batchId,
+        before: { status: batch.status, version: batch.version },
+        after: { status: updated.status, version: updated.version },
+      })
+
+      return reply.send(updated)
     },
   )
 }

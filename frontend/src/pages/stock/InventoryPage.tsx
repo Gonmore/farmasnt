@@ -25,7 +25,7 @@ type BalanceExpandedItem = {
   batchId: string | null
   locationId: string
   product: { sku: string; name: string }
-  batch: { batchNumber: string; expiresAt: string | null; status: string } | null
+  batch: { batchNumber: string; expiresAt: string | null; status: string; version: number } | null
   location: {
     id: string
     code: string
@@ -61,6 +61,8 @@ type ProductGroup = {
       batchId: string | null
       batchNumber: string
       expiresAt: string | null
+      status: string
+      version: number
       quantity: number
       locationId: string
       locationCode: string
@@ -82,6 +84,8 @@ type WarehouseGroup = {
       batchId: string | null
       batchNumber: string
       expiresAt: string | null
+      status: string
+      version: number
       quantity: number
       locationId: string
       locationCode: string
@@ -102,6 +106,20 @@ async function listWarehouses(token: string): Promise<{ items: WarehouseListItem
 async function listWarehouseLocations(token: string, warehouseId: string): Promise<{ items: LocationListItem[] }> {
   const params = new URLSearchParams({ take: '100' })
   return apiFetch(`/api/v1/warehouses/${warehouseId}/locations?${params}`, { token })
+}
+
+async function updateBatchStatus(
+  token: string,
+  productId: string,
+  batchId: string,
+  status: string,
+  version: number,
+): Promise<any> {
+  return apiFetch(`/api/v1/products/${productId}/batches/${batchId}/status`, {
+    token,
+    method: 'PATCH',
+    body: JSON.stringify({ status, version }),
+  })
 }
 
 async function createTransferMovement(
@@ -146,6 +164,13 @@ function getExpiryColors(status: ExpiryStatus): { bg: string; border: string; te
   }
 }
 
+function getBatchStatusDisplay(status: string): { text: string; color: string } {
+  if (status === 'QUARANTINE') {
+    return { text: 'En cuarentena', color: 'text-orange-600 dark:text-orange-400' }
+  }
+  return { text: 'Liberado', color: 'text-green-600 dark:text-green-400' }
+}
+
 export function InventoryPage() {
   const auth = useAuth()
   const navGroups = useNavigation()
@@ -169,6 +194,16 @@ export function InventoryPage() {
   const [moveToWarehouseId, setMoveToWarehouseId] = useState('')
   const [moveToLocationId, setMoveToLocationId] = useState('')
   const [moveError, setMoveError] = useState('')
+
+  const [statusChangeItem, setStatusChangeItem] = useState<{
+    productId: string
+    productName: string
+    batchId: string
+    batchNumber: string
+    currentStatus: string
+    version: number
+  } | null>(null)
+  const [newStatus, setNewStatus] = useState('RELEASED')
 
   const balancesQuery = useQuery({
     queryKey: ['balances', 'inventory'],
@@ -220,6 +255,30 @@ export function InventoryPage() {
     },
   })
 
+  const statusChangeMutation = useMutation({
+    mutationFn: async () => {
+      if (!statusChangeItem) throw new Error('Seleccioná un lote para cambiar estado')
+
+      return updateBatchStatus(
+        auth.accessToken!,
+        statusChangeItem.productId,
+        statusChangeItem.batchId,
+        newStatus,
+        statusChangeItem.version,
+      )
+    },
+    onSuccess: async () => {
+      await balancesQuery.refetch()
+      queryClient.invalidateQueries({ queryKey: ['balances'] })
+      setStatusChangeItem(null)
+      setNewStatus('RELEASED')
+      alert('Estado del lote actualizado')
+    },
+    onError: (err: any) => {
+      alert(err instanceof Error ? err.message : 'Error al cambiar estado')
+    },
+  })
+
   const productGroups = useMemo<ProductGroup[]>(() => {
     if (!balancesQuery.data?.items) return []
 
@@ -260,6 +319,8 @@ export function InventoryPage() {
         batchId: item.batchId,
         batchNumber: item.batch?.batchNumber ?? '-',
         expiresAt: item.batch?.expiresAt ?? null,
+        status: item.batch?.status ?? 'RELEASED',
+        version: item.batch?.version ?? 1,
         quantity: qty,
         locationId: item.locationId,
         locationCode: item.location.code,
@@ -309,6 +370,8 @@ export function InventoryPage() {
         batchId: item.batchId,
         batchNumber: item.batch?.batchNumber ?? '-',
         expiresAt: item.batch?.expiresAt ?? null,
+        status: item.batch?.status ?? 'RELEASED',
+        version: item.batch?.version ?? 1,
         quantity: qty,
         locationId: item.locationId,
         locationCode: item.location.code,
@@ -427,28 +490,57 @@ export function InventoryPage() {
                                   )
                                 },
                               },
+                              {
+                                header: '🔒 Estado',
+                                accessor: (b) => {
+                                  const statusDisplay = getBatchStatusDisplay(b.status)
+                                  return (
+                                    <span className={`text-sm font-medium ${statusDisplay.color}`}>
+                                      {statusDisplay.text}
+                                    </span>
+                                  )
+                                },
+                              },
                               { header: '📍 Ubicación', accessor: (b) => b.locationCode },
                               { header: '📊 Cantidad', accessor: (b) => b.quantity },
                               {
                                 header: '⚡ Acción',
                                 accessor: (b) => (
-                                  <button
-                                    onClick={() =>
-                                      setMovingItem({
-                                        productId: pg.productId,
-                                        productName: `${pg.sku} - ${pg.name}`,
-                                        batchId: b.batchId,
-                                        batchNumber: b.batchNumber,
-                                        fromLocationId: b.locationId,
-                                        fromWarehouseCode: wh.warehouseCode,
-                                        fromLocationCode: b.locationCode,
-                                        availableQty: String(b.quantity),
-                                      })
-                                    }
-                                    className="rounded bg-[var(--pf-primary)] px-3 py-1 text-sm text-white hover:opacity-80"
-                                  >
-                                    🚚 Mover
-                                  </button>
+                                  <div className="flex gap-2">
+                                    <button
+                                      onClick={() =>
+                                        setMovingItem({
+                                          productId: pg.productId,
+                                          productName: `${pg.sku} - ${pg.name}`,
+                                          batchId: b.batchId,
+                                          batchNumber: b.batchNumber,
+                                          fromLocationId: b.locationId,
+                                          fromWarehouseCode: wh.warehouseCode,
+                                          fromLocationCode: b.locationCode,
+                                          availableQty: String(b.quantity),
+                                        })
+                                      }
+                                      className="rounded bg-[var(--pf-primary)] px-3 py-1 text-sm text-white hover:opacity-80"
+                                    >
+                                      🚚 Mover
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        setStatusChangeItem({
+                                          productId: pg.productId,
+                                          productName: `${pg.sku} - ${pg.name}`,
+                                          batchId: b.batchId!,
+                                          batchNumber: b.batchNumber,
+                                          currentStatus: b.status,
+                                          version: b.version,
+                                        })
+                                        setNewStatus(b.status === 'QUARANTINE' ? 'RELEASED' : 'QUARANTINE')
+                                      }}
+                                      className="rounded bg-orange-500 px-3 py-1 text-sm text-white hover:opacity-80"
+                                    >
+                                      🔄 Estado
+                                    </button>
+                                  </div>
                                 ),
                               },
                             ]}
@@ -531,28 +623,57 @@ export function InventoryPage() {
                                   )
                                 },
                               },
+                              {
+                                header: '🔒 Estado',
+                                accessor: (b) => {
+                                  const statusDisplay = getBatchStatusDisplay(b.status)
+                                  return (
+                                    <span className={`text-sm font-medium ${statusDisplay.color}`}>
+                                      {statusDisplay.text}
+                                    </span>
+                                  )
+                                },
+                              },
                               { header: '📍 Ubicación', accessor: (b) => b.locationCode },
                               { header: '📊 Cantidad', accessor: (b) => b.quantity },
                               {
                                 header: '⚡ Acción',
                                 accessor: (b) => (
-                                  <button
-                                    onClick={() =>
-                                      setMovingItem({
-                                        productId: prod.productId,
-                                        productName: `${prod.sku} - ${prod.name}`,
-                                        batchId: b.batchId,
-                                        batchNumber: b.batchNumber,
-                                        fromLocationId: b.locationId,
-                                        fromWarehouseCode: wg.warehouseCode,
-                                        fromLocationCode: b.locationCode,
-                                        availableQty: String(b.quantity),
-                                      })
-                                    }
-                                    className="rounded bg-[var(--pf-primary)] px-3 py-1 text-sm text-white hover:opacity-80"
-                                  >
-                                    🚚 Mover
-                                  </button>
+                                  <div className="flex gap-2">
+                                    <button
+                                      onClick={() =>
+                                        setMovingItem({
+                                          productId: prod.productId,
+                                          productName: `${prod.sku} - ${prod.name}`,
+                                          batchId: b.batchId,
+                                          batchNumber: b.batchNumber,
+                                          fromLocationId: b.locationId,
+                                          fromWarehouseCode: wg.warehouseCode,
+                                          fromLocationCode: b.locationCode,
+                                          availableQty: String(b.quantity),
+                                        })
+                                      }
+                                      className="rounded bg-[var(--pf-primary)] px-3 py-1 text-sm text-white hover:opacity-80"
+                                    >
+                                      🚚 Mover
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        setStatusChangeItem({
+                                          productId: prod.productId,
+                                          productName: `${prod.sku} - ${prod.name}`,
+                                          batchId: b.batchId!,
+                                          batchNumber: b.batchNumber,
+                                          currentStatus: b.status,
+                                          version: b.version,
+                                        })
+                                        setNewStatus(b.status === 'QUARANTINE' ? 'RELEASED' : 'QUARANTINE')
+                                      }}
+                                      className="rounded bg-orange-500 px-3 py-1 text-sm text-white hover:opacity-80"
+                                    >
+                                      🔄 Estado
+                                    </button>
+                                  </div>
                                 ),
                               },
                             ]}
@@ -580,7 +701,7 @@ export function InventoryPage() {
           setMoveToLocationId('')
           setMoveError('')
         }}
-        title="🚚 Mover Existencia"
+        title="Mover Existencias"
         maxWidth="lg"
       >
         {movingItem && (
@@ -662,6 +783,70 @@ export function InventoryPage() {
               </Button>
               <Button onClick={() => moveMutation.mutate()} disabled={moveMutation.isPending}>
                 {moveMutation.isPending ? '⏳ Moviendo...' : '✅ Confirmar Movimiento'}
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* Modal Cambiar Estado */}
+      <Modal
+        isOpen={!!statusChangeItem}
+        onClose={() => {
+          setStatusChangeItem(null)
+          setNewStatus('RELEASED')
+        }}
+        title="Cambiar Estado del Lote"
+      >
+        {statusChangeItem && (
+          <div className="space-y-4">
+            <div>
+              <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
+                🔄 Cambiar Estado del Lote
+              </h3>
+              <div className="mt-2 text-sm text-slate-600 dark:text-slate-400">
+                <div>
+                  <strong>Producto:</strong> {statusChangeItem.productName}
+                </div>
+                <div>
+                  <strong>Lote:</strong> {statusChangeItem.batchNumber}
+                </div>
+                <div>
+                  <strong>Estado actual:</strong>{' '}
+                  <span className={getBatchStatusDisplay(statusChangeItem.currentStatus).color}>
+                    {getBatchStatusDisplay(statusChangeItem.currentStatus).text}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <Select
+              label="🔒 Nuevo estado"
+              value={newStatus}
+              onChange={(e) => setNewStatus(e.target.value)}
+              options={[
+                { value: 'RELEASED', label: '✅ Liberado' },
+                { value: 'QUARANTINE', label: '🚫 En cuarentena' },
+              ]}
+              disabled={statusChangeMutation.isPending}
+            />
+
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setStatusChangeItem(null)
+                  setNewStatus('RELEASED')
+                }}
+                disabled={statusChangeMutation.isPending}
+              >
+                ❌ Cancelar
+              </Button>
+              <Button
+                onClick={() => statusChangeMutation.mutate()}
+                disabled={statusChangeMutation.isPending || newStatus === statusChangeItem.currentStatus}
+              >
+                {statusChangeMutation.isPending ? '⏳ Cambiando...' : '✅ Cambiar Estado'}
               </Button>
             </div>
           </div>

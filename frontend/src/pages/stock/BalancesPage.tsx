@@ -19,7 +19,7 @@ type BalanceExpandedItem = {
   quantity: string
   updatedAt: string
   product: { sku: string; name: string }
-  batch: { batchNumber: string; expiresAt: string | null } | null
+  batch: { batchNumber: string; expiresAt: string | null; status: string; version: number } | null
   location: {
     code: string
     warehouse: { code: string; name: string }
@@ -36,6 +36,13 @@ async function fetchBalances(token: string, productId?: string): Promise<{ items
   if (productId) params.set('productId', productId)
   const qs = params.toString()
   return apiFetch(`/api/v1/reports/stock/balances-expanded${qs ? `?${qs}` : ''}`, { token })
+}
+
+function getBatchStatusDisplay(status: string): { text: string; color: string } {
+  if (status === 'QUARANTINE') {
+    return { text: 'En cuarentena', color: 'text-orange-600 dark:text-orange-400' }
+  }
+  return { text: 'Liberado', color: 'text-green-600 dark:text-green-400' }
 }
 
 export function BalancesPage() {
@@ -90,6 +97,18 @@ export function BalancesPage() {
                 { header: 'SKU', accessor: (b) => b.product.sku },
                 { header: 'Producto', accessor: (b) => b.product.name },
                 { header: 'Lote', accessor: (b) => b.batch?.batchNumber || 'Sin lote' },
+                {
+                  header: 'Estado',
+                  accessor: (b) => {
+                    if (!b.batch) return '-'
+                    const statusDisplay = getBatchStatusDisplay(b.batch.status)
+                    return (
+                      <span className={`text-sm font-medium ${statusDisplay.color}`}>
+                        {statusDisplay.text}
+                      </span>
+                    )
+                  },
+                },
                 { header: 'Cantidad', accessor: (b) => b.quantity },
                 { header: 'Almacén', accessor: (b) => b.location.warehouse.name },
                 { header: 'Ubicación', accessor: (b) => b.location.code },

@@ -616,6 +616,32 @@ Notas
   - Si se envía `warehouseId`, el backend resuelve automáticamente una ubicación activa dentro del almacén.
   - También se acepta `toLocationId` (compatibilidad), pero la UI usa `warehouseId`.
 
+### PATCH /api/v1/products/:productId/batches/:batchId/status
+Requiere permiso: `catalog:write`.
+
+Body
+```json
+{
+  "status": "RELEASED" | "QUARANTINE",
+  "version": 1
+}
+```
+
+Response 200
+```json
+{
+  "id": "...",
+  "batchNumber": "LOT-2025-0001",
+  "status": "QUARANTINE",
+  "version": 2,
+  "updatedAt": "2025-01-01T00:00:00.000Z"
+}
+```
+
+Notas
+- Usa control de concurrencia optimista con `version`.
+- `409` si la versión no coincide.
+
 ### GET /api/v1/products/:productId/batches/:batchId/movements
 Requiere permisos: `catalog:read` + `stock:read`.
 

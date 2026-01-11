@@ -177,7 +177,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
           batchId: true,
           locationId: true,
           product: { select: { sku: true, name: true } },
-          batch: { select: { batchNumber: true, expiresAt: true, status: true } },
+          batch: { select: { batchNumber: true, expiresAt: true, status: true, version: true } },
           location: {
             select: {
               id: true,

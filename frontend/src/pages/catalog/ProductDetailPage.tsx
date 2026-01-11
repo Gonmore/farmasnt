@@ -317,6 +317,7 @@ export function ProductDetailPage() {
   const [expiresAt, setExpiresAt] = useState('')
   const [manufacturingDate, setManufacturingDate] = useState('')
   const [batchStatus, setBatchStatus] = useState('RELEASED')
+  const [quarantineDays, setQuarantineDays] = useState<string>('')
   const [showBatchForm, setShowBatchForm] = useState(false)
   const [batchFormError, setBatchFormError] = useState<string>('')
 
@@ -420,6 +421,7 @@ export function ProductDetailPage() {
       setExpiresAt('')
       setManufacturingDate('')
       setBatchStatus('RELEASED')
+      setQuarantineDays('')
       setShowBatchForm(false)
       setBatchFormError('')
       setWarehouseIdForInitialStock('')
@@ -1004,6 +1006,18 @@ export function ProductDetailPage() {
                     ]}
                     disabled={batchMutation.isPending}
                   />
+                  {batchStatus === 'QUARANTINE' && (
+                    <Input
+                      label="Días de cuarentena"
+                      type="number"
+                      value={quarantineDays}
+                      onChange={(e) => setQuarantineDays(e.target.value)}
+                      disabled={batchMutation.isPending}
+                      placeholder="30"
+                      min={1}
+                      max={365}
+                    />
+                  )}
 
                   <div className="rounded-md border border-slate-200 p-3 dark:border-slate-700">
                     <div className="grid gap-3">
