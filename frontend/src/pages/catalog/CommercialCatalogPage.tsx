@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { apiFetch } from '../../lib/api'
 import { useAuth, useCart, useTenant } from '../../providers'
-import { MainLayout, PageContainer, Button, Loading, ErrorState, EmptyState } from '../../components'
+import { MainLayout, PageContainer, Button, Loading, ErrorState, EmptyState, CatalogSearch } from '../../components'
 import { useNavigation } from '../../hooks'
 
 type Product = {
@@ -116,6 +116,7 @@ export function CommercialCatalogPage() {
   return (
     <MainLayout navGroups={navGroups}>
       <PageContainer title="🛒 Catálogo Comercial">
+        <CatalogSearch className="mb-6" />
         <div className="rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-gradient-to-br from-slate-50 to-blue-50/30 dark:from-slate-900 dark:to-slate-800/50 p-6 shadow-lg">
           {productsQuery.isLoading && <Loading />}
           {productsQuery.error && (

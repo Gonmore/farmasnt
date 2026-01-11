@@ -3,7 +3,7 @@ import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { apiFetch } from '../../lib/api'
 import { useAuth } from '../../providers/AuthProvider'
-import { MainLayout, PageContainer, Button, Table, Loading, ErrorState, EmptyState, PaginationCursor, Modal, ExpiryBadge } from '../../components'
+import { MainLayout, PageContainer, Button, Table, Loading, ErrorState, EmptyState, PaginationCursor, Modal, ExpiryBadge, CatalogSearch } from '../../components'
 import { useNavigation } from '../../hooks'
 import type { ExpiryStatus } from '../../components'
 
@@ -166,6 +166,7 @@ export function ProductsListPage() {
           </Button>
         }
       >
+        <CatalogSearch className="mb-6" />
         <div className="rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
           {productsQuery.isLoading && <Loading />}
           {productsQuery.error && (

@@ -42,7 +42,6 @@ export function useNavigation(): NavGroup[] {
       title: '📦 Catálogo',
       items: [
         { to: '/catalog/products', label: '🏷️ Productos' },
-        { to: '/catalog/search', label: '🔍 Búsqueda' },
         { to: '/catalog/commercial', label: '🛒 Comercial' },
       ],
     });

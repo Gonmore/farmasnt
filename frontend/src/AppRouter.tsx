@@ -6,7 +6,6 @@ import {
   DashboardPage,
   ProductsListPage,
   ProductDetailPage,
-  CatalogSearchPage,
   CommercialCatalogPage,
   WarehousesPage,
   LocationsPage,
@@ -62,14 +61,6 @@ export function AppRouter() {
           element={
             <ProtectedRoute>
               <ProductDetailPage />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/catalog/search"
-          element={
-            <ProtectedRoute>
-              <CatalogSearchPage />
             </ProtectedRoute>
           }
         />
