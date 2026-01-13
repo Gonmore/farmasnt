@@ -17,6 +17,8 @@ type ExpirySummaryItem = {
   daysToExpire: number
   status: ExpiryStatus
   quantity: string
+  reservedQuantity?: string
+  availableQuantity?: string
   warehouseCode: string
   warehouseName: string
   locationCode: string
@@ -81,7 +83,17 @@ export function ExpiryPage() {
                     header: 'Estado',
                     accessor: (item) => <ExpiryBadge status={item.status} />,
                   },
-                  { header: 'Cantidad', accessor: (item) => item.quantity },
+                  { header: 'Total', accessor: (item) => item.quantity },
+                  { header: 'Reservado', accessor: (item) => item.reservedQuantity ?? '0' },
+                  {
+                    header: 'Disponible',
+                    accessor: (item) => {
+                      if (typeof item.availableQuantity === 'string') return item.availableQuantity
+                      const total = Number(item.quantity || '0')
+                      const reserved = Number(item.reservedQuantity ?? '0')
+                      return String(Math.max(0, total - reserved))
+                    },
+                  },
                   { header: 'Almacén', accessor: (item) => `${item.warehouseCode} - ${item.locationCode}` },
                 ]}
                 data={expiryQuery.data.items}

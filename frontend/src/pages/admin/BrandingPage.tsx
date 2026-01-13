@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
-import { MainLayout, PageContainer, Button, Input, Loading, ErrorState } from '../../components'
+import { MainLayout, PageContainer, Button, Input, Loading, ErrorState, CountrySelector } from '../../components'
 import { useNavigation } from '../../hooks'
 
 type BrandingData = {
@@ -13,6 +13,7 @@ type BrandingData = {
   brandTertiary: string | null
   defaultTheme: 'LIGHT' | 'DARK'
   currency: string
+  country?: string | null
 }
 
 export function BrandingPage() {
@@ -25,6 +26,7 @@ export function BrandingPage() {
   const [brandTertiary, setBrandTertiary] = useState('#f59e0b')
   const [defaultTheme, setDefaultTheme] = useState<'LIGHT' | 'DARK'>('LIGHT')
   const [currency, setCurrency] = useState('BOB')
+  const [country, setCountry] = useState('BOLIVIA')
 
   const brandingQuery = useQuery<BrandingData>({
     queryKey: ['tenant', 'branding'],
@@ -38,6 +40,7 @@ export function BrandingPage() {
       setBrandTertiary(data.brandTertiary || '#f59e0b')
       setDefaultTheme(data.defaultTheme)
       setCurrency(data.currency || 'BOB')
+      setCountry(data.country || 'BOLIVIA')
       return data
     },
   })
@@ -61,6 +64,7 @@ export function BrandingPage() {
       brandTertiary,
       defaultTheme,
       currency,
+      country: country || null,
     })
   }
 
@@ -241,6 +245,20 @@ export function BrandingPage() {
               </p>
             </div>
 
+            {/* País */}
+            <div>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                País
+              </label>
+              <CountrySelector
+                value={country}
+                onChange={setCountry}
+              />
+              <p className="mt-1 text-xs text-slate-500">
+                Requerido para poder asignar ciudades a sucursales y priorizar reservas.
+              </p>
+            </div>
+
             {/* Mensaje de éxito */}
             {updateMutation.isSuccess && (
               <div className="p-4 rounded-lg bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800">
@@ -271,6 +289,7 @@ export function BrandingPage() {
                   setBrandTertiary(brandingQuery.data?.brandTertiary || '#f59e0b')
                   setDefaultTheme(brandingQuery.data?.defaultTheme || 'LIGHT')
                   setCurrency(brandingQuery.data?.currency || 'BOB')
+                  setCountry(brandingQuery.data?.country || 'BOLIVIA')
                 }}
                 disabled={updateMutation.isPending}
               >

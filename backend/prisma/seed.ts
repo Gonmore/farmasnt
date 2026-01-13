@@ -348,6 +348,370 @@ async function main() {
     },
   })
 
+  // ============= MÁS DATOS DE PRUEBA =============
+
+  // Warehouses adicionales en diferentes ciudades
+  const whCochabamba = await db.warehouse.upsert({
+    where: { tenantId_code: { tenantId: demoTenant.id, code: 'WH-02' } },
+    update: { name: 'Sucursal Cochabamba', city: 'Cochabamba' },
+    create: {
+      tenantId: demoTenant.id,
+      code: 'WH-02',
+      name: 'Sucursal Cochabamba',
+      city: 'Cochabamba',
+      createdBy: demoAdminUser.id
+    },
+  })
+
+  const whSantaCruz = await db.warehouse.upsert({
+    where: { tenantId_code: { tenantId: demoTenant.id, code: 'WH-03' } },
+    update: { name: 'Sucursal Santa Cruz', city: 'Santa Cruz' },
+    create: {
+      tenantId: demoTenant.id,
+      code: 'WH-03',
+      name: 'Sucursal Santa Cruz',
+      city: 'Santa Cruz',
+      createdBy: demoAdminUser.id
+    },
+  })
+
+  // Ubicaciones para los nuevos warehouses
+  const locCochabamba = await db.location.upsert({
+    where: { tenantId_warehouseId_code: { tenantId: demoTenant.id, warehouseId: whCochabamba.id, code: 'BIN-02' } },
+    update: {},
+    create: { tenantId: demoTenant.id, warehouseId: whCochabamba.id, code: 'BIN-02', type: 'BIN', createdBy: demoAdminUser.id },
+  })
+
+  const locSantaCruz = await db.location.upsert({
+    where: { tenantId_warehouseId_code: { tenantId: demoTenant.id, warehouseId: whSantaCruz.id, code: 'BIN-03' } },
+    update: {},
+    create: { tenantId: demoTenant.id, warehouseId: whSantaCruz.id, code: 'BIN-03', type: 'BIN', createdBy: demoAdminUser.id },
+  })
+
+  // Clientes en diferentes ciudades
+  const customerLaPaz = await db.customer.upsert({
+    where: { id: 'customer-lp-001' }, // Usar ID fijo para upsert
+    update: {
+      businessName: 'Farmacia Central La Paz S.R.L.',
+      nit: '123456789',
+      contactName: 'María González',
+      contactBirthDay: 15,
+      contactBirthMonth: 3,
+      contactBirthYear: 1985,
+      email: 'contacto@farmaciacentral-lp.com',
+      phone: '+591 22222222',
+      address: 'Av. 16 de Julio #1234',
+      city: 'La Paz',
+      zone: 'Centro'
+    },
+    create: {
+      id: 'customer-lp-001',
+      tenantId: demoTenant.id,
+      name: 'Farmacia Central La Paz',
+      businessName: 'Farmacia Central La Paz S.R.L.',
+      nit: '123456789',
+      contactName: 'María González',
+      contactBirthDay: 15,
+      contactBirthMonth: 3,
+      contactBirthYear: 1985,
+      email: 'contacto@farmaciacentral-lp.com',
+      phone: '+591 22222222',
+      address: 'Av. 16 de Julio #1234',
+      city: 'La Paz',
+      zone: 'Centro',
+      createdBy: demoAdminUser.id
+    },
+  })
+
+  const customerCochabamba = await db.customer.upsert({
+    where: { id: 'customer-cbba-001' },
+    update: {
+      businessName: 'Farmacia del Valle Ltda.',
+      nit: '987654321',
+      contactName: 'Carlos Rodríguez',
+      contactBirthDay: 22,
+      contactBirthMonth: 7,
+      contactBirthYear: 1978,
+      email: 'ventas@farmaciadelvalle.com',
+      phone: '+591 44444444',
+      address: 'Calle Bolívar #567',
+      city: 'Cochabamba',
+      zone: 'Zona Norte'
+    },
+    create: {
+      id: 'customer-cbba-001',
+      tenantId: demoTenant.id,
+      name: 'Farmacia del Valle',
+      businessName: 'Farmacia del Valle Ltda.',
+      nit: '987654321',
+      contactName: 'Carlos Rodríguez',
+      contactBirthDay: 22,
+      contactBirthMonth: 7,
+      contactBirthYear: 1978,
+      email: 'ventas@farmaciadelvalle.com',
+      phone: '+591 44444444',
+      address: 'Calle Bolívar #567',
+      city: 'Cochabamba',
+      zone: 'Zona Norte',
+      createdBy: demoAdminUser.id
+    },
+  })
+
+  const customerSantaCruz = await db.customer.upsert({
+    where: { id: 'customer-scz-001' },
+    update: {
+      businessName: 'Farmacia Oriental S.A.',
+      nit: '456789123',
+      contactName: 'Ana López',
+      contactBirthDay: 8,
+      contactBirthMonth: 11,
+      contactBirthYear: 1990,
+      email: 'info@farmaciaoriental.com',
+      phone: '+591 33333333',
+      address: 'Av. San Martín #890',
+      city: 'Santa Cruz',
+      zone: 'Equipetrol'
+    },
+    create: {
+      id: 'customer-scz-001',
+      tenantId: demoTenant.id,
+      name: 'Farmacia Oriental',
+      businessName: 'Farmacia Oriental S.A.',
+      nit: '456789123',
+      contactName: 'Ana López',
+      contactBirthDay: 8,
+      contactBirthMonth: 11,
+      contactBirthYear: 1990,
+      email: 'info@farmaciaoriental.com',
+      phone: '+591 33333333',
+      address: 'Av. San Martín #890',
+      city: 'Santa Cruz',
+      zone: 'Equipetrol',
+      createdBy: demoAdminUser.id
+    },
+  })
+
+  // Productos adicionales con recetario
+  const productIbuprofeno = await db.product.upsert({
+    where: { tenantId_sku: { tenantId: demoTenant.id, sku: 'IBUP-400TAB' } },
+    update: { name: 'Ibuprofeno 400mg (Tabletas)' },
+    create: {
+      tenantId: demoTenant.id,
+      sku: 'IBUP-400TAB',
+      name: 'Ibuprofeno 400mg (Tabletas)',
+      description: 'Antiinflamatorio no esteroideo',
+      createdBy: demoAdminUser.id,
+    },
+    select: { id: true },
+  })
+
+  const productAmoxicilina = await db.product.upsert({
+    where: { tenantId_sku: { tenantId: demoTenant.id, sku: 'AMOX-500CAP' } },
+    update: { name: 'Amoxicilina 500mg (Cápsulas)' },
+    create: {
+      tenantId: demoTenant.id,
+      sku: 'AMOX-500CAP',
+      name: 'Amoxicilina 500mg (Cápsulas)',
+      description: 'Antibiótico de amplio espectro',
+      createdBy: demoAdminUser.id,
+    },
+    select: { id: true },
+  })
+
+  // Recetarios para los productos (simplificado por ahora)
+  // Nota: Los campos de prescripción no existen en el schema actual
+  // await db.productRecipe.upsert({
+  //   where: { tenantId_productId: { tenantId: demoTenant.id, productId: productIbuprofeno.id } },
+  //   update: {
+  //     recipeType: 'CONTROLADO',
+  //     activeIngredients: 'Ibuprofeno 400mg',
+  //     indications: 'Dolor, fiebre, inflamación',
+  //     contraindications: 'Úlcera péptica, insuficiencia renal',
+  //     dosage: '1 tableta cada 8 horas'
+  //   },
+  //   create: {
+  //     tenantId: demoTenant.id,
+  //     productId: productIbuprofeno.id,
+  //     recipeType: 'CONTROLADO',
+  //     activeIngredients: 'Ibuprofeno 400mg',
+  //     indications: 'Dolor, fiebre, inflamación',
+  //     contraindications: 'Úlcera péptica, insuficiencia renal',
+  //     dosage: '1 tableta cada 8 horas',
+  //     createdBy: demoAdminUser.id
+  //   },
+  // })
+
+  // await db.productRecipe.upsert({
+  //   where: { tenantId_productId: { tenantId: demoTenant.id, productId: productAmoxicilina.id } },
+  //   update: {
+  //     recipeType: 'CONTROLADO',
+  //     activeIngredients: 'Amoxicilina trihidrato 500mg',
+  //     indications: 'Infecciones bacterianas',
+  //     contraindications: 'Alergia a penicilinas',
+  //     dosage: '1 cápsula cada 8 horas por 7 días'
+  //   },
+  //   create: {
+  //     tenantId: demoTenant.id,
+  //     productId: productAmoxicilina.id,
+  //     recipeType: 'CONTROLADO',
+  //     activeIngredients: 'Amoxicilina trihidrato 500mg',
+  //     indications: 'Infecciones bacterianas',
+  //     contraindications: 'Alergia a penicilinas',
+  //     dosage: '1 cápsula cada 8 horas por 7 días',
+  //     createdBy: demoAdminUser.id
+  //   },
+  // })
+
+  // Batches y stock para los nuevos productos en diferentes ciudades
+  const ibuprofenoBatch = await db.batch.upsert({
+    where: { tenantId_productId_batchNumber: { tenantId: demoTenant.id, productId: productIbuprofeno.id, batchNumber: 'IBU-2024-01' } },
+    update: { expiresAt: addDaysUtc(todayUtc, 365) },
+    create: {
+      tenantId: demoTenant.id,
+      productId: productIbuprofeno.id,
+      batchNumber: 'IBU-2024-01',
+      expiresAt: addDaysUtc(todayUtc, 365),
+      createdBy: demoAdminUser.id,
+    },
+    select: { id: true },
+  })
+
+  const amoxicilinaBatch = await db.batch.upsert({
+    where: { tenantId_productId_batchNumber: { tenantId: demoTenant.id, productId: productAmoxicilina.id, batchNumber: 'AMOX-2024-01' } },
+    update: { expiresAt: addDaysUtc(todayUtc, 400) },
+    create: {
+      tenantId: demoTenant.id,
+      productId: productAmoxicilina.id,
+      batchNumber: 'AMOX-2024-01',
+      expiresAt: addDaysUtc(todayUtc, 400),
+      createdBy: demoAdminUser.id,
+    },
+    select: { id: true },
+  })
+
+  // Stock distribuido en diferentes ciudades
+  // Ibuprofeno: La Paz (20), Cochabamba (15), Santa Cruz (10)
+  await db.inventoryBalance.upsert({
+    where: {
+      tenantId_locationId_productId_batchId: {
+        tenantId: demoTenant.id,
+        locationId: loc.id, // La Paz
+        productId: productIbuprofeno.id,
+        batchId: ibuprofenoBatch.id,
+      },
+    },
+    update: { quantity: '20' },
+    create: {
+      tenantId: demoTenant.id,
+      locationId: loc.id,
+      productId: productIbuprofeno.id,
+      batchId: ibuprofenoBatch.id,
+      quantity: '20',
+      createdBy: demoAdminUser.id,
+    },
+  })
+
+  await db.inventoryBalance.upsert({
+    where: {
+      tenantId_locationId_productId_batchId: {
+        tenantId: demoTenant.id,
+        locationId: locCochabamba.id,
+        productId: productIbuprofeno.id,
+        batchId: ibuprofenoBatch.id,
+      },
+    },
+    update: { quantity: '15' },
+    create: {
+      tenantId: demoTenant.id,
+      locationId: locCochabamba.id,
+      productId: productIbuprofeno.id,
+      batchId: ibuprofenoBatch.id,
+      quantity: '15',
+      createdBy: demoAdminUser.id,
+    },
+  })
+
+  await db.inventoryBalance.upsert({
+    where: {
+      tenantId_locationId_productId_batchId: {
+        tenantId: demoTenant.id,
+        locationId: locSantaCruz.id,
+        productId: productIbuprofeno.id,
+        batchId: ibuprofenoBatch.id,
+      },
+    },
+    update: { quantity: '10' },
+    create: {
+      tenantId: demoTenant.id,
+      locationId: locSantaCruz.id,
+      productId: productIbuprofeno.id,
+      batchId: ibuprofenoBatch.id,
+      quantity: '10',
+      createdBy: demoAdminUser.id,
+    },
+  })
+
+  // Amoxicilina: La Paz (12), Cochabamba (8), Santa Cruz (18)
+  await db.inventoryBalance.upsert({
+    where: {
+      tenantId_locationId_productId_batchId: {
+        tenantId: demoTenant.id,
+        locationId: loc.id, // La Paz
+        productId: productAmoxicilina.id,
+        batchId: amoxicilinaBatch.id,
+      },
+    },
+    update: { quantity: '12' },
+    create: {
+      tenantId: demoTenant.id,
+      locationId: loc.id,
+      productId: productAmoxicilina.id,
+      batchId: amoxicilinaBatch.id,
+      quantity: '12',
+      createdBy: demoAdminUser.id,
+    },
+  })
+
+  await db.inventoryBalance.upsert({
+    where: {
+      tenantId_locationId_productId_batchId: {
+        tenantId: demoTenant.id,
+        locationId: locCochabamba.id,
+        productId: productAmoxicilina.id,
+        batchId: amoxicilinaBatch.id,
+      },
+    },
+    update: { quantity: '8' },
+    create: {
+      tenantId: demoTenant.id,
+      locationId: locCochabamba.id,
+      productId: productAmoxicilina.id,
+      batchId: amoxicilinaBatch.id,
+      quantity: '8',
+      createdBy: demoAdminUser.id,
+    },
+  })
+
+  await db.inventoryBalance.upsert({
+    where: {
+      tenantId_locationId_productId_batchId: {
+        tenantId: demoTenant.id,
+        locationId: locSantaCruz.id,
+        productId: productAmoxicilina.id,
+        batchId: amoxicilinaBatch.id,
+      },
+    },
+    update: { quantity: '18' },
+    create: {
+      tenantId: demoTenant.id,
+      locationId: locSantaCruz.id,
+      productId: productAmoxicilina.id,
+      batchId: amoxicilinaBatch.id,
+      quantity: '18',
+      createdBy: demoAdminUser.id,
+    },
+  })
+
   // eslint-disable-next-line no-console
   console.log('✅ Seed completed successfully!')
   console.log('\n📦 Platform Tenant (Supernovatel):')

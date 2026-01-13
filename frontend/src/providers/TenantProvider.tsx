@@ -21,6 +21,7 @@ export type TenantBranding = {
   brandTertiary: string | null
   defaultTheme: 'LIGHT' | 'DARK'
   currency: string
+  country?: string | null
 }
 
 export type TenantContextValue = {
@@ -48,6 +49,11 @@ function parseJwtClaims(token: string): { sub?: string; tenantId?: string } {
   } catch {
     return {}
   }
+}
+
+function normalizeCountry(country?: string | null): string {
+  const value = (country ?? '').trim()
+  return value ? value.toUpperCase() : 'BOLIVIA'
 }
 
 export function TenantProvider(props: { children: React.ReactNode }) {
@@ -99,19 +105,21 @@ export function TenantProvider(props: { children: React.ReactNode }) {
 
   const value = useMemo<TenantContextValue>(() => {
     if (!accessToken) {
+      const publicBranding = publicBrandingQuery.data
       return {
         tenantId: null,
         userId: null,
-        branding: publicBrandingQuery.data ?? null,
+        branding: publicBranding ? { ...publicBranding, country: normalizeCountry(publicBranding.country) } : null,
         brandingLoading: publicBrandingQuery.isLoading,
       }
     }
 
     const claims = parseJwtClaims(accessToken)
+    const branding = brandingQuery.data
     return {
       tenantId: typeof claims.tenantId === 'string' ? claims.tenantId : null,
       userId: typeof claims.sub === 'string' ? claims.sub : null,
-      branding: brandingQuery.data ?? null,
+      branding: branding ? { ...branding, country: normalizeCountry(branding.country) } : null,
       brandingLoading: brandingQuery.isLoading,
     }
   }, [accessToken, brandingQuery.data, brandingQuery.isLoading, publicBrandingQuery.data, publicBrandingQuery.isLoading])

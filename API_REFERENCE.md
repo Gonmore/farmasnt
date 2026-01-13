@@ -123,7 +123,9 @@ Response 200
   "brandPrimary": "#0f172a",
   "brandSecondary": "#334155",
   "brandTertiary": "#64748b",
-  "defaultTheme": "LIGHT"
+  "defaultTheme": "LIGHT",
+  "currency": "BOB",
+  "country": "BOLIVIA"
 }
 ```
 
@@ -141,9 +143,29 @@ Response 200
   "brandPrimary": "#0f172a",
   "brandSecondary": "#334155",
   "brandTertiary": "#64748b",
-  "defaultTheme": "LIGHT"
+  "defaultTheme": "LIGHT",
+  "currency": "BOB",
+  "country": "BOLIVIA"
 }
 ```
+
+### PATCH /api/v1/tenant/branding
+Requiere JWT.
+
+Body (campos opcionales; enviar al menos 1)
+```json
+{
+  "logoUrl": "https://.../tenant-logos/<tenantId>.png",
+  "brandPrimary": "#0f172a",
+  "brandSecondary": "#334155",
+  "brandTertiary": "#64748b",
+  "defaultTheme": "LIGHT",
+  "currency": "BOB",
+  "country": "BOLIVIA"
+}
+```
+
+Response 200 (mismo shape que `GET /api/v1/tenant/branding`).
 
 ---
 
@@ -684,7 +706,7 @@ Query
 Response 200
 ```json
 {
-  "items": [{ "id": "...", "code": "WH-01", "name": "Almacén", "isActive": true, "version": 1, "updatedAt": "...", "totalQuantity": "10" }],
+  "items": [{ "id": "...", "code": "WH-01", "name": "Almacén", "city": "LA PAZ", "isActive": true, "version": 1, "updatedAt": "...", "totalQuantity": "10" }],
   "nextCursor": "..."
 }
 ```
@@ -713,7 +735,8 @@ Body
 ```json
 {
   "code": "WH-01",
-  "name": "Sucursal Central"
+  "name": "Sucursal Central",
+  "city": "LA PAZ"
 }
 ```
 
@@ -723,6 +746,7 @@ Response 201
   "id": "...",
   "code": "WH-01",
   "name": "Sucursal Central",
+  "city": "LA PAZ",
   "isActive": true,
   "version": 1,
   "updatedAt": "...",
@@ -733,6 +757,32 @@ Response 201
 Notas
 - Crea automáticamente una ubicación por defecto (`BIN-01`, tipo `BIN`) en la sucursal.
 - `409` si el código ya existe (único por tenant).
+- `409` si el tenant no tiene configurado `country` (ver `PATCH /api/v1/tenant/branding`).
+
+### PATCH /api/v1/warehouses/:id
+Requiere permiso: `stock:manage`.
+
+Body (campos opcionales; enviar al menos 1)
+```json
+{
+  "name": "Sucursal Central",
+  "city": "LA PAZ"
+}
+```
+
+Response 200
+```json
+{
+  "id": "...",
+  "code": "WH-01",
+  "name": "Sucursal Central",
+  "city": "LA PAZ",
+  "isActive": true,
+  "version": 2,
+  "updatedAt": "...",
+  "totalQuantity": "10"
+}
+```
 
 ### POST /api/v1/warehouses/:id/locations
 Requiere permiso: `stock:manage`.
@@ -914,12 +964,38 @@ Requiere permiso: `sales:order:write`.
 
 Body
 ```json
-{ "name": "Cliente", "nit": "123", "email": "c@c.com", "phone": "...", "address": "..." }
+{
+  "name": "Cliente",
+  "nit": "123",
+  "email": "c@c.com",
+  "phone": "...",
+  "address": "...",
+  "city": "LA PAZ",
+  "zone": "ZONA SUR",
+  "mapsUrl": "https://maps.google.com/?q=...",
+  "creditDays7Enabled": false,
+  "creditDays14Enabled": false
+}
 ```
 
 Response 201
 ```json
-{ "id": "...", "name": "Cliente", "nit": "123", "email": "c@c.com", "phone": "...", "address": "...", "isActive": true, "version": 1, "createdAt": "..." }
+{
+  "id": "...",
+  "name": "Cliente",
+  "nit": "123",
+  "email": "c@c.com",
+  "phone": "...",
+  "address": "...",
+  "city": "LA PAZ",
+  "zone": "ZONA SUR",
+  "mapsUrl": "https://maps.google.com/?q=...",
+  "creditDays7Enabled": false,
+  "creditDays14Enabled": false,
+  "isActive": true,
+  "version": 1,
+  "createdAt": "..."
+}
 ```
 
 ### GET /api/v1/customers
@@ -932,7 +1008,26 @@ Query
 
 Response 200
 ```json
-{ "items": [{ "id": "...", "name": "...", "nit": null, "email": null, "phone": null, "isActive": true, "version": 1, "updatedAt": "..." }], "nextCursor": "..." }
+{
+  "items": [
+    {
+      "id": "...",
+      "name": "...",
+      "nit": null,
+      "email": null,
+      "phone": null,
+      "city": "LA PAZ",
+      "zone": "ZONA SUR",
+      "mapsUrl": null,
+      "isActive": true,
+      "creditDays7Enabled": false,
+      "creditDays14Enabled": false,
+      "version": 1,
+      "updatedAt": "..."
+    }
+  ],
+  "nextCursor": "..."
+}
 ```
 
 ### GET /api/v1/customers/:id
@@ -943,7 +1038,7 @@ Requiere permiso: `sales:order:write`.
 
 Body
 - `version` requerido
-- campos opcionales: `name`, `nit`, `email`, `phone`, `address`, `isActive`
+- campos opcionales: `name`, `nit`, `email`, `phone`, `address`, `city`, `zone`, `mapsUrl`, `isActive`, `creditDays7Enabled`, `creditDays14Enabled`
 
 Notas
 - `409` si `version` no coincide.
@@ -952,6 +1047,14 @@ Notas
 
 ## Sales Orders
 Requiere: módulo `SALES`.
+
+### GET /api/v1/sales/quotes/next-number
+Requiere permiso: `sales:order:write`.
+
+Response 200
+```json
+{ "number": "COT-YYYY0001" }
+```
 
 ### POST /api/v1/sales/orders
 Requiere permiso: `sales:order:write`.
@@ -980,6 +1083,12 @@ Response 201
   "lines": [{ "id": "...", "productId": "...", "batchId": null, "quantity": "2", "unitPrice": "10" }]
 }
 ```
+
+Notas (reserva / “apartar existencias”)
+- Al crear la orden, el sistema intenta **reservar stock** aumentando `InventoryBalance.reservedQuantity`.
+- Priorización para reservar: primero balances cuya sucursal (`Warehouse.city`) coincide con `Customer.city` (si está configurada), luego el resto.
+- Dentro de cada grupo aplica FEFO (vence antes primero) y solo usa lotes `RELEASED` y no vencidos.
+- Si no hay stock suficiente, se reservan cantidades parciales (la orden puede crearse igual).
 
 ### GET /api/v1/sales/orders
 Requiere permiso: `sales:order:read`.
@@ -1026,6 +1135,7 @@ Notas
 - `409` si `version` no coincide.
 
 Realtime emit
+- `sales.order.created`
 - `sales.order.confirmed`
 
 ### POST /api/v1/sales/orders/:id/fulfill
@@ -1199,6 +1309,7 @@ Response 200
     {
       "id": "...",
       "quantity": "15",
+      "reservedQuantity": "2",
       "updatedAt": "...",
       "productId": "...",
       "batchId": null,

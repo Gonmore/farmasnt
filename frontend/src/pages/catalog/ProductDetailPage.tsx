@@ -40,6 +40,8 @@ type ProductBatchListItem = {
   createdAt: string
   updatedAt: string
   totalQuantity: string | null
+  totalReservedQuantity?: string | null
+  totalAvailableQuantity?: string | null
   locations: {
     warehouseId: string
     warehouseCode: string
@@ -47,6 +49,8 @@ type ProductBatchListItem = {
     locationId: string
     locationCode: string
     quantity: string
+    reservedQuantity?: string
+    availableQuantity?: string
   }[]
 }
 
@@ -913,10 +917,12 @@ export function ProductDetailPage() {
                             </button>
 
                             <div className="text-right">
-                              <div className="text-sm font-medium text-slate-900 dark:text-slate-100">
-                                {b.totalQuantity ?? '-'}
-                              </div>
-                              <div className="text-xs text-slate-600 dark:text-slate-400">Existencias</div>
+                                <div className="text-sm font-medium text-slate-900 dark:text-slate-100">
+                                  {b.totalAvailableQuantity ?? b.totalQuantity ?? '-'}
+                                </div>
+                                <div className="text-xs text-slate-600 dark:text-slate-400">
+                                  disp. · {b.totalReservedQuantity ?? '0'} res. · {b.totalQuantity ?? '-'} total
+                                </div>
                             </div>
                           </div>
 
@@ -927,7 +933,12 @@ export function ProductDetailPage() {
                                   <span>
                                     {l.warehouseCode} · {l.locationCode}
                                   </span>
-                                  <span className="font-medium">{l.quantity}</span>
+                                  <span className="font-medium">
+                                    {l.availableQuantity ?? String(Math.max(0, Number(l.quantity || '0') - Number(l.reservedQuantity ?? '0')))}
+                                    <span className="ml-2 text-slate-500 dark:text-slate-400">
+                                      ({l.reservedQuantity ?? '0'} res. · {l.quantity} total)
+                                    </span>
+                                  </span>
                                 </div>
                               ))}
                             </div>

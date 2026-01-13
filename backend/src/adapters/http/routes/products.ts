@@ -632,6 +632,7 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
             select: {
               batchId: true,
               quantity: true,
+              reservedQuantity: true,
               location: {
                 select: {
                   id: true,
@@ -643,20 +644,24 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
           })
         : []
 
-      const balancesByBatch = new Map<string, Array<{ location: any; quantity: string }>>()
+      const balancesByBatch = new Map<string, Array<{ location: any; quantity: string; reservedQuantity: string }>>()
       for (const b of balances as any[]) {
         const key = b.batchId as string
         const arr = balancesByBatch.get(key) ?? []
-        arr.push({ location: b.location, quantity: String(b.quantity) })
+        arr.push({ location: b.location, quantity: String(b.quantity), reservedQuantity: String(b.reservedQuantity ?? '0') })
         balancesByBatch.set(key, arr)
       }
 
       const items = batches.map((b) => {
         const locs = balancesByBatch.get(b.id) ?? []
         const total = locs.reduce((acc, x) => acc + Number(x.quantity || '0'), 0)
+        const totalReserved = locs.reduce((acc, x) => acc + Number(x.reservedQuantity || '0'), 0)
+        const totalAvailable = Math.max(0, total - totalReserved)
         return {
           ...b,
           totalQuantity: hasStockRead ? String(total) : null,
+          totalReservedQuantity: hasStockRead ? String(totalReserved) : null,
+          totalAvailableQuantity: hasStockRead ? String(totalAvailable) : null,
           locations: hasStockRead
             ? locs.map((x) => ({
                 warehouseId: x.location.warehouse.id,
@@ -665,6 +670,8 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
                 locationId: x.location.id,
                 locationCode: x.location.code,
                 quantity: x.quantity,
+                reservedQuantity: x.reservedQuantity,
+                availableQuantity: String(Math.max(0, Number(x.quantity || '0') - Number(x.reservedQuantity || '0'))),
               }))
             : [],
         }

@@ -46,7 +46,8 @@ async function fetchProductDetail(token: string, productId: string): Promise<Pro
   const batches = await fetchProductBatches(token, productId)
   
   const totalStock = batches.reduce((total: number, batch: any) => {
-    return total + parseInt(batch.totalQuantity || '0')
+    const available = batch.totalAvailableQuantity ?? String(Math.max(0, Number(batch.totalQuantity || '0') - Number(batch.totalReservedQuantity || '0')))
+    return total + parseInt(available || '0')
   }, 0)
   
   return {

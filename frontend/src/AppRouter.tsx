@@ -7,6 +7,7 @@ import {
   ProductsListPage,
   ProductDetailPage,
   CommercialCatalogPage,
+  SellerCatalogPage,
   WarehousesPage,
   LocationsPage,
   BalancesPage,
@@ -16,6 +17,8 @@ import {
   CustomersPage,
   CustomerDetailPage,
   OrdersPage,
+  QuotesPage,
+  QuoteDetailPage,
   SalesReportsPage,
   StockReportsPage,
   AuditListPage,
@@ -69,6 +72,14 @@ export function AppRouter() {
           element={
             <ProtectedRoute>
               <CommercialCatalogPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/catalog/seller"
+          element={
+            <ProtectedRoute>
+              <SellerCatalogPage />
             </ProtectedRoute>
           }
         />
@@ -155,6 +166,22 @@ export function AppRouter() {
           element={
             <ProtectedRoute>
               <OrdersPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/sales/quotes"
+          element={
+            <ProtectedRoute>
+              <QuotesPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/sales/quotes/:id"
+          element={
+            <ProtectedRoute>
+              <QuoteDetailPage />
             </ProtectedRoute>
           }
         />

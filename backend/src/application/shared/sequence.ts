@@ -1,6 +1,6 @@
 import type { Prisma } from '../../generated/prisma/client.js'
 
-export type SequenceKey = 'MS' | 'OP' | 'LI' | 'OA' | 'OC' | 'OV' | 'LOT'
+export type SequenceKey = 'MS' | 'OP' | 'LI' | 'OA' | 'OC' | 'OV' | 'LOT' | 'COT'
 
 function padLeft(value: number, length: number): string {
   return String(value).padStart(length, '0')
@@ -29,6 +29,10 @@ export async function nextSequence(
 
   if (args.key === 'LOT') {
     return { value: row.currentValue, number: `LOT-${args.year}${padLeft(row.currentValue, 3)}` }
+  }
+
+  if (args.key === 'COT') {
+    return { value: row.currentValue, number: `COT-${args.year}${padLeft(row.currentValue, 4)}` }
   }
 
   return { value: row.currentValue, number: `${args.key}${args.year}-${row.currentValue}` }

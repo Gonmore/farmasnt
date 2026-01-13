@@ -17,6 +17,7 @@ type ProductListResponse = { items: ProductListItem[]; nextCursor: string | null
 type BalanceExpandedItem = {
   id: string
   quantity: string
+  reservedQuantity?: string
   updatedAt: string
   product: { sku: string; name: string }
   batch: { batchNumber: string; expiresAt: string | null; status: string; version: number } | null
@@ -109,7 +110,16 @@ export function BalancesPage() {
                     )
                   },
                 },
-                { header: 'Cantidad', accessor: (b) => b.quantity },
+                { header: 'Total', accessor: (b) => b.quantity },
+                { header: 'Reservado', accessor: (b) => b.reservedQuantity ?? '0' },
+                {
+                  header: 'Disponible',
+                  accessor: (b) => {
+                    const total = Number(b.quantity || '0')
+                    const reserved = Number(b.reservedQuantity ?? '0')
+                    return String(Math.max(0, total - reserved))
+                  },
+                },
                 { header: 'Almacén', accessor: (b) => b.location.warehouse.name },
                 { header: 'Ubicación', accessor: (b) => b.location.code },
               ]}

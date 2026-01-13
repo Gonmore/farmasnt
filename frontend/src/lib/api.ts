@@ -39,6 +39,17 @@ export async function apiFetch<T>(path: string, init?: RequestInit & { token?: s
       try {
         const data = (await resp.json()) as any
         if (data && typeof data.message === 'string' && data.message.trim()) {
+          if (Array.isArray(data.issues) && data.issues.length > 0) {
+            const detail = data.issues
+              .slice(0, 6)
+              .map((i: any) => {
+                const path = Array.isArray(i?.path) ? i.path.join('.') : ''
+                const msg = typeof i?.message === 'string' ? i.message : JSON.stringify(i)
+                return path ? `${path}: ${msg}` : msg
+              })
+              .join(' | ')
+            throw new Error(`${data.message}: ${detail}`)
+          }
           throw new Error(data.message)
         }
         throw new Error(typeof data === 'string' ? data : JSON.stringify(data))

@@ -31,6 +31,7 @@ export async function registerTenantRoutes(app: FastifyInstance): Promise<void> 
               brandTertiary: { type: 'string', nullable: true },
               defaultTheme: { type: 'string' },
               currency: { type: 'string' },
+              country: { type: 'string', nullable: true },
             },
             required: ['tenantId', 'tenantName', 'defaultTheme'],
             additionalProperties: false,
@@ -60,6 +61,17 @@ export async function registerTenantRoutes(app: FastifyInstance): Promise<void> 
       }
 
       if (!tenantId) {
+        // For localhost development, use the demo tenant
+        if (host === 'localhost' || host === '127.0.0.1') {
+          const demoTenant = await db.tenant.findFirst({
+            where: { name: 'Demo Pharma', isActive: true },
+            select: { id: true },
+          })
+          tenantId = demoTenant?.id ?? null
+        }
+      }
+
+      if (!tenantId) {
         // If no host-based tenant can be resolved, fall back only when there's a single active tenant.
         const candidates = await db.tenant.findMany({ where: { isActive: true }, select: { id: true }, take: 2 })
         if (candidates.length === 1) tenantId = candidates[0]!.id
@@ -82,6 +94,7 @@ export async function registerTenantRoutes(app: FastifyInstance): Promise<void> 
           brandTertiary: true,
           defaultTheme: true,
           currency: true,
+          country: true,
         },
       })
 
@@ -100,6 +113,7 @@ export async function registerTenantRoutes(app: FastifyInstance): Promise<void> 
         brandTertiary: tenant.brandTertiary,
         defaultTheme: tenant.defaultTheme,
         currency: tenant.currency,
+        country: tenant.country,
       }
     },
   )
@@ -124,6 +138,7 @@ export async function registerTenantRoutes(app: FastifyInstance): Promise<void> 
               brandTertiary: { type: 'string', nullable: true },
               defaultTheme: { type: 'string' },
               currency: { type: 'string' },
+              country: { type: 'string', nullable: true },
             },
             required: ['tenantId', 'tenantName', 'defaultTheme'],
             additionalProperties: false,
@@ -145,6 +160,7 @@ export async function registerTenantRoutes(app: FastifyInstance): Promise<void> 
           brandTertiary: true,
           defaultTheme: true,
           currency: true,
+          country: true,
         },
       })
 
@@ -163,6 +179,7 @@ export async function registerTenantRoutes(app: FastifyInstance): Promise<void> 
         brandTertiary: tenant.brandTertiary,
         defaultTheme: tenant.defaultTheme,
         currency: tenant.currency,
+        country: tenant.country,
       }
     },
   )
@@ -173,10 +190,10 @@ export async function registerTenantRoutes(app: FastifyInstance): Promise<void> 
     { preHandler: [requireAuth()] },
     async (request, reply) => {
       const actor = request.auth!
-      const { logoUrl, brandPrimary, brandSecondary, brandTertiary, defaultTheme } = request.body as any
+      const { logoUrl, brandPrimary, brandSecondary, brandTertiary, defaultTheme, currency, country } = request.body as any
 
       // Validar que al menos un campo esté presente
-      if (!logoUrl && !brandPrimary && !brandSecondary && !brandTertiary && !defaultTheme) {
+      if (!logoUrl && !brandPrimary && !brandSecondary && !brandTertiary && !defaultTheme && !currency && country === undefined) {
         return reply.status(400).send({ message: 'At least one field must be provided' })
       }
 
@@ -191,6 +208,8 @@ export async function registerTenantRoutes(app: FastifyInstance): Promise<void> 
       if (brandSecondary !== undefined) updateData.brandSecondary = brandSecondary
       if (brandTertiary !== undefined) updateData.brandTertiary = brandTertiary
       if (defaultTheme !== undefined) updateData.defaultTheme = defaultTheme
+      if (currency !== undefined) updateData.currency = currency
+      if (country !== undefined) updateData.country = typeof country === 'string' ? country.trim().toUpperCase() || null : null
 
       const tenant = await db.tenant.update({
         where: { id: actor.tenantId },
@@ -203,6 +222,8 @@ export async function registerTenantRoutes(app: FastifyInstance): Promise<void> 
           brandSecondary: true,
           brandTertiary: true,
           defaultTheme: true,
+          currency: true,
+          country: true,
         },
       })
 
@@ -214,6 +235,8 @@ export async function registerTenantRoutes(app: FastifyInstance): Promise<void> 
         brandSecondary: tenant.brandSecondary,
         brandTertiary: tenant.brandTertiary,
         defaultTheme: tenant.defaultTheme,
+        currency: tenant.currency,
+        country: tenant.country,
       })
     },
   )

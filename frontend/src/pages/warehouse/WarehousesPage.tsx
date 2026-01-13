@@ -3,15 +3,17 @@ import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { apiFetch } from '../../lib/api'
 import { useAuth } from '../../providers/AuthProvider'
-import { MainLayout, PageContainer, Table, Loading, ErrorState, EmptyState, PaginationCursor, Button, Modal, Input, Select } from '../../components'
+import { useTenant } from '../../providers/TenantProvider'
+import { MainLayout, PageContainer, Table, Loading, ErrorState, EmptyState, PaginationCursor, Button, Modal, Input, Select, CitySelector } from '../../components'
 import { useNavigation } from '../../hooks'
 
-type WarehouseListItem = { id: string; code: string; name: string; isActive: boolean; totalQuantity: string }
+type WarehouseListItem = { id: string; code: string; name: string; city?: string | null; isActive: boolean; totalQuantity: string }
 type ListResponse = { items: WarehouseListItem[]; nextCursor: string | null }
 
 type WarehouseStockRow = {
   id: string
   quantity: string
+  reservedQuantity?: string
   updatedAt: string
   productId: string
   batchId: string
@@ -61,15 +63,20 @@ async function fetchWarehouses(token: string, take: number, cursor?: string): Pr
 
 export function WarehousesPage() {
   const auth = useAuth()
+  const tenant = useTenant()
   const navigate = useNavigate()
   const navGroups = useNavigation()
   const queryClient = useQueryClient()
   const [cursor, setCursor] = useState<string | undefined>()
   const [editingWarehouse, setEditingWarehouse] = useState<WarehouseListItem | null>(null)
   const [editName, setEditName] = useState('')
+  const [editCity, setEditCity] = useState('')
   const [showCreate, setShowCreate] = useState(false)
   const [createCode, setCreateCode] = useState('')
   const [createName, setCreateName] = useState('')
+  const [createCity, setCreateCity] = useState('')
+
+  const tenantCountry = (tenant.branding?.country ?? '').trim() || 'BOLIVIA'
 
   const [stockWarehouse, setStockWarehouse] = useState<WarehouseListItem | null>(null)
   const [movingRow, setMovingRow] = useState<WarehouseStockRow | null>(null)
@@ -103,26 +110,27 @@ export function WarehousesPage() {
   )
 
   const updateWarehouseMutation = useMutation({
-    mutationFn: async ({ id, name }: { id: string; name: string }) => {
+    mutationFn: async ({ id, name, city }: { id: string; name: string; city: string }) => {
       return apiFetch(`/api/v1/warehouses/${id}`, {
         token: auth.accessToken!,
         method: 'PATCH',
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name, city }),
       })
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['warehouses'] })
       setEditingWarehouse(null)
       setEditName('')
+      setEditCity('')
     },
   })
 
   const createWarehouseMutation = useMutation({
-    mutationFn: async ({ code, name }: { code: string; name: string }) => {
+    mutationFn: async ({ code, name, city }: { code: string; name: string; city: string }) => {
       return apiFetch(`/api/v1/warehouses`, {
         token: auth.accessToken!,
         method: 'POST',
-        body: JSON.stringify({ code, name }),
+        body: JSON.stringify({ code, name, city }),
       })
     },
     onSuccess: () => {
@@ -130,6 +138,7 @@ export function WarehousesPage() {
       setShowCreate(false)
       setCreateCode('')
       setCreateName('')
+      setCreateCity('')
     },
   })
 
@@ -139,6 +148,11 @@ export function WarehousesPage() {
 
       const qtyNum = Number(moveQty)
       if (!Number.isFinite(qtyNum) || qtyNum <= 0) throw new Error('Ingresá una cantidad válida (mayor a 0)')
+
+      const total = Number(movingRow.quantity || '0')
+      const reserved = Number(movingRow.reservedQuantity ?? '0')
+      const available = Math.max(0, total - reserved)
+      if (qtyNum > available) throw new Error(`No podés mover más de lo disponible (${available}).`)
       if (!moveToWarehouseId) throw new Error('Seleccioná el almacén destino')
       if (!moveToLocationId) throw new Error('Seleccioná la ubicación destino')
 
@@ -168,17 +182,19 @@ export function WarehousesPage() {
   const handleEdit = (warehouse: WarehouseListItem) => {
     setEditingWarehouse(warehouse)
     setEditName(warehouse.name)
+    setEditCity((warehouse.city ?? '').toString())
   }
 
   const handleSaveEdit = () => {
-    if (editingWarehouse && editName.trim()) {
-      updateWarehouseMutation.mutate({ id: editingWarehouse.id, name: editName.trim() })
+    if (editingWarehouse && editName.trim() && editCity.trim()) {
+      updateWarehouseMutation.mutate({ id: editingWarehouse.id, name: editName.trim(), city: editCity.trim() })
     }
   }
 
   const handleCancelEdit = () => {
     setEditingWarehouse(null)
     setEditName('')
+    setEditCity('')
   }
 
   const handleLoadMore = () => {
@@ -214,6 +230,7 @@ export function WarehousesPage() {
                 columns={[
                   { header: 'Código', accessor: (w) => w.code },
                   { header: 'Nombre', accessor: (w) => w.name },
+                  { header: 'Ciudad', accessor: (w) => w.city || '-' },
                   {
                     header: 'Estado',
                     accessor: (w) => (
@@ -269,6 +286,64 @@ export function WarehousesPage() {
       </PageContainer>
 
       <Modal
+        isOpen={showCreate}
+        onClose={() => {
+          setShowCreate(false)
+          setCreateCode('')
+          setCreateName('')
+          setCreateCity('')
+        }}
+        title="➕ Crear Sucursal"
+        maxWidth="md"
+      >
+        <div className="space-y-4">
+          <Input label="Código" value={createCode} onChange={(e) => setCreateCode(e.target.value)} placeholder="BR-01" />
+          <Input label="Nombre" value={createName} onChange={(e) => setCreateName(e.target.value)} placeholder="Sucursal" />
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+              Ciudad
+            </label>
+            <CitySelector
+              country={tenantCountry}
+              value={createCity}
+              onChange={setCreateCity}
+            />
+          </div>
+
+          {createWarehouseMutation.error && (
+            <div className="rounded-md bg-red-50 p-3 text-sm text-red-600 dark:bg-red-900/20 dark:text-red-400">
+              Error:{' '}
+              {(createWarehouseMutation.error as any)?.response?.data?.message ||
+                (createWarehouseMutation.error instanceof Error
+                  ? createWarehouseMutation.error.message
+                  : 'Error al crear sucursal')}
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setShowCreate(false)
+                setCreateCode('')
+                setCreateName('')
+                setCreateCity('')
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={() => createWarehouseMutation.mutate({ code: createCode.trim(), name: createName.trim(), city: createCity.trim() })}
+              disabled={!createCode.trim() || !createName.trim() || !createCity.trim()}
+              loading={createWarehouseMutation.isPending}
+            >
+              Crear
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
         isOpen={!!editingWarehouse}
         onClose={handleCancelEdit}
         title="Editar Sucursal"
@@ -287,6 +362,16 @@ export function WarehousesPage() {
             />
           </div>
 
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Ciudad</label>
+            <CitySelector
+              country={tenantCountry}
+              value={editCity}
+              onChange={setEditCity}
+              disabled={updateWarehouseMutation.isPending}
+            />
+          </div>
+
           {updateWarehouseMutation.error && (
             <div className="rounded-md bg-red-50 p-3 text-sm text-red-600 dark:bg-red-900/20 dark:text-red-400">
               Error: {(updateWarehouseMutation.error as any)?.response?.data?.message || 'Error al actualizar sucursal'}
@@ -299,69 +384,9 @@ export function WarehousesPage() {
             </Button>
             <Button 
               onClick={handleSaveEdit} 
-              disabled={updateWarehouseMutation.isPending || !editName.trim()}
+              disabled={updateWarehouseMutation.isPending || !editName.trim() || !editCity.trim()}
             >
               {updateWarehouseMutation.isPending ? 'Guardando...' : 'Guardar'}
-            </Button>
-          </div>
-        </div>
-      </Modal>
-
-      <Modal
-        isOpen={showCreate}
-        onClose={() => {
-          setShowCreate(false)
-          setCreateCode('')
-          setCreateName('')
-        }}
-        title="Crear Sucursal"
-        maxWidth="sm"
-      >
-        <div className="space-y-4">
-          <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Código</label>
-            <Input
-              value={createCode}
-              onChange={(e) => setCreateCode(e.target.value)}
-              placeholder="Ej: WH-02"
-              disabled={createWarehouseMutation.isPending}
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Nombre</label>
-            <Input
-              value={createName}
-              onChange={(e) => setCreateName(e.target.value)}
-              placeholder="Ej: Sucursal Norte"
-              disabled={createWarehouseMutation.isPending}
-            />
-          </div>
-
-          {createWarehouseMutation.error && (
-            <div className="rounded-md bg-red-50 p-3 text-sm text-red-600 dark:bg-red-900/20 dark:text-red-400">
-              Error: {createWarehouseMutation.error instanceof Error ? createWarehouseMutation.error.message : 'Error al crear sucursal'}
-            </div>
-          )}
-
-          <div className="flex justify-end gap-2">
-            <Button
-              variant="secondary"
-              onClick={() => {
-                setShowCreate(false)
-                setCreateCode('')
-                setCreateName('')
-              }}
-              disabled={createWarehouseMutation.isPending}
-            >
-              Cancelar
-            </Button>
-            <Button
-              onClick={() =>
-                createWarehouseMutation.mutate({ code: createCode.trim(), name: createName.trim() })
-              }
-              disabled={createWarehouseMutation.isPending || !createCode.trim() || !createName.trim()}
-            >
-              {createWarehouseMutation.isPending ? 'Creando...' : 'Crear'}
             </Button>
           </div>
         </div>
@@ -407,7 +432,16 @@ export function WarehousesPage() {
                   accessor: (r) => (r.batch.expiresAt ? new Date(r.batch.expiresAt).toLocaleDateString() : '-'),
                 },
                 { header: 'Ubicación', accessor: (r) => r.location.code },
-                { header: 'Cantidad', accessor: (r) => r.quantity },
+                { header: 'Total', accessor: (r) => r.quantity },
+                { header: 'Reservado', accessor: (r) => r.reservedQuantity ?? '0' },
+                {
+                  header: 'Disponible',
+                  accessor: (r) => {
+                    const total = Number(r.quantity || '0')
+                    const reserved = Number(r.reservedQuantity ?? '0')
+                    return String(Math.max(0, total - reserved))
+                  },
+                },
                 {
                   header: 'Acciones',
                   accessor: (r) => (
@@ -436,7 +470,17 @@ export function WarehousesPage() {
               <div className="mb-3 text-sm font-medium text-slate-900 dark:text-slate-100">Mover existencia</div>
 
               <div className="mb-3 text-sm text-slate-600 dark:text-slate-400">
-                Origen: {movingRow.location.warehouse.code} / {movingRow.location.code} · {movingRow.product.sku} · Lote {movingRow.batch.batchNumber} · Disponible {movingRow.quantity}
+                {(() => {
+                  const total = Number(movingRow.quantity || '0')
+                  const reserved = Number(movingRow.reservedQuantity ?? '0')
+                  const available = Math.max(0, total - reserved)
+                  return (
+                    <>
+                      Origen: {movingRow.location.warehouse.code} / {movingRow.location.code} · {movingRow.product.sku} · Lote{' '}
+                      {movingRow.batch.batchNumber} · Disponible {available} ({reserved} res. · {total} total)
+                    </>
+                  )
+                })()}
               </div>
 
               <div className="grid gap-3 md:grid-cols-2">

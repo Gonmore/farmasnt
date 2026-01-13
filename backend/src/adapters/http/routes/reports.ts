@@ -172,6 +172,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
         select: {
           id: true,
           quantity: true,
+          reservedQuantity: true,
           updatedAt: true,
           productId: true,
           batchId: true,

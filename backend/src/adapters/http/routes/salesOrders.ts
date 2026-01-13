@@ -60,9 +60,228 @@ function startOfTodayUtc(): Date {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0))
 }
 
+function toNumber(value: any): number {
+  const n = typeof value === 'number' ? value : Number(value)
+  return Number.isFinite(n) ? n : 0
+}
+
+async function reserveForOrder(
+  tx: any,
+  args: {
+    tenantId: string
+    userId: string
+    orderId: string
+    preferCity?: string | null
+    lines: Array<{ id: string; productId: string; batchId: string | null; quantity: any }>
+  },
+): Promise<void> {
+  const todayUtc = startOfTodayUtc()
+  const preferCity = typeof args.preferCity === 'string' ? args.preferCity.trim().toUpperCase() : null
+
+  // Reserve from balances across tenant (FEFO). If stock is insufficient, reserve partially.
+  for (const line of args.lines) {
+    let remaining = Math.max(0, toNumber(line.quantity))
+    if (remaining <= 0) continue
+
+    // Important: same balances can appear in multiple passes (sameCity + anyCity).
+    // De-duplicate to avoid over-reserving using stale reservedQuantity values.
+    const seenBalanceIds = new Set<string>()
+
+    // If line specifies a batch, reserve only from that batch.
+    const lists: any[][] = []
+
+    if (line.batchId) {
+      if (preferCity) {
+        const sameCity = await tx.inventoryBalance.findMany({
+          where: {
+            tenantId: args.tenantId,
+            productId: line.productId,
+            batchId: line.batchId,
+            quantity: { gt: 0 },
+            location: { isActive: true, warehouse: { isActive: true, city: preferCity } },
+            batch: { status: 'RELEASED', OR: [{ expiresAt: null }, { expiresAt: { gte: todayUtc } }] },
+          },
+          orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
+          select: { id: true, quantity: true, reservedQuantity: true },
+        })
+        lists.push(sameCity)
+      }
+
+      const anyCity = await tx.inventoryBalance.findMany({
+        where: {
+          tenantId: args.tenantId,
+          productId: line.productId,
+          batchId: line.batchId,
+          quantity: { gt: 0 },
+          location: { isActive: true, warehouse: { isActive: true } },
+          batch: { status: 'RELEASED', OR: [{ expiresAt: null }, { expiresAt: { gte: todayUtc } }] },
+        },
+        orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
+        select: { id: true, quantity: true, reservedQuantity: true },
+      })
+      lists.push(anyCity)
+    } else {
+      const locBase = { isActive: true, warehouse: { isActive: true } }
+
+      const sameCityLoc = preferCity ? { isActive: true, warehouse: { isActive: true, city: preferCity } } : null
+
+      if (sameCityLoc) {
+        const withExpirySame = await tx.inventoryBalance.findMany({
+          where: {
+            tenantId: args.tenantId,
+            productId: line.productId,
+            batchId: { not: null },
+            quantity: { gt: 0 },
+            location: sameCityLoc,
+            batch: { status: 'RELEASED', expiresAt: { not: null, gte: todayUtc } },
+          },
+          orderBy: [{ batch: { expiresAt: 'asc' } }, { updatedAt: 'desc' }, { id: 'asc' }],
+          select: { id: true, quantity: true, reservedQuantity: true },
+        })
+
+        const withoutExpirySame = await tx.inventoryBalance.findMany({
+          where: {
+            tenantId: args.tenantId,
+            productId: line.productId,
+            batchId: { not: null },
+            quantity: { gt: 0 },
+            location: sameCityLoc,
+            batch: { status: 'RELEASED', expiresAt: null },
+          },
+          orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
+          select: { id: true, quantity: true, reservedQuantity: true },
+        })
+
+        const unbatchedSame = await tx.inventoryBalance.findMany({
+          where: {
+            tenantId: args.tenantId,
+            productId: line.productId,
+            batchId: null,
+            quantity: { gt: 0 },
+            location: sameCityLoc,
+          },
+          orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
+          select: { id: true, quantity: true, reservedQuantity: true },
+        })
+
+        lists.push(withExpirySame, withoutExpirySame, unbatchedSame)
+      }
+
+      const withExpiryAny = await tx.inventoryBalance.findMany({
+        where: {
+          tenantId: args.tenantId,
+          productId: line.productId,
+          batchId: { not: null },
+          quantity: { gt: 0 },
+          location: locBase,
+          batch: { status: 'RELEASED', expiresAt: { not: null, gte: todayUtc } },
+        },
+        orderBy: [{ batch: { expiresAt: 'asc' } }, { updatedAt: 'desc' }, { id: 'asc' }],
+        select: { id: true, quantity: true, reservedQuantity: true },
+      })
+
+      const withoutExpiryAny = await tx.inventoryBalance.findMany({
+        where: {
+          tenantId: args.tenantId,
+          productId: line.productId,
+          batchId: { not: null },
+          quantity: { gt: 0 },
+          location: locBase,
+          batch: { status: 'RELEASED', expiresAt: null },
+        },
+        orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
+        select: { id: true, quantity: true, reservedQuantity: true },
+      })
+
+      const unbatchedAny = await tx.inventoryBalance.findMany({
+        where: {
+          tenantId: args.tenantId,
+          productId: line.productId,
+          batchId: null,
+          quantity: { gt: 0 },
+          location: locBase,
+        },
+        orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
+        select: { id: true, quantity: true, reservedQuantity: true },
+      })
+
+      lists.push(withExpiryAny, withoutExpiryAny, unbatchedAny)
+    }
+
+    for (const balances of lists) {
+      for (const b of balances) {
+        if (remaining <= 0) break
+        if (seenBalanceIds.has(b.id)) continue
+        seenBalanceIds.add(b.id)
+        const qty = toNumber(b.quantity)
+        const reserved = toNumber(b.reservedQuantity)
+        const available = Math.max(0, qty - reserved)
+        if (available <= 0) continue
+
+        const take = Math.min(available, remaining)
+        remaining -= take
+
+        await tx.inventoryBalance.update({
+          where: { id: b.id },
+          data: { reservedQuantity: { increment: take }, version: { increment: 1 }, createdBy: args.userId },
+          select: { id: true },
+        })
+
+        await tx.salesOrderReservation.create({
+          data: {
+            tenantId: args.tenantId,
+            salesOrderId: args.orderId,
+            salesOrderLineId: line.id,
+            inventoryBalanceId: b.id,
+            quantity: decimalFromNumber(take),
+            createdBy: args.userId,
+          },
+          select: { id: true },
+        })
+      }
+      if (remaining <= 0) break
+    }
+  }
+}
+
+async function releaseReservationsForOrder(tx: any, args: { tenantId: string; orderId: string; userId: string }): Promise<void> {
+  const reservations = await tx.salesOrderReservation.findMany({
+    where: { tenantId: args.tenantId, salesOrderId: args.orderId },
+    select: { id: true, inventoryBalanceId: true, quantity: true },
+  })
+  if (reservations.length === 0) return
+
+  for (const r of reservations) {
+    const q = toNumber(r.quantity)
+    if (q > 0) {
+      await tx.inventoryBalance.update({
+        where: { id: r.inventoryBalanceId },
+        data: { reservedQuantity: { decrement: q }, version: { increment: 1 }, createdBy: args.userId },
+        select: { id: true },
+      })
+    }
+  }
+
+  await tx.salesOrderReservation.deleteMany({ where: { tenantId: args.tenantId, salesOrderId: args.orderId } })
+}
+
 export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<void> {
   const db = prisma()
   const audit = new AuditService(db)
+
+  app.get(
+    '/api/v1/sales/quotes/next-number',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'SALES'), requirePermission(Permissions.SalesOrderWrite)],
+    },
+    async (request, reply) => {
+      const tenantId = request.auth!.tenantId
+      const year = currentYearUtc()
+
+      const next = await db.$transaction((tx) => nextSequence(tx, { tenantId, year, key: 'COT' }))
+      return reply.send({ number: next.number })
+    },
+  )
 
   app.post(
     '/api/v1/sales/orders',
@@ -77,7 +296,7 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
       const userId = request.auth!.userId
 
       const created = await db.$transaction(async (tx) => {
-        const customer = await tx.customer.findFirst({ where: { id: parsed.data.customerId, tenantId, isActive: true }, select: { id: true } })
+        const customer = await tx.customer.findFirst({ where: { id: parsed.data.customerId, tenantId, isActive: true }, select: { id: true, city: true } })
         if (!customer) {
           const err = new Error('Customer not found') as Error & { statusCode?: number }
           err.statusCode = 404
@@ -136,6 +355,8 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
           select: { id: true, productId: true, batchId: true, quantity: true, unitPrice: true },
         })
 
+        await reserveForOrder(tx, { tenantId, userId, orderId: order.id, preferCity: customer.city, lines })
+
         return { ...order, lines }
       })
 
@@ -147,6 +368,8 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
         entityId: created.id,
         after: created,
       })
+
+      app.io?.to(`tenant:${tenantId}`).emit('sales.order.created', created)
 
       return reply.status(201).send(created)
     },
@@ -295,6 +518,9 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
           err.statusCode = 409
           throw err
         }
+
+        // Order is being fulfilled: release reservations first so reservedQuantity doesn't linger.
+        await releaseReservationsForOrder(tx, { tenantId, orderId: order.id, userId })
 
         const location = await tx.location.findFirst({ where: { id: fromLocationId, tenantId, isActive: true }, select: { id: true } })
         if (!location) {

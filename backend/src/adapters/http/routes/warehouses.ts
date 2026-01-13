@@ -8,10 +8,12 @@ import { Permissions } from '../../../application/security/permissions.js'
 const createWarehouseSchema = z.object({
   code: z.string().trim().min(1).max(32),
   name: z.string().trim().min(1).max(200),
+  city: z.string().trim().min(1).max(120),
 })
 
 const updateWarehouseSchema = z.object({
-  name: z.string().trim().min(1).max(200),
+  name: z.string().trim().min(1).max(200).optional(),
+  city: z.string().trim().min(1).max(120).optional(),
 })
 
 const createLocationSchema = z.object({
@@ -49,7 +51,7 @@ export async function registerWarehouseRoutes(app: FastifyInstance): Promise<voi
             }
           : {}),
         orderBy: { id: 'asc' },
-        select: { id: true, code: true, name: true, isActive: true, version: true, updatedAt: true },
+        select: { id: true, code: true, name: true, city: true, isActive: true, version: true, updatedAt: true },
       })
 
       const warehouseIds = items.map((w) => w.id)
@@ -86,6 +88,10 @@ export async function registerWarehouseRoutes(app: FastifyInstance): Promise<voi
       const tenantId = request.auth!.tenantId
       const userId = request.auth!.userId
 
+      const tenant = await db.tenant.findFirst({ where: { id: tenantId, isActive: true }, select: { id: true, country: true } })
+      if (!tenant) return reply.status(404).send({ message: 'Tenant not found' })
+      if (!tenant.country) return reply.status(409).send({ message: 'Tenant country must be configured before creating a branch' })
+
       try {
         const created = await db.$transaction(async (tx) => {
           // Create warehouse
@@ -94,9 +100,10 @@ export async function registerWarehouseRoutes(app: FastifyInstance): Promise<voi
               tenantId,
               code: parsed.data.code,
               name: parsed.data.name,
+              city: parsed.data.city.toUpperCase(),
               createdBy: userId,
             },
-            select: { id: true, code: true, name: true, isActive: true, version: true, updatedAt: true },
+            select: { id: true, code: true, name: true, city: true, isActive: true, version: true, updatedAt: true },
           })
 
           // Create default location (BIN-01)
@@ -150,9 +157,10 @@ export async function registerWarehouseRoutes(app: FastifyInstance): Promise<voi
           version: warehouse.version // Optimistic locking
         },
         data: {
-          name: parsed.data.name,
+          ...(parsed.data.name !== undefined ? { name: parsed.data.name } : {}),
+          ...(parsed.data.city !== undefined ? { city: parsed.data.city.toUpperCase() } : {}),
         },
-        select: { id: true, code: true, name: true, isActive: true, version: true, updatedAt: true },
+        select: { id: true, code: true, name: true, city: true, isActive: true, version: true, updatedAt: true },
       })
 
       return reply.send(updated)

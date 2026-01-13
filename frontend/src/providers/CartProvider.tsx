@@ -6,6 +6,7 @@ export type CartItem = {
   name: string
   price: number
   quantity: number
+  discountPct?: number
   photoUrl: string | null
 }
 
@@ -16,6 +17,8 @@ type CartContextType = {
   addItem: (item: Omit<CartItem, 'quantity'> & { quantity?: number }) => void
   removeItem: (productId: string) => void
   updateQuantity: (productId: string, quantity: number) => void
+  updatePrice: (productId: string, price: number) => void
+  updateDiscountPct: (productId: string, discountPct: number) => void
   clearCart: () => void
 }
 
@@ -52,14 +55,17 @@ export function CartProvider({ children }: { children: ReactNode }) {
         const updated = [...prev]
         updated[existingIndex] = {
           ...updated[existingIndex],
-          quantity: updated[existingIndex].quantity + (item.quantity || 1)
+          quantity: updated[existingIndex].quantity + (item.quantity || 1),
+          // If caller provides a discount, keep it; otherwise preserve existing
+          discountPct: item.discountPct ?? updated[existingIndex].discountPct,
         }
         return updated
       } else {
         // New item
         return [...prev, {
           ...item,
-          quantity: item.quantity || 1
+          quantity: item.quantity || 1,
+          discountPct: item.discountPct ?? 0,
         }]
       }
     })
@@ -70,7 +76,9 @@ export function CartProvider({ children }: { children: ReactNode }) {
   }
 
   const updateQuantity = (productId: string, quantity: number) => {
-    if (quantity <= 0) {
+    const nextQty = Number.isFinite(quantity) ? quantity : 0
+
+    if (nextQty <= 0) {
       removeItem(productId)
       return
     }
@@ -79,7 +87,31 @@ export function CartProvider({ children }: { children: ReactNode }) {
       const updated = [...prev]
       const index = updated.findIndex(i => i.id === productId)
       if (index >= 0) {
-        updated[index] = { ...updated[index], quantity }
+        updated[index] = { ...updated[index], quantity: nextQty }
+      }
+      return updated
+    })
+  }
+
+  const updatePrice = (productId: string, price: number) => {
+    const nextPrice = Number.isFinite(price) ? Math.max(0, price) : 0
+    setItems(prev => {
+      const updated = [...prev]
+      const index = updated.findIndex(i => i.id === productId)
+      if (index >= 0) {
+        updated[index] = { ...updated[index], price: nextPrice }
+      }
+      return updated
+    })
+  }
+
+  const updateDiscountPct = (productId: string, discountPct: number) => {
+    const pct = Number.isFinite(discountPct) ? Math.min(100, Math.max(0, discountPct)) : 0
+    setItems(prev => {
+      const updated = [...prev]
+      const index = updated.findIndex(i => i.id === productId)
+      if (index >= 0) {
+        updated[index] = { ...updated[index], discountPct: pct }
       }
       return updated
     })
@@ -90,7 +122,10 @@ export function CartProvider({ children }: { children: ReactNode }) {
   }
 
   const itemCount = items.reduce((total, item) => total + item.quantity, 0)
-  const total = items.reduce((sum, item) => sum + (item.price * item.quantity), 0)
+  const total = items.reduce((sum, item) => {
+    const disc = Number.isFinite(item.discountPct) ? Math.min(100, Math.max(0, item.discountPct ?? 0)) : 0
+    return sum + (item.price * item.quantity * (1 - disc / 100))
+  }, 0)
 
   return (
     <CartContext.Provider
@@ -101,6 +136,8 @@ export function CartProvider({ children }: { children: ReactNode }) {
         addItem,
         removeItem,
         updateQuantity,
+        updatePrice,
+        updateDiscountPct,
         clearCart
       }}
     >

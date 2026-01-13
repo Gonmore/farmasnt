@@ -24,6 +24,8 @@ type ProductListItem = {
     batchNumber: string
     warehouseName: string
     totalQuantity: string
+    totalReservedQuantity?: string
+    totalAvailableQuantity?: string
     expiresAt?: string
   }>
 }
@@ -101,6 +103,8 @@ export function ProductsListPage() {
             batchNumber: batch.batchNumber,
             warehouseName: batch.locations?.[0]?.warehouseName || 'Sin ubicación',
             totalQuantity: batch.totalQuantity || '0',
+            totalReservedQuantity: batch.totalReservedQuantity || '0',
+            totalAvailableQuantity: batch.totalAvailableQuantity || String(Math.max(0, Number(batch.totalQuantity || '0') - Number(batch.totalReservedQuantity || '0'))),
             expiresAt: batch.expiresAt
           }))
 
@@ -214,7 +218,7 @@ export function ProductsListPage() {
                           onClick={() => p.batches.length > 0 && setStockModal({ isOpen: true, product: p })}
                           title={p.batches.length > 0 ? "Ver stock completo" : "Sin stock"}
                         >
-                          {p.batches.length > 0 ? p.batches.reduce((total: number, batch: any) => total + parseInt(batch.totalQuantity), 0) : '❌'}
+                          {p.batches.length > 0 ? p.batches.reduce((total: number, batch: any) => total + parseInt(batch.totalAvailableQuantity || batch.totalQuantity), 0) : '❌'}
                         </div>
                       </div>
                     ),
@@ -317,8 +321,11 @@ export function ProductsListPage() {
                     </div>
                     <div className="text-right flex flex-col items-end gap-2">
                       <div>
-                        <span className="text-3xl font-bold text-green-600">{batch.totalQuantity}</span>
-                        <span className="text-green-500 ml-1">unidades</span>
+                        <span className="text-3xl font-bold text-green-600">{batch.totalAvailableQuantity || batch.totalQuantity}</span>
+                        <span className="text-green-500 ml-1">disp.</span>
+                        <div className="text-xs text-slate-600">
+                          {batch.totalReservedQuantity || '0'} res. · {batch.totalQuantity} total
+                        </div>
                       </div>
                       {batch.expiresAt && <ExpiryBadge status={expiryStatus} />}
                     </div>
@@ -327,9 +334,9 @@ export function ProductsListPage() {
               })}
               <div className="mt-6 p-4 bg-slate-100 rounded-lg">
                 <div className="flex justify-between items-center">
-                  <span className="font-bold text-slate-700">Total en todos los almacenes:</span>
+                  <span className="font-bold text-slate-700">Total disponible en todos los almacenes:</span>
                   <span className="text-3xl font-bold text-slate-800">
-                    {stockModal.product.batches.reduce((total, batch) => total + parseInt(batch.totalQuantity), 0)}
+                    {stockModal.product.batches.reduce((total, batch) => total + parseInt(batch.totalAvailableQuantity || batch.totalQuantity), 0)}
                   </span>
                 </div>
               </div>

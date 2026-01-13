@@ -1,7 +1,9 @@
 import { Link } from 'react-router-dom'
 import { useAuth } from '../../providers/AuthProvider'
+import { useNotifications } from '../../providers/NotificationsProvider'
 import { useTenant } from '../../providers/TenantProvider'
 import { useTheme } from '../../providers/ThemeProvider'
+import { useEffect, useRef, useState } from 'react'
 
 interface HeaderProps {
   onMenuClick?: () => void
@@ -12,6 +14,21 @@ export function Header({ onMenuClick, showMenuButton = false }: HeaderProps) {
   const auth = useAuth()
   const tenant = useTenant()
   const theme = useTheme()
+  const notifications = useNotifications()
+  const [notificationsOpen, setNotificationsOpen] = useState(false)
+  const dropdownRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    const onDocClick = (e: MouseEvent) => {
+      if (!notificationsOpen) return
+      const target = e.target as Node | null
+      if (dropdownRef.current && target && !dropdownRef.current.contains(target)) {
+        setNotificationsOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onDocClick)
+    return () => document.removeEventListener('mousedown', onDocClick)
+  }, [notificationsOpen])
 
   return (
     <header className="sticky top-0 z-50 border-b border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
@@ -73,6 +90,62 @@ export function Header({ onMenuClick, showMenuButton = false }: HeaderProps) {
                   </svg>
                 )}
               </button>
+
+              <div className="relative" ref={dropdownRef}>
+                <button
+                  onClick={() => {
+                    const next = !notificationsOpen
+                    setNotificationsOpen(next)
+                    if (next) notifications.markAllRead()
+                  }}
+                  className="relative rounded p-2 text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
+                  title="Notificaciones"
+                >
+                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"
+                    />
+                  </svg>
+                  {notifications.unreadCount > 0 && (
+                    <span className="absolute -right-1 -top-1 min-w-[18px] rounded-full bg-red-600 px-1 text-center text-[11px] font-semibold text-white">
+                      {notifications.unreadCount > 99 ? '99+' : notifications.unreadCount}
+                    </span>
+                  )}
+                </button>
+
+                {notificationsOpen && (
+                  <div className="absolute right-0 mt-2 w-80 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg dark:border-slate-700 dark:bg-slate-900">
+                    <div className="flex items-center justify-between border-b border-slate-200 px-3 py-2 text-sm font-semibold dark:border-slate-700">
+                      <span>Notificaciones</span>
+                      <button
+                        className="text-xs text-slate-600 hover:underline dark:text-slate-300"
+                        onClick={() => notifications.clear()}
+                      >
+                        Limpiar
+                      </button>
+                    </div>
+                    <div className="max-h-96 overflow-auto">
+                      {notifications.notifications.length === 0 ? (
+                        <div className="p-3 text-sm text-slate-600 dark:text-slate-400">Sin notificaciones.</div>
+                      ) : (
+                        notifications.notifications.slice(0, 12).map((n) => (
+                          <div key={n.id} className="border-b border-slate-100 p-3 last:border-b-0 dark:border-slate-800">
+                            <div className="text-sm font-medium text-slate-900 dark:text-slate-100">{n.title}</div>
+                            {n.body && <div className="mt-1 text-xs text-slate-600 dark:text-slate-400">{n.body}</div>}
+                            <div className="mt-1 text-[11px] text-slate-500 dark:text-slate-500">
+                              {new Date(n.createdAt).toLocaleString()}
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
               <button
                 onClick={auth.logout}
                 className="rounded bg-slate-200 px-4 py-2 text-sm font-medium text-slate-900 hover:bg-slate-300 dark:bg-slate-700 dark:text-slate-100 dark:hover:bg-slate-600"

@@ -37,6 +37,8 @@ type ProductBatchListItem = {
     locationId: string
     locationCode: string
     quantity: string
+    reservedQuantity?: string
+    availableQuantity?: string
   }[]
 }
 
@@ -204,12 +206,17 @@ export function MovementsPage() {
     const rows: any[] = []
     for (const batch of data.items) {
       for (const loc of batch.locations ?? []) {
+        const total = Number(loc.quantity || '0')
+        const reserved = Number(loc.reservedQuantity ?? '0')
+        const available = Number(loc.availableQuantity ?? String(Math.max(0, total - reserved)))
         rows.push({
           id: `${batch.id}::${loc.locationId}`,
           batchNumber: batch.batchNumber,
           manufacturingDate: batch.manufacturingDate ? new Date(batch.manufacturingDate).toLocaleDateString() : '-',
           expiresAt: batch.expiresAt ? new Date(batch.expiresAt).toLocaleDateString() : '-',
-          quantity: loc.quantity,
+          totalQuantity: String(total),
+          reservedQuantity: String(Math.max(0, reserved)),
+          availableQuantity: String(Math.max(0, available)),
           warehouse: `${loc.warehouseCode} - ${loc.warehouseName}`,
           location: loc.locationCode,
           batchId: batch.id,
@@ -217,8 +224,10 @@ export function MovementsPage() {
         })
       }
     }
-    return rows
+    return rows.filter((r) => Number(r.totalQuantity || '0') > 0)
   })()
+
+  const selectableStockRows = stockRows.filter((r) => Number(r.availableQuantity || '0') > 0)
 
   // Calcular el próximo número de lote
   const nextBatchNumber = (() => {
@@ -333,7 +342,9 @@ export function MovementsPage() {
                           { header: 'Lote', accessor: (r) => r.batchNumber },
                           { header: 'Elaboración', accessor: (r) => r.manufacturingDate },
                           { header: 'Vence', accessor: (r) => r.expiresAt },
-                          { header: 'Cantidad', accessor: (r) => r.quantity },
+                          { header: 'Total', accessor: (r) => r.totalQuantity },
+                          { header: 'Reservado', accessor: (r) => r.reservedQuantity },
+                          { header: 'Disponible', accessor: (r) => r.availableQuantity },
                           { header: 'Ubicación', accessor: (r) => `${r.warehouse} / ${r.location}` },
                         ]}
                         data={stockRows}
@@ -460,7 +471,7 @@ export function MovementsPage() {
                       />
                     )}
 
-                    {productBatchesQuery.data?.hasStockRead && stockRows.length > 0 && (
+                    {productBatchesQuery.data?.hasStockRead && selectableStockRows.length > 0 && (
                       <Table
                         columns={[
                           {
@@ -479,15 +490,17 @@ export function MovementsPage() {
                           { header: 'Lote', accessor: (r) => r.batchNumber },
                           { header: 'Elaboración', accessor: (r) => r.manufacturingDate },
                           { header: 'Vence', accessor: (r) => r.expiresAt },
-                          { header: 'Cantidad', accessor: (r) => r.quantity },
+                          { header: 'Total', accessor: (r) => r.totalQuantity },
+                          { header: 'Reservado', accessor: (r) => r.reservedQuantity },
+                          { header: 'Disponible', accessor: (r) => r.availableQuantity },
                           { header: 'Ubicación', accessor: (r) => `${r.warehouse} / ${r.location}` },
                         ]}
-                        data={stockRows}
+                        data={selectableStockRows}
                         keyExtractor={(r) => r.id}
                       />
                     )}
 
-                    {productBatchesQuery.data?.hasStockRead && stockRows.length === 0 && (
+                    {productBatchesQuery.data?.hasStockRead && selectableStockRows.length === 0 && (
                       <div className="text-sm text-slate-600 dark:text-slate-400">Sin existencias disponibles</div>
                     )}
                   </div>
@@ -604,7 +617,7 @@ export function MovementsPage() {
                       />
                     )}
 
-                    {productBatchesQuery.data?.hasStockRead && stockRows.length > 0 && (
+                    {productBatchesQuery.data?.hasStockRead && selectableStockRows.length > 0 && (
                       <Table
                         columns={[
                           {
@@ -623,15 +636,17 @@ export function MovementsPage() {
                           { header: 'Lote', accessor: (r) => r.batchNumber },
                           { header: 'Elaboración', accessor: (r) => r.manufacturingDate },
                           { header: 'Vence', accessor: (r) => r.expiresAt },
-                          { header: 'Cantidad', accessor: (r) => r.quantity },
+                          { header: 'Total', accessor: (r) => r.totalQuantity },
+                          { header: 'Reservado', accessor: (r) => r.reservedQuantity },
+                          { header: 'Disponible', accessor: (r) => r.availableQuantity },
                           { header: 'Ubicación', accessor: (r) => `${r.warehouse} / ${r.location}` },
                         ]}
-                        data={stockRows}
+                        data={selectableStockRows}
                         keyExtractor={(r) => r.id}
                       />
                     )}
 
-                    {productBatchesQuery.data?.hasStockRead && stockRows.length === 0 && (
+                    {productBatchesQuery.data?.hasStockRead && selectableStockRows.length === 0 && (
                       <div className="text-sm text-slate-600 dark:text-slate-400">Sin existencias disponibles</div>
                     )}
                   </div>
@@ -794,7 +809,7 @@ export function MovementsPage() {
                                 checked={selectedStockKey === r.id}
                                 onChange={(e) => {
                                   setSelectedStockKey(e.target.value)
-                                  setAdjustedQuantity(r.quantity)
+                                  setAdjustedQuantity(r.totalQuantity)
                                   const mfgDate = r.manufacturingDate ? new Date(r.manufacturingDate).toISOString().split('T')[0] : ''
                                   const expDate = r.expiresAt ? new Date(r.expiresAt).toISOString().split('T')[0] : ''
                                   setAdjustedManufacturingDate(mfgDate)
@@ -807,7 +822,9 @@ export function MovementsPage() {
                           { header: 'Lote', accessor: (r) => r.batchNumber },
                           { header: 'Elaboración', accessor: (r) => r.manufacturingDate },
                           { header: 'Vence', accessor: (r) => r.expiresAt },
-                          { header: 'Cantidad', accessor: (r) => r.quantity },
+                          { header: 'Total', accessor: (r) => r.totalQuantity },
+                          { header: 'Reservado', accessor: (r) => r.reservedQuantity },
+                          { header: 'Disponible', accessor: (r) => r.availableQuantity },
                           { header: 'Ubicación', accessor: (r) => `${r.warehouse} / ${r.location}` },
                         ]}
                         data={stockRows}

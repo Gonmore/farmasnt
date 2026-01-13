@@ -43,6 +43,7 @@ export function useNavigation(): NavGroup[] {
       items: [
         { to: '/catalog/products', label: '🏷️ Productos' },
         { to: '/catalog/commercial', label: '🛒 Comercial' },
+        ...(hasPermission('sales:order:write') ? [{ to: '/catalog/seller', label: '🧑‍💼 Vendedor' }] : []),
       ],
     });
   }
@@ -66,6 +67,7 @@ export function useNavigation(): NavGroup[] {
       title: '💰 Ventas',
       items: [
         { to: '/sales/customers', label: '👥 Clientes' },
+        { to: '/sales/quotes', label: '📝 Cotizaciones' },
         { to: '/sales/orders', label: '📋 Órdenes' },
       ],
     });

@@ -7,6 +7,7 @@ import { AuthProvider } from './providers/AuthProvider'
 import { TenantProvider } from './providers/TenantProvider'
 import { ThemeProvider } from './providers/ThemeProvider'
 import { CartProvider } from './providers/CartProvider'
+import { NotificationsProvider } from './providers/NotificationsProvider'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -23,9 +24,11 @@ createRoot(document.getElementById('root')!).render(
       <AuthProvider>
         <TenantProvider>
           <ThemeProvider>
-            <CartProvider>
-              <AppRouter />
-            </CartProvider>
+            <NotificationsProvider>
+              <CartProvider>
+                <AppRouter />
+              </CartProvider>
+            </NotificationsProvider>
           </ThemeProvider>
         </TenantProvider>
       </AuthProvider>

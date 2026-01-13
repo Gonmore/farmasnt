@@ -1,0 +1,1 @@
+SELECT name, city, UPPER(city) as upper_city FROM "Customer" WHERE "tenantId" = '00000000-0000-0000-0000-000000000002' ORDER BY city, name;

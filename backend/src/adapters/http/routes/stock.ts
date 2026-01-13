@@ -100,6 +100,7 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
         select: {
           id: true,
           quantity: true,
+          reservedQuantity: true,
           product: { select: { id: true, sku: true, name: true } },
           batch: { select: { id: true, batchNumber: true, expiresAt: true } },
           location: { select: { id: true, code: true, warehouse: { select: { id: true, code: true, name: true } } } },
@@ -116,6 +117,10 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
           if (!batch || !exp) return null
           const d = daysToExpire(exp, todayUtc)
           const status = semaphoreStatusForDays(d)
+
+          const total = Number(r.quantity || '0')
+          const reserved = Number((r as any).reservedQuantity ?? '0')
+          const available = Math.max(0, total - Math.max(0, reserved))
           return {
             balanceId: r.id,
             productId: r.product.id,
@@ -126,7 +131,9 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
             expiresAt: exp.toISOString(),
             daysToExpire: d,
             status,
-            quantity: r.quantity,
+            quantity: String(r.quantity),
+            reservedQuantity: String((r as any).reservedQuantity ?? '0'),
+            availableQuantity: String(available),
             warehouseId: r.location.warehouse.id,
             warehouseCode: r.location.warehouse.code,
             warehouseName: r.location.warehouse.name,

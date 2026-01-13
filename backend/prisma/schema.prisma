@@ -50,6 +50,7 @@ model Tenant {
   id        String   @id @default(uuid())
   name      String
   isActive  Boolean  @default(true)
+  country   String?  @default("BOLIVIA")
   logoUrl   String?
   brandPrimary  String?
   brandSecondary String?
@@ -218,17 +219,28 @@ model Customer {
   id        String   @id @default(uuid())
   tenantId  String
   name      String
+  businessName String?
   nit       String?
+  contactName String?
+  contactBirthDay Int?
+  contactBirthMonth Int?
+  contactBirthYear Int?
   email     String?
   phone     String?
   address   String?
+  city      String?
+  zone      String?
+  mapsUrl   String?
   isActive  Boolean  @default(true)
+  creditDays7Enabled  Boolean  @default(false)
+  creditDays14Enabled Boolean  @default(false)
   version   Int      @default(1)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   createdBy String?
 
   salesOrders SalesOrder[]
+  quotes      Quote[]
 
   @@index([tenantId])
   @@index([tenantId, name])
@@ -256,6 +268,7 @@ model Product {
   balances InventoryBalance[]
   stockMovements StockMovement[]
   salesOrderLines SalesOrderLine[]
+  quoteLines      QuoteLine[]
 
   @@unique([tenantId, sku])
   @@index([tenantId])
@@ -334,6 +347,7 @@ model Warehouse {
   tenantId  String
   code      String
   name      String
+  city      String?
   isActive  Boolean  @default(true)
   version   Int      @default(1)
   createdAt DateTime @default(now())
@@ -395,6 +409,7 @@ model InventoryBalance {
   productId  String
   batchId    String?
   quantity   Decimal  @default(0)
+  reservedQuantity Decimal @default(0)
   version    Int      @default(1)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
@@ -403,6 +418,8 @@ model InventoryBalance {
   location Location @relation(fields: [locationId], references: [id], onDelete: Restrict)
   product  Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
   batch    Batch?   @relation(fields: [batchId], references: [id], onDelete: Restrict)
+
+  reservations SalesOrderReservation[]
 
   @@unique([tenantId, locationId, productId, batchId])
   @@index([tenantId])
@@ -466,6 +483,7 @@ model SalesOrder {
 
   customer Customer @relation(fields: [customerId], references: [id], onDelete: Restrict)
   lines    SalesOrderLine[]
+  reservations SalesOrderReservation[]
 
   @@unique([tenantId, number])
   @@index([tenantId])
@@ -490,8 +508,76 @@ model SalesOrderLine {
   product    Product    @relation(fields: [productId], references: [id], onDelete: Restrict)
   batch      Batch?     @relation(fields: [batchId], references: [id], onDelete: Restrict)
 
+  reservations SalesOrderReservation[]
+
   @@index([tenantId])
   @@index([salesOrderId])
+  @@index([productId])
+}
+
+model SalesOrderReservation {
+  id               String   @id @default(uuid())
+  tenantId         String
+  salesOrderId     String
+  salesOrderLineId String
+  inventoryBalanceId String
+  quantity         Decimal
+  createdAt        DateTime @default(now())
+  createdBy        String?
+
+  salesOrder SalesOrder @relation(fields: [salesOrderId], references: [id], onDelete: Cascade)
+  line       SalesOrderLine @relation(fields: [salesOrderLineId], references: [id], onDelete: Cascade)
+  balance    InventoryBalance @relation(fields: [inventoryBalanceId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, salesOrderLineId, inventoryBalanceId])
+  @@index([tenantId])
+  @@index([salesOrderId])
+  @@index([salesOrderLineId])
+  @@index([inventoryBalanceId])
+}
+
+model Quote {
+  id         String   @id @default(uuid())
+  tenantId   String
+  number     String
+  customerId String
+  validityDays Int     @default(7)
+  paymentMode  String  @default("CASH")
+  deliveryDays Int     @default(1)
+  globalDiscountPct Decimal @default(0)
+  proposalValue String?
+  note       String?
+  version    Int      @default(1)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  createdBy  String?
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  lines    QuoteLine[]
+
+  @@unique([tenantId, number])
+  @@index([tenantId])
+  @@index([customerId])
+}
+
+model QuoteLine {
+  id        String   @id @default(uuid())
+  tenantId  String
+  quoteId   String
+  productId String
+  quantity  Decimal
+  unitPrice Decimal  @default(0)
+  discountPct Decimal @default(0)
+  version   Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  createdBy String?
+
+  quote   Quote   @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId])
+  @@index([quoteId])
   @@index([productId])
 }
 

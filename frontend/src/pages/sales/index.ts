@@ -1,3 +1,5 @@
 export { CustomersPage } from './CustomersPage'
 export { CustomerDetailPage } from './CustomerDetailPage'
 export { OrdersPage } from './OrdersPage'
+export { QuotesPage } from './QuotesPage'
+export { QuoteDetailPage } from './QuoteDetailPage'

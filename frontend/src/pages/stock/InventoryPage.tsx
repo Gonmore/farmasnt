@@ -20,6 +20,7 @@ import type { ExpiryStatus } from '../../components/common/ExpiryBadge'
 type BalanceExpandedItem = {
   id: string
   quantity: string
+  reservedQuantity?: string
   updatedAt: string
   productId: string
   batchId: string | null
@@ -52,11 +53,15 @@ type ProductGroup = {
   sku: string
   name: string
   totalQuantity: number
+  totalReservedQuantity: number
+  totalAvailableQuantity: number
   warehouses: Array<{
     warehouseId: string
     warehouseCode: string
     warehouseName: string
     quantity: number
+    reservedQuantity: number
+    availableQuantity: number
     batches: Array<{
       batchId: string | null
       batchNumber: string
@@ -64,6 +69,8 @@ type ProductGroup = {
       status: string
       version: number
       quantity: number
+      reservedQuantity: number
+      availableQuantity: number
       locationId: string
       locationCode: string
     }>
@@ -75,11 +82,15 @@ type WarehouseGroup = {
   warehouseCode: string
   warehouseName: string
   totalQuantity: number
+  totalReservedQuantity: number
+  totalAvailableQuantity: number
   products: Array<{
     productId: string
     sku: string
     name: string
     quantity: number
+    reservedQuantity: number
+    availableQuantity: number
     batches: Array<{
       batchId: string | null
       batchNumber: string
@@ -87,6 +98,8 @@ type WarehouseGroup = {
       status: string
       version: number
       quantity: number
+      reservedQuantity: number
+      availableQuantity: number
       locationId: string
       locationCode: string
     }>
@@ -288,6 +301,9 @@ export function InventoryPage() {
       const qty = Number(item.quantity)
       if (!Number.isFinite(qty) || qty <= 0) continue
 
+      const reserved = Math.max(0, Number(item.reservedQuantity ?? '0'))
+      const available = Math.max(0, qty - reserved)
+
       let productGroup = map.get(item.productId)
       if (!productGroup) {
         productGroup = {
@@ -295,12 +311,16 @@ export function InventoryPage() {
           sku: item.product.sku,
           name: item.product.name,
           totalQuantity: 0,
+          totalReservedQuantity: 0,
+          totalAvailableQuantity: 0,
           warehouses: [],
         }
         map.set(item.productId, productGroup)
       }
 
       productGroup.totalQuantity += qty
+      productGroup.totalReservedQuantity += reserved
+      productGroup.totalAvailableQuantity += available
 
       let whGroup = productGroup.warehouses.find((w) => w.warehouseId === item.location.warehouse.id)
       if (!whGroup) {
@@ -309,12 +329,16 @@ export function InventoryPage() {
           warehouseCode: item.location.warehouse.code,
           warehouseName: item.location.warehouse.name,
           quantity: 0,
+          reservedQuantity: 0,
+          availableQuantity: 0,
           batches: [],
         }
         productGroup.warehouses.push(whGroup)
       }
 
       whGroup.quantity += qty
+      whGroup.reservedQuantity += reserved
+      whGroup.availableQuantity += available
       whGroup.batches.push({
         batchId: item.batchId,
         batchNumber: item.batch?.batchNumber ?? '-',
@@ -322,6 +346,8 @@ export function InventoryPage() {
         status: item.batch?.status ?? 'RELEASED',
         version: item.batch?.version ?? 1,
         quantity: qty,
+        reservedQuantity: reserved,
+        availableQuantity: available,
         locationId: item.locationId,
         locationCode: item.location.code,
       })
@@ -339,6 +365,9 @@ export function InventoryPage() {
       const qty = Number(item.quantity)
       if (!Number.isFinite(qty) || qty <= 0) continue
 
+      const reserved = Math.max(0, Number(item.reservedQuantity ?? '0'))
+      const available = Math.max(0, qty - reserved)
+
       let whGroup = map.get(item.location.warehouse.id)
       if (!whGroup) {
         whGroup = {
@@ -346,12 +375,16 @@ export function InventoryPage() {
           warehouseCode: item.location.warehouse.code,
           warehouseName: item.location.warehouse.name,
           totalQuantity: 0,
+          totalReservedQuantity: 0,
+          totalAvailableQuantity: 0,
           products: [],
         }
         map.set(item.location.warehouse.id, whGroup)
       }
 
       whGroup.totalQuantity += qty
+      whGroup.totalReservedQuantity += reserved
+      whGroup.totalAvailableQuantity += available
 
       let prodGroup = whGroup.products.find((p) => p.productId === item.productId)
       if (!prodGroup) {
@@ -360,12 +393,16 @@ export function InventoryPage() {
           sku: item.product.sku,
           name: item.product.name,
           quantity: 0,
+          reservedQuantity: 0,
+          availableQuantity: 0,
           batches: [],
         }
         whGroup.products.push(prodGroup)
       }
 
       prodGroup.quantity += qty
+      prodGroup.reservedQuantity += reserved
+      prodGroup.availableQuantity += available
       prodGroup.batches.push({
         batchId: item.batchId,
         batchNumber: item.batch?.batchNumber ?? '-',
@@ -373,6 +410,8 @@ export function InventoryPage() {
         status: item.batch?.status ?? 'RELEASED',
         version: item.batch?.version ?? 1,
         quantity: qty,
+        reservedQuantity: reserved,
+        availableQuantity: available,
         locationId: item.locationId,
         locationCode: item.location.code,
       })
@@ -453,8 +492,10 @@ export function InventoryPage() {
                       </div>
                     </div>
                     <div className="text-right">
-                      <div className="text-2xl font-bold text-[var(--pf-primary)]">{pg.totalQuantity}</div>
-                      <div className="text-xs text-slate-600 dark:text-slate-400">unidades</div>
+                      <div className="text-2xl font-bold text-[var(--pf-primary)]">{pg.totalAvailableQuantity}</div>
+                      <div className="text-xs text-slate-600 dark:text-slate-400">
+                        disp. · {pg.totalReservedQuantity} res. · {pg.totalQuantity} total
+                      </div>
                     </div>
                   </button>
 
@@ -469,8 +510,11 @@ export function InventoryPage() {
                             <div className="font-medium text-slate-900 dark:text-slate-100">
                               🏢 {wh.warehouseCode} - {wh.warehouseName}
                             </div>
-                            <div className="text-lg font-semibold text-slate-700 dark:text-slate-300">
-                              {wh.quantity}
+                            <div className="text-right">
+                              <div className="text-lg font-semibold text-slate-700 dark:text-slate-300">{wh.availableQuantity}</div>
+                              <div className="text-xs text-slate-500 dark:text-slate-400">
+                                {wh.reservedQuantity} res. · {wh.quantity} total
+                              </div>
                             </div>
                           </div>
 
@@ -502,7 +546,9 @@ export function InventoryPage() {
                                 },
                               },
                               { header: '📍 Ubicación', accessor: (b) => b.locationCode },
-                              { header: '📊 Cantidad', accessor: (b) => b.quantity },
+                              { header: '📊 Total', accessor: (b) => b.quantity },
+                              { header: '🧷 Reservado', accessor: (b) => b.reservedQuantity },
+                              { header: '✅ Disponible', accessor: (b) => b.availableQuantity },
                               {
                                 header: '⚡ Acción',
                                 accessor: (b) => (
@@ -517,7 +563,7 @@ export function InventoryPage() {
                                           fromLocationId: b.locationId,
                                           fromWarehouseCode: wh.warehouseCode,
                                           fromLocationCode: b.locationCode,
-                                          availableQty: String(b.quantity),
+                                          availableQty: String(b.availableQuantity),
                                         })
                                       }
                                       className="rounded bg-[var(--pf-primary)] px-3 py-1 text-sm text-white hover:opacity-80"
@@ -586,8 +632,10 @@ export function InventoryPage() {
                       </div>
                     </div>
                     <div className="text-right">
-                      <div className="text-2xl font-bold text-[var(--pf-primary)]">{wg.totalQuantity}</div>
-                      <div className="text-xs text-slate-600 dark:text-slate-400">unidades</div>
+                      <div className="text-2xl font-bold text-[var(--pf-primary)]">{wg.totalAvailableQuantity}</div>
+                      <div className="text-xs text-slate-600 dark:text-slate-400">
+                        disp. · {wg.totalReservedQuantity} res. · {wg.totalQuantity} total
+                      </div>
                     </div>
                   </button>
 
@@ -602,8 +650,11 @@ export function InventoryPage() {
                             <div className="font-medium text-slate-900 dark:text-slate-100">
                               📦 {prod.sku} - {prod.name}
                             </div>
-                            <div className="text-lg font-semibold text-slate-700 dark:text-slate-300">
-                              {prod.quantity}
+                            <div className="text-right">
+                              <div className="text-lg font-semibold text-slate-700 dark:text-slate-300">{prod.availableQuantity}</div>
+                              <div className="text-xs text-slate-500 dark:text-slate-400">
+                                {prod.reservedQuantity} res. · {prod.quantity} total
+                              </div>
                             </div>
                           </div>
 
@@ -635,7 +686,9 @@ export function InventoryPage() {
                                 },
                               },
                               { header: '📍 Ubicación', accessor: (b) => b.locationCode },
-                              { header: '📊 Cantidad', accessor: (b) => b.quantity },
+                              { header: '📊 Total', accessor: (b) => b.quantity },
+                              { header: '🧷 Reservado', accessor: (b) => b.reservedQuantity },
+                              { header: '✅ Disponible', accessor: (b) => b.availableQuantity },
                               {
                                 header: '⚡ Acción',
                                 accessor: (b) => (
@@ -650,7 +703,7 @@ export function InventoryPage() {
                                           fromLocationId: b.locationId,
                                           fromWarehouseCode: wg.warehouseCode,
                                           fromLocationCode: b.locationCode,
-                                          availableQty: String(b.quantity),
+                                          availableQty: String(b.availableQuantity),
                                         })
                                       }
                                       className="rounded bg-[var(--pf-primary)] px-3 py-1 text-sm text-white hover:opacity-80"
