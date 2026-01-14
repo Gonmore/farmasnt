@@ -48,6 +48,17 @@ type LocationListItem = {
   isActive: boolean
 }
 
+type ReservationItem = {
+  id: string
+  seller: string
+  client: string
+  order: string
+  quantity: number
+  deliveryDays: number
+  deliveryDate: string | null
+  productName: string
+}
+
 type ProductGroup = {
   productId: string
   sku: string
@@ -63,6 +74,7 @@ type ProductGroup = {
     reservedQuantity: number
     availableQuantity: number
     batches: Array<{
+      id: string
       batchId: string | null
       batchNumber: string
       expiresAt: string | null
@@ -92,6 +104,7 @@ type WarehouseGroup = {
     reservedQuantity: number
     availableQuantity: number
     batches: Array<{
+      id: string
       batchId: string | null
       batchNumber: string
       expiresAt: string | null
@@ -119,6 +132,10 @@ async function listWarehouses(token: string): Promise<{ items: WarehouseListItem
 async function listWarehouseLocations(token: string, warehouseId: string): Promise<{ items: LocationListItem[] }> {
   const params = new URLSearchParams({ take: '100' })
   return apiFetch(`/api/v1/warehouses/${warehouseId}/locations?${params}`, { token })
+}
+
+async function fetchReservations(token: string, balanceId: string): Promise<{ items: ReservationItem[] }> {
+  return apiFetch(`/api/v1/stock/reservations?balanceId=${balanceId}`, { token })
 }
 
 async function updateBatchStatus(
@@ -217,6 +234,23 @@ export function InventoryPage() {
     version: number
   } | null>(null)
   const [newStatus, setNewStatus] = useState('RELEASED')
+
+  const [reservationsModalOpen, setReservationsModalOpen] = useState(false)
+  const [selectedReservations, setSelectedReservations] = useState<ReservationItem[]>([])
+  const [loadingReservations, setLoadingReservations] = useState(false)
+
+  const openReservationsModal = async (balanceId: string) => {
+    setLoadingReservations(true)
+    try {
+      const data = await fetchReservations(auth.accessToken!, balanceId)
+      setSelectedReservations(data.items)
+      setReservationsModalOpen(true)
+    } catch (error) {
+      console.error('Error fetching reservations:', error)
+    } finally {
+      setLoadingReservations(false)
+    }
+  }
 
   const balancesQuery = useQuery({
     queryKey: ['balances', 'inventory'],
@@ -340,6 +374,7 @@ export function InventoryPage() {
       whGroup.reservedQuantity += reserved
       whGroup.availableQuantity += available
       whGroup.batches.push({
+        id: item.id,
         batchId: item.batchId,
         batchNumber: item.batch?.batchNumber ?? '-',
         expiresAt: item.batch?.expiresAt ?? null,
@@ -404,6 +439,7 @@ export function InventoryPage() {
       prodGroup.reservedQuantity += reserved
       prodGroup.availableQuantity += available
       prodGroup.batches.push({
+        id: item.id,
         batchId: item.batchId,
         batchNumber: item.batch?.batchNumber ?? '-',
         expiresAt: item.batch?.expiresAt ?? null,
@@ -547,7 +583,25 @@ export function InventoryPage() {
                               },
                               { header: '📍 Ubicación', accessor: (b) => b.locationCode },
                               { header: '📊 Total', accessor: (b) => b.quantity },
-                              { header: '🧷 Reservado', accessor: (b) => b.reservedQuantity },
+                              {
+                                header: '🧷 Reservado',
+                                accessor: (b) => {
+                                  const reserved = Number(b.reservedQuantity ?? '0')
+                                  if (reserved > 0) {
+                                    return (
+                                      <Button
+                                        size="sm"
+                                        variant="secondary"
+                                        onClick={() => openReservationsModal(b.id)}
+                                        loading={loadingReservations}
+                                      >
+                                        {b.reservedQuantity}
+                                      </Button>
+                                    )
+                                  }
+                                  return b.reservedQuantity ?? '0'
+                                },
+                              },
                               { header: '✅ Disponible', accessor: (b) => b.availableQuantity },
                               {
                                 header: '⚡ Acción',
@@ -687,7 +741,25 @@ export function InventoryPage() {
                               },
                               { header: '📍 Ubicación', accessor: (b) => b.locationCode },
                               { header: '📊 Total', accessor: (b) => b.quantity },
-                              { header: '🧷 Reservado', accessor: (b) => b.reservedQuantity },
+                              {
+                                header: '🧷 Reservado',
+                                accessor: (b) => {
+                                  const reserved = Number(b.reservedQuantity ?? '0')
+                                  if (reserved > 0) {
+                                    return (
+                                      <Button
+                                        size="sm"
+                                        variant="secondary"
+                                        onClick={() => openReservationsModal(b.id)}
+                                        loading={loadingReservations}
+                                      >
+                                        {b.reservedQuantity}
+                                      </Button>
+                                    )
+                                  }
+                                  return b.reservedQuantity ?? '0'
+                                },
+                              },
                               { header: '✅ Disponible', accessor: (b) => b.availableQuantity },
                               {
                                 header: '⚡ Acción',
@@ -904,7 +976,45 @@ export function InventoryPage() {
             </div>
           </div>
         )}
-      </Modal>
+
+        </Modal>
+
+        <Modal
+          isOpen={reservationsModalOpen}
+          onClose={() => setReservationsModalOpen(false)}
+          title="Reservas de Stock"
+        >
+          <div className="space-y-4">
+            {selectedReservations.length === 0 ? (
+              <p className="text-slate-900 dark:text-slate-100">No hay reservas para este balance.</p>
+            ) : (
+              selectedReservations.map((res, index) => {
+                const deliveryDate = res.deliveryDate ? new Date(res.deliveryDate) : null
+                const isPast = res.deliveryDays < 0
+                const daysText = isPast
+                  ? `Hace ${Math.abs(res.deliveryDays)} días`
+                  : `En ${res.deliveryDays} días`
+
+                // Use the same blue background for all reservations with solid blue border
+                const colorClass = 'bg-blue-50 dark:bg-blue-900/20 border-blue-500 dark:border-blue-400'
+
+                return (
+                  <div key={res.id} className={`rounded-lg p-4 border-2 ${colorClass}`}>
+                    <div className="grid grid-cols-2 gap-2 text-sm">
+                      <div><strong>Vendedor:</strong> {res.seller}</div>
+                      <div><strong>Cliente:</strong> {res.client}</div>
+                      <div><strong>Orden:</strong> {res.order}</div>
+                      <div><strong>Cantidad:</strong> {res.quantity}</div>
+                      <div className="col-span-2">
+                        <strong>Entrega:</strong> {deliveryDate ? deliveryDate.toLocaleDateString() : 'No especificada'} ({daysText})
+                      </div>
+                    </div>
+                  </div>
+                )
+              })
+            )}
+          </div>
+        </Modal>
     </MainLayout>
   )
 }

@@ -4,6 +4,9 @@ export default {
   content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
   theme: {
     extend: {
+      screens: {
+        'custom': '950px',
+      },
       colors: {
         pf: {
           primary: 'var(--pf-primary)',

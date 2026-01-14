@@ -273,6 +273,84 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
     },
   )
 
+  // Get reservations for a balance
+  app.get(
+    '/api/v1/stock/reservations',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.StockRead)],
+    },
+    async (request, reply) => {
+      const parsed = z.object({ balanceId: z.string().uuid() }).safeParse(request.query)
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
+
+      const tenantId = request.auth!.tenantId
+      const balanceId = parsed.data.balanceId
+
+      // Get reservations for this balance
+      const reservations = await db.salesOrderReservation.findMany({
+        where: {
+          tenantId,
+          inventoryBalanceId: balanceId,
+        },
+        include: {
+          salesOrder: {
+            include: {
+              customer: true,
+            },
+          },
+          line: {
+            include: {
+              product: {
+                select: {
+                  name: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: {
+          createdAt: 'desc',
+        },
+      })
+
+      // Get user names for createdBy
+      const userIds = [...new Set(reservations.map(r => r.salesOrder.createdBy).filter(Boolean))]
+      const users = userIds.length > 0 ? await db.user.findMany({
+        where: {
+          id: { in: userIds },
+          tenantId, // Ensure users are from the same tenant
+        },
+        select: {
+          id: true,
+          fullName: true,
+          email: true,
+        },
+      }) : []
+      const userMap = new Map(users.map(u => [u.id, u.fullName || u.email || 'Unknown']))
+
+      // Format the response
+      const formattedReservations = reservations.map((res) => {
+        const deliveryDate = res.salesOrder.deliveryDate
+        const today = new Date()
+        const diffTime = deliveryDate ? deliveryDate.getTime() - today.getTime() : 0
+        const deliveryDays = deliveryDate ? Math.ceil(diffTime / (1000 * 60 * 60 * 24)) : 0
+
+        return {
+          id: res.id,
+          seller: userMap.get(res.salesOrder.createdBy!) || 'Unknown',
+          client: res.salesOrder.customer.name,
+          order: res.salesOrder.number,
+          quantity: Number(res.quantity),
+          deliveryDays,
+          deliveryDate: deliveryDate?.toISOString() || null,
+          productName: res.line.product.name,
+        }
+      })
+
+      return reply.send({ items: formattedReservations })
+    },
+  )
+
   app.post(
     '/api/v1/stock/movements',
     {

@@ -8,6 +8,7 @@ import { TenantProvider } from './providers/TenantProvider'
 import { ThemeProvider } from './providers/ThemeProvider'
 import { CartProvider } from './providers/CartProvider'
 import { NotificationsProvider } from './providers/NotificationsProvider'
+import { ScrollProvider } from './contexts/ScrollContext'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -26,7 +27,9 @@ createRoot(document.getElementById('root')!).render(
           <ThemeProvider>
             <NotificationsProvider>
               <CartProvider>
-                <AppRouter />
+                <ScrollProvider>
+                  <AppRouter />
+                </ScrollProvider>
               </CartProvider>
             </NotificationsProvider>
           </ThemeProvider>

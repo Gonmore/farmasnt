@@ -12,9 +12,15 @@ type QuoteDetail = {
   number: string
   customerId: string
   customerName: string
+  status: 'CREATED' | 'PROCESSED'
+  quotedBy: string | null
   validityDays: number
   paymentMode: string
   deliveryDays: number
+  deliveryCity: string | null
+  deliveryZone: string | null
+  deliveryAddress: string | null
+  deliveryMapsUrl: string | null
   globalDiscountPct: number
   proposalValue: string | null
   note: string | null
@@ -74,16 +80,22 @@ export function QuoteDetailPage() {
             <Button variant="secondary" onClick={() => navigate('/sales/quotes')}>Volver</Button>
             {quoteQuery.data && (
               <>
-                <Button variant="secondary" onClick={() => navigate(`/catalog/seller?quoteId=${quoteQuery.data.id}`)}>Editar</Button>
+                {quoteQuery.data.status !== 'PROCESSED' && (
+                  <Button variant="secondary" onClick={() => navigate(`/catalog/seller?quoteId=${quoteQuery.data.id}`)}>Editar</Button>
+                )}
                 <Button
                   onClick={async () => {
                     const q = quoteQuery.data!
                     await exportQuoteToPDF({
                       quoteNumber: q.number,
                       customerName: q.customerName,
+                      quotedBy: q.quotedBy ?? undefined,
                       validityDays: String(q.validityDays),
-                      paymentMode: paymentLabel(q.paymentMode).replace(/[^\x20-\x7E]/g, '').trim(),
+                      paymentMode: paymentLabel(q.paymentMode),
                       deliveryDays: String(q.deliveryDays),
+                      deliveryCity: q.deliveryCity ?? undefined,
+                      deliveryZone: q.deliveryZone ?? undefined,
+                      deliveryAddress: q.deliveryAddress ?? undefined,
                       globalDiscountPct: String(q.globalDiscountPct),
                       proposalValue: q.proposalValue ?? '',
                       items: q.lines.map((l) => ({
@@ -118,10 +130,34 @@ export function QuoteDetailPage() {
               <div className="grid gap-2 md:grid-cols-2 text-sm">
                 <div><strong>Número:</strong> {quoteQuery.data.number}</div>
                 <div><strong>Cliente:</strong> {quoteQuery.data.customerName}</div>
+                <div><strong>Estado:</strong> {quoteQuery.data.status === 'PROCESSED' ? 'PROCESADA' : 'CREADA'}</div>
+                <div><strong>Cotizado por:</strong> {quoteQuery.data.quotedBy ?? '-'}</div>
                 <div><strong>Validez:</strong> {quoteQuery.data.validityDays} día(s)</div>
                 <div><strong>Forma de pago:</strong> {paymentLabel(quoteQuery.data.paymentMode)}</div>
                 <div><strong>Entrega:</strong> {quoteQuery.data.deliveryDays} día(s)</div>
                 <div><strong>Desc. global:</strong> {quoteQuery.data.globalDiscountPct}%</div>
+                {(quoteQuery.data.deliveryAddress || quoteQuery.data.deliveryZone || quoteQuery.data.deliveryCity) && (
+                  <div className="md:col-span-2">
+                    <strong>Lugar de entrega:</strong>{' '}
+                    {[quoteQuery.data.deliveryAddress, quoteQuery.data.deliveryZone, quoteQuery.data.deliveryCity]
+                      .map((p) => (p ?? '').trim())
+                      .filter(Boolean)
+                      .join(', ')}
+                  </div>
+                )}
+                {quoteQuery.data.deliveryMapsUrl && (
+                  <div className="md:col-span-2">
+                    <strong>Mapa:</strong>{' '}
+                    <a
+                      href={quoteQuery.data.deliveryMapsUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-[var(--pf-primary)] underline"
+                    >
+                      Ver ubicación
+                    </a>
+                  </div>
+                )}
                 {quoteQuery.data.proposalValue && <div className="md:col-span-2"><strong>Valor de propuesta:</strong> {quoteQuery.data.proposalValue}</div>}
               </div>
             </div>

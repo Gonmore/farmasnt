@@ -1,4 +1,6 @@
 import type { ReactNode } from 'react'
+import { useRef, useEffect } from 'react'
+import { useScroll } from '../../contexts/ScrollContext'
 
 export interface Column<T> {
   header: ReactNode
@@ -14,8 +16,24 @@ export interface TableProps<T> {
 }
 
 export function Table<T>({ columns, data, keyExtractor, rowClassName }: TableProps<T>) {
+  const { scrollLeft, setScrollLeft, setMaxScroll } = useScroll()
+  const scrollRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollLeft = scrollLeft
+    }
+  }, [scrollLeft])
+
+  const handleScroll = () => {
+    if (scrollRef.current) {
+      setScrollLeft(scrollRef.current.scrollLeft)
+      setMaxScroll(scrollRef.current.scrollWidth - scrollRef.current.clientWidth)
+    }
+  }
+
   return (
-    <div className="overflow-x-auto">
+    <div ref={scrollRef} className="overflow-x-scroll pb-4" onScroll={handleScroll}>
       <table className="w-full border-collapse text-sm">
         <thead>
           <tr className="border-b border-slate-200 dark:border-slate-700">

@@ -13,19 +13,7 @@ const listQuerySchema = z.object({
 })
 
 const orderCreateSchema = z.object({
-  customerId: z.string().uuid(),
-  note: z.string().trim().max(500).optional(),
-  lines: z
-    .array(
-      z.object({
-        productId: z.string().uuid(),
-        batchId: z.string().uuid().nullable().optional(),
-        quantity: z.coerce.number().positive(),
-        unitPrice: z.coerce.number().min(0).optional(),
-      }),
-    )
-    .min(1)
-    .optional(),
+  quoteId: z.string().uuid(),
 })
 
 const orderConfirmSchema = z.object({
@@ -292,86 +280,9 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
       const parsed = orderCreateSchema.safeParse(request.body)
       if (!parsed.success) return reply.status(400).send({ message: 'Invalid request', issues: parsed.error.issues })
 
-      const tenantId = request.auth!.tenantId
-      const userId = request.auth!.userId
-
-      const created = await db.$transaction(async (tx) => {
-        const customer = await tx.customer.findFirst({ where: { id: parsed.data.customerId, tenantId, isActive: true }, select: { id: true, city: true } })
-        if (!customer) {
-          const err = new Error('Customer not found') as Error & { statusCode?: number }
-          err.statusCode = 404
-          throw err
-        }
-
-        const number = generateOrderNumber()
-        const order = await tx.salesOrder.create({
-          data: {
-            tenantId,
-            number,
-            customerId: parsed.data.customerId,
-            note: parsed.data.note ?? null,
-            createdBy: userId,
-          },
-          select: { id: true, number: true, customerId: true, status: true, note: true, version: true, createdAt: true },
-        })
-
-        const linesInput = parsed.data.lines ?? []
-        if (linesInput.length > 0) {
-          // Validate products/batches exist under tenant
-          for (const line of linesInput) {
-            const product = await tx.product.findFirst({ where: { id: line.productId, tenantId, isActive: true }, select: { id: true } })
-            if (!product) {
-              const err = new Error('Product not found') as Error & { statusCode?: number }
-              err.statusCode = 404
-              throw err
-            }
-            const batchId = line.batchId ?? null
-            if (batchId) {
-              const batch = await tx.batch.findFirst({ where: { id: batchId, tenantId, productId: line.productId }, select: { id: true } })
-              if (!batch) {
-                const err = new Error('Batch not found') as Error & { statusCode?: number }
-                err.statusCode = 404
-                throw err
-              }
-            }
-          }
-
-          await tx.salesOrderLine.createMany({
-            data: linesInput.map((l) => ({
-              tenantId,
-              salesOrderId: order.id,
-              productId: l.productId,
-              batchId: l.batchId ?? null,
-              quantity: decimalFromNumber(l.quantity),
-              unitPrice: decimalFromNumber(l.unitPrice ?? 0),
-              createdBy: userId,
-            })),
-          })
-        }
-
-        const lines = await tx.salesOrderLine.findMany({
-          where: { tenantId, salesOrderId: order.id },
-          orderBy: { createdAt: 'asc' },
-          select: { id: true, productId: true, batchId: true, quantity: true, unitPrice: true },
-        })
-
-        await reserveForOrder(tx, { tenantId, userId, orderId: order.id, preferCity: customer.city, lines })
-
-        return { ...order, lines }
-      })
-
-      await audit.append({
-        tenantId,
-        actorUserId: userId,
-        action: 'sales.order.create',
-        entityType: 'SalesOrder',
-        entityId: created.id,
-        after: created,
-      })
-
-      app.io?.to(`tenant:${tenantId}`).emit('sales.order.created', created)
-
-      return reply.status(201).send(created)
+      // New rule: orders must be created from an existing quote.
+      // Use POST /api/v1/sales/quotes/:id/process
+      return reply.status(400).send({ message: 'Orders must be created from a quote. Use /api/v1/sales/quotes/:id/process' })
     },
   )
 
@@ -396,11 +307,47 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
             }
           : {}),
         orderBy: { id: 'asc' },
-        select: { id: true, number: true, customerId: true, status: true, note: true, version: true, updatedAt: true },
+        select: {
+          id: true,
+          number: true,
+          status: true,
+          updatedAt: true,
+          createdBy: true,
+          deliveryDate: true,
+          deliveryCity: true,
+          deliveryZone: true,
+          deliveryAddress: true,
+          deliveryMapsUrl: true,
+          customer: { select: { id: true, name: true } },
+          quote: { select: { id: true, number: true } },
+        },
       })
 
+      const authorIds = Array.from(new Set(items.map((o: any) => o.createdBy).filter(Boolean))) as string[]
+      const authors = authorIds.length
+        ? await db.user.findMany({ where: { tenantId, id: { in: authorIds } }, select: { id: true, fullName: true, email: true } })
+        : []
+      const authorMap = new Map(authors.map((u: any) => [u.id, (u.fullName ?? '').trim() || u.email] as const))
+
+      const mapped = items.map((o: any) => ({
+        id: o.id,
+        number: o.number,
+        status: o.status,
+        updatedAt: o.updatedAt.toISOString(),
+        customerId: o.customer.id,
+        customerName: o.customer.name,
+        quoteId: o.quote?.id ?? null,
+        quoteNumber: o.quote?.number ?? null,
+        processedBy: o.createdBy ? authorMap.get(o.createdBy) ?? null : null,
+        deliveryDate: o.deliveryDate ? o.deliveryDate.toISOString() : null,
+        deliveryCity: o.deliveryCity,
+        deliveryZone: o.deliveryZone,
+        deliveryAddress: o.deliveryAddress,
+        deliveryMapsUrl: o.deliveryMapsUrl,
+      }))
+
       const nextCursor = items.length === parsed.data.take ? items[items.length - 1]!.id : null
-      return reply.send({ items, nextCursor })
+      return reply.send({ items: mapped, nextCursor })
     },
   )
 
@@ -419,18 +366,49 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
           id: true,
           number: true,
           customerId: true,
+          quoteId: true,
           status: true,
           note: true,
           version: true,
           createdAt: true,
           updatedAt: true,
+          createdBy: true,
+          deliveryDate: true,
+          deliveryCity: true,
+          deliveryZone: true,
+          deliveryAddress: true,
+          deliveryMapsUrl: true,
           customer: { select: { id: true, name: true, nit: true } },
-          lines: { select: { id: true, productId: true, batchId: true, quantity: true, unitPrice: true } },
+          quote: { select: { id: true, number: true } },
+          lines: {
+            select: {
+              id: true,
+              productId: true,
+              batchId: true,
+              quantity: true,
+              unitPrice: true,
+              product: { select: { sku: true, name: true } },
+            },
+          },
         },
       })
 
       if (!order) return reply.status(404).send({ message: 'Not found' })
-      return reply.send(order)
+
+      const processedBy = await (async () => {
+        if (!order.createdBy) return null
+        const u = await db.user.findFirst({ where: { id: order.createdBy, tenantId }, select: { fullName: true, email: true } })
+        if (!u) return null
+        return (u.fullName ?? '').trim() || u.email
+      })()
+
+      return reply.send({
+        ...order,
+        processedBy,
+        createdAt: order.createdAt.toISOString(),
+        updatedAt: order.updatedAt.toISOString(),
+        deliveryDate: order.deliveryDate ? order.deliveryDate.toISOString() : null,
+      })
     },
   )
 

@@ -17,6 +17,7 @@ import {
   CustomersPage,
   CustomerDetailPage,
   OrdersPage,
+  OrderDetailPage,
   QuotesPage,
   QuoteDetailPage,
   SalesReportsPage,
@@ -166,6 +167,14 @@ export function AppRouter() {
           element={
             <ProtectedRoute>
               <OrdersPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/sales/orders/:id"
+          element={
+            <ProtectedRoute>
+              <OrderDetailPage />
             </ProtectedRoute>
           }
         />

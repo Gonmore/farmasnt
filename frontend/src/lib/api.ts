@@ -29,7 +29,11 @@ api.interceptors.request.use((config) => {
 export async function apiFetch<T>(path: string, init?: RequestInit & { token?: string | null }): Promise<T> {
   const url = `${API_BASE_URL}${path}`
   const headers = new Headers(init?.headers)
-  headers.set('Content-Type', headers.get('Content-Type') ?? 'application/json')
+  const hasBody = init?.body !== undefined && init?.body !== null
+  const contentTypeAlreadySet = !!headers.get('Content-Type')
+  // Only set JSON content-type when we actually send a body.
+  // Fastify will reject requests with Content-Type: application/json and an empty body.
+  if (hasBody && !contentTypeAlreadySet) headers.set('Content-Type', 'application/json')
   if (init?.token) headers.set('Authorization', `Bearer ${init.token}`)
 
   const resp = await fetch(url, { ...init, headers })

@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { apiFetch } from '../../lib/api'
-import { useAuth, useCart, useTenant } from '../../providers'
+import { useAuth, useCart, useTenant, useTheme } from '../../providers'
 import {
   MainLayout,
   PageContainer,
@@ -14,10 +14,11 @@ import {
   Input,
   Modal,
   Table,
+  MapSelector,
 } from '../../components'
 import { useNavigation } from '../../hooks'
-import jsPDF from 'jspdf'
 import { useNavigate, useSearchParams } from 'react-router-dom'
+import { exportQuoteToPDF } from '../../lib/quotePdf'
 
 type Product = {
   id: string
@@ -73,9 +74,15 @@ type QuoteCreateResponse = {
   number: string
   customerId: string
   customerName: string
+  status: 'CREATED' | 'PROCESSED'
+  quotedBy: string | null
   validityDays: number
   paymentMode: string
   deliveryDays: number
+  deliveryCity: string | null
+  deliveryZone: string | null
+  deliveryAddress: string | null
+  deliveryMapsUrl: string | null
   globalDiscountPct: number
   proposalValue: string | null
   note: string | null
@@ -99,9 +106,15 @@ type QuoteDetailForEdit = {
   number: string
   customerId: string
   customerName: string
+  status: 'CREATED' | 'PROCESSED'
+  quotedBy: string | null
   validityDays: number
   paymentMode: string
   deliveryDays: number
+  deliveryCity: string | null
+  deliveryZone: string | null
+  deliveryAddress: string | null
+  deliveryMapsUrl: string | null
   globalDiscountPct: number
   proposalValue: string | null
   note: string | null
@@ -129,6 +142,10 @@ async function createQuote(
     validityDays: number
     paymentMode: string
     deliveryDays: number
+    deliveryCity?: string
+    deliveryZone?: string
+    deliveryAddress?: string
+    deliveryMapsUrl?: string
     globalDiscountPct: number
     proposalValue?: string
     note?: string
@@ -146,6 +163,10 @@ async function updateQuote(
     validityDays: number
     paymentMode: string
     deliveryDays: number
+    deliveryCity?: string
+    deliveryZone?: string
+    deliveryAddress?: string
+    deliveryMapsUrl?: string
     globalDiscountPct: number
     proposalValue?: string
     note?: string
@@ -159,15 +180,17 @@ async function fetchQuoteForEdit(token: string, quoteId: string): Promise<QuoteD
   return apiFetch(`/api/v1/sales/quotes/${quoteId}`, { token })
 }
 
-async function createSalesOrder(
-  token: string,
-  data: {
-    customerId: string
-    note?: string
-    lines: Array<{ productId: string; quantity: number; unitPrice: number }>
-  },
-): Promise<{ id: string; number: string; status: string; version: number; createdAt: string }> {
-  return apiFetch(`/api/v1/sales/orders`, { token, method: 'POST', body: JSON.stringify(data) })
+type CustomerDetail = {
+  id: string
+  name: string
+  address: string | null
+  city: string | null
+  zone: string | null
+  mapsUrl: string | null
+}
+
+async function fetchCustomerDetail(token: string, customerId: string): Promise<CustomerDetail> {
+  return apiFetch(`/api/v1/customers/${customerId}`, { token })
 }
 
 type WarehouseStock = { warehouseName: string; qty: number }
@@ -188,132 +211,6 @@ function clampPct(value: number): number {
   if (value > 100) return 100
   return value
 }
-
-async function exportQuoteToPDF(
-  quoteData: {
-    quoteNumber: string
-    customerName: string
-    validityDays: string
-    paymentMode: string
-    deliveryDays: string
-    globalDiscountPct: string
-    proposalValue: string
-    items: any[]
-    subtotal: number
-    globalDiscountAmount: number
-    totalAfterGlobal: number
-    currency: string
-    tenant: any
-  }
-): Promise<void> {
-  const pdf = new jsPDF('p', 'mm', 'letter') // Tamaño carta
-  const pageWidth = pdf.internal.pageSize.getWidth()
-  const pageHeight = pdf.internal.pageSize.getHeight()
-  const margin = 20
-  let yPosition = margin
-
-  // Encabezado
-  pdf.setFontSize(18)
-  pdf.setFont('helvetica', 'bold')
-  pdf.text('COTIZACIÓN', pageWidth / 2, yPosition, { align: 'center' })
-  yPosition += 15
-
-  // Información de la empresa
-  pdf.setFontSize(12)
-  pdf.setFont('helvetica', 'bold')
-  pdf.text(quoteData.tenant.branding?.tenantName ?? 'Empresa', margin, yPosition)
-  yPosition += 8
-
-  pdf.setFontSize(10)
-  pdf.setFont('helvetica', 'normal')
-  pdf.text(`Cotización: ${quoteData.quoteNumber}`, margin, yPosition)
-  yPosition += 6
-  pdf.text(`Fecha: ${new Date().toLocaleDateString()}`, margin, yPosition)
-  yPosition += 6
-  pdf.text(`Cliente: ${quoteData.customerName}`, margin, yPosition)
-  yPosition += 6
-  pdf.text(`Validez: ${quoteData.validityDays} día(s)`, margin, yPosition)
-  yPosition += 10
-
-  // Tabla de productos
-  const colWidths = [25, 60, 20, 20, 30, 30] // SKU, Producto, Cant, Desc, Unit, Total
-  const headers = ['SKU', 'Producto', 'Cant.', 'Desc.%', 'Precio Unit.', 'Total']
-
-  // Encabezados de tabla
-  pdf.setFontSize(9)
-  pdf.setFont('helvetica', 'bold')
-  headers.forEach((header, i) => {
-    let x = margin
-    for (let j = 0; j < i; j++) x += colWidths[j]
-    pdf.text(header, x, yPosition)
-  })
-  yPosition += 6
-
-  // Línea separadora
-  pdf.line(margin, yPosition, pageWidth - margin, yPosition)
-  yPosition += 4
-
-  // Filas de productos
-  pdf.setFont('helvetica', 'normal')
-  quoteData.items.forEach((item) => {
-    if (yPosition > pageHeight - margin - 20) {
-      pdf.addPage()
-      yPosition = margin
-    }
-
-    const rowData = [
-      item.sku,
-      item.name.length > 25 ? item.name.substring(0, 22) + '...' : item.name,
-      item.quantity.toString(),
-      item.discountPct.toString(),
-      `${money(item.unitPrice)} ${quoteData.currency}`,
-      `${money(item.lineTotal)} ${quoteData.currency}`
-    ]
-
-    rowData.forEach((data, i) => {
-      let x = margin
-      for (let j = 0; j < i; j++) x += colWidths[j]
-      pdf.text(data, x, yPosition)
-    })
-    yPosition += 5
-  })
-
-  yPosition += 5
-
-  // Totales
-  if (yPosition > pageHeight - margin - 30) {
-    pdf.addPage()
-    yPosition = margin
-  }
-
-  pdf.setFont('helvetica', 'bold')
-  pdf.text(`Total: ${money(quoteData.subtotal)} ${quoteData.currency}`, pageWidth - margin - 60, yPosition, { align: 'right' })
-  yPosition += 6
-
-  if (quoteData.globalDiscountAmount > 0) {
-    pdf.text(`Desc. global (${quoteData.globalDiscountPct}%): -${money(quoteData.globalDiscountAmount)} ${quoteData.currency}`, pageWidth - margin - 60, yPosition, { align: 'right' })
-    yPosition += 6
-  }
-
-  pdf.setFontSize(11)
-  pdf.text(`TOTAL FINAL: ${money(quoteData.totalAfterGlobal)} ${quoteData.currency}`, pageWidth - margin, yPosition, { align: 'right' })
-  yPosition += 10
-
-  // Información adicional
-  pdf.setFontSize(9)
-  pdf.setFont('helvetica', 'normal')
-  pdf.text(`Forma de pago: ${quoteData.paymentMode}`, margin, yPosition)
-  yPosition += 5
-  pdf.text(`Tiempo de entrega: ${quoteData.deliveryDays} día(s)`, margin, yPosition)
-  yPosition += 5
-  if (quoteData.proposalValue.trim()) {
-    pdf.text(`Valor de propuesta: ${quoteData.proposalValue}`, margin, yPosition)
-  }
-
-  // Descargar el PDF
-  pdf.save(`cotizacion-${quoteData.quoteNumber}.pdf`)
-}
-
 export function SellerCatalogPage() {
   const auth = useAuth()
   const navigate = useNavigate()
@@ -324,6 +221,7 @@ export function SellerCatalogPage() {
   const navGroups = useNavigation()
   const cart = useCart()
   const tenant = useTenant()
+  const theme = useTheme()
   const currency = tenant.branding?.currency || 'BOB'
 
   const [cursor, setCursor] = useState<string | undefined>()
@@ -332,13 +230,25 @@ export function SellerCatalogPage() {
   const [customerId, setCustomerId] = useState('')
 
   const [quoteOpen, setQuoteOpen] = useState(false)
-  const [orderOpen, setOrderOpen] = useState(false)
 
   const [validityDays, setValidityDays] = useState('7')
   const [paymentMode, setPaymentMode] = useState('CASH')
   const [globalDiscountPct, setGlobalDiscountPct] = useState('0')
   const [deliveryDays, setDeliveryDays] = useState('1')
   const [proposalValue, setProposalValue] = useState('')
+
+  const [deliveryCity, setDeliveryCity] = useState('')
+  const [deliveryZone, setDeliveryZone] = useState('')
+  const [deliveryAddress, setDeliveryAddress] = useState('')
+  const [deliveryMapsUrl, setDeliveryMapsUrl] = useState('')
+
+  type DeliveryMode = 'customer' | 'custom'
+  const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>('customer')
+
+  const deliveryTouchedRef = useRef(false)
+
+  const [showSaveSuccess, setShowSaveSuccess] = useState(false)
+  const [quoteActionError, setQuoteActionError] = useState('')
 
   const loadedQuoteIdRef = useRef<string | null>(null)
   const autoOpenedQuoteIdRef = useRef<string | null>(null)
@@ -363,7 +273,23 @@ export function SellerCatalogPage() {
     setGlobalDiscountPct('0')
     setDeliveryDays('1')
     setProposalValue('')
+    setDeliveryCity('')
+    setDeliveryZone('')
+    setDeliveryAddress('')
+    setDeliveryMapsUrl('')
+    deliveryTouchedRef.current = false
+    setDeliveryMode('customer')
+    setQuoteActionError('')
+    setShowSaveSuccess(false)
   }, [isEditing])
+
+  useEffect(() => {
+    if (!quoteOpen) return
+    setQuoteActionError('')
+    setShowSaveSuccess(false)
+    deliveryTouchedRef.current = false
+    setDeliveryMode('customer')
+  }, [quoteOpen])
 
   // Funciones para manejar cantidades temporales
   const updateProductQuantity = (productId: string, quantity: number) => {
@@ -405,6 +331,12 @@ export function SellerCatalogPage() {
     enabled: !!auth.accessToken,
   })
 
+  const customerDetailQuery = useQuery({
+    queryKey: ['customer', customerId],
+    queryFn: () => fetchCustomerDetail(auth.accessToken!, customerId),
+    enabled: !!auth.accessToken && !!customerId,
+  })
+
   const balancesQuery = useQuery({
     queryKey: ['balancesExpanded', 'forSellerCatalog'],
     queryFn: () => fetchBalancesExpanded(auth.accessToken!),
@@ -432,6 +364,12 @@ export function SellerCatalogPage() {
     setGlobalDiscountPct(String(q.globalDiscountPct ?? 0))
     setProposalValue(q.proposalValue ?? '')
 
+    setDeliveryCity(q.deliveryCity ?? '')
+    setDeliveryZone(q.deliveryZone ?? '')
+    setDeliveryAddress(q.deliveryAddress ?? '')
+    setDeliveryMapsUrl(q.deliveryMapsUrl ?? '')
+    deliveryTouchedRef.current = true
+
     cart.clearCart()
     for (const line of q.lines) {
       cart.addItem({
@@ -446,10 +384,52 @@ export function SellerCatalogPage() {
     }
   }, [isEditing, quoteForEditQuery.data])
 
+  useEffect(() => {
+    if (!quoteOpen) return
+    if (!customerDetailQuery.data) return
+    if (deliveryTouchedRef.current) return
+
+    setDeliveryCity(customerDetailQuery.data.city ?? '')
+    setDeliveryZone(customerDetailQuery.data.zone ?? '')
+    setDeliveryAddress(customerDetailQuery.data.address ?? '')
+    setDeliveryMapsUrl(customerDetailQuery.data.mapsUrl ?? '')
+  }, [quoteOpen, customerDetailQuery.data?.id])
+
+  const effectiveDelivery = useMemo(() => {
+    if (deliveryMode === 'customer') {
+      return {
+        city: customerDetailQuery.data?.city ?? deliveryCity,
+        zone: customerDetailQuery.data?.zone ?? deliveryZone,
+        address: customerDetailQuery.data?.address ?? deliveryAddress,
+        mapsUrl: customerDetailQuery.data?.mapsUrl ?? deliveryMapsUrl,
+      }
+    }
+
+    return {
+      city: deliveryCity,
+      zone: deliveryZone,
+      address: deliveryAddress,
+      mapsUrl: deliveryMapsUrl,
+    }
+  }, [
+    deliveryMode,
+    customerDetailQuery.data?.id,
+    deliveryCity,
+    deliveryZone,
+    deliveryAddress,
+    deliveryMapsUrl,
+  ])
+
   const saveQuoteMutation = useMutation({
     mutationFn: async () => {
       if (!customerId) throw new Error('Seleccioná un cliente')
       if (cart.items.length === 0) throw new Error('Seleccioná al menos un producto')
+
+      const invalidQty = cart.items.find((i) => !Number.isFinite(i.quantity) || i.quantity <= 0)
+      if (invalidQty) throw new Error('Hay productos con cantidad 0. Eliminá el producto o ingresá una cantidad mayor a 0.')
+
+      const quoteInEdit = quoteForEditQuery.data
+      if (quoteInEdit?.status === 'PROCESSED') throw new Error('La cotización ya fue procesada y no se puede editar')
 
       const lines = cart.items.map((i) => ({
         productId: i.id,
@@ -463,6 +443,10 @@ export function SellerCatalogPage() {
         validityDays: Number(validityDays) || 7,
         paymentMode,
         deliveryDays: Number(deliveryDays) || 1,
+        deliveryCity: deliveryMode === 'custom' ? (deliveryCity.trim() || undefined) : undefined,
+        deliveryZone: deliveryMode === 'custom' ? (deliveryZone.trim() || undefined) : undefined,
+        deliveryAddress: deliveryMode === 'custom' ? (deliveryAddress.trim() || undefined) : undefined,
+        deliveryMapsUrl: deliveryMode === 'custom' ? (deliveryMapsUrl.trim() || undefined) : undefined,
         globalDiscountPct: clampPct(Number(globalDiscountPct)),
         proposalValue: proposalValue.trim() || undefined,
         note: undefined,
@@ -480,14 +464,19 @@ export function SellerCatalogPage() {
       await queryClient.invalidateQueries({ queryKey: ['quotes'] })
       await queryClient.invalidateQueries({ queryKey: ['quote'] })
 
-      // Exportar PDF usando el correlativo generado al guardar
+      setShowSaveSuccess(true)
+
       const paymentLabel = paymentOptions.find((o) => o.value === paymentMode)?.label ?? paymentMode
-      const quoteData = {
+      await exportQuoteToPDF({
         quoteNumber: created.number,
         customerName: created.customerName,
+        quotedBy: created.quotedBy ?? undefined,
         validityDays: String(created.validityDays),
-        paymentMode: paymentLabel.replace(/[^\x20-\x7E]/g, '').trim(),
+        paymentMode: paymentLabel,
         deliveryDays: String(created.deliveryDays),
+        deliveryCity: created.deliveryCity ?? undefined,
+        deliveryZone: created.deliveryZone ?? undefined,
+        deliveryAddress: created.deliveryAddress ?? undefined,
         globalDiscountPct: String(created.globalDiscountPct),
         proposalValue: created.proposalValue ?? '',
         items: created.lines.map((l) => {
@@ -507,54 +496,14 @@ export function SellerCatalogPage() {
         totalAfterGlobal: created.total,
         currency,
         tenant,
-      }
-      await exportQuoteToPDF(quoteData)
-
-      alert(isEditing ? `✅ Cotización actualizada: ${created.number}` : `✅ Cotización guardada: ${created.number}`)
-      setQuoteOpen(false)
-
-      if (!isEditing) {
-        cart.clearCart()
-      } else {
-        navigate(`/sales/quotes/${created.id}`)
-      }
-    },
-    onError: (err: any) => {
-      alert(err instanceof Error ? err.message : 'Error al guardar cotización')
-    },
-  })
-
-  const createOrderMutation = useMutation({
-    mutationFn: () => {
-      if (!customerId) throw new Error('Seleccioná un cliente')
-      if (cart.items.length === 0) throw new Error('Seleccioná al menos un producto')
-
-      const gd = clampPct(Number(globalDiscountPct)) / 100
-
-      const lines = cart.items.map((i) => {
-        const itemDiscount = clampPct(i.discountPct ?? 0) / 100
-        const finalUnit = i.price * (1 - itemDiscount) * (1 - gd)
-        return {
-          productId: i.id,
-          quantity: i.quantity,
-          unitPrice: Number.isFinite(finalUnit) ? finalUnit : 0,
-        }
       })
 
-      const noteParts = [`Entrega: ${deliveryDays || '1'} día(s)`, `Descuento global: ${clampPct(Number(globalDiscountPct))}%`]
-      return createSalesOrder(auth.accessToken!, {
-        customerId,
-        note: noteParts.join(' | '),
-        lines,
-      })
-    },
-    onSuccess: (created) => {
-      alert(`✅ Pedido creado: ${created.number}`)
       cart.clearCart()
-      setOrderOpen(false)
+      setQuoteOpen(false)
+      navigate(`/sales/quotes?highlight=${encodeURIComponent(created.id)}`)
     },
     onError: (err: any) => {
-      alert(err instanceof Error ? err.message : 'Error al procesar pedido')
+      setQuoteActionError(err instanceof Error ? err.message : 'Error al guardar cotización')
     },
   })
 
@@ -619,6 +568,10 @@ export function SellerCatalogPage() {
 
   const totalAfterGlobal = Math.max(0, subtotal - globalDiscountAmount)
 
+  const quoteInEdit = quoteForEditQuery.data
+  const isProcessedQuote = !!(isEditing && quoteInEdit?.status === 'PROCESSED')
+  const modalReadOnly = isProcessedQuote || showSaveSuccess
+
   return (
     <MainLayout navGroups={navGroups}>
       <PageContainer title={isEditing ? '🧑‍💼 Editar cotización' : '🧑‍💼 Catálogo Vendedor'}>
@@ -654,9 +607,6 @@ export function SellerCatalogPage() {
               disabled={!canGenerate}
             >
               📄 Generar cotización
-            </Button>
-            <Button onClick={() => setOrderOpen(true)} disabled={!canGenerate}>
-              🧾 Procesar pedido
             </Button>
           </div>
         </div>
@@ -794,7 +744,14 @@ export function SellerCatalogPage() {
                         label="Cantidad"
                         type="number"
                         value={String(i.quantity)}
-                        onChange={(e) => cart.updateQuantity(i.id, Number(e.target.value))}
+                        onChange={(e) => {
+                          const next = Number(e.target.value)
+                          if (!Number.isFinite(next) || next <= 0) {
+                            cart.removeItem(i.id)
+                          } else {
+                            cart.updateQuantity(i.id, next)
+                          }
+                        }}
                         min={0}
                       />
                       <Input
@@ -861,15 +818,188 @@ export function SellerCatalogPage() {
             <ErrorState message="Error al cargar la cotización para editar" retry={quoteForEditQuery.refetch} />
           </div>
         ) : (
-        <div className="space-y-4 max-h-[80vh] overflow-y-auto">
-          <div className="grid gap-3 md:grid-cols-2">
-            <Input label="Tiempo de validez (días)" type="number" value={validityDays} onChange={(e) => setValidityDays(e.target.value)} min={1} />
-            <Select label="Modalidad de pago" value={paymentMode} onChange={(e) => setPaymentMode(e.target.value)} options={paymentOptions} />
-            <Input label="Tiempo de entrega (días)" type="number" value={deliveryDays} onChange={(e) => setDeliveryDays(e.target.value)} min={0} />
-            <Input label="Descuento global (%)" type="number" value={globalDiscountPct} onChange={(e) => setGlobalDiscountPct(e.target.value)} min={0} max={100} />
+          <div className="relative space-y-4 max-h-[80vh] overflow-y-auto">
+            {showSaveSuccess && (
+              <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/80 dark:bg-slate-900/70">
+                <div className="flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 dark:border-emerald-900/40 dark:bg-emerald-900/20">
+                  <img
+                    src={theme.mode === 'dark' ? '/dark_check.gif' : '/check.gif'}
+                    alt="Guardado"
+                    className="h-14 w-14"
+                  />
+                  <div className="text-sm text-emerald-900 dark:text-emerald-100">
+                    Cotización guardada. Exportando PDF...
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {isProcessedQuote && (
+              <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-100">
+                Esta cotización ya fue procesada y es solo lectura.
+              </div>
+            )}
+
+            {quoteActionError && (
+              <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-200">
+                {quoteActionError}
+              </div>
+            )}
+
+            <div className="grid gap-3 md:grid-cols-2">
+              <Input
+                label="Tiempo de validez (días)"
+                type="number"
+                value={validityDays}
+                onChange={(e) => setValidityDays(e.target.value)}
+                min={1}
+                disabled={modalReadOnly}
+              />
+              <Select
+                label="Modalidad de pago"
+                value={paymentMode}
+                onChange={(e) => setPaymentMode(e.target.value)}
+                options={paymentOptions}
+                disabled={modalReadOnly}
+              />
+              <Input
+                label="Tiempo de entrega (días)"
+                type="number"
+                value={deliveryDays}
+                onChange={(e) => setDeliveryDays(e.target.value)}
+                min={0}
+                disabled={modalReadOnly}
+              />
+              <Input
+                label="Descuento global (%)"
+                type="number"
+                value={globalDiscountPct}
+                onChange={(e) => setGlobalDiscountPct(e.target.value)}
+                min={0}
+                max={100}
+                disabled={modalReadOnly}
+              />
+            </div>
+
+          <div className="rounded-lg border border-slate-200 dark:border-slate-700 p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">Lugar de entrega</div>
+
+              <div className="flex items-center gap-4 text-sm">
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="radio"
+                    name="deliveryMode"
+                    checked={deliveryMode === 'customer'}
+                    onChange={() => setDeliveryMode('customer')}
+                    disabled={modalReadOnly}
+                  />
+                  <span>Usar ubicación del cliente</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="radio"
+                    name="deliveryMode"
+                    checked={deliveryMode === 'custom'}
+                    onChange={() => setDeliveryMode('custom')}
+                    disabled={modalReadOnly}
+                  />
+                  <span>Elegir otra ubicación</span>
+                </label>
+              </div>
+            </div>
+
+            {deliveryMode === 'customer' ? (
+              <div className="mt-2 text-sm text-slate-700 dark:text-slate-300">
+                <div>
+                  {[effectiveDelivery.address, effectiveDelivery.zone, effectiveDelivery.city]
+                    .map((p) => (p ?? '').trim())
+                    .filter(Boolean)
+                    .join(', ') || '—'}
+                </div>
+                {!!effectiveDelivery.mapsUrl?.trim() && (
+                  <div className="mt-1">
+                    <a
+                      href={effectiveDelivery.mapsUrl.trim()}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-[var(--pf-primary)] underline"
+                    >
+                      Ver en mapa
+                    </a>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <>
+                <div className="mt-3 grid gap-3 md:grid-cols-2">
+                  <Input
+                    label="Ciudad"
+                    value={deliveryCity}
+                    onChange={(e) => {
+                      deliveryTouchedRef.current = true
+                      setDeliveryCity(e.target.value)
+                    }}
+                    disabled={modalReadOnly}
+                  />
+                  <Input
+                    label="Zona"
+                    value={deliveryZone}
+                    onChange={(e) => {
+                      deliveryTouchedRef.current = true
+                      setDeliveryZone(e.target.value)
+                    }}
+                    disabled={modalReadOnly}
+                  />
+                </div>
+                <div className="mt-3">
+                  <Input
+                    label="Dirección"
+                    value={deliveryAddress}
+                    onChange={(e) => {
+                      deliveryTouchedRef.current = true
+                      setDeliveryAddress(e.target.value)
+                    }}
+                    placeholder="(opcional)"
+                    disabled={modalReadOnly}
+                  />
+                </div>
+                <div className="mt-3">
+                  <Input
+                    label="URL de mapa (Google Maps)"
+                    value={deliveryMapsUrl}
+                    onChange={(e) => {
+                      deliveryTouchedRef.current = true
+                      setDeliveryMapsUrl(e.target.value)
+                    }}
+                    placeholder="https://www.google.com/maps/@..."
+                    disabled={modalReadOnly}
+                  />
+                </div>
+                <div className="mt-3">
+                  <MapSelector
+                    city={deliveryCity}
+                    zone={deliveryZone}
+                    address={deliveryAddress}
+                    mapsUrl={deliveryMapsUrl}
+                    onLocationSelect={(mapsUrl, geocodedAddress) => {
+                      deliveryTouchedRef.current = true
+                      setDeliveryMapsUrl(mapsUrl)
+                      if (geocodedAddress) setDeliveryAddress(geocodedAddress)
+                    }}
+                  />
+                </div>
+              </>
+            )}
           </div>
 
-          <Input label="Valor de propuesta (opcional)" value={proposalValue} onChange={(e) => setProposalValue(e.target.value)} placeholder="opcional" />
+            <Input
+              label="Valor de propuesta (opcional)"
+              value={proposalValue}
+              onChange={(e) => setProposalValue(e.target.value)}
+              placeholder="opcional"
+              disabled={modalReadOnly}
+            />
 
           {/* Cotización con diseño de hoja */}
           <div className="bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 shadow-lg rounded-sm overflow-hidden">
@@ -918,9 +1048,17 @@ export function SellerCatalogPage() {
                         <Input
                           type="number"
                           value={String(r.quantity)}
-                          onChange={(e) => cart.updateQuantity(r.productId, Number(e.target.value))}
+                          onChange={(e) => {
+                            const next = Number(e.target.value)
+                            if (!Number.isFinite(next) || next <= 0) {
+                              cart.removeItem(r.productId)
+                            } else {
+                              cart.updateQuantity(r.productId, next)
+                            }
+                          }}
                           min={0}
                           className="w-24"
+                          disabled={modalReadOnly}
                         />
                       ),
                     },
@@ -934,6 +1072,7 @@ export function SellerCatalogPage() {
                           min={0}
                           max={100}
                           className="w-24"
+                          disabled={modalReadOnly}
                         />
                       ),
                     },
@@ -947,6 +1086,7 @@ export function SellerCatalogPage() {
                             onChange={(e) => cart.updatePrice(r.productId, Number(e.target.value))}
                             min={0}
                             className="w-28"
+                            disabled={modalReadOnly}
                           />
                           <span className="text-xs text-slate-600 dark:text-slate-400">{currency}</span>
                         </div>
@@ -997,41 +1137,55 @@ export function SellerCatalogPage() {
               <div className="grid gap-2 text-sm text-slate-700 dark:text-slate-300 border-t border-slate-300 dark:border-slate-600 pt-4">
                 <div><strong>Forma de pago:</strong> {paymentOptions.find((o) => o.value === paymentMode)?.label ?? paymentMode}</div>
                 <div><strong>Tiempo de entrega:</strong> {deliveryDays} día(s)</div>
+                {([effectiveDelivery.address, effectiveDelivery.zone, effectiveDelivery.city]
+                  .map((p) => (p ?? '').trim())
+                  .filter(Boolean).length > 0) && (
+                  <div>
+                    <strong>Lugar de entrega:</strong>{' '}
+                    {[effectiveDelivery.address, effectiveDelivery.zone, effectiveDelivery.city]
+                      .map((p) => (p ?? '').trim())
+                      .filter(Boolean)
+                      .join(', ')}
+                  </div>
+                )}
+                {!!effectiveDelivery.mapsUrl?.trim() && (
+                  <div>
+                    <strong>Mapa:</strong>{' '}
+                    <a
+                      href={effectiveDelivery.mapsUrl.trim()}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-[var(--pf-primary)] underline"
+                    >
+                      Ver ubicación
+                    </a>
+                  </div>
+                )}
                 {proposalValue.trim() && (<div><strong>Valor de propuesta:</strong> {proposalValue}</div>)}
               </div>
             </div>
           </div>
 
-          <div className="flex justify-end gap-2">
-            <Button onClick={() => saveQuoteMutation.mutate()} loading={saveQuoteMutation.isPending}>
-              {isEditing ? '💾 Guardar cambios y exportar a PDF' : '💾 Guardar y exportar a PDF'}
-            </Button>
-            <Button variant="secondary" onClick={() => setQuoteOpen(false)}>Cerrar</Button>
+            <div className="sticky bottom-0 z-[1] bg-white/95 dark:bg-slate-900/95 border-t border-slate-200 dark:border-slate-800 pt-3 pb-2">
+              <div className="flex justify-end gap-2">
+                <Button
+                  onClick={() => {
+                    setQuoteActionError('')
+                    setShowSaveSuccess(false)
+                    saveQuoteMutation.mutate()
+                  }}
+                  loading={saveQuoteMutation.isPending}
+                  disabled={modalReadOnly}
+                >
+                  {isEditing ? '💾 Guardar cambios y exportar a PDF' : '💾 Guardar y exportar a PDF'}
+                </Button>
+                <Button variant="secondary" onClick={() => setQuoteOpen(false)} disabled={showSaveSuccess}>
+                  Cerrar
+                </Button>
+              </div>
+            </div>
           </div>
-        </div>
         )}
-      </Modal>
-
-      <Modal isOpen={orderOpen} onClose={() => setOrderOpen(false)} title="🧾 Procesar pedido" maxWidth="lg">
-        <div className="space-y-4">
-          <Input label="Tiempo de entrega (días)" type="number" value={deliveryDays} onChange={(e) => setDeliveryDays(e.target.value)} min={0} />
-          <Input label="Descuento global (%)" type="number" value={globalDiscountPct} onChange={(e) => setGlobalDiscountPct(e.target.value)} min={0} max={100} />
-
-          <div className="rounded-md border border-slate-200 dark:border-slate-700 p-3 text-sm">
-            <div><strong>Cliente:</strong> {selectedCustomer?.name ?? '-'}</div>
-            <div><strong>Ítems:</strong> {cart.itemCount}</div>
-            <div><strong>Total estimado:</strong> {money(totalAfterGlobal)} {currency}</div>
-          </div>
-
-          <div className="flex justify-end gap-2">
-            <Button variant="secondary" onClick={() => setOrderOpen(false)} disabled={createOrderMutation.isPending}>
-              Cancelar
-            </Button>
-            <Button onClick={() => createOrderMutation.mutate()} loading={createOrderMutation.isPending}>
-              Confirmar
-            </Button>
-          </div>
-        </div>
       </Modal>
     </MainLayout>
   )

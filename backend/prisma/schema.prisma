@@ -41,6 +41,11 @@ enum SalesOrderStatus {
   CANCELLED
 }
 
+enum QuoteStatus {
+  CREATED
+  PROCESSED
+}
+
 enum ThemeMode {
   LIGHT
   DARK
@@ -474,20 +479,29 @@ model SalesOrder {
   tenantId   String
   number     String
   customerId String
+  quoteId    String?
   status     SalesOrderStatus @default(DRAFT)
   note       String?
+  deliveryDate DateTime?
+  deliveryCity String?
+  deliveryZone String?
+  deliveryAddress String?
+  deliveryMapsUrl String?
   version    Int              @default(1)
   createdAt  DateTime         @default(now())
   updatedAt  DateTime         @updatedAt
   createdBy  String?
 
   customer Customer @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  quote    Quote?   @relation(fields: [quoteId], references: [id], onDelete: Restrict)
   lines    SalesOrderLine[]
   reservations SalesOrderReservation[]
 
   @@unique([tenantId, number])
+  @@unique([quoteId])
   @@index([tenantId])
   @@index([customerId])
+  @@index([quoteId])
   @@index([status])
 }
 
@@ -541,9 +555,15 @@ model Quote {
   tenantId   String
   number     String
   customerId String
+  status     QuoteStatus @default(CREATED)
+  processedAt DateTime?
   validityDays Int     @default(7)
   paymentMode  String  @default("CASH")
   deliveryDays Int     @default(1)
+  deliveryCity String?
+  deliveryZone String?
+  deliveryAddress String?
+  deliveryMapsUrl String?
   globalDiscountPct Decimal @default(0)
   proposalValue String?
   note       String?
@@ -554,10 +574,12 @@ model Quote {
 
   customer Customer @relation(fields: [customerId], references: [id], onDelete: Restrict)
   lines    QuoteLine[]
+  salesOrder SalesOrder?
 
   @@unique([tenantId, number])
   @@index([tenantId])
   @@index([customerId])
+  @@index([status])
 }
 
 model QuoteLine {

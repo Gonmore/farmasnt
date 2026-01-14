@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import type { ReactElement } from 'react'
 import { Modal } from '../common/Modal'
 import { api } from '../../lib/api'
+import { useScroll } from '../../contexts/ScrollContext'
 
 interface ContactInfo {
   id: string
@@ -75,6 +76,14 @@ export function Footer() {
   const [isOpen, setIsOpen] = useState(false)
   const [contactInfo, setContactInfo] = useState<ContactInfo | null>(null)
   const [isLoading, setIsLoading] = useState(false)
+  const { scrollLeft, setScrollLeft, maxScroll } = useScroll()
+  const scrollRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollLeft = scrollLeft
+    }
+  }, [scrollLeft])
 
   const loadContactInfo = async () => {
     if (contactInfo) return // Ya cargado
@@ -102,7 +111,7 @@ export function Footer() {
 
   return (
     <>
-      <footer className="border-t border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
+      <footer className="sticky bottom-0 border-t border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
         <button
           onClick={handleOpen}
           className="w-full"
@@ -130,6 +139,16 @@ export function Footer() {
             </div>
           </div>
         </button>
+        {maxScroll > 0 && (
+          <div
+            ref={scrollRef}
+            className="overflow-x-auto bg-slate-100 dark:bg-slate-800"
+            style={{ height: '16px' }}
+            onScroll={(e) => setScrollLeft(e.currentTarget.scrollLeft)}
+          >
+            <div style={{ width: `${maxScroll + window.innerWidth}px`, height: '1px' }} />
+          </div>
+        )}
       </footer>
 
       <Modal

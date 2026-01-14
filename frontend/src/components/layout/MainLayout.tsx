@@ -47,9 +47,9 @@ export function MainLayout({ children, navGroups }: MainLayoutProps) {
         />
         <main className="flex flex-1 flex-col overflow-auto bg-slate-50 dark:bg-slate-950">
           <div className="flex-1">{children}</div>
-          <Footer />
         </main>
       </div>
+      <Footer />
     </div>
   )
 }

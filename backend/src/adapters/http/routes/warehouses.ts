@@ -22,7 +22,7 @@ const createLocationSchema = z.object({
 })
 
 const listQuerySchema = z.object({
-  take: z.coerce.number().int().min(1).max(50).default(20),
+  take: z.coerce.number().int().min(1).max(100).default(20),
   cursor: z.string().uuid().optional(),
 })
 

@@ -77,20 +77,8 @@ export function Modal({ isOpen, onClose, title, children, maxWidth = 'md' }: Mod
           </button>
         </div>
 
-        <div className="relative min-h-[300px] px-6 py-4">
-          <div className="absolute inset-0 flex items-center justify-center opacity-15">
-            <img
-              src="/Estrella_SNT.png"
-              alt=""
-              className="h-full max-h-48 object-contain dark:hidden"
-            />
-            <img
-              src="/Estrella_Blanca_SNT.png"
-              alt=""
-              className="hidden h-full max-h-48 object-contain dark:block"
-            />
-          </div>
-          <div className="relative z-10">{children}</div>
+        <div className="px-6 py-4">
+          {children}
         </div>
       </div>
     </div>

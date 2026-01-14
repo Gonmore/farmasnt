@@ -147,6 +147,44 @@ Se incorporaron endpoints read-only de reportes para acelerar dashboards y panta
 
 ---
 
+## **[13 Ene 2026] Cotizaciones persistentes + lugar de entrega + órdenes solo desde cotización**
+
+### Cotizaciones (Quotes) como origen obligatorio
+- Se incorporó el flujo **cotización → procesar → orden** como regla de negocio.
+- Backend:
+  - Se agregó el modelo de **cotización** con correlativo `COT-YYYY####` generado en backend al guardar.
+  - Se agregó estado de cotización: `CREATED` / `PROCESSED`.
+  - Al procesar una cotización, se crea una orden y la cotización queda **read-only**.
+  - Se bloqueó la creación directa de órdenes (`POST /api/v1/sales/orders` responde 400) para forzar el origen en cotización.
+
+### Lugar de entrega (con mapa)
+- Se añadieron campos de entrega en cotización:
+  - `deliveryCity`, `deliveryZone`, `deliveryAddress`, `deliveryMapsUrl`.
+- UX:
+  - Por defecto toma la ubicación del cliente final.
+  - Permite seleccionar otra ubicación en el mapa (click) y se completa dirección vía reverse geocoding.
+
+### Autor y auditoría funcional
+- Se incorporó `quotedBy` (displayName del usuario creador) y se muestra:
+  - en la lista de cotizaciones,
+  - en el detalle,
+  - y en el PDF (“Cotizado por”).
+
+### PDF (robustez)
+- Se corrigieron caracteres extraños/corrupción en PDFs (jsPDF) sanitizando texto a ASCII al escribir.
+
+### Frontend: UX y pantallas
+- Catálogo vendedor:
+  - Se mantiene el flujo de selección de productos y edición en modal.
+  - Al guardar: se exporta PDF y se muestra feedback con `check.gif` / `dark_check.gif` según tema.
+  - Luego se habilita el CTA verde **“Procesar pedido”** que llama al endpoint de procesamiento de cotización.
+- Ventas:
+  - Cotizaciones: lista con estado + autor; “Editar” deshabilitado si PROCESSED.
+  - Detalle de cotización: muestra estado/autor/lugar de entrega y bloquea edición si PROCESSED.
+  - Órdenes: se removió “Crear Orden” desde UI y se añadió **detalle de orden** para `/sales/orders/:id`.
+
+---
+
 ## **[05 Ene 2026] Operación por existencias (stock por almacén) + mejoras UX**
 
 ### Almacenes: ver stock y mover

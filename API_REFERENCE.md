@@ -1045,7 +1045,7 @@ Notas
 
 ---
 
-## Sales Orders
+## Sales Quotes (Cotizaciones)
 Requiere: módulo `SALES`.
 
 ### GET /api/v1/sales/quotes/next-number
@@ -1056,39 +1056,140 @@ Response 200
 { "number": "COT-YYYY0001" }
 ```
 
-### POST /api/v1/sales/orders
+### GET /api/v1/sales/quotes
+Requiere permiso: `sales:order:read`.
+
+Query
+- `take` (1..50, default 20)
+- `cursor` (uuid, opcional)
+- `customerSearch` (string, opcional; filtra por customer.name)
+
+Response 200
+```json
+{
+  "items": [
+    {
+      "id": "...",
+      "number": "COT-20260001",
+      "customerId": "...",
+      "customerName": "...",
+      "status": "CREATED",
+      "quotedBy": "Usuario ...",
+      "total": 123.45,
+      "createdAt": "...",
+      "itemsCount": 3
+    }
+  ],
+  "nextCursor": "..."
+}
+```
+
+### POST /api/v1/sales/quotes
 Requiere permiso: `sales:order:write`.
 
 Body
 ```json
 {
   "customerId": "...",
+  "validityDays": 7,
+  "paymentMode": "CASH",
+  "deliveryDays": 1,
+  "deliveryCity": "SANTA CRUZ",
+  "deliveryZone": "ZONA ...",
+  "deliveryAddress": "Av ...",
+  "deliveryMapsUrl": "https://www.google.com/maps/@...",
+  "globalDiscountPct": 0,
+  "proposalValue": "Opcional",
   "note": "Opcional",
   "lines": [
-    { "productId": "...", "batchId": null, "quantity": 2, "unitPrice": 10 }
+    { "productId": "...", "quantity": 2, "unitPrice": 10, "discountPct": 5 }
   ]
 }
 ```
 
-Response 201
+Notas
+- Si no se envían `delivery*`, el backend hace fallback a la ubicación del cliente (`Customer.city/zone/address/mapsUrl`).
+
+Response 201 (resumen)
 ```json
 {
   "id": "...",
-  "number": "SO-YYYYMMDD-0000",
+  "number": "COT-20260001",
   "customerId": "...",
-  "status": "DRAFT",
+  "customerName": "...",
+  "status": "CREATED",
+  "quotedBy": "Usuario ...",
+  "validityDays": 7,
+  "paymentMode": "CASH",
+  "deliveryDays": 1,
+  "deliveryCity": "SANTA CRUZ",
+  "deliveryZone": "...",
+  "deliveryAddress": "...",
+  "deliveryMapsUrl": "...",
+  "globalDiscountPct": 0,
+  "proposalValue": null,
   "note": null,
-  "version": 1,
-  "createdAt": "...",
-  "lines": [{ "id": "...", "productId": "...", "batchId": null, "quantity": "2", "unitPrice": "10" }]
+  "subtotal": 19,
+  "globalDiscountAmount": 0,
+  "total": 19,
+  "lines": [
+    {
+      "id": "...",
+      "productId": "...",
+      "productSku": "SKU...",
+      "productName": "Producto ...",
+      "quantity": 2,
+      "unitPrice": 10,
+      "discountPct": 5
+    }
+  ],
+  "createdAt": "..."
 }
 ```
 
-Notas (reserva / “apartar existencias”)
-- Al crear la orden, el sistema intenta **reservar stock** aumentando `InventoryBalance.reservedQuantity`.
-- Priorización para reservar: primero balances cuya sucursal (`Warehouse.city`) coincide con `Customer.city` (si está configurada), luego el resto.
-- Dentro de cada grupo aplica FEFO (vence antes primero) y solo usa lotes `RELEASED` y no vencidos.
-- Si no hay stock suficiente, se reservan cantidades parciales (la orden puede crearse igual).
+### GET /api/v1/sales/quotes/:id
+Requiere permiso: `sales:order:read`.
+
+Response 200 (incluye status, quotedBy, delivery*, líneas con total y timestamps)
+
+### PUT /api/v1/sales/quotes/:id
+Requiere permiso: `sales:order:write`.
+
+Notas
+- `409` si la cotización ya fue procesada (`status = PROCESSED`).
+
+### POST /api/v1/sales/quotes/:id/process
+Requiere permiso: `sales:order:write`.
+
+Acción
+- Crea una Orden de Venta desde la cotización.
+- Marca la cotización como `PROCESSED` (read-only).
+
+Errores
+- `404` si no existe.
+- `409` si ya estaba procesada.
+
+Response 201
+```json
+{ "id": "...", "number": "SO-YYYYMMDD-0000", "status": "DRAFT", "version": 1, "createdAt": "..." }
+```
+
+---
+
+## Sales Orders
+Requiere: módulo `SALES`.
+
+### POST /api/v1/sales/orders
+Requiere permiso: `sales:order:write`.
+
+Nota
+- Por regla de negocio, **toda orden debe originarse en una cotización**.
+- Este endpoint responde `400` y la alternativa soportada es `POST /api/v1/sales/quotes/:id/process`.
+
+Response 400
+```json
+{ "message": "Orders must be created from a quote. Use /api/v1/sales/quotes/:id/process" }
+```
 
 ### GET /api/v1/sales/orders
 Requiere permiso: `sales:order:read`.
@@ -1100,25 +1201,62 @@ Query
 
 Response 200
 ```json
-{ "items": [{ "id": "...", "number": "...", "customerId": "...", "status": "DRAFT", "note": null, "version": 1, "updatedAt": "..." }], "nextCursor": "..." }
+{
+  "items": [
+    {
+      "id": "...",
+      "number": "SO-YYYYMMDD-0000",
+      "status": "DRAFT",
+      "updatedAt": "...",
+      "customerId": "...",
+      "customerName": "...",
+      "quoteId": "...",
+      "quoteNumber": "COT-20260001",
+      "processedBy": "Usuario ...",
+      "deliveryDate": "...",
+      "deliveryCity": "...",
+      "deliveryZone": "...",
+      "deliveryAddress": "...",
+      "deliveryMapsUrl": "..."
+    }
+  ],
+  "nextCursor": "..."
+}
 ```
 
 ### GET /api/v1/sales/orders/:id
 Requiere permiso: `sales:order:read`.
 
-Response 200 (incluye customer y lines)
+Response 200 (incluye customer, quote, delivery* y lines con product)
 ```json
 {
   "id": "...",
-  "number": "...",
+  "number": "SO-YYYYMMDD-0000",
   "customerId": "...",
+  "quoteId": "...",
   "status": "DRAFT",
-  "note": null,
+  "note": "Desde cotización COT-...",
   "version": 1,
   "createdAt": "...",
   "updatedAt": "...",
+  "processedBy": "Usuario ...",
+  "deliveryDate": "...",
+  "deliveryCity": "...",
+  "deliveryZone": "...",
+  "deliveryAddress": "...",
+  "deliveryMapsUrl": "...",
   "customer": { "id": "...", "name": "...", "nit": null },
-  "lines": [{ "id": "...", "productId": "...", "batchId": null, "quantity": "2", "unitPrice": "10" }]
+  "quote": { "id": "...", "number": "COT-..." },
+  "lines": [
+    {
+      "id": "...",
+      "productId": "...",
+      "batchId": null,
+      "quantity": "2",
+      "unitPrice": "10",
+      "product": { "sku": "SKU...", "name": "Producto ..." }
+    }
+  ]
 }
 ```
 

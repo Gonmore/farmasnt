@@ -13,10 +13,16 @@ const listQuerySchema = z.object({
 })
 
 const quoteCreateSchema = z.object({
-  customerId: z.string().uuid(),
+  // Customer IDs are strings in Prisma and may be legacy (not strictly UUID).
+  customerId: z.string().trim().min(1).max(64),
   validityDays: z.coerce.number().int().min(1).max(365).default(7),
   paymentMode: z.string().trim().min(1).max(50).default('CASH'),
   deliveryDays: z.coerce.number().int().min(0).max(365).default(1),
+  deliveryCity: z.string().trim().max(80).optional(),
+  deliveryZone: z.string().trim().max(80).optional(),
+  deliveryAddress: z.string().trim().max(200).optional(),
+  // Google Maps share URLs can be long.
+  deliveryMapsUrl: z.string().trim().max(2000).optional(),
   globalDiscountPct: z.coerce.number().min(0).max(100).default(0),
   proposalValue: z.string().trim().max(200).optional(),
   note: z.string().trim().max(500).optional(),
@@ -52,6 +58,224 @@ function computeTotals(lines: Array<{ quantity: number; unitPrice: number; disco
   const globalDiscountAmount = subtotal * gd
   const totalAfterGlobal = Math.max(0, subtotal - globalDiscountAmount)
   return { subtotal, globalDiscountAmount, totalAfterGlobal }
+}
+
+function startOfTodayUtc(): Date {
+  const now = new Date()
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0))
+}
+
+function addDaysUtc(date: Date, days: number): Date {
+  const ms = date.getTime() + Math.max(0, days) * 24 * 60 * 60 * 1000
+  return new Date(ms)
+}
+
+function toNumber(value: any): number {
+  const n = typeof value === 'number' ? value : Number(value)
+  return Number.isFinite(n) ? n : 0
+}
+
+function deriveOrderNumberFromQuoteNumber(quoteNumber: string): string {
+  const n = (quoteNumber ?? '').trim()
+  if (!n) return 'OV'
+  if (n.toUpperCase().startsWith('COT-')) return `OV-${n.slice(4)}`
+  if (n.toUpperCase().startsWith('COT')) {
+    // Handle legacy formats like COT2026009
+    return `OV${n.slice(3)}`
+  }
+  // Fallback: keep the numeric tail if present.
+  const dash = n.indexOf('-')
+  if (dash >= 0 && dash < n.length - 1) return `OV-${n.slice(dash + 1)}`
+  return `OV-${n}`
+}
+
+type InsufficientStockItem = { productId: string; productName: string; required: number; available: number }
+
+class InsufficientStockCityError extends Error {
+  statusCode = 409
+  city: string
+  items: InsufficientStockItem[]
+  constructor(args: { city: string; items: InsufficientStockItem[] }) {
+    const names = args.items.map((i) => i.productName).filter(Boolean).join(', ')
+    super(`Cantidad de existencias insuficientes en el almacen de: ${args.city} para el o los producto(s): ${names}`)
+    this.city = args.city
+    this.items = args.items
+  }
+}
+
+async function reserveForOrderInCityOrFail(
+  tx: any,
+  args: {
+    tenantId: string
+    userId: string
+    orderId: string
+    city: string
+    lines: Array<{ id: string; productId: string; productName: string; batchId: string | null; quantity: any }>
+  },
+): Promise<void> {
+  const todayUtc = startOfTodayUtc()
+  const cityRaw = (args.city ?? '').trim()
+  const city = cityRaw ? cityRaw : ''
+  if (!city) throw new InsufficientStockCityError({ city: '(sin ciudad)', items: [] })
+
+  const sameCityLoc = {
+    isActive: true,
+    warehouse: {
+      isActive: true,
+      city: { equals: city, mode: 'insensitive' as const },
+    },
+  }
+
+  // Pre-check availability in the customer's city for all lines (fail fast, no partial reservations).
+  const shortages: InsufficientStockItem[] = []
+  for (const line of args.lines) {
+    const required = Math.max(0, toNumber(line.quantity))
+    if (required <= 0) continue
+
+    const balances = await tx.inventoryBalance.findMany({
+      where: {
+        tenantId: args.tenantId,
+        productId: line.productId,
+        quantity: { gt: 0 },
+        location: sameCityLoc,
+        OR: [
+          { batchId: null },
+          { batch: { status: 'RELEASED', OR: [{ expiresAt: null }, { expiresAt: { gte: todayUtc } }] } },
+        ],
+      },
+      select: { quantity: true, reservedQuantity: true },
+    })
+
+    const available = balances.reduce((sum: number, b: any) => {
+      const qty = toNumber(b.quantity)
+      const reserved = toNumber(b.reservedQuantity)
+      return sum + Math.max(0, qty - reserved)
+    }, 0)
+
+    if (available + 1e-9 < required) {
+      shortages.push({ productId: line.productId, productName: line.productName, required, available })
+    }
+  }
+  if (shortages.length > 0) throw new InsufficientStockCityError({ city, items: shortages })
+
+  // Reserve in city only (FEFO-ish ordering).
+  for (const line of args.lines) {
+    let remaining = Math.max(0, toNumber(line.quantity))
+    if (remaining <= 0) continue
+
+    const lists: any[][] = []
+    if (line.batchId) {
+      const sameCity = await tx.inventoryBalance.findMany({
+        where: {
+          tenantId: args.tenantId,
+          productId: line.productId,
+          batchId: line.batchId,
+          quantity: { gt: 0 },
+          location: sameCityLoc,
+          batch: { status: 'RELEASED', OR: [{ expiresAt: null }, { expiresAt: { gte: todayUtc } }] },
+        },
+        orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
+        select: { id: true, quantity: true, reservedQuantity: true },
+      })
+      lists.push(sameCity)
+    } else {
+      const withExpirySame = await tx.inventoryBalance.findMany({
+        where: {
+          tenantId: args.tenantId,
+          productId: line.productId,
+          batchId: { not: null },
+          quantity: { gt: 0 },
+          location: sameCityLoc,
+          batch: { status: 'RELEASED', expiresAt: { not: null, gte: todayUtc } },
+        },
+        orderBy: [{ batch: { expiresAt: 'asc' } }, { updatedAt: 'desc' }, { id: 'asc' }],
+        select: { id: true, quantity: true, reservedQuantity: true },
+      })
+
+      const withoutExpirySame = await tx.inventoryBalance.findMany({
+        where: {
+          tenantId: args.tenantId,
+          productId: line.productId,
+          batchId: { not: null },
+          quantity: { gt: 0 },
+          location: sameCityLoc,
+          batch: { status: 'RELEASED', expiresAt: null },
+        },
+        orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
+        select: { id: true, quantity: true, reservedQuantity: true },
+      })
+
+      const unbatchedSame = await tx.inventoryBalance.findMany({
+        where: {
+          tenantId: args.tenantId,
+          productId: line.productId,
+          batchId: null,
+          quantity: { gt: 0 },
+          location: sameCityLoc,
+        },
+        orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
+        select: { id: true, quantity: true, reservedQuantity: true },
+      })
+
+      lists.push(withExpirySame, withoutExpirySame, unbatchedSame)
+    }
+
+    for (const balances of lists) {
+      for (const b of balances) {
+        if (remaining <= 0) break
+        const qty = toNumber(b.quantity)
+        const reserved = toNumber(b.reservedQuantity)
+        const available = Math.max(0, qty - reserved)
+        if (available <= 0) continue
+
+        const take = Math.min(available, remaining)
+        remaining -= take
+
+        await tx.inventoryBalance.update({
+          where: { id: b.id },
+          data: { reservedQuantity: { increment: take }, version: { increment: 1 }, createdBy: args.userId },
+          select: { id: true },
+        })
+
+        await tx.salesOrderReservation.create({
+          data: {
+            tenantId: args.tenantId,
+            salesOrderId: args.orderId,
+            salesOrderLineId: line.id,
+            inventoryBalanceId: b.id,
+            quantity: decimalFromNumber(take),
+            createdBy: args.userId,
+          },
+          select: { id: true },
+        })
+      }
+      if (remaining <= 0) break
+    }
+
+    // Race-condition safety: if stock changed after pre-check, fail with a clear message.
+    if (remaining > 1e-9) {
+      throw new InsufficientStockCityError({
+        city,
+        items: [
+          {
+            productId: line.productId,
+            productName: line.productName,
+            required: Math.max(0, toNumber(line.quantity)),
+            available: Math.max(0, toNumber(line.quantity) - remaining),
+          },
+        ],
+      })
+    }
+  }
+}
+
+async function resolveUserDisplayName(db: any, tenantId: string, userId?: string | null): Promise<string | null> {
+  if (!userId) return null
+  const user = await db.user.findFirst({ where: { id: userId, tenantId }, select: { fullName: true, email: true } })
+  if (!user) return null
+  const name = (user.fullName ?? '').trim()
+  if (name) return name
+  return user.email
 }
 
 export async function salesQuotesRoutes(app: FastifyInstance) {
@@ -95,11 +319,19 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
       const items = hasMore ? quotes.slice(0, -1) : quotes
       const nextCursor = hasMore && items.length > 0 ? items[items.length - 1]!.id : null
 
+      const authorIds = Array.from(new Set(items.map((q: any) => q.createdBy).filter(Boolean))) as string[]
+      const authors = authorIds.length
+        ? await db.user.findMany({ where: { tenantId, id: { in: authorIds } }, select: { id: true, fullName: true, email: true } })
+        : []
+      const authorMap = new Map(authors.map((u: any) => [u.id, (u.fullName ?? '').trim() || u.email] as const))
+
       const result = items.map((quote: any) => ({
         id: quote.id,
         number: quote.number,
         customerId: quote.customerId,
         customerName: quote.customer.name,
+        status: quote.status,
+        quotedBy: quote.createdBy ? authorMap.get(quote.createdBy) ?? null : null,
         total: computeTotals(
           quote.lines.map((l: any) => ({
             unitPrice: Number(l.unitPrice),
@@ -129,7 +361,20 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
       const parsed = quoteCreateSchema.safeParse(request.body)
       if (!parsed.success) return reply.status(400).send({ message: 'Invalid request', issues: parsed.error.issues })
 
-      const { customerId, validityDays, paymentMode, deliveryDays, globalDiscountPct, proposalValue, note, lines } = parsed.data
+      const {
+        customerId,
+        validityDays,
+        paymentMode,
+        deliveryDays,
+        deliveryCity,
+        deliveryZone,
+        deliveryAddress,
+        deliveryMapsUrl,
+        globalDiscountPct,
+        proposalValue,
+        note,
+        lines,
+      } = parsed.data
       const tenantId = request.auth!.tenantId
       const userId = request.auth!.userId
       const audit = new AuditService(db)
@@ -137,6 +382,7 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
       // Verify customer exists and belongs to tenant
       const customer = await db.customer.findFirst({
         where: { id: customerId, tenantId },
+        select: { id: true, name: true, city: true, zone: true, address: true, mapsUrl: true },
       })
       if (!customer) {
         return reply.code(404).send({ error: 'Customer not found' })
@@ -163,6 +409,11 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
             tenantId,
             number: quoteNumber,
             customerId,
+            status: 'CREATED',
+            deliveryCity: (deliveryCity ?? customer.city ?? null) ? String(deliveryCity ?? customer.city).trim().toUpperCase() : null,
+            deliveryZone: (deliveryZone ?? customer.zone ?? null) ? String(deliveryZone ?? customer.zone).trim().toUpperCase() : null,
+            deliveryAddress: (deliveryAddress ?? customer.address ?? null) ? String(deliveryAddress ?? customer.address).trim() : null,
+            deliveryMapsUrl: (deliveryMapsUrl ?? customer.mapsUrl ?? null) ? String(deliveryMapsUrl ?? customer.mapsUrl).trim() : null,
             validityDays,
             paymentMode,
             deliveryDays,
@@ -199,6 +450,7 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
         after: quote,
       })
 
+      const quotedBy = await resolveUserDisplayName(db, tenantId, quote.createdBy)
       const totals = computeTotals(
         quote.lines.map((l: any) => ({
           quantity: Number(l.quantity),
@@ -213,9 +465,15 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
         number: quote.number,
         customerId: quote.customerId,
         customerName: quote.customer.name,
+        status: quote.status,
+        quotedBy,
         validityDays: quote.validityDays,
         paymentMode: quote.paymentMode,
         deliveryDays: quote.deliveryDays,
+        deliveryCity: quote.deliveryCity,
+        deliveryZone: quote.deliveryZone,
+        deliveryAddress: quote.deliveryAddress,
+        deliveryMapsUrl: quote.deliveryMapsUrl,
         globalDiscountPct: Number(quote.globalDiscountPct ?? 0),
         proposalValue: quote.proposalValue,
         note: quote.note,
@@ -233,6 +491,154 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
         })),
         createdAt: quote.createdAt.toISOString(),
       }
+    },
+  )
+
+  app.post(
+    '/api/v1/sales/quotes/:id/process',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'SALES'), requirePermission(Permissions.SalesOrderWrite)],
+    },
+    async (request, reply) => {
+      const rawId = (request.params as any)?.id ?? request.params
+      const idStr = typeof rawId === 'string' ? rawId.trim() : String(rawId ?? '').trim()
+      const idParsed = z.string().uuid().safeParse(idStr)
+      if (!idParsed.success) {
+        return reply.status(400).send({
+          message: 'Invalid params',
+          issues: idParsed.error.issues,
+          received: { id: rawId },
+        })
+      }
+
+      const id = idParsed.data
+      const tenantId = request.auth!.tenantId
+      const userId = request.auth!.userId
+      const audit = new AuditService(db)
+
+      let created: any
+      try {
+        created = await db.$transaction(async (tx: any) => {
+          const quote = await tx.quote.findFirst({
+            where: { id, tenantId },
+            include: {
+              customer: { select: { id: true, name: true, city: true } },
+              lines: {
+                select: {
+                  id: true,
+                  productId: true,
+                  quantity: true,
+                  unitPrice: true,
+                  discountPct: true,
+                  product: { select: { name: true } },
+                },
+              },
+            },
+          })
+
+          if (!quote) {
+            const err = new Error('Quote not found') as Error & { statusCode?: number }
+            err.statusCode = 404
+            throw err
+          }
+          if (quote.status === 'PROCESSED') {
+            const err = new Error('Quote already processed') as Error & { statusCode?: number }
+            err.statusCode = 409
+            throw err
+          }
+
+          const city = (quote.customer.city ?? '').trim()
+          if (!city) {
+            const err = new Error('Customer city is required to reserve stock') as Error & { statusCode?: number }
+            err.statusCode = 400
+            throw err
+          }
+
+          const orderNumber = deriveOrderNumberFromQuoteNumber(String(quote.number ?? ''))
+
+          const todayUtc = startOfTodayUtc()
+          const deliveryDate = addDaysUtc(todayUtc, Number(quote.deliveryDays ?? 0))
+
+          const order = await tx.salesOrder.create({
+            data: {
+              tenantId,
+              number: orderNumber,
+              customerId: quote.customerId,
+              quoteId: quote.id,
+              note: `Desde cotización ${quote.number}`,
+              deliveryDate,
+              deliveryCity: quote.deliveryCity ?? quote.customer.city ?? null,
+              deliveryZone: quote.deliveryZone ?? null,
+              deliveryAddress: quote.deliveryAddress ?? null,
+              deliveryMapsUrl: quote.deliveryMapsUrl ?? null,
+              createdBy: userId,
+            },
+            select: { id: true, number: true, status: true, version: true, createdAt: true },
+          })
+
+          const gd = clampPct(Number(quote.globalDiscountPct ?? 0)) / 100
+
+          // Create lines individually so we can create reservations referencing the line IDs.
+          const createdLines: Array<{ id: string; productId: string; productName: string; batchId: string | null; quantity: any }> = []
+          for (const l of quote.lines) {
+            const disc = clampPct(Number(l.discountPct ?? 0)) / 100
+            const unit = Number(l.unitPrice)
+            const finalUnit = unit * (1 - disc) * (1 - gd)
+            const lineRow = await tx.salesOrderLine.create({
+              data: {
+                tenantId,
+                salesOrderId: order.id,
+                productId: l.productId,
+                batchId: null,
+                quantity: decimalFromNumber(Number(l.quantity)),
+                unitPrice: decimalFromNumber(Number.isFinite(finalUnit) ? finalUnit : 0),
+                createdBy: userId,
+              },
+              select: { id: true, productId: true, quantity: true },
+            })
+            createdLines.push({
+              id: lineRow.id,
+              productId: lineRow.productId,
+              productName: String((l as any)?.product?.name ?? ''),
+              batchId: null,
+              quantity: lineRow.quantity,
+            })
+          }
+
+          // Reserve stock strictly from customer's city.
+          await reserveForOrderInCityOrFail(tx, {
+            tenantId,
+            userId,
+            orderId: order.id,
+            city,
+            lines: createdLines,
+          })
+
+          await tx.quote.update({
+            where: { id: quote.id },
+            data: { status: 'PROCESSED', processedAt: new Date(), version: { increment: 1 } },
+            select: { id: true },
+          })
+
+          return order
+        })
+      } catch (e: any) {
+        if (e instanceof InsufficientStockCityError) {
+          return reply.status(e.statusCode).send({ message: e.message, city: e.city, items: e.items })
+        }
+        throw e
+      }
+
+      await audit.append({
+        tenantId,
+        actorUserId: userId,
+        action: 'PROCESS',
+        entityType: 'QUOTE',
+        entityId: id,
+        after: created,
+      })
+
+      return reply.status(201).send(created)
     },
   )
 
@@ -266,6 +672,7 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: 'Quote not found' })
       }
 
+      const quotedBy = await resolveUserDisplayName(db, tenantId, quote.createdBy)
       const totals = computeTotals(
         quote.lines.map((l: any) => ({
           quantity: Number(l.quantity),
@@ -280,12 +687,18 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
         number: quote.number,
         customerId: quote.customerId,
         customerName: quote.customer.name,
+        status: quote.status,
+        quotedBy,
         customerBusinessName: quote.customer.businessName,
         customerAddress: quote.customer.address,
         customerPhone: quote.customer.phone,
         validityDays: quote.validityDays,
         paymentMode: quote.paymentMode,
         deliveryDays: quote.deliveryDays,
+        deliveryCity: quote.deliveryCity,
+        deliveryZone: quote.deliveryZone,
+        deliveryAddress: quote.deliveryAddress,
+        deliveryMapsUrl: quote.deliveryMapsUrl,
         globalDiscountPct: Number(quote.globalDiscountPct ?? 0),
         proposalValue: quote.proposalValue,
         note: quote.note,
@@ -304,6 +717,7 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
         })),
         createdAt: quote.createdAt.toISOString(),
         updatedAt: quote.updatedAt.toISOString(),
+        processedAt: quote.processedAt ? quote.processedAt.toISOString() : null,
       }
     },
   )
@@ -325,7 +739,20 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
       if (!bodyParsed.success) return reply.status(400).send({ message: 'Invalid request', issues: bodyParsed.error.issues })
 
       const { id } = paramsParsed.data
-      const { customerId, validityDays, paymentMode, deliveryDays, globalDiscountPct, proposalValue, note, lines } = bodyParsed.data
+      const {
+        customerId,
+        validityDays,
+        paymentMode,
+        deliveryDays,
+        deliveryCity,
+        deliveryZone,
+        deliveryAddress,
+        deliveryMapsUrl,
+        globalDiscountPct,
+        proposalValue,
+        note,
+        lines,
+      } = bodyParsed.data
       const tenantId = request.auth!.tenantId
       const userId = request.auth!.userId
       const audit = new AuditService(db)
@@ -339,9 +766,14 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: 'Quote not found' })
       }
 
+      if (existingQuote.status === 'PROCESSED') {
+        return reply.code(409).send({ message: 'Quote already processed' })
+      }
+
       // Verify customer exists and belongs to tenant
       const customer = await db.customer.findFirst({
         where: { id: customerId, tenantId },
+        select: { id: true, city: true, zone: true, address: true, mapsUrl: true },
       })
       if (!customer) {
         return reply.code(404).send({ error: 'Customer not found' })
@@ -369,6 +801,10 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
           where: { id },
           data: {
             customerId,
+            deliveryCity: (deliveryCity ?? customer.city ?? null) ? String(deliveryCity ?? customer.city).trim().toUpperCase() : null,
+            deliveryZone: (deliveryZone ?? customer.zone ?? null) ? String(deliveryZone ?? customer.zone).trim().toUpperCase() : null,
+            deliveryAddress: (deliveryAddress ?? customer.address ?? null) ? String(deliveryAddress ?? customer.address).trim() : null,
+            deliveryMapsUrl: (deliveryMapsUrl ?? customer.mapsUrl ?? null) ? String(deliveryMapsUrl ?? customer.mapsUrl).trim() : null,
             validityDays,
             paymentMode,
             deliveryDays,
@@ -427,14 +863,22 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
         Number(quote.globalDiscountPct ?? 0),
       )
 
+      const quotedBy = await resolveUserDisplayName(db, tenantId, quote.createdBy)
+
       return {
         id: quote.id,
         number: quote.number,
         customerId: quote.customerId,
         customerName: quote.customer.name,
+        status: quote.status,
+        quotedBy,
         validityDays: quote.validityDays,
         paymentMode: quote.paymentMode,
         deliveryDays: quote.deliveryDays,
+        deliveryCity: quote.deliveryCity,
+        deliveryZone: quote.deliveryZone,
+        deliveryAddress: quote.deliveryAddress,
+        deliveryMapsUrl: quote.deliveryMapsUrl,
         globalDiscountPct: Number(quote.globalDiscountPct ?? 0),
         proposalValue: quote.proposalValue,
         note: quote.note,
