@@ -18,6 +18,7 @@ import {
   CustomerDetailPage,
   OrdersPage,
   OrderDetailPage,
+  DeliveriesPage,
   QuotesPage,
   QuoteDetailPage,
   SalesReportsPage,
@@ -41,7 +42,7 @@ export function AppRouter() {
         <Route path="/login" element={<LoginPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
 
-        {/* Protected routes */}
+        {/* Home (redirect handled inside DashboardPage for Ventas/Logistica/Platform) */}
         <Route
           path="/"
           element={
@@ -55,7 +56,7 @@ export function AppRouter() {
         <Route
           path="/catalog/products"
           element={
-            <ProtectedRoute>
+            <ProtectedRoute requiredPermissions={['catalog:write']}>
               <ProductsListPage />
             </ProtectedRoute>
           }
@@ -63,7 +64,7 @@ export function AppRouter() {
         <Route
           path="/catalog/products/:id"
           element={
-            <ProtectedRoute>
+            <ProtectedRoute requiredPermissions={['catalog:write']}>
               <ProductDetailPage />
             </ProtectedRoute>
           }
@@ -71,7 +72,7 @@ export function AppRouter() {
         <Route
           path="/catalog/commercial"
           element={
-            <ProtectedRoute>
+            <ProtectedRoute requiredPermissions={['catalog:write']}>
               <CommercialCatalogPage />
             </ProtectedRoute>
           }
@@ -79,7 +80,7 @@ export function AppRouter() {
         <Route
           path="/catalog/seller"
           element={
-            <ProtectedRoute>
+            <ProtectedRoute requiredPermissions={['catalog:read', 'sales:order:write']}>
               <SellerCatalogPage />
             </ProtectedRoute>
           }
@@ -89,7 +90,7 @@ export function AppRouter() {
         <Route
           path="/warehouse/warehouses"
           element={
-            <ProtectedRoute>
+            <ProtectedRoute requiredPermissions={['stock:read']} denyRoleCodes={['VENTAS']}>
               <WarehousesPage />
             </ProtectedRoute>
           }
@@ -97,7 +98,7 @@ export function AppRouter() {
         <Route
           path="/warehouse/warehouses/:warehouseId/locations"
           element={
-            <ProtectedRoute>
+            <ProtectedRoute requiredPermissions={['stock:read']} denyRoleCodes={['VENTAS']}>
               <LocationsPage />
             </ProtectedRoute>
           }
@@ -107,7 +108,7 @@ export function AppRouter() {
         <Route
           path="/stock/inventory"
           element={
-            <ProtectedRoute>
+            <ProtectedRoute requiredPermissions={['stock:read']}>
               <InventoryPage />
             </ProtectedRoute>
           }
@@ -115,7 +116,7 @@ export function AppRouter() {
         <Route
           path="/stock/balances"
           element={
-            <ProtectedRoute>
+            <ProtectedRoute requiredPermissions={['stock:read']}>
               <BalancesPage />
             </ProtectedRoute>
           }
@@ -123,7 +124,7 @@ export function AppRouter() {
         <Route
           path="/stock/movements"
           element={
-            <ProtectedRoute>
+            <ProtectedRoute requiredPermissions={['stock:manage']}>
               <MovementsPage />
             </ProtectedRoute>
           }
@@ -131,7 +132,7 @@ export function AppRouter() {
         <Route
           path="/stock/expiry"
           element={
-            <ProtectedRoute>
+            <ProtectedRoute requiredPermissions={['stock:read']}>
               <ExpiryPage />
             </ProtectedRoute>
           }
@@ -141,7 +142,7 @@ export function AppRouter() {
         <Route
           path="/sales/customers"
           element={
-            <ProtectedRoute>
+            <ProtectedRoute requiredPermissions={['sales:order:read']}>
               <CustomersPage />
             </ProtectedRoute>
           }
@@ -149,7 +150,7 @@ export function AppRouter() {
         <Route
           path="/sales/customers/new"
           element={
-            <ProtectedRoute>
+            <ProtectedRoute requiredPermissions={['sales:order:write']}>
               <CustomerDetailPage />
             </ProtectedRoute>
           }
@@ -157,31 +158,15 @@ export function AppRouter() {
         <Route
           path="/sales/customers/:customerId"
           element={
-            <ProtectedRoute>
+            <ProtectedRoute requiredPermissions={['sales:order:read']}>
               <CustomerDetailPage />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/sales/orders"
-          element={
-            <ProtectedRoute>
-              <OrdersPage />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/sales/orders/:id"
-          element={
-            <ProtectedRoute>
-              <OrderDetailPage />
             </ProtectedRoute>
           }
         />
         <Route
           path="/sales/quotes"
           element={
-            <ProtectedRoute>
+            <ProtectedRoute requiredPermissions={['sales:order:write']}>
               <QuotesPage />
             </ProtectedRoute>
           }
@@ -189,8 +174,32 @@ export function AppRouter() {
         <Route
           path="/sales/quotes/:id"
           element={
-            <ProtectedRoute>
+            <ProtectedRoute requiredPermissions={['sales:order:write']}>
               <QuoteDetailPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/sales/orders"
+          element={
+            <ProtectedRoute requiredPermissions={['sales:order:read']}>
+              <OrdersPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/sales/orders/:id"
+          element={
+            <ProtectedRoute requiredPermissions={['sales:order:read']}>
+              <OrderDetailPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/sales/deliveries"
+          element={
+            <ProtectedRoute requiredPermissions={['sales:delivery:read']}>
+              <DeliveriesPage />
             </ProtectedRoute>
           }
         />
@@ -199,7 +208,7 @@ export function AppRouter() {
         <Route
           path="/reports/sales"
           element={
-            <ProtectedRoute>
+            <ProtectedRoute requiredPermissions={['report:sales:read']}>
               <SalesReportsPage />
             </ProtectedRoute>
           }
@@ -207,7 +216,7 @@ export function AppRouter() {
         <Route
           path="/reports/stock"
           element={
-            <ProtectedRoute>
+            <ProtectedRoute requiredPermissions={['report:stock:read']}>
               <StockReportsPage />
             </ProtectedRoute>
           }
@@ -217,7 +226,7 @@ export function AppRouter() {
         <Route
           path="/audit/events"
           element={
-            <ProtectedRoute>
+            <ProtectedRoute requiredPermissions={['audit:read']}>
               <AuditListPage />
             </ProtectedRoute>
           }
@@ -227,7 +236,7 @@ export function AppRouter() {
         <Route
           path="/admin/users"
           element={
-            <ProtectedRoute>
+            <ProtectedRoute requiredPermissions={['admin:users:manage']}>
               <UsersPage />
             </ProtectedRoute>
           }
@@ -235,7 +244,7 @@ export function AppRouter() {
         <Route
           path="/admin/roles"
           element={
-            <ProtectedRoute>
+            <ProtectedRoute requiredPermissions={['admin:users:manage']}>
               <RolesPage />
             </ProtectedRoute>
           }
@@ -243,7 +252,7 @@ export function AppRouter() {
         <Route
           path="/admin/branding"
           element={
-            <ProtectedRoute>
+            <ProtectedRoute requiredPermissions={['admin:users:manage']}>
               <BrandingPage />
             </ProtectedRoute>
           }
@@ -253,7 +262,7 @@ export function AppRouter() {
         <Route
           path="/platform/tenants"
           element={
-            <ProtectedRoute>
+            <ProtectedRoute requiredPermissions={['platform:tenants:manage']}>
               <TenantsPage />
             </ProtectedRoute>
           }
@@ -261,7 +270,7 @@ export function AppRouter() {
         <Route
           path="/platform/contact"
           element={
-            <ProtectedRoute>
+            <ProtectedRoute requiredPermissions={['platform:tenants:manage']}>
               <ContactSettingsPage />
             </ProtectedRoute>
           }

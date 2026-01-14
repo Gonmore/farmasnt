@@ -988,7 +988,7 @@ export function InventoryPage() {
             {selectedReservations.length === 0 ? (
               <p className="text-slate-900 dark:text-slate-100">No hay reservas para este balance.</p>
             ) : (
-              selectedReservations.map((res, index) => {
+              selectedReservations.map((res) => {
                 const deliveryDate = res.deliveryDate ? new Date(res.deliveryDate) : null
                 const isPast = res.deliveryDays < 0
                 const daysText = isPast

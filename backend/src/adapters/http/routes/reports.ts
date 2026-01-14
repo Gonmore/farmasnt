@@ -54,7 +54,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
   app.get(
     '/api/v1/reports/sales/summary',
     {
-      preHandler: [requireAuth(), requireModuleEnabled(db, 'SALES'), requirePermission(Permissions.SalesOrderRead)],
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'SALES'), requirePermission(Permissions.ReportSalesRead)],
     },
     async (request, reply) => {
       const parsed = salesSummaryQuerySchema.safeParse(request.query)
@@ -98,7 +98,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
   app.get(
     '/api/v1/reports/sales/top-products',
     {
-      preHandler: [requireAuth(), requireModuleEnabled(db, 'SALES'), requirePermission(Permissions.SalesOrderRead)],
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'SALES'), requirePermission(Permissions.ReportSalesRead)],
     },
     async (request, reply) => {
       const parsed = salesTopProductsQuerySchema.safeParse(request.query)
@@ -145,7 +145,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
   app.get(
     '/api/v1/reports/stock/balances-expanded',
     {
-      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.StockRead)],
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.ReportStockRead)],
     },
     async (request, reply) => {
       const parsed = stockBalancesExpandedQuerySchema.safeParse(request.query)
@@ -196,7 +196,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
   app.get(
     '/api/v1/reports/stock/movements-expanded',
     {
-      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.StockRead)],
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.ReportStockRead)],
     },
     async (request, reply) => {
       const parsed = stockMovementsExpandedQuerySchema.safeParse(request.query)

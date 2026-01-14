@@ -249,6 +249,10 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
           Permissions.StockMove,
           Permissions.SalesOrderRead,
           Permissions.SalesOrderWrite,
+          Permissions.SalesDeliveryRead,
+          Permissions.SalesDeliveryWrite,
+          Permissions.ReportSalesRead,
+          Permissions.ReportStockRead,
           Permissions.AdminUsersManage,
           Permissions.AuditRead,
         ]
@@ -260,6 +264,63 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
 
         for (const p of perms) {
           await tx.rolePermission.create({ data: { roleId: role.id, permissionId: p.id } })
+        }
+
+        // Create required roles: Ventas + Logística
+        const ventasRole = await tx.role.create({
+          data: {
+            tenantId: t.id,
+            code: 'VENTAS',
+            name: 'Ventas',
+            isSystem: true,
+            createdBy: actor.userId,
+          },
+          select: { id: true },
+        })
+
+        const logisticaRole = await tx.role.create({
+          data: {
+            tenantId: t.id,
+            code: 'LOGISTICA',
+            name: 'Logística',
+            isSystem: true,
+            createdBy: actor.userId,
+          },
+          select: { id: true },
+        })
+
+        const ventasPermissionCodes = [
+          Permissions.CatalogRead,
+          Permissions.StockRead,
+          Permissions.SalesOrderRead,
+          Permissions.SalesOrderWrite,
+          Permissions.SalesDeliveryRead,
+          Permissions.ReportSalesRead,
+        ]
+
+        const logisticaPermissionCodes = [
+          Permissions.StockRead,
+          Permissions.StockMove,
+          Permissions.SalesOrderRead,
+          Permissions.SalesDeliveryRead,
+          Permissions.SalesDeliveryWrite,
+          Permissions.ReportStockRead,
+        ]
+
+        const ventasPerms = await tx.permission.findMany({
+          where: { code: { in: ventasPermissionCodes } },
+          select: { id: true },
+        })
+        for (const p of ventasPerms) {
+          await tx.rolePermission.create({ data: { roleId: ventasRole.id, permissionId: p.id } })
+        }
+
+        const logisticaPerms = await tx.permission.findMany({
+          where: { code: { in: logisticaPermissionCodes } },
+          select: { id: true },
+        })
+        for (const p of logisticaPerms) {
+          await tx.rolePermission.create({ data: { roleId: logisticaRole.id, permissionId: p.id } })
         }
 
         // Create tenant admin user

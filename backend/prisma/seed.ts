@@ -118,6 +118,10 @@ async function main() {
     { code: Permissions.AuditRead, module: 'WAREHOUSE' },
     { code: Permissions.SalesOrderRead, module: 'SALES' },
     { code: Permissions.SalesOrderWrite, module: 'SALES' },
+    { code: Permissions.SalesDeliveryRead, module: 'SALES' },
+    { code: Permissions.SalesDeliveryWrite, module: 'SALES' },
+    { code: Permissions.ReportSalesRead, module: 'SALES' },
+    { code: Permissions.ReportStockRead, module: 'WAREHOUSE' },
     { code: Permissions.AdminUsersManage, module: 'SALES' },
     { code: Permissions.PlatformTenantsManage, module: 'SALES' },
   ] as const

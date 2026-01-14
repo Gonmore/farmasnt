@@ -26,6 +26,20 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+// If the backend returns 401, clear tokens so the UI can return to /login cleanly.
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const status = error?.response?.status;
+    if (status === 401) {
+      localStorage.removeItem('pf.accessToken');
+      localStorage.removeItem('pf.refreshToken');
+      window.dispatchEvent(new Event('pf:auth:logout'));
+    }
+    return Promise.reject(error);
+  },
+);
+
 export async function apiFetch<T>(path: string, init?: RequestInit & { token?: string | null }): Promise<T> {
   const url = `${API_BASE_URL}${path}`
   const headers = new Headers(init?.headers)

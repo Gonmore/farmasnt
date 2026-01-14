@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
+import { useAuth } from '../providers/AuthProvider';
 
 export interface Permission {
   id: string;
@@ -33,11 +34,18 @@ export interface AuthMeResponse {
 }
 
 export function usePermissions() {
+  const auth = useAuth();
   const { data, isLoading, error } = useQuery<AuthMeResponse>({
     queryKey: ['auth', 'me'],
     queryFn: async () => {
       const response = await api.get<AuthMeResponse>('/api/v1/auth/me');
       return response.data;
+    },
+    enabled: auth.isAuthenticated,
+    retry: (failureCount, err: any) => {
+      const status = err?.response?.status;
+      if (status === 401 || status === 403) return false;
+      return failureCount < 2;
     },
     staleTime: 5 * 60 * 1000, // 5 minutos
     gcTime: 10 * 60 * 1000, // 10 minutos

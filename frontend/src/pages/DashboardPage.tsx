@@ -6,6 +6,7 @@ import { useAuth } from '../providers/AuthProvider';
 import { MainLayout } from '../components/layout';
 import { PageContainer, Loading, ErrorState, Badge, Button } from '../components';
 import { useNavigation, usePermissions } from '../hooks';
+import { Navigate } from 'react-router-dom';
 
 type HealthResponse = {
   status: 'ok';
@@ -176,10 +177,18 @@ export function DashboardPage() {
   const auth = useAuth();
   const navGroups = useNavigation();
   const queryClient = useQueryClient();
-  const { isPlatformAdmin, isTenantAdmin } = usePermissions();
+  const { isPlatformAdmin, isTenantAdmin, roles, isLoading } = usePermissions();
   const [socketStatus, setSocketStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
   const [events, setEvents] = useState<Array<{ at: string; type: string; payload: unknown }>>([]);
   const [isExtensionModalOpen, setIsExtensionModalOpen] = useState(false);
+
+  if (!isLoading) {
+    if (isPlatformAdmin) return <Navigate to="/platform/tenants" replace />
+    if (!isTenantAdmin) {
+      if (roles.some((r) => r.code === 'LOGISTICA')) return <Navigate to="/sales/deliveries" replace />
+      if (roles.some((r) => r.code === 'VENTAS')) return <Navigate to="/catalog/seller" replace />
+    }
+  }
 
   const healthQuery = useQuery({
     queryKey: ['health'],

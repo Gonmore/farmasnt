@@ -1,4 +1,4 @@
-import { createContext, useContext, useMemo, useState } from 'react'
+import { createContext, useContext, useEffect, useMemo, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import {
   clearAccessToken,
@@ -26,6 +26,31 @@ export function AuthProvider(props: { children: React.ReactNode }) {
   const queryClient = useQueryClient()
   const [accessTokenState, setAccessTokenState] = useState<string | null>(() => getAccessToken())
   const [refreshTokenState, setRefreshTokenState] = useState<string | null>(() => getRefreshToken())
+
+  useEffect(() => {
+    const handleLogout = () => {
+      clearAccessToken()
+      clearRefreshToken()
+      setAccessTokenState(null)
+      setRefreshTokenState(null)
+      queryClient.clear()
+    }
+
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === 'pf.accessToken' || e.key === 'pf.refreshToken') {
+        // Keep state in sync with storage changes from other tabs/windows.
+        setAccessTokenState(getAccessToken())
+        setRefreshTokenState(getRefreshToken())
+      }
+    }
+
+    window.addEventListener('pf:auth:logout', handleLogout)
+    window.addEventListener('storage', handleStorage)
+    return () => {
+      window.removeEventListener('pf:auth:logout', handleLogout)
+      window.removeEventListener('storage', handleStorage)
+    }
+  }, [queryClient])
 
   const value = useMemo<AuthContextValue>(() => {
     return {

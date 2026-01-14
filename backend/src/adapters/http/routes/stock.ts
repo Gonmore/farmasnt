@@ -314,7 +314,7 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
       })
 
       // Get user names for createdBy
-      const userIds = [...new Set(reservations.map(r => r.salesOrder.createdBy).filter(Boolean))]
+      const userIds = [...new Set(reservations.map((r) => r.salesOrder.createdBy).filter((v): v is string => !!v))]
       const users = userIds.length > 0 ? await db.user.findMany({
         where: {
           id: { in: userIds },
@@ -334,10 +334,11 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
         const today = new Date()
         const diffTime = deliveryDate ? deliveryDate.getTime() - today.getTime() : 0
         const deliveryDays = deliveryDate ? Math.ceil(diffTime / (1000 * 60 * 60 * 24)) : 0
+        const createdBy = res.salesOrder.createdBy
 
         return {
           id: res.id,
-          seller: userMap.get(res.salesOrder.createdBy!) || 'Unknown',
+          seller: createdBy ? (userMap.get(createdBy) || 'Unknown') : 'Unknown',
           client: res.salesOrder.customer.name,
           order: res.salesOrder.number,
           quantity: Number(res.quantity),

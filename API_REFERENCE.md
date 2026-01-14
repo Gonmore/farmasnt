@@ -1171,7 +1171,49 @@ Errores
 
 Response 201
 ```json
-{ "id": "...", "number": "SO-YYYYMMDD-0000", "status": "DRAFT", "version": 1, "createdAt": "..." }
+{ "id": "...", "number": "SO-YYYYMMDD-0000", "status": "CONFIRMED", "version": 1, "createdAt": "..." }
+```
+
+---
+## Deliveries (Entregas)
+Requiere: módulo `SALES`.
+
+Nota
+- "Pendientes" mapea a órdenes `DRAFT` + `CONFIRMED` (compatibilidad con órdenes antiguas).
+- "Entregadas" mapea a órdenes `FULFILLED`.
+- "Todas" mapea a órdenes `DRAFT` + `CONFIRMED` + `FULFILLED`.
+
+### GET /api/v1/sales/deliveries
+Requiere permiso: `sales:order:read`.
+
+Query
+- `take` (1..100, default 50)
+- `cursor` (uuid, opcional)
+- `status` (PENDING|DELIVERED|ALL, default PENDING)
+- `cities` (string, opcional: ciudades separadas por coma, case-insensitive)
+
+Response 200
+```json
+{
+  "items": [
+    {
+      "id": "...",
+      "number": "SO-YYYYMMDD-0000",
+      "status": "CONFIRMED",
+      "version": 2,
+      "updatedAt": "...",
+      "customerId": "...",
+      "customerName": "...",
+      "processedBy": "Usuario ...",
+      "deliveryDate": "...",
+      "deliveryCity": "...",
+      "deliveryZone": "...",
+      "deliveryAddress": "...",
+      "deliveryMapsUrl": "..."
+    }
+  ],
+  "nextCursor": "..."
+}
 ```
 
 ---
@@ -1305,6 +1347,34 @@ Response 200 (estructura)
   "movements": [ ... ],
   "balances": [ ... ]
 }
+```
+
+### POST /api/v1/sales/orders/:id/deliver
+Requiere: módulos `SALES` y `WAREHOUSE` + permisos `sales:order:write` y `stock:move`.
+
+Body
+```json
+{ "version": 2, "fromLocationId": "... (opcional)", "note": "Opcional" }
+```
+
+Notas
+- Marca la orden como **entregada** (set `status: FULFILLED`) y genera `StockMovement` `OUT`.
+- Si la orden tiene `SalesOrderReservation`:
+  - Consume desde los `InventoryBalance` reservados (decrementa `quantity` y `reservedQuantity`).
+  - Borra las reservas (`SalesOrderReservation.deleteMany`).
+- Si la orden **no** tiene reservas:
+  - Requiere `fromLocationId` y ejecuta el mismo flujo que `/fulfill` (incluye FEFO y validación de vencimiento).
+  - En este modo, la orden debe estar en `CONFIRMED`.
+- `409` si stock insuficiente, `version` no coincide, o lote vencido (`Batch.expiresAt` < hoy UTC).
+
+Realtime emit
+- `sales.order.delivered`
+- `stock.movement.created`
+- `stock.balance.changed`
+
+Response 200
+```json
+{ "order": { "id": "...", "number": "...", "status": "FULFILLED", "version": 3, "updatedAt": "..." } }
 ```
 
 ---

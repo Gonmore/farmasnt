@@ -12,6 +12,13 @@ const listQuerySchema = z.object({
   status: z.enum(['DRAFT', 'CONFIRMED', 'FULFILLED', 'CANCELLED']).optional(),
 })
 
+const deliveriesQuerySchema = z.object({
+  take: z.coerce.number().int().min(1).max(100).default(50),
+  cursor: z.string().uuid().optional(),
+  status: z.enum(['PENDING', 'DELIVERED', 'ALL']).default('PENDING'),
+  cities: z.string().optional(),
+})
+
 const orderCreateSchema = z.object({
   quoteId: z.string().uuid(),
 })
@@ -26,7 +33,257 @@ const orderFulfillSchema = z.object({
   note: z.string().trim().max(500).optional(),
 })
 
+const orderDeliverSchema = z.object({
+  version: z.number().int().positive(),
+  fromLocationId: z.string().uuid().optional(),
+  note: z.string().trim().max(500).optional(),
+})
+
 type LockedBalanceRow = { id: string; quantity: string }
+
+type LockedBalanceForDeliveryRow = {
+  id: string
+  quantity: string
+  reservedQuantity: string
+  locationId: string
+  productId: string
+  batchId: string | null
+}
+
+async function fulfillOrderInTx(
+  tx: any,
+  args: {
+    tenantId: string
+    orderId: string
+    userId: string
+    version: number
+    fromLocationId: string
+    note?: string
+  },
+): Promise<{ orderBefore: any; updatedOrder: any; createdMovements: any[]; changedBalances: any[] }> {
+  const todayUtc = startOfTodayUtc()
+
+  const order = await tx.salesOrder.findFirst({
+    where: { id: args.orderId, tenantId: args.tenantId },
+    select: { id: true, number: true, status: true, version: true, customerId: true },
+  })
+  if (!order) {
+    const err = new Error('Not found') as Error & { statusCode?: number }
+    err.statusCode = 404
+    throw err
+  }
+  if (order.version !== args.version) {
+    const err = new Error('Version conflict') as Error & { statusCode?: number }
+    err.statusCode = 409
+    throw err
+  }
+  if (order.status !== 'CONFIRMED') {
+    const err = new Error('Only CONFIRMED orders can be fulfilled') as Error & { statusCode?: number }
+    err.statusCode = 409
+    throw err
+  }
+
+  // Order is being fulfilled: release reservations first so reservedQuantity doesn't linger.
+  await releaseReservationsForOrder(tx, { tenantId: args.tenantId, orderId: order.id, userId: args.userId })
+
+  const location = await tx.location.findFirst({
+    where: { id: args.fromLocationId, tenantId: args.tenantId, isActive: true },
+    select: { id: true },
+  })
+  if (!location) {
+    const err = new Error('Location not found') as Error & { statusCode?: number }
+    err.statusCode = 404
+    throw err
+  }
+
+  const lines = await tx.salesOrderLine.findMany({
+    where: { tenantId: args.tenantId, salesOrderId: order.id },
+    select: { id: true, productId: true, batchId: true, quantity: true },
+    orderBy: { createdAt: 'asc' },
+  })
+  if (lines.length === 0) {
+    const err = new Error('Order has no lines') as Error & { statusCode?: number }
+    err.statusCode = 409
+    throw err
+  }
+
+  const selectFefoBatchId = async (productId: string, qty: number): Promise<string | null> => {
+    // Prefer batches with an expiry date (soonest first)
+    const withExpiry = await tx.inventoryBalance.findMany({
+      where: {
+        tenantId: args.tenantId,
+        locationId: args.fromLocationId,
+        productId,
+        batchId: { not: null },
+        quantity: { gte: qty },
+        batch: { expiresAt: { not: null, gte: todayUtc } },
+      },
+      take: 1,
+      orderBy: [{ batch: { expiresAt: 'asc' } }, { id: 'asc' }],
+      select: { batchId: true },
+    })
+    if (withExpiry[0]?.batchId) return withExpiry[0].batchId
+
+    // Then allow batches without expiry date
+    const withoutExpiry = await tx.inventoryBalance.findMany({
+      where: {
+        tenantId: args.tenantId,
+        locationId: args.fromLocationId,
+        productId,
+        batchId: { not: null },
+        quantity: { gte: qty },
+        batch: { expiresAt: null },
+      },
+      take: 1,
+      orderBy: [{ id: 'asc' }],
+      select: { batchId: true },
+    })
+    return withoutExpiry[0]?.batchId ?? null
+  }
+
+  // FEFO auto-pick
+  const effectiveBatchIdByLineId = new Map<string, string | null>()
+  for (const line of lines) {
+    const qty = Number(line.quantity)
+    if (!line.batchId) {
+      const chosen = await selectFefoBatchId(line.productId, qty)
+      effectiveBatchIdByLineId.set(line.id, chosen)
+      if (chosen) {
+        await tx.salesOrderLine.update({ where: { id: line.id }, data: { batchId: chosen, createdBy: args.userId } })
+      }
+    } else {
+      effectiveBatchIdByLineId.set(line.id, line.batchId)
+    }
+  }
+
+  // Expiry rule
+  for (const line of lines) {
+    const batchId = effectiveBatchIdByLineId.get(line.id) ?? null
+    if (!batchId) continue
+    const batch = await tx.batch.findFirst({
+      where: { id: batchId, tenantId: args.tenantId, productId: line.productId },
+      select: { id: true, expiresAt: true, batchNumber: true },
+    })
+    if (!batch) {
+      const err = new Error('Batch not found') as Error & { statusCode?: number }
+      err.statusCode = 404
+      throw err
+    }
+    if (batch.expiresAt && batch.expiresAt < todayUtc) {
+      const err = new Error('Batch is expired') as Error & { statusCode?: number; code?: string; meta?: any }
+      err.statusCode = 409
+      err.code = 'BATCH_EXPIRED'
+      err.meta = { batchId: batch.id, batchNumber: batch.batchNumber, expiresAt: batch.expiresAt.toISOString() }
+      throw err
+    }
+  }
+
+  // Lock balances for each (product,batch) in this location
+  const lockBalance = async (productId: string, batchId: string | null) => {
+    if (batchId === null) {
+      const rows = await tx.$queryRaw<LockedBalanceRow[]>`
+        SELECT "id", "quantity" FROM "InventoryBalance"
+        WHERE "tenantId" = ${args.tenantId} AND "locationId" = ${args.fromLocationId} AND "productId" = ${productId} AND "batchId" IS NULL
+        FOR UPDATE
+      `
+      return rows[0] ?? null
+    }
+    const rows = await tx.$queryRaw<LockedBalanceRow[]>`
+      SELECT "id", "quantity" FROM "InventoryBalance"
+      WHERE "tenantId" = ${args.tenantId} AND "locationId" = ${args.fromLocationId} AND "productId" = ${productId} AND "batchId" = ${batchId}
+      FOR UPDATE
+    `
+    return rows[0] ?? null
+  }
+
+  for (const line of lines) {
+    const batchId = effectiveBatchIdByLineId.get(line.id) ?? null
+    await lockBalance(line.productId, batchId)
+  }
+
+  const changedBalances: any[] = []
+  const createdMovements: any[] = []
+  const year = currentYearUtc()
+
+  for (const line of lines) {
+    const batchId = effectiveBatchIdByLineId.get(line.id) ?? null
+    const qty = Number(line.quantity)
+
+    const current = await tx.inventoryBalance.findFirst({
+      where: { tenantId: args.tenantId, locationId: args.fromLocationId, productId: line.productId, batchId },
+      select: { id: true, quantity: true },
+    })
+    const currentQty = current ? Number(current.quantity) : 0
+    const nextQty = currentQty - qty
+    if (nextQty < 0) {
+      const err = new Error('Insufficient stock') as Error & { statusCode?: number }
+      err.statusCode = 409
+      throw err
+    }
+
+    const balance = current
+      ? await tx.inventoryBalance.update({
+          where: { id: current.id },
+          data: { quantity: decimalFromNumber(nextQty), version: { increment: 1 }, createdBy: args.userId },
+          select: { id: true, locationId: true, productId: true, batchId: true, quantity: true, version: true, updatedAt: true },
+        })
+      : await tx.inventoryBalance.create({
+          data: {
+            tenantId: args.tenantId,
+            locationId: args.fromLocationId,
+            productId: line.productId,
+            batchId,
+            quantity: decimalFromNumber(nextQty),
+            createdBy: args.userId,
+          },
+          select: { id: true, locationId: true, productId: true, batchId: true, quantity: true, version: true, updatedAt: true },
+        })
+
+    changedBalances.push(balance)
+
+    const seq = await nextSequence(tx, { tenantId: args.tenantId, year, key: 'MS' })
+    const movement = await tx.stockMovement.create({
+      data: {
+        tenantId: args.tenantId,
+        number: seq.number,
+        numberYear: year,
+        type: 'OUT',
+        productId: line.productId,
+        batchId,
+        fromLocationId: args.fromLocationId,
+        toLocationId: null,
+        quantity: decimalFromNumber(qty),
+        referenceType: 'SALES_ORDER',
+        referenceId: order.number,
+        note: args.note ?? null,
+        createdBy: args.userId,
+      },
+      select: {
+        id: true,
+        number: true,
+        numberYear: true,
+        type: true,
+        productId: true,
+        batchId: true,
+        fromLocationId: true,
+        toLocationId: true,
+        quantity: true,
+        createdAt: true,
+        referenceType: true,
+        referenceId: true,
+      },
+    })
+    createdMovements.push(movement)
+  }
+
+  const updatedOrder = await tx.salesOrder.update({
+    where: { id: order.id },
+    data: { status: 'FULFILLED', version: { increment: 1 }, createdBy: args.userId },
+    select: { id: true, number: true, status: true, version: true, updatedAt: true },
+  })
+
+  return { orderBefore: order, updatedOrder, createdMovements, changedBalances }
+}
 
 function decimalFromNumber(value: number): string {
   return value.toString()
@@ -257,6 +514,78 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
   const db = prisma()
   const audit = new AuditService(db)
 
+  // Deliveries (read-side): orders pending delivery / delivered.
+  // Pending maps to DRAFT+CONFIRMED to support older orders created before we set CONFIRMED on quote processing.
+  app.get(
+    '/api/v1/sales/deliveries',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'SALES'), requirePermission(Permissions.SalesDeliveryRead)],
+    },
+    async (request, reply) => {
+      const parsed = deliveriesQuerySchema.safeParse(request.query)
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
+
+      const tenantId = request.auth!.tenantId
+      const statuses = parsed.data.status === 'DELIVERED' ? (['FULFILLED'] as const) : parsed.data.status === 'ALL' ? (['DRAFT', 'CONFIRMED', 'FULFILLED'] as const) : (['DRAFT', 'CONFIRMED'] as const)
+      const cities = parsed.data.cities ? parsed.data.cities.split(',').map(c => c.toUpperCase().trim()).filter(c => c) : undefined
+
+      const items = await db.salesOrder.findMany({
+        where: {
+          tenantId,
+          status: { in: statuses as any },
+          ...(cities ? { deliveryCity: { in: cities } } : {}),
+        },
+        take: parsed.data.take,
+        ...(parsed.data.cursor
+          ? {
+              skip: 1,
+              cursor: { id: parsed.data.cursor },
+            }
+          : {}),
+        orderBy: [{ deliveryDate: 'asc' }, { id: 'asc' }],
+        select: {
+          id: true,
+          number: true,
+          status: true,
+          version: true,
+          updatedAt: true,
+          createdBy: true,
+          deliveryDate: true,
+          deliveryCity: true,
+          deliveryZone: true,
+          deliveryAddress: true,
+          deliveryMapsUrl: true,
+          customer: { select: { id: true, name: true } },
+        },
+      })
+
+      const authorIds = Array.from(new Set(items.map((o: any) => o.createdBy).filter(Boolean))) as string[]
+      const authors = authorIds.length
+        ? await db.user.findMany({ where: { tenantId, id: { in: authorIds } }, select: { id: true, fullName: true, email: true } })
+        : []
+      const authorMap = new Map(authors.map((u: any) => [u.id, (u.fullName ?? '').trim() || u.email] as const))
+
+      const mapped = items.map((o: any) => ({
+        id: o.id,
+        number: o.number,
+        status: o.status,
+        version: o.version,
+        updatedAt: o.updatedAt.toISOString(),
+        customerId: o.customer.id,
+        customerName: o.customer.name,
+        processedBy: o.createdBy ? authorMap.get(o.createdBy) ?? null : null,
+        deliveryDate: o.deliveryDate ? o.deliveryDate.toISOString() : null,
+        deliveryCity: o.deliveryCity,
+        deliveryZone: o.deliveryZone,
+        deliveryAddress: o.deliveryAddress,
+        deliveryMapsUrl: o.deliveryMapsUrl,
+      }))
+
+      const nextCursor = items.length === parsed.data.take ? items[items.length - 1]!.id : null
+      return reply.send({ items: mapped, nextCursor })
+    },
+  )
+
   app.get(
     '/api/v1/sales/quotes/next-number',
     {
@@ -473,229 +802,17 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
 
       const { fromLocationId } = parsed.data
 
-      const todayUtc = startOfTodayUtc()
-
       try {
-        const result = await db.$transaction(async (tx) => {
-        const order = await tx.salesOrder.findFirst({
-          where: { id, tenantId },
-          select: { id: true, number: true, status: true, version: true, customerId: true },
-        })
-        if (!order) {
-          const err = new Error('Not found') as Error & { statusCode?: number }
-          err.statusCode = 404
-          throw err
-        }
-        if (order.version !== parsed.data.version) {
-          const err = new Error('Version conflict') as Error & { statusCode?: number }
-          err.statusCode = 409
-          throw err
-        }
-        if (order.status !== 'CONFIRMED') {
-          const err = new Error('Only CONFIRMED orders can be fulfilled') as Error & { statusCode?: number }
-          err.statusCode = 409
-          throw err
-        }
-
-        // Order is being fulfilled: release reservations first so reservedQuantity doesn't linger.
-        await releaseReservationsForOrder(tx, { tenantId, orderId: order.id, userId })
-
-        const location = await tx.location.findFirst({ where: { id: fromLocationId, tenantId, isActive: true }, select: { id: true } })
-        if (!location) {
-          const err = new Error('Location not found') as Error & { statusCode?: number }
-          err.statusCode = 404
-          throw err
-        }
-
-        const lines = await tx.salesOrderLine.findMany({
-          where: { tenantId, salesOrderId: order.id },
-          select: { id: true, productId: true, batchId: true, quantity: true },
-          orderBy: { createdAt: 'asc' },
-        })
-        if (lines.length === 0) {
-          const err = new Error('Order has no lines') as Error & { statusCode?: number }
-          err.statusCode = 409
-          throw err
-        }
-
-        const selectFefoBatchId = async (productId: string, qty: number): Promise<string | null> => {
-          // Prefer batches with an expiry date (soonest first)
-          const withExpiry = await tx.inventoryBalance.findMany({
-            where: {
-              tenantId,
-              locationId: fromLocationId,
-              productId,
-              batchId: { not: null },
-              quantity: { gte: qty },
-              batch: { expiresAt: { not: null, gte: todayUtc } },
-            },
-            take: 1,
-            orderBy: [{ batch: { expiresAt: 'asc' } }, { id: 'asc' }],
-            select: { batchId: true },
-          })
-          if (withExpiry[0]?.batchId) return withExpiry[0].batchId
-
-          // Then allow batches without expiry date
-          const withoutExpiry = await tx.inventoryBalance.findMany({
-            where: {
-              tenantId,
-              locationId: fromLocationId,
-              productId,
-              batchId: { not: null },
-              quantity: { gte: qty },
-              batch: { expiresAt: null },
-            },
-            take: 1,
-            orderBy: [{ id: 'asc' }],
-            select: { batchId: true },
-          })
-          return withoutExpiry[0]?.batchId ?? null
-        }
-
-        // FEFO auto-pick: if line has no batchId, try selecting a non-expired batch with sufficient stock.
-        // If none exists, fall back to batchId=null behavior (legacy/unbatched inventory).
-        const effectiveBatchIdByLineId = new Map<string, string | null>()
-        for (const line of lines) {
-          const qty = Number(line.quantity)
-          if (!line.batchId) {
-            const chosen = await selectFefoBatchId(line.productId, qty)
-            effectiveBatchIdByLineId.set(line.id, chosen)
-            if (chosen) {
-              await tx.salesOrderLine.update({ where: { id: line.id }, data: { batchId: chosen, createdBy: userId } })
-            }
-          } else {
-            effectiveBatchIdByLineId.set(line.id, line.batchId)
-          }
-        }
-
-        // Expiry rule: if a line resolves to a batchId (explicit or auto-picked), it must not be expired.
-        for (const line of lines) {
-          const batchId = effectiveBatchIdByLineId.get(line.id) ?? null
-          if (!batchId) continue
-          const batch = await tx.batch.findFirst({
-            where: { id: batchId, tenantId, productId: line.productId },
-            select: { id: true, expiresAt: true, batchNumber: true },
-          })
-          if (!batch) {
-            const err = new Error('Batch not found') as Error & { statusCode?: number }
-            err.statusCode = 404
-            throw err
-          }
-          if (batch.expiresAt && batch.expiresAt < todayUtc) {
-            const err = new Error('Batch is expired') as Error & { statusCode?: number; code?: string; meta?: any }
-            err.statusCode = 409
-            err.code = 'BATCH_EXPIRED'
-            err.meta = { batchId: batch.id, batchNumber: batch.batchNumber, expiresAt: batch.expiresAt.toISOString() }
-            throw err
-          }
-        }
-
-        // Lock balances for each (product,batch) in this location
-        const lockBalance = async (productId: string, batchId: string | null) => {
-          if (batchId === null) {
-            const rows = await tx.$queryRaw<LockedBalanceRow[]>`
-              SELECT "id", "quantity" FROM "InventoryBalance"
-              WHERE "tenantId" = ${tenantId} AND "locationId" = ${fromLocationId} AND "productId" = ${productId} AND "batchId" IS NULL
-              FOR UPDATE
-            `
-            return rows[0] ?? null
-          }
-          const rows = await tx.$queryRaw<LockedBalanceRow[]>`
-            SELECT "id", "quantity" FROM "InventoryBalance"
-            WHERE "tenantId" = ${tenantId} AND "locationId" = ${fromLocationId} AND "productId" = ${productId} AND "batchId" = ${batchId}
-            FOR UPDATE
-          `
-          return rows[0] ?? null
-        }
-
-        for (const line of lines) {
-          const batchId = effectiveBatchIdByLineId.get(line.id) ?? null
-          await lockBalance(line.productId, batchId)
-        }
-
-        const changedBalances: any[] = []
-        const createdMovements: any[] = []
-        const year = currentYearUtc()
-
-        for (const line of lines) {
-          const batchId = effectiveBatchIdByLineId.get(line.id) ?? null
-          const qty = Number(line.quantity)
-
-          const current = await tx.inventoryBalance.findFirst({
-            where: { tenantId, locationId: fromLocationId, productId: line.productId, batchId },
-            select: { id: true, quantity: true },
-          })
-          const currentQty = current ? Number(current.quantity) : 0
-          const nextQty = currentQty - qty
-          if (nextQty < 0) {
-            const err = new Error('Insufficient stock') as Error & { statusCode?: number }
-            err.statusCode = 409
-            throw err
-          }
-
-          const balance = current
-            ? await tx.inventoryBalance.update({
-                where: { id: current.id },
-                data: { quantity: decimalFromNumber(nextQty), version: { increment: 1 }, createdBy: userId },
-                select: { id: true, locationId: true, productId: true, batchId: true, quantity: true, version: true, updatedAt: true },
-              })
-            : await tx.inventoryBalance.create({
-                data: {
-                  tenantId,
-                  locationId: fromLocationId,
-                  productId: line.productId,
-                  batchId,
-                  quantity: decimalFromNumber(nextQty),
-                  createdBy: userId,
-                },
-                select: { id: true, locationId: true, productId: true, batchId: true, quantity: true, version: true, updatedAt: true },
-              })
-
-          changedBalances.push(balance)
-
-          const seq = await nextSequence(tx, { tenantId, year, key: 'MS' })
-          const movement = await tx.stockMovement.create({
-            data: {
-              tenantId,
-              number: seq.number,
-              numberYear: year,
-              type: 'OUT',
-              productId: line.productId,
-              batchId,
-              fromLocationId,
-              toLocationId: null,
-              quantity: decimalFromNumber(qty),
-              referenceType: 'SALES_ORDER',
-              referenceId: order.number,
-              note: parsed.data.note ?? null,
-              createdBy: userId,
-            },
-            select: {
-              id: true,
-              number: true,
-              numberYear: true,
-              type: true,
-              productId: true,
-              batchId: true,
-              fromLocationId: true,
-              toLocationId: true,
-              quantity: true,
-              createdAt: true,
-              referenceType: true,
-              referenceId: true,
-            },
-          })
-          createdMovements.push(movement)
-        }
-
-        const updatedOrder = await tx.salesOrder.update({
-          where: { id: order.id },
-          data: { status: 'FULFILLED', version: { increment: 1 }, createdBy: userId },
-          select: { id: true, number: true, status: true, version: true, updatedAt: true },
-        })
-
-        return { orderBefore: order, updatedOrder, createdMovements, changedBalances }
-        })
+        const result = await db.$transaction((tx) =>
+          fulfillOrderInTx(tx, {
+            tenantId,
+            orderId: id,
+            userId,
+            version: parsed.data.version,
+            fromLocationId,
+            ...(parsed.data.note !== undefined ? { note: parsed.data.note } : {}),
+          }),
+        )
 
       await audit.append({
         tenantId,
@@ -731,6 +848,248 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
             entityType: 'Batch',
             entityId: e?.meta?.batchId ?? null,
             metadata: { operation: 'sales.order.fulfill', orderId: id, ...e.meta },
+          })
+          return reply.status(409).send({ message: 'Batch expired' })
+        }
+        throw e
+      }
+    },
+  )
+
+  // Deliver: fulfill an order by consuming its reservations (reserved -> stock out) and marking it as FULFILLED.
+  app.post(
+    '/api/v1/sales/orders/:id/deliver',
+    {
+      preHandler: [
+        requireAuth(),
+        requireModuleEnabled(db, 'SALES'),
+        requireModuleEnabled(db, 'WAREHOUSE'),
+        requirePermission(Permissions.SalesDeliveryWrite),
+        requirePermission(Permissions.StockMove),
+      ],
+    },
+    async (request, reply) => {
+      const id = (request.params as any).id as string
+      const parsed = orderDeliverSchema.safeParse(request.body)
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid request', issues: parsed.error.issues })
+
+      const tenantId = request.auth!.tenantId
+      const userId = request.auth!.userId
+
+      try {
+
+        const result = await db.$transaction(async (tx) => {
+          const order = await tx.salesOrder.findFirst({
+            where: { id, tenantId },
+            select: { id: true, number: true, status: true, version: true },
+          })
+          if (!order) {
+            const err = new Error('Not found') as Error & { statusCode?: number }
+            err.statusCode = 404
+            throw err
+          }
+          if (order.version !== parsed.data.version) {
+            const err = new Error('Version conflict') as Error & { statusCode?: number }
+            err.statusCode = 409
+            throw err
+          }
+          if (order.status === 'FULFILLED') {
+            const err = new Error('Order already delivered') as Error & { statusCode?: number }
+            err.statusCode = 409
+            throw err
+          }
+          if (order.status === 'CANCELLED') {
+            const err = new Error('Cancelled orders cannot be delivered') as Error & { statusCode?: number }
+            err.statusCode = 409
+            throw err
+          }
+
+          const reservations = await tx.salesOrderReservation.findMany({
+            where: { tenantId, salesOrderId: order.id },
+            select: { id: true, inventoryBalanceId: true, quantity: true },
+          })
+
+          // If there are no reservations, fall back to the classic fulfillment flow (requires fromLocationId).
+          if (reservations.length === 0) {
+            if (!parsed.data.fromLocationId) {
+              const err = new Error('Order has no reservations; provide fromLocationId or use /fulfill') as Error & { statusCode?: number }
+              err.statusCode = 409
+              throw err
+            }
+            return fulfillOrderInTx(tx, {
+              tenantId,
+              orderId: order.id,
+              userId,
+              version: parsed.data.version,
+              fromLocationId: parsed.data.fromLocationId,
+              ...(parsed.data.note !== undefined ? { note: parsed.data.note } : {}),
+            })
+          }
+
+          const todayUtc = startOfTodayUtc()
+
+          const qtyByBalanceId = new Map<string, number>()
+          for (const r of reservations) {
+            const q = toNumber(r.quantity)
+            if (q <= 0) continue
+            qtyByBalanceId.set(r.inventoryBalanceId, (qtyByBalanceId.get(r.inventoryBalanceId) ?? 0) + q)
+          }
+          const balanceIds = Array.from(qtyByBalanceId.keys())
+
+          // Lock balances to avoid concurrent stock/reservation changes.
+          const locked: LockedBalanceForDeliveryRow[] = []
+          for (const bid of balanceIds) {
+            const rows = await tx.$queryRaw<LockedBalanceForDeliveryRow[]>`
+              SELECT "id", "quantity", "reservedQuantity", "locationId", "productId", "batchId"
+              FROM "InventoryBalance"
+              WHERE "tenantId" = ${tenantId} AND "id" = ${bid}
+              FOR UPDATE
+            `
+            if (rows[0]) locked.push(rows[0])
+          }
+
+          // Expiry rule: if balance is tied to a batch, it must not be expired.
+          for (const b of locked) {
+            if (!b.batchId) continue
+            const batch = await tx.batch.findFirst({
+              where: { id: b.batchId, tenantId, productId: b.productId },
+              select: { id: true, expiresAt: true, batchNumber: true },
+            })
+            if (!batch) {
+              const err = new Error('Batch not found') as Error & { statusCode?: number }
+              err.statusCode = 404
+              throw err
+            }
+            if (batch.expiresAt && batch.expiresAt < todayUtc) {
+              const err = new Error('Batch is expired') as Error & { statusCode?: number; code?: string; meta?: any }
+              err.statusCode = 409
+              err.code = 'BATCH_EXPIRED'
+              err.meta = { batchId: batch.id, batchNumber: batch.batchNumber, expiresAt: batch.expiresAt.toISOString() }
+              throw err
+            }
+          }
+
+          const lockedById = new Map(locked.map((r) => [r.id, r]))
+
+          const changedBalances: any[] = []
+          const createdMovements: any[] = []
+          const year = currentYearUtc()
+
+          for (const [balanceId, q] of qtyByBalanceId.entries()) {
+            const b = lockedById.get(balanceId)
+            if (!b) {
+              const err = new Error('Inventory balance not found') as Error & { statusCode?: number }
+              err.statusCode = 404
+              throw err
+            }
+
+            const curQty = toNumber(b.quantity)
+            const curRes = toNumber(b.reservedQuantity)
+            const nextQty = curQty - q
+            const nextRes = curRes - q
+            if (nextQty < 0) {
+              const err = new Error('Insufficient stock') as Error & { statusCode?: number }
+              err.statusCode = 409
+              throw err
+            }
+            if (nextRes < 0) {
+              const err = new Error('Reserved quantity inconsistency') as Error & { statusCode?: number }
+              err.statusCode = 409
+              throw err
+            }
+
+            const updatedBalance = await tx.inventoryBalance.update({
+              where: { id: balanceId },
+              data: {
+                quantity: decimalFromNumber(nextQty),
+                reservedQuantity: decimalFromNumber(nextRes),
+                version: { increment: 1 },
+                createdBy: userId,
+              },
+              select: {
+                id: true,
+                locationId: true,
+                productId: true,
+                batchId: true,
+                quantity: true,
+                reservedQuantity: true,
+                version: true,
+                updatedAt: true,
+              },
+            })
+            changedBalances.push(updatedBalance)
+
+            const seq = await nextSequence(tx, { tenantId, year, key: 'MS' })
+            const movement = await tx.stockMovement.create({
+              data: {
+                tenantId,
+                number: seq.number,
+                numberYear: year,
+                type: 'OUT',
+                productId: b.productId,
+                batchId: b.batchId,
+                fromLocationId: b.locationId,
+                toLocationId: null,
+                quantity: decimalFromNumber(q),
+                referenceType: 'SALES_ORDER',
+                referenceId: order.number,
+                note: parsed.data.note ?? null,
+                createdBy: userId,
+              },
+              select: {
+                id: true,
+                number: true,
+                numberYear: true,
+                type: true,
+                productId: true,
+                batchId: true,
+                fromLocationId: true,
+                toLocationId: true,
+                quantity: true,
+                createdAt: true,
+                referenceType: true,
+                referenceId: true,
+              },
+            })
+            createdMovements.push(movement)
+          }
+
+          await tx.salesOrderReservation.deleteMany({ where: { tenantId, salesOrderId: order.id } })
+
+          const updatedOrder = await tx.salesOrder.update({
+            where: { id: order.id },
+            data: { status: 'FULFILLED', version: { increment: 1 }, createdBy: userId },
+            select: { id: true, number: true, status: true, version: true, updatedAt: true },
+          })
+
+          return { orderBefore: order, updatedOrder, createdMovements, changedBalances }
+        })
+
+      await audit.append({
+        tenantId,
+        actorUserId: userId,
+        action: 'sales.order.deliver',
+        entityType: 'SalesOrder',
+        entityId: id,
+        before: result.orderBefore,
+        after: { order: result.updatedOrder, movements: result.createdMovements, balances: result.changedBalances },
+      })
+
+      const room = `tenant:${tenantId}`
+      app.io?.to(room).emit('sales.order.delivered', result.updatedOrder)
+      for (const m of result.createdMovements) app.io?.to(room).emit('stock.movement.created', m)
+      for (const b of result.changedBalances) app.io?.to(room).emit('stock.balance.changed', b)
+
+      return reply.send({ order: result.updatedOrder })
+      } catch (e: any) {
+        if (e?.code === 'BATCH_EXPIRED') {
+          await audit.append({
+            tenantId,
+            actorUserId: userId,
+            action: 'stock.expiry.blocked',
+            entityType: 'Batch',
+            entityId: e?.meta?.batchId ?? null,
+            metadata: { operation: 'sales.order.deliver', orderId: id, ...e.meta },
           })
           return reply.status(409).send({ message: 'Batch expired' })
         }

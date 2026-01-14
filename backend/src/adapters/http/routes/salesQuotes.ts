@@ -565,6 +565,7 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
               number: orderNumber,
               customerId: quote.customerId,
               quoteId: quote.id,
+              status: 'CONFIRMED',
               note: `Desde cotización ${quote.number}`,
               deliveryDate,
               deliveryCity: quote.deliveryCity ?? quote.customer.city ?? null,

@@ -147,6 +147,28 @@ Se incorporaron endpoints read-only de reportes para acelerar dashboards y panta
 
 ---
 
+## **[14 Ene 2026] Módulo Entregas + cierre de venta por reservas**
+
+### Entregas (UI)
+- Se agregó la pantalla **Entregas** en Ventas (`/sales/deliveries`) con lista de pendientes/entregadas.
+- Se muestra **fecha relativa** ("en X días" / "hoy" / "ayer" / "hace X días"), lugar de entrega y acceso a Maps.
+- Acciones:
+  - **Ver OV** (navega al detalle de la orden).
+  - **Marcar entregado**.
+
+### Backend: listar entregas + marcar entregado
+- Nuevo read-side: `GET /api/v1/sales/deliveries` (pendientes = `DRAFT|CONFIRMED`, entregadas = `FULFILLED`).
+- Nueva acción: `POST /api/v1/sales/orders/:id/deliver`.
+  - Si la orden tiene `SalesOrderReservation`, se consume stock desde los balances reservados: decrementa `quantity` y `reservedQuantity`, borra reservas y crea `StockMovement` `OUT`.
+  - Si no hay reservas, permite fallback al flujo clásico (requiere `fromLocationId`, incluye FEFO + validación de lote vencido).
+  - Emite eventos realtime (`sales.order.delivered`, `stock.movement.created`, `stock.balance.changed`) y registra auditoría.
+
+### Ajuste de flujo cotización → orden
+- Al procesar una cotización, la orden resultante se crea en estado `CONFIRMED` para que quede lista como "pendiente de entrega".
+
+### Docs
+- Se actualizó `API_REFERENCE.md` para incluir los endpoints de Entregas y la acción de entrega.
+
 ## **[13 Ene 2026] Cotizaciones persistentes + lugar de entrega + órdenes solo desde cotización**
 
 ### Cotizaciones (Quotes) como origen obligatorio
@@ -447,4 +469,12 @@ Tenant Admin (Clientes)
 - Navegación renderizada dinámicamente según permisos
 - Badges de estado calculados en tiempo real (días restantes)
 - Modal extension genera preview antes de enviar (UX transparente)
+
+### **[14 Ene 2026]** — Mejoras UX en Entregas
+- **Botón "Lugar" estilizado**: borde sólido azul, radius alto, background translúcido azul para destacar como botón interactivo.
+- **Modal de dirección**: al presionar "Lugar", modal con dirección completa + botón "Ver en Maps" (abre Google Maps).
+- **Filtro por ciudad**: chips de selección múltiple por ciudad de entrega, similar a Clientes.
+- **Botón "Ver todas"**: reemplaza "Ir a Órdenes", muestra todas las entregas (pendientes + entregadas) combinando `DRAFT` + `CONFIRMED` + `FULFILLED`.
+- **Backend**: endpoint `GET /api/v1/sales/deliveries` ahora soporta `status=ALL` y `cities` query param para filtrar.
+- **Documentación**: actualizada API_REFERENCE.md con nuevos params `status=ALL` y `cities`.
 

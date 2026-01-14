@@ -96,12 +96,19 @@ export async function createHttpServer() {
   })
 
   // Auth hook: attach request.auth if access token is present
+  // Important: expired/invalid tokens must NOT throw here, otherwise every request becomes a 500.
   app.addHook('preHandler', async (request) => {
     const authHeader = request.headers.authorization
     if (!authHeader || !authHeader.startsWith('Bearer ')) return
 
     const token = authHeader.slice('Bearer '.length)
-    const claims = await verifyAccessToken(token, env.JWT_ACCESS_SECRET)
+    let claims: { sub: string; tenantId: string }
+    try {
+      claims = await verifyAccessToken(token, env.JWT_ACCESS_SECRET)
+    } catch {
+      // Treat invalid/expired tokens as unauthenticated.
+      return
+    }
 
     const user = await db.user.findFirst({
       where: { id: claims.sub, tenantId: claims.tenantId, isActive: true, tenant: { isActive: true } },
