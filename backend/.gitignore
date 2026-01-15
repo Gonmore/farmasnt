@@ -6,4 +6,5 @@ dist
 
 /src/generated/prisma
 
-prisma/migrations
+# NOTE: Do not ignore prisma/migrations. We deploy using `prisma migrate deploy`,
+# which requires committed migrations.

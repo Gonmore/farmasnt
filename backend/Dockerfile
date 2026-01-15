@@ -20,6 +20,7 @@ ENV NODE_ENV=production
 COPY --from=build /app/package*.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/prisma ./prisma
+COPY --from=build /app/prisma.config.js ./prisma.config.js
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/src/generated ./src/generated
 

@@ -1,0 +1,1 @@
+-- This migration is now handled by the later migration that adds the column with default

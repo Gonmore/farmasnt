@@ -1,0 +1,9 @@
+-- AlterTable
+ALTER TABLE "Quote" ADD COLUMN     "deliveryDays" INTEGER NOT NULL DEFAULT 1,
+ADD COLUMN     "globalDiscountPct" DECIMAL(65,30) NOT NULL DEFAULT 0,
+ADD COLUMN     "paymentMode" TEXT NOT NULL DEFAULT 'CASH',
+ADD COLUMN     "proposalValue" TEXT,
+ADD COLUMN     "validityDays" INTEGER NOT NULL DEFAULT 7;
+
+-- AlterTable
+ALTER TABLE "QuoteLine" ADD COLUMN     "discountPct" DECIMAL(65,30) NOT NULL DEFAULT 0;
