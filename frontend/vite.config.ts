@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
@@ -11,14 +12,15 @@ export default defineConfig({
     allowedHosts: ['localhost', '127.0.0.1', '.supernovatel.com', '.febsa.com'],
     proxy: {
       // Avoid Chromium ERR_UNSAFE_PORT for :6000 by proxying through Vite (:6001)
+      // In Docker, this should point to the backend service (e.g. http://backend-farmasnt:6000)
       '/api': {
-        target: 'http://127.0.0.1:6000',
+        target: process.env.VITE_BACKEND_TARGET || 'http://127.0.0.1:6000',
         changeOrigin: true,
         xfwd: true,
       },
       // Socket.io uses this path by default
       '/socket.io': {
-        target: 'http://127.0.0.1:6000',
+        target: process.env.VITE_BACKEND_TARGET || 'http://127.0.0.1:6000',
         ws: true,
         changeOrigin: true,
         xfwd: true,
@@ -30,5 +32,19 @@ export default defineConfig({
   // the production domain(s) here too.
   preview: {
     allowedHosts: ['localhost', '127.0.0.1', '.supernovatel.com', '.febsa.com'],
+    // In Docker production, proxy to backend service
+    proxy: {
+      '/api': {
+        target: process.env.VITE_BACKEND_TARGET || 'http://127.0.0.1:6000',
+        changeOrigin: true,
+        xfwd: true,
+      },
+      '/socket.io': {
+        target: process.env.VITE_BACKEND_TARGET || 'http://127.0.0.1:6000',
+        ws: true,
+        changeOrigin: true,
+        xfwd: true,
+      },
+    },
   },
 })
