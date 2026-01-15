@@ -25,7 +25,7 @@ services:
       SMTP_FROM: "PharmaFlow <saas@supernovatel.com>"
       WEB_ORIGIN: "https://farmasnt.supernovatel.com"
     ports:
-      - "6000:6000"
+      - "80:6000"  # Expose backend on port 80 instead of 6000
     networks:
       - red-interna
 

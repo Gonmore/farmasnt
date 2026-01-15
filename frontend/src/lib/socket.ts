@@ -5,9 +5,10 @@ import { getApiBaseUrl } from './api'
 // Use the same base URL as API calls, but convert to WebSocket protocol
 function getWebSocketUrl(): string {
   const apiUrl = getApiBaseUrl()
-  // In production, backend is on port 6000 of the same domain
+  // In production, assume backend is available on standard ports via reverse proxy
+  // In development, use the API URL directly (Vite proxy handles it)
   const isProduction = !import.meta.env.DEV
-  const baseUrl = isProduction ? apiUrl.replace(/:\d+$/, '') + ':6000' : apiUrl
+  const baseUrl = isProduction ? apiUrl.replace(/:\d+$/, '') : apiUrl
   // Convert https:// to wss:// and http:// to ws://
   return baseUrl.replace(/^https?:\/\//, (match) => match === 'https://' ? 'wss://' : 'ws://')
 }
@@ -30,7 +31,11 @@ export function connectSocket(): Socket | null {
             transports: ['polling'],
             upgrade: false,
           }
-        : {}),
+        : {
+            // In production, use polling to avoid unsafe port issues
+            transports: ['polling'],
+            upgrade: false,
+          }),
     })
   }
 
