@@ -62,16 +62,21 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
     // If DB hasn't been migrated yet (TenantDomain table missing), do not fail login.
     let tenantId: string | undefined
     if (host) {
-      try {
-        const domainRow = await db.tenantDomain.findFirst({
-          where: { domain: host, verifiedAt: { not: null }, tenant: { isActive: true } },
-          select: { tenantId: true },
-        })
-        tenantId = domainRow?.tenantId
-      } catch (e: any) {
-        // Prisma P2021: table does not exist
-        if (e?.code !== 'P2021') throw e
-        tenantId = undefined
+      // Special case: farmasnt.supernovatel.com allows login from any tenant (universal access)
+      if (host === 'farmasnt.supernovatel.com' || host.endsWith('.farmasnt.supernovatel.com')) {
+        tenantId = undefined // Allow searching across all tenants
+      } else {
+        try {
+          const domainRow = await db.tenantDomain.findFirst({
+            where: { domain: host, verifiedAt: { not: null }, tenant: { isActive: true } },
+            select: { tenantId: true },
+          })
+          tenantId = domainRow?.tenantId
+        } catch (e: any) {
+          // Prisma P2021: table does not exist
+          if (e?.code !== 'P2021') throw e
+          tenantId = undefined
+        }
       }
     }
 
@@ -88,7 +93,8 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
     if (!user) {
       // If no tenant was resolved from host, check if this email exists in multiple tenants.
       // In that case, we can't safely choose one and we require a host-based tenant.
-      if (!tenantId) {
+      // Exception: farmasnt.supernovatel.com allows universal access
+      if (!tenantId && host !== 'farmasnt.supernovatel.com' && !host?.endsWith('.farmasnt.supernovatel.com')) {
         const count = await db.user.count({ where: { email: normalizedEmail, isActive: true, tenant: { isActive: true } } })
         if (count > 1) return reply.status(409).send({ message: 'Ambiguous user email across tenants; use the correct tenant domain' })
       }
