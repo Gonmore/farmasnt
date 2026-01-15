@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { useSearchParams } from 'react-router-dom'
 import { Button, Input, Loading } from '../components'
 import { useTenant } from '../providers/TenantProvider'
 import { apiFetch } from '../lib/api'
@@ -15,7 +15,7 @@ export function ResetPasswordPage() {
 
   const initialToken = useMemo(() => searchParams.get('token') ?? '', [searchParams])
 
-  const [mode, setMode] = useState<'request' | 'confirm'>(initialToken ? 'confirm' : 'request')
+  const mode = initialToken ? 'confirm' : 'request'
 
   const [email, setEmail] = useState('')
   const [token, setToken] = useState(initialToken)

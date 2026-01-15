@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
-import { Link, Navigate, useNavigate } from 'react-router-dom'
+import { Navigate, useNavigate } from 'react-router-dom'
 import { useAuth } from '../providers/AuthProvider'
 import { useTenant } from '../providers/TenantProvider'
 import { Button, Input, Loading } from '../components'
