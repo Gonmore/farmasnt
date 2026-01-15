@@ -1,9 +1,16 @@
 import { io, type Socket } from 'socket.io-client'
 import { getAccessToken } from './auth'
+import { getApiBaseUrl } from './api'
 
-// Default to 127.0.0.1 to avoid Windows localhost resolving to IPv6 (::1)
-// while backend is bound on IPv4.
-const WS_URL = import.meta.env.VITE_WS_URL ?? 'http://127.0.0.1:6000'
+// Use the same base URL as API calls, but convert to WebSocket protocol
+function getWebSocketUrl(): string {
+  const apiUrl = getApiBaseUrl()
+  // In production, backend is on port 6000 of the same domain
+  const isProduction = !import.meta.env.DEV
+  const baseUrl = isProduction ? apiUrl.replace(/:\d+$/, '') + ':6000' : apiUrl
+  // Convert https:// to wss:// and http:// to ws://
+  return baseUrl.replace(/^https?:\/\//, (match) => match === 'https://' ? 'wss://' : 'ws://')
+}
 
 let socket: Socket | null = null
 
@@ -13,7 +20,7 @@ export function connectSocket(): Socket | null {
 
   if (!socket) {
     const isDev = import.meta.env.DEV
-    socket = io(WS_URL, {
+    socket = io(getWebSocketUrl(), {
       autoConnect: false,
       auth: { token },
       ...(isDev

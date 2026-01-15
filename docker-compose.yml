@@ -23,6 +23,7 @@ services:
       SMTP_USER: "saas@supernovatel.com"
       SMTP_PASS: "if5u/WD9kZ"
       SMTP_FROM: "PharmaFlow <saas@supernovatel.com>"
+      WEB_ORIGIN: "https://farmasnt.supernovatel.com"
     ports:
       - "6000:6000"
     networks:
@@ -35,6 +36,7 @@ services:
         # Importante: VITE_* se inyecta en build (no en runtime)
         VITE_API_BASE_URL: "https://farmasnt.supernovatel.com"
         VITE_BACKEND_TARGET: "http://backend-farmasnt:6000"
+        VITE_WS_URL: "http://backend-farmasnt:6000"
     container_name: frontend-farmasnt
     restart: always
     ports:
