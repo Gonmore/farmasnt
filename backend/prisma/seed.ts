@@ -43,7 +43,7 @@ async function main() {
 
   const tenantName = process.env.SEED_TENANT_NAME ?? 'Demo Pharma'
   const adminEmail = process.env.SEED_ADMIN_EMAIL ?? 'admin@demo.local'
-  const adminPassword = process.env.SEED_ADMIN_PASSWORD ?? 'Admin123!'
+  const adminPassword = process.env.SEED_ADMIN_PASSWORD ?? 'Admin123'
   const platformDomain = process.env.SEED_PLATFORM_DOMAIN ?? 'farmacia.supernovatel.com'
   
   // Platform Tenant (Supernovatel)
@@ -260,6 +260,13 @@ async function main() {
     where: { domain: 'demo.localhost' },
     update: { tenantId: demoTenant.id, isPrimary: true, verifiedAt: new Date() },
     create: { tenantId: demoTenant.id, domain: 'demo.localhost', isPrimary: true, verifiedAt: new Date(), createdBy: null },
+  })
+
+  // Add localhost domain for local development
+  await db.tenantDomain.upsert({
+    where: { domain: 'localhost' },
+    update: { tenantId: demoTenant.id, isPrimary: false, verifiedAt: new Date() },
+    create: { tenantId: demoTenant.id, domain: 'localhost', isPrimary: false, verifiedAt: new Date(), createdBy: null },
   })
 
   const demoAdminUser = await db.user.upsert({
