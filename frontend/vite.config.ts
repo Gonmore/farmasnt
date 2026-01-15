@@ -25,4 +25,10 @@ export default defineConfig({
       },
     },
   },
+  // NOTE: `vite preview` uses a different config key (`preview.allowedHosts`).
+  // Our Docker image serves the built app via `vite preview`, so we must allow
+  // the production domain(s) here too.
+  preview: {
+    allowedHosts: ['localhost', '127.0.0.1', '.supernovatel.com', '.febsa.com'],
+  },
 })
