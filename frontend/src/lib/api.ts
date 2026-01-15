@@ -5,7 +5,8 @@ import axios from 'axios';
 type LogoutReason = 'SESSION_EXPIRED' | 'UNAUTHORIZED';
 
 const envBase = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '';
-const API_BASE_URL = envBase.trim() ? envBase.trim() : window.location.origin;
+// In production, use relative URLs so the reverse proxy can redirect /api/* to backend
+const API_BASE_URL = (!import.meta.env.DEV && envBase.trim()) ? '' : (envBase.trim() || window.location.origin);
 
 export function getApiBaseUrl(): string {
   return API_BASE_URL;

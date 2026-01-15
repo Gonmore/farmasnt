@@ -5,10 +5,16 @@ import { getApiBaseUrl } from './api'
 // Use the same base URL as API calls, but convert to WebSocket protocol
 function getWebSocketUrl(): string {
   const apiUrl = getApiBaseUrl()
-  // In production, assume backend is available on standard ports via reverse proxy
-  // In development, use the API URL directly (Vite proxy handles it)
+  // In production with configured API URL, use relative URLs for proxy redirection
   const isProduction = !import.meta.env.DEV
-  const baseUrl = isProduction ? apiUrl.replace(/:\d+$/, '') : apiUrl
+  const hasConfiguredApiUrl = (import.meta.env.VITE_API_BASE_URL as string)?.trim()
+  const baseUrl = (isProduction && hasConfiguredApiUrl) ? '' : apiUrl
+
+  if (baseUrl === '') {
+    // Use relative URL - Socket.IO will connect to same origin
+    return ''
+  }
+
   // Convert https:// to wss:// and http:// to ws://
   return baseUrl.replace(/^https?:\/\//, (match) => match === 'https://' ? 'wss://' : 'ws://')
 }

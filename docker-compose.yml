@@ -34,7 +34,7 @@ services:
       context: ./frontend
       args:
         # Importante: VITE_* se inyecta en build (no en runtime)
-        VITE_API_BASE_URL: ""  # Usar URLs relativas para que el proxy redirija /api/* al backend
+        VITE_API_BASE_URL: "https://farmasnt.supernovatel.com"  # Mantener URL absoluta para evitar problemas SSL
         VITE_BACKEND_TARGET: "http://backend-farmasnt:6000"
     container_name: frontend-farmasnt
     restart: always
