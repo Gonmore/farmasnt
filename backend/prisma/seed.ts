@@ -1,7 +1,30 @@
 import 'dotenv/config'
 import bcrypt from 'bcryptjs'
-import { prisma } from '../src/adapters/db/prisma.js'
-import { Permissions } from '../src/application/security/permissions.js'
+import { PrismaClient } from '../src/generated/prisma/client.js'
+import { PrismaPg } from '@prisma/adapter-pg'
+import { Pool } from 'pg'
+
+async function loadPermissions(): Promise<any> {
+  // In dev, seed runs against TS sources. In production Docker image, we only guarantee dist.
+  try {
+    const mod = await import('../src/application/security/permissions.js')
+    return (mod as any).Permissions
+  } catch {
+    const mod = await import('../dist/application/security/permissions.js')
+    return (mod as any).Permissions
+  }
+}
+
+function createDb(): PrismaClient {
+  const connectionString = process.env.DATABASE_URL
+  if (!connectionString) throw new Error('DATABASE_URL is required')
+  const pool = new Pool({ connectionString })
+  const adapter = new PrismaPg(pool)
+  return new PrismaClient({
+    adapter,
+    log: process.env.NODE_ENV === 'production' ? ['error'] : ['warn', 'error'],
+  })
+}
 
 const DEFAULT_MODULES = ['WAREHOUSE', 'SALES'] as const
 
@@ -15,7 +38,8 @@ function addDaysUtc(date: Date, days: number): Date {
 }
 
 async function main() {
-  const db = prisma()
+  const Permissions = await loadPermissions()
+  const db = createDb()
 
   const tenantName = process.env.SEED_TENANT_NAME ?? 'Demo Pharma'
   const adminEmail = process.env.SEED_ADMIN_EMAIL ?? 'admin@demo.local'
@@ -786,6 +810,8 @@ async function main() {
   console.log(`   - Role: TENANT_ADMIN (all permissions except platform:tenants:manage)`)
   console.log(`   - Subscription: ${demoTenant.branchLimit} branches until ${demoTenant.subscriptionExpiresAt}`)
   console.log(`   - Contact: ${demoTenant.contactName} (${demoTenant.contactEmail}, ${demoTenant.contactPhone})`)
+
+  await db.$disconnect()
 }
 
 main().catch((e) => {
