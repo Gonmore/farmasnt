@@ -1,52 +1,44 @@
 services:
-  db:
-    image: postgres:16
-    container_name: farmasnt-db
+  backend-farmasnt:
+    build:
+      context: ./backend
+    container_name: backend-farmasnt
+    restart: always
     environment:
-      POSTGRES_DB: farmasnt
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: D3v3/op3R
+      # Formato LLAVE: VALOR (Nota el uso de : y sin comillas innecesarias a menos que haya caracteres raros)
+      DATABASE_URL: "postgresql://postgres:D3v3%2Fop3R@postgres-principal:5432/farmasnt?schema=public"
+      PORT: 6000
+      NODE_ENV: "development"
+      JWT_ACCESS_SECRET: "Supern0vat0s2026"
+      JWT_REFRESH_SECRET: "Supern0vat0s2026"
+      SEED_TENANT_NAME: "Demo Pharma"
+      SEED_ADMIN_EMAIL: "admin@demo.local"
+      SEED_ADMIN_PASSWORD: "Admin123!"
+      SEED_PLATFORM_DOMAIN: "farmasnt.supernovatel.com"
+      SMTP_HOST: "mail.supernovatel.com"
+      SMTP_PORT: 465
+      SMTP_SECURE: "true"
+      SMTP_USER: "saas@supernovatel.com"
+      SMTP_PASS: "if5u/WD9kZ"
+      SMTP_FROM: "PharmaFlow <saas@supernovatel.com>"
     ports:
-      - '5432:5432'
-    volumes:
-      - farmasnt_pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U postgres -d farmasnt']
-      interval: 5s
-      timeout: 5s
-      retries: 20
+      - "6000:6000"
+    networks:
+      - red-interna
 
-  # S3-compatible object storage for public tenant logos (dev/local)
-  minio:
-    image: minio/minio:RELEASE.2025-01-20T00-00-00Z
-    container_name: farmasnt-minio
+  frontend-farmasnt:
+    build:
+      context: ./frontend
+    container_name: frontend-farmasnt
+    restart: always
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
-    command: server /data --console-address ":9001"
+      # Si tu frontend de React/Vite necesita la URL del backend:
+      VITE_API_URL: "https://farmasnt.supernovatel.com/api" 
     ports:
-      - '9000:9000'
-      - '9001:9001'
-    volumes:
-      - farmasnt_minio:/data
+      - "6001:6001"
+    networks:
+      - red-interna
 
-  minio-init:
-    image: minio/mc:RELEASE.2025-01-17T23-00-00Z
-    container_name: farmasnt-minio-init
-    depends_on:
-      - minio
-    entrypoint: ["/bin/sh", "-c"]
-    command: |
-      set -e
-      echo "Waiting for MinIO...";
-      until mc alias set local http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null 2>&1; do sleep 1; done;
-      mc mb -p local/farmasnt-assets >/dev/null 2>&1 || true;
-      mc anonymous set download local/farmasnt-assets >/dev/null 2>&1 || true;
-      echo "MinIO bucket farmasnt-assets is ready (public download)."
-    environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
-
-volumes:
-  farmasnt_pgdata:
-  farmasnt_minio:
+networks:
+  red-interna:
+    external: true
