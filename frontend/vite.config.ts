@@ -2,6 +2,14 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
+// Determine backend target based on environment
+const getBackendTarget = () => {
+  // In development (vite dev), use localhost
+  // In production (vite preview/Docker), use backend service
+  const isProduction = process.env.NODE_ENV === 'production';
+  return isProduction ? 'http://backend-farmasnt:6000' : 'http://127.0.0.1:6000';
+};
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
@@ -14,13 +22,13 @@ export default defineConfig({
       // Avoid Chromium ERR_UNSAFE_PORT for :6000 by proxying through Vite (:6001)
       // In Docker, this should point to the backend service (e.g. http://backend-farmasnt:6000)
       '/api': {
-        target: process.env.VITE_BACKEND_TARGET || 'http://127.0.0.1:6000',
+        target: getBackendTarget(),
         changeOrigin: true,
         xfwd: true,
       },
       // Socket.io uses this path by default
       '/socket.io': {
-        target: process.env.VITE_BACKEND_TARGET || 'http://127.0.0.1:6000',
+        target: getBackendTarget(),
         ws: true,
         changeOrigin: true,
         xfwd: true,
@@ -35,12 +43,12 @@ export default defineConfig({
     // In Docker production, proxy to backend service
     proxy: {
       '/api': {
-        target: process.env.VITE_BACKEND_TARGET || 'http://127.0.0.1:6000',
+        target: getBackendTarget(),
         changeOrigin: true,
         xfwd: true,
       },
       '/socket.io': {
-        target: process.env.VITE_BACKEND_TARGET || 'http://127.0.0.1:6000',
+        target: getBackendTarget(),
         ws: true,
         changeOrigin: true,
         xfwd: true,
