@@ -25,7 +25,7 @@ services:
       SMTP_FROM: "PharmaFlow <saas@supernovatel.com>"
       WEB_ORIGIN: "https://farmasnt.supernovatel.com"
     ports:
-      - "80:6000"  # Expose backend on port 80 instead of 6000
+      - "6000:6000"  # Mantener puerto 6000 para acceso interno
     networks:
       - red-interna
 
@@ -34,7 +34,7 @@ services:
       context: ./frontend
       args:
         # Importante: VITE_* se inyecta en build (no en runtime)
-        VITE_API_BASE_URL: "https://farmasnt.supernovatel.com"
+        VITE_API_BASE_URL: ""  # Usar URLs relativas para que el proxy redirija /api/* al backend
         VITE_BACKEND_TARGET: "http://backend-farmasnt:6000"
     container_name: frontend-farmasnt
     restart: always

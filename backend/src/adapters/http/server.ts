@@ -53,14 +53,6 @@ export async function createHttpServer() {
         variants.add(configured)
         variants.add(configured.replace('localhost', '127.0.0.1'))
         variants.add(configured.replace('127.0.0.1', 'localhost'))
-        // Also allow HTTP version if configured origin is HTTPS (for mixed content scenarios)
-        if (configured.startsWith('https://')) {
-          variants.add(configured.replace('https://', 'http://'))
-        }
-        // Also allow HTTPS version if configured origin is HTTP
-        if (configured.startsWith('http://')) {
-          variants.add(configured.replace('http://', 'https://'))
-        }
       }
 
       return cb(null, variants.has(origin))

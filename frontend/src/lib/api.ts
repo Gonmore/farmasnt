@@ -5,12 +5,7 @@ import axios from 'axios';
 type LogoutReason = 'SESSION_EXPIRED' | 'UNAUTHORIZED';
 
 const envBase = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '';
-let API_BASE_URL = envBase.trim() ? envBase.trim() : window.location.origin;
-
-// In production, if frontend is served over HTTP but backend is HTTPS, use HTTPS
-if (!import.meta.env.DEV && window.location.protocol === 'http:' && !envBase.trim()) {
-  API_BASE_URL = window.location.origin.replace('http:', 'https:');
-}
+const API_BASE_URL = envBase.trim() ? envBase.trim() : window.location.origin;
 
 export function getApiBaseUrl(): string {
   return API_BASE_URL;
