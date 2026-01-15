@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link, Navigate, useNavigate } from 'react-router-dom'
 import { useAuth } from '../providers/AuthProvider'
@@ -12,8 +12,21 @@ export function LoginPage() {
   const navigate = useNavigate()
   const [email, setEmail] = useState('admin@demo.local')
   const [password, setPassword] = useState('Admin123!')
+  const [notice, setNotice] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    try {
+      const reason = sessionStorage.getItem('pf.logoutReason')
+      if (reason === 'SESSION_EXPIRED') {
+        setNotice('Tu sesión expiró por inactividad. Por favor vuelve a iniciar sesión.')
+      }
+      if (reason) sessionStorage.removeItem('pf.logoutReason')
+    } catch {
+      // ignore
+    }
+  }, [])
 
   if (auth.isAuthenticated) {
     return <Navigate to="/" replace />
@@ -95,6 +108,12 @@ export function LoginPage() {
                     ¿Olvidaste tu contraseña?
                   </Link>
                 </div>
+
+                {notice && (
+                  <div className="rounded bg-blue-50 p-3 text-sm text-blue-700 dark:bg-blue-900/20 dark:text-blue-300">
+                    {notice}
+                  </div>
+                )}
 
                 {error && (
                   <div className="rounded bg-red-50 p-3 text-sm text-red-600 dark:bg-red-900/20 dark:text-red-400">

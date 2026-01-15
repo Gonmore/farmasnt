@@ -12,6 +12,9 @@ type Product = {
   sku: string
   name: string
   description: string | null
+  presentationWrapper?: string | null
+  presentationQuantity?: string | null
+  presentationFormat?: string | null
   photoUrl?: string | null
   cost?: string | null
   price?: string | null
@@ -126,7 +129,19 @@ async function fetchProduct(token: string, id: string): Promise<Product> {
   return apiFetch(`/api/v1/products/${id}`, { token })
 }
 
-async function createProduct(token: string, data: { sku: string; name: string; description?: string }): Promise<Product> {
+async function createProduct(
+  token: string,
+  data: {
+    sku: string
+    name: string
+    description?: string
+    presentationWrapper?: string
+    presentationQuantity?: number
+    presentationFormat?: string
+    cost?: number
+    price?: number
+  },
+): Promise<Product> {
   return apiFetch(`/api/v1/products`, {
     method: 'POST',
     token,
@@ -141,6 +156,9 @@ async function updateProduct(
     version: number
     name?: string
     description?: string | null
+    presentationWrapper?: string | null
+    presentationQuantity?: number | null
+    presentationFormat?: string | null
     isActive?: boolean
     photoUrl?: string | null
     photoKey?: string | null
@@ -271,27 +289,48 @@ export function ProductDetailPage() {
 
   // Form state
   const [sku, setSku] = useState('')
+  const [skuAuto, setSkuAuto] = useState(true)
   const [name, setName] = useState('')
-  const [presentation, setPresentation] = useState(isNew ? 'comprimidos' : '')
-  const [customPresentation, setCustomPresentation] = useState('')
+  const [presentationWrapper, setPresentationWrapper] = useState(isNew ? 'caja' : '')
+  const [presentationQuantity, setPresentationQuantity] = useState(isNew ? '1' : '')
+  const [presentationFormat, setPresentationFormat] = useState(isNew ? 'comprimidos' : '')
+  const [customWrapper, setCustomWrapper] = useState('')
+  const [customFormat, setCustomFormat] = useState('')
   const [description, setDescription] = useState('')
   const [cost, setCost] = useState('')
   const [price, setPrice] = useState('')
   const [isActive, setIsActive] = useState(true)
 
-  // Available presentations
-  const [presentations, setPresentations] = useState<string[]>(['comprimidos', 'capsulas', 'inyectable'])
+  const wrapperOptions = ['caja', 'frasco', 'blister', 'botella', 'sobre', 'tubo']
+  const formatOptions = ['comprimidos', 'capsulas', 'vial', 'ampolla', 'ml', 'gotas', 'sobres']
+
+  const finalWrapper =
+    (presentationWrapper === 'otro' ? customWrapper.trim() : presentationWrapper.trim())
+      .toLowerCase()
+      .trim() || ''
+  const finalFormat =
+    (presentationFormat === 'otro' ? customFormat.trim() : presentationFormat.trim())
+      .toLowerCase()
+      .trim() || ''
+  const finalQuantityText = presentationQuantity.trim()
+
+  function capitalizeFirst(s: string): string {
+    if (!s) return s
+    return s.charAt(0).toUpperCase() + s.slice(1)
+  }
+
+  const presentationText =
+    finalWrapper && finalFormat && finalQuantityText ? `${capitalizeFirst(finalWrapper)} de ${finalQuantityText} ${finalFormat}` : ''
 
   // Generate SKU automatically when name or presentation changes
   useEffect(() => {
-    if (isNew && name.trim() && presentation) {
-      const generatedSku = generateSku(name, presentation)
+    if (isNew && skuAuto && name.trim() && finalWrapper && finalFormat && finalQuantityText) {
+      const generatedSku = generateSku(name, finalWrapper, finalQuantityText, finalFormat)
       setSku(generatedSku)
     }
-  }, [name, presentation, isNew])
+  }, [name, finalWrapper, finalQuantityText, finalFormat, isNew, skuAuto])
 
-  // Function to generate SKU from name and presentation
-  function generateSku(productName: string, productPresentation: string): string {
+  function generateSku(productName: string, wrapper: string, quantityText: string, format: string): string {
     // Clean name: remove special chars, take first 4 letters, uppercase
     const cleanName = productName
       .replace(/[^a-zA-Z0-9\s]/g, '') // Remove special chars
@@ -301,20 +340,46 @@ export function ProductDetailPage() {
       .map(word => word.substring(0, 4).toUpperCase()) // First 4 chars uppercase
       .join('-')
 
-    // Get presentation code
-    const presCode = getPresentationCode(productPresentation)
-    
-    return `${cleanName}-${presCode}`
+    const wrapCode = getWrapperCode(wrapper)
+    const fmtCode = getFormatCode(format)
+    const qtyCode = normalizeQtyCode(quantityText)
+    return `${cleanName}-${wrapCode}${qtyCode}${fmtCode}`
   }
 
-  // Function to get presentation code
-  function getPresentationCode(pres: string): string {
+  function normalizeQtyCode(qty: string): string {
+    const t = qty.trim()
+    if (!t) return ''
+    // Allow decimals: 2.5 -> 2P5
+    const normalized = t.replace(',', '.').replace(/[^0-9.]/g, '')
+    if (!normalized) return ''
+    return normalized.replace('.', 'P')
+  }
+
+  function getWrapperCode(wrap: string): string {
     const codes: Record<string, string> = {
-      'comprimidos': 'COMP',
-      'capsulas': 'CAPS',
-      'inyectable': 'INYC',
+      caja: 'CAJ',
+      frasco: 'FRS',
+      blister: 'BLS',
+      botella: 'BOT',
+      sobre: 'SOB',
+      tubo: 'TUB',
     }
-    return codes[pres] || pres.substring(0, 4).toUpperCase()
+    const key = (wrap || '').toLowerCase().trim()
+    return codes[key] || key.substring(0, 3).toUpperCase()
+  }
+
+  function getFormatCode(fmt: string): string {
+    const codes: Record<string, string> = {
+      comprimidos: 'COMP',
+      capsulas: 'CAPS',
+      vial: 'VIAL',
+      ampolla: 'AMP',
+      ml: 'ML',
+      gotas: 'GOT',
+      sobres: 'SBR',
+    }
+    const key = (fmt || '').toLowerCase().trim()
+    return codes[key] || key.substring(0, 4).toUpperCase()
   }
 
   // Batch form state
@@ -359,14 +424,38 @@ export function ProductDetailPage() {
   useEffect(() => {
     if (productQuery.data) {
       setSku(productQuery.data.sku)
+      setSkuAuto(false)
       setName(productQuery.data.name)
       setDescription(productQuery.data.description || '')
       setCost(productQuery.data.cost || '')
       setPrice(productQuery.data.price || '')
       setIsActive(productQuery.data.isActive)
-      // For existing products, presentation is not stored, so leave empty
-      setPresentation('')
-      setCustomPresentation('')
+
+      const savedWrap = (productQuery.data.presentationWrapper ?? '').trim().toLowerCase()
+      if (!savedWrap) {
+        setPresentationWrapper('')
+        setCustomWrapper('')
+      } else if (wrapperOptions.includes(savedWrap)) {
+        setPresentationWrapper(savedWrap)
+        setCustomWrapper('')
+      } else {
+        setPresentationWrapper('otro')
+        setCustomWrapper(savedWrap)
+      }
+
+      const savedFmt = (productQuery.data.presentationFormat ?? '').trim().toLowerCase()
+      if (!savedFmt) {
+        setPresentationFormat('')
+        setCustomFormat('')
+      } else if (formatOptions.includes(savedFmt)) {
+        setPresentationFormat(savedFmt)
+        setCustomFormat('')
+      } else {
+        setPresentationFormat('otro')
+        setCustomFormat(savedFmt)
+      }
+
+      setPresentationQuantity(productQuery.data.presentationQuantity ? String(productQuery.data.presentationQuantity) : '')
     }
   }, [productQuery.data])
 
@@ -396,7 +485,16 @@ export function ProductDetailPage() {
   }, [recipeQuery.data])
 
   const createMutation = useMutation({
-    mutationFn: (data: { sku: string; name: string; description?: string; cost?: number; price?: number }) =>
+    mutationFn: (data: {
+      sku: string
+      name: string
+      description?: string
+      presentationWrapper?: string
+      presentationQuantity?: number
+      presentationFormat?: string
+      cost?: number
+      price?: number
+    }) =>
       createProduct(auth.accessToken!, data),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['products'] })
@@ -405,7 +503,17 @@ export function ProductDetailPage() {
   })
 
   const updateMutation = useMutation({
-    mutationFn: (data: { version: number; name?: string; description?: string | null; cost?: number | null; price?: number | null; isActive?: boolean }) =>
+    mutationFn: (data: {
+      version: number
+      name?: string
+      description?: string | null
+      presentationWrapper?: string | null
+      presentationQuantity?: number | null
+      presentationFormat?: string | null
+      cost?: number | null
+      price?: number | null
+      isActive?: boolean
+    }) =>
       updateProduct(auth.accessToken!, id!, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['product', id] })
@@ -560,19 +668,17 @@ export function ProductDetailPage() {
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault()
-    
-    // Handle custom presentation
-    let finalPresentation = presentation
-    if (presentation === 'otro' && customPresentation.trim()) {
-      finalPresentation = customPresentation.trim().toLowerCase()
-      // Add to presentations list if not already there
-      if (!presentations.includes(finalPresentation)) {
-        setPresentations(prev => [...prev, finalPresentation])
-      }
-    }
+
+    const qty = finalQuantityText ? Number(finalQuantityText.replace(',', '.')) : NaN
+    const hasPresentation = finalWrapper && finalFormat && Number.isFinite(qty) && qty > 0
     
     if (isNew) {
       const payload: any = { sku, name, description: description || undefined }
+      if (hasPresentation) {
+        payload.presentationWrapper = finalWrapper
+        payload.presentationQuantity = qty
+        payload.presentationFormat = finalFormat
+      }
       if (cost) payload.cost = parseFloat(cost)
       if (price) payload.price = parseFloat(price)
       createMutation.mutate(payload)
@@ -582,6 +688,16 @@ export function ProductDetailPage() {
         name,
         description: description || null,
         isActive,
+      }
+      if (hasPresentation) {
+        payload.presentationWrapper = finalWrapper
+        payload.presentationQuantity = qty
+        payload.presentationFormat = finalFormat
+      } else {
+        // allow clearing
+        payload.presentationWrapper = null
+        payload.presentationQuantity = null
+        payload.presentationFormat = null
       }
       if (cost) payload.cost = parseFloat(cost)
       if (price) payload.price = parseFloat(price)
@@ -685,34 +801,81 @@ export function ProductDetailPage() {
               
               <div className="group">
                 <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
-                  Presentación
+                  Presentación (envoltorio + cantidad + formato)
                 </label>
-                <Select
-                  value={presentation}
-                  onChange={(e) => {
-                    const value = e.target.value
-                    setPresentation(value)
-                    if (value !== 'otro') {
-                      setCustomPresentation('')
-                    }
-                  }}
-                  options={[
-                    ...presentations.map(p => ({ value: p, label: p.charAt(0).toUpperCase() + p.slice(1) })),
-                    { value: 'otro', label: 'Otro' },
-                  ]}
-                  disabled={createMutation.isPending || updateMutation.isPending}
-                  required
-                  className="transition-all duration-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                />
-                {presentation === 'otro' && (
-                  <Input
-                    value={customPresentation}
-                    onChange={(e) => setCustomPresentation(e.target.value)}
-                    placeholder="Especificar presentación"
-                    className="mt-2 transition-all duration-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    disabled={createMutation.isPending || updateMutation.isPending}
-                    required
-                  />
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                  <div>
+                    <Select
+                      value={presentationWrapper}
+                      onChange={(e) => {
+                        const value = e.target.value
+                        setPresentationWrapper(value)
+                        if (value !== 'otro') setCustomWrapper('')
+                      }}
+                      options={[
+                        ...wrapperOptions.map((w) => ({ value: w, label: capitalizeFirst(w) })),
+                        { value: 'otro', label: 'Otro' },
+                      ]}
+                      disabled={createMutation.isPending || updateMutation.isPending}
+                      required={isNew}
+                      className="transition-all duration-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                    {presentationWrapper === 'otro' && (
+                      <Input
+                        value={customWrapper}
+                        onChange={(e) => setCustomWrapper(e.target.value)}
+                        placeholder="Ej: caja, frasco..."
+                        className="mt-2 transition-all duration-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        disabled={createMutation.isPending || updateMutation.isPending}
+                        required
+                      />
+                    )}
+                  </div>
+
+                  <div>
+                    <Input
+                      value={presentationQuantity}
+                      onChange={(e) => setPresentationQuantity(e.target.value)}
+                      placeholder="Ej: 250"
+                      disabled={createMutation.isPending || updateMutation.isPending}
+                      required={isNew}
+                      className="transition-all duration-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                  </div>
+
+                  <div>
+                    <Select
+                      value={presentationFormat}
+                      onChange={(e) => {
+                        const value = e.target.value
+                        setPresentationFormat(value)
+                        if (value !== 'otro') setCustomFormat('')
+                      }}
+                      options={[
+                        ...formatOptions.map((f) => ({ value: f, label: capitalizeFirst(f) })),
+                        { value: 'otro', label: 'Otro' },
+                      ]}
+                      disabled={createMutation.isPending || updateMutation.isPending}
+                      required={isNew}
+                      className="transition-all duration-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                    {presentationFormat === 'otro' && (
+                      <Input
+                        value={customFormat}
+                        onChange={(e) => setCustomFormat(e.target.value)}
+                        placeholder="Ej: comprimidos, vial..."
+                        className="mt-2 transition-all duration-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        disabled={createMutation.isPending || updateMutation.isPending}
+                        required
+                      />
+                    )}
+                  </div>
+                </div>
+
+                {presentationText ? (
+                  <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">Vista previa: {presentationText}</div>
+                ) : (
+                  <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">Ej: Caja de 250 comprimidos</div>
                 )}
               </div>
 
@@ -720,7 +883,10 @@ export function ProductDetailPage() {
                 <Input
                   label="SKU"
                   value={sku}
-                  onChange={(e) => setSku(e.target.value)}
+                  onChange={(e) => {
+                    setSku(e.target.value)
+                    setSkuAuto(false)
+                  }}
                   placeholder="Se genera automáticamente"
                   disabled={createMutation.isPending || updateMutation.isPending}
                   className="transition-all duration-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"

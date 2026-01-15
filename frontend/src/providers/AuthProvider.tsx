@@ -36,6 +36,12 @@ export function AuthProvider(props: { children: React.ReactNode }) {
       queryClient.clear()
     }
 
+    const handleTokens = () => {
+      // Refresh flow in lib/api.ts updates localStorage and emits this event.
+      setAccessTokenState(getAccessToken())
+      setRefreshTokenState(getRefreshToken())
+    }
+
     const handleStorage = (e: StorageEvent) => {
       if (e.key === 'pf.accessToken' || e.key === 'pf.refreshToken') {
         // Keep state in sync with storage changes from other tabs/windows.
@@ -45,12 +51,44 @@ export function AuthProvider(props: { children: React.ReactNode }) {
     }
 
     window.addEventListener('pf:auth:logout', handleLogout)
+    window.addEventListener('pf:auth:tokens', handleTokens)
     window.addEventListener('storage', handleStorage)
     return () => {
       window.removeEventListener('pf:auth:logout', handleLogout)
+      window.removeEventListener('pf:auth:tokens', handleTokens)
       window.removeEventListener('storage', handleStorage)
     }
   }, [queryClient])
+
+  useEffect(() => {
+    // Track user activity for inactivity-based session expiry behavior.
+    const KEY = 'pf.lastActivityAt'
+    let lastWrite = 0
+    const write = () => {
+      const now = Date.now()
+      // Throttle to avoid spamming localStorage.
+      if (now - lastWrite < 30_000) return
+      lastWrite = now
+      try {
+        localStorage.setItem(KEY, String(now))
+      } catch {
+        // ignore
+      }
+    }
+
+    write()
+    const events: Array<keyof WindowEventMap> = ['mousedown', 'keydown', 'touchstart', 'scroll']
+    for (const ev of events) window.addEventListener(ev, write, { passive: true })
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') write()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+
+    return () => {
+      for (const ev of events) window.removeEventListener(ev, write)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [])
 
   const value = useMemo<AuthContextValue>(() => {
     return {
