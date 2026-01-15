@@ -101,12 +101,13 @@ export function LoginPage() {
                 />
 
                 <div className="flex justify-end">
-                  <Link
-                    to="/reset-password"
+                  <button
+                    type="button"
+                    onClick={() => window.location.href = '/reset-password'}
                     className="text-sm text-slate-600 hover:underline dark:text-slate-400"
                   >
                     ¿Olvidaste tu contraseña?
-                  </Link>
+                  </button>
                 </div>
 
                 {notice && (

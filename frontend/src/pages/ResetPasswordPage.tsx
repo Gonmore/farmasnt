@@ -84,19 +84,16 @@ export function ResetPasswordPage() {
           {!tenant.brandingLoading && (
             <>
               <div className="flex items-center justify-between">
-                <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Restablecer contraseña</h2>
-                <Link to="/login" className="text-sm text-slate-600 hover:underline dark:text-slate-400">
+                <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">
+                  {mode === 'request' ? 'Restablecer contraseña' : 'Nueva contraseña'}
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => window.location.href = '/login'}
+                  className="text-sm text-slate-600 hover:underline dark:text-slate-400"
+                >
                   Volver
-                </Link>
-              </div>
-
-              <div className="flex gap-2">
-                <Button type="button" variant={mode === 'request' ? 'primary' : 'secondary'} onClick={() => setMode('request')}>
-                  Solicitar
-                </Button>
-                <Button type="button" variant={mode === 'confirm' ? 'primary' : 'secondary'} onClick={() => setMode('confirm')}>
-                  Confirmar
-                </Button>
+                </button>
               </div>
 
               {mode === 'request' && (
