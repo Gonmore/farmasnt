@@ -4,7 +4,7 @@ import type { FormEvent } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { apiFetch, getApiBaseUrl } from '../../lib/api'
 import { useAuth } from '../../providers/AuthProvider'
-import { MainLayout, PageContainer, Button, Input, Select, Loading, ErrorState } from '../../components'
+import { MainLayout, PageContainer, Button, Input, Select, Loading, ErrorState, ImageUpload } from '../../components'
 import { useNavigation } from '../../hooks'
 
 type Product = {
@@ -393,7 +393,7 @@ export function ProductDetailPage() {
   const [selectedBatchId, setSelectedBatchId] = useState<string>('')
 
   // Product photo state (existing products only)
-  const [selectedPhoto, setSelectedPhoto] = useState<File | null>(null)
+  // Note: Photo upload is now handled directly by ImageUpload component
 
   // Initial stock on batch creation (optional)
   const [warehouseIdForInitialStock, setWarehouseIdForInitialStock] = useState<string>('')
@@ -590,7 +590,6 @@ export function ProductDetailPage() {
       return presign
     },
     onSuccess: () => {
-      setSelectedPhoto(null)
       queryClient.invalidateQueries({ queryKey: ['product', id] })
       queryClient.invalidateQueries({ queryKey: ['products'] })
     },
@@ -947,54 +946,15 @@ export function ProductDetailPage() {
               )}
 
               {!isNew && (
-                <div className="rounded-lg border-2 border-dashed border-slate-300 bg-gradient-to-br from-slate-50 to-slate-100 p-4 dark:border-slate-600 dark:from-slate-800 dark:to-slate-700">
+                <div>
                   <div className="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100">📸 Foto del Producto</div>
-                  {productQuery.data?.photoUrl ? (
-                    <img
-                      src={productQuery.data.photoUrl}
-                      alt="Foto del producto"
-                      className="mb-3 h-40 w-full rounded-lg object-contain bg-white shadow-md dark:bg-slate-900"
-                    />
-                  ) : (
-                    <div className="mb-3 flex h-40 w-full items-center justify-center rounded-lg bg-white text-sm text-slate-500 shadow-md dark:bg-slate-900 dark:text-slate-400">
-                      Sin foto
-                    </div>
-                  )}
-
-                  <div className="flex gap-2">
-                    <input
-                      type="file"
-                      accept="image/png,image/jpeg,image/webp"
-                      onChange={(e) => setSelectedPhoto(e.target.files?.[0] ?? null)}
-                      disabled={uploadPhotoMutation.isPending || removePhotoMutation.isPending || updateMutation.isPending}
-                      className="transition-all duration-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    />
-                  </div>
-
-                  <div className="mt-3 flex gap-2">
-                    <Button
-                      type="button"
-                      size="sm"
-                      loading={uploadPhotoMutation.isPending}
-                      disabled={!selectedPhoto || removePhotoMutation.isPending || updateMutation.isPending}
-                      onClick={() => {
-                        if (selectedPhoto) uploadPhotoMutation.mutate(selectedPhoto)
-                      }}
-                    >
-                      Subir foto
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="secondary"
-                      loading={removePhotoMutation.isPending}
-                      disabled={!productQuery.data?.photoUrl || uploadPhotoMutation.isPending || updateMutation.isPending}
-                      onClick={() => removePhotoMutation.mutate()}
-                    >
-                      Quitar
-                    </Button>
-                  </div>
-
+                  <ImageUpload
+                    currentImageUrl={productQuery.data?.photoUrl}
+                    onImageSelect={(file) => uploadPhotoMutation.mutate(file)}
+                    onImageRemove={() => removePhotoMutation.mutate()}
+                    loading={uploadPhotoMutation.isPending || removePhotoMutation.isPending}
+                    disabled={updateMutation.isPending}
+                  />
                   {(uploadPhotoMutation.error || removePhotoMutation.error) && (
                     <p className="mt-2 text-sm text-red-600">
                       {uploadPhotoMutation.error instanceof Error

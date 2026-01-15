@@ -62,9 +62,40 @@ export function TenantProvider(props: { children: React.ReactNode }) {
   const publicBrandingQuery = useQuery({
     queryKey: ['publicTenantBranding'],
     enabled: !accessToken,
-    queryFn: async () => apiFetch<TenantBranding>('/api/v1/public/tenant/branding', {}),
+    queryFn: async () => {
+      // Add timeout to prevent infinite loading on first access
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+
+      try {
+        const result = await apiFetch<TenantBranding>('/api/v1/public/tenant/branding', {
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        return result;
+      } catch (error) {
+        clearTimeout(timeoutId);
+        if (error instanceof Error && error.name === 'AbortError') {
+          throw new Error('Request timeout - tenant branding not available');
+        }
+        throw error;
+      }
+    },
     staleTime: 60_000,
-    retry: false,
+    retry: (failureCount, error) => {
+      // Don't retry on 404 (tenant not found), timeout, or other client errors
+      if (error && typeof error === 'object') {
+        if ('status' in error) {
+          const status = (error as any).status;
+          if (status >= 400 && status < 500) return false;
+        }
+        if ('message' in error && (error as any).message?.includes('timeout')) return false;
+      }
+      return failureCount < 2;
+    },
+    retryDelay: 1000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   })
 
   const brandingQuery = useQuery({
@@ -106,11 +137,27 @@ export function TenantProvider(props: { children: React.ReactNode }) {
   const value = useMemo<TenantContextValue>(() => {
     if (!accessToken) {
       const publicBranding = publicBrandingQuery.data
+      const isLoading = publicBrandingQuery.isLoading || publicBrandingQuery.isFetching
+      const hasError = publicBrandingQuery.isError
+
+      // If there's an error and we're not loading, provide fallback branding
+      const effectiveBranding = hasError && !isLoading ? {
+        tenantId: 'fallback',
+        tenantName: 'PharmaFlow',
+        logoUrl: null,
+        brandPrimary: null,
+        brandSecondary: null,
+        brandTertiary: null,
+        defaultTheme: 'LIGHT' as const,
+        currency: 'BOB',
+        country: 'BOLIVIA'
+      } : publicBranding
+
       return {
         tenantId: null,
         userId: null,
-        branding: publicBranding ? { ...publicBranding, country: normalizeCountry(publicBranding.country) } : null,
-        brandingLoading: publicBrandingQuery.isLoading,
+        branding: effectiveBranding ? { ...effectiveBranding, country: normalizeCountry(effectiveBranding.country) } : null,
+        brandingLoading: isLoading,
       }
     }
 
@@ -122,7 +169,7 @@ export function TenantProvider(props: { children: React.ReactNode }) {
       branding: branding ? { ...branding, country: normalizeCountry(branding.country) } : null,
       brandingLoading: brandingQuery.isLoading,
     }
-  }, [accessToken, brandingQuery.data, brandingQuery.isLoading, publicBrandingQuery.data, publicBrandingQuery.isLoading])
+  }, [accessToken, brandingQuery.data, brandingQuery.isLoading, publicBrandingQuery.data, publicBrandingQuery.isLoading, publicBrandingQuery.isFetching, publicBrandingQuery.isError])
 
   return <TenantContext.Provider value={value}>{props.children}</TenantContext.Provider>
 }
