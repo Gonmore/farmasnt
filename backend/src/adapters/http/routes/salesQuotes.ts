@@ -112,7 +112,7 @@ async function reserveForOrderInCityOrFail(
     city: string
     lines: Array<{ id: string; productId: string; productName: string; batchId: string | null; quantity: any }>
   },
-): Promise<void> {
+): Promise<any[]> {
   const todayUtc = startOfTodayUtc()
   const cityRaw = (args.city ?? '').trim()
   const city = cityRaw ? cityRaw : ''
@@ -159,6 +159,7 @@ async function reserveForOrderInCityOrFail(
   if (shortages.length > 0) throw new InsufficientStockCityError({ city, items: shortages })
 
   // Reserve in city only (FEFO-ish ordering).
+  const changedBalances: any[] = []
   for (const line of args.lines) {
     let remaining = Math.max(0, toNumber(line.quantity))
     if (remaining <= 0) continue
@@ -231,11 +232,23 @@ async function reserveForOrderInCityOrFail(
         const take = Math.min(available, remaining)
         remaining -= take
 
-        await tx.inventoryBalance.update({
+        const updatedBalance = await tx.inventoryBalance.update({
           where: { id: b.id },
           data: { reservedQuantity: { increment: take }, version: { increment: 1 }, createdBy: args.userId },
-          select: { id: true },
+          select: {
+            id: true,
+            tenantId: true,
+            locationId: true,
+            productId: true,
+            batchId: true,
+            quantity: true,
+            reservedQuantity: true,
+            version: true,
+            updatedAt: true,
+          },
         })
+
+        changedBalances.push(updatedBalance)
 
         await tx.salesOrderReservation.create({
           data: {
@@ -267,6 +280,8 @@ async function reserveForOrderInCityOrFail(
       })
     }
   }
+
+  return changedBalances
 }
 
 async function resolveUserDisplayName(db: any, tenantId: string, userId?: string | null): Promise<string | null> {
@@ -607,12 +622,34 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
           }
 
           // Reserve stock strictly from customer's city.
-          await reserveForOrderInCityOrFail(tx, {
+          const changedBalances = await reserveForOrderInCityOrFail(tx, {
             tenantId,
             userId,
             orderId: order.id,
             city,
             lines: createdLines,
+          })
+
+          const reservations = await tx.salesOrderReservation.findMany({
+            where: { tenantId, salesOrderId: order.id },
+            select: {
+              id: true,
+              quantity: true,
+              line: {
+                select: {
+                  productId: true,
+                  product: { select: { name: true, sku: true } },
+                },
+              },
+              balance: {
+                select: {
+                  id: true,
+                  batchId: true,
+                  batch: { select: { batchNumber: true, expiresAt: true } },
+                  location: { select: { code: true, warehouse: { select: { code: true, name: true, city: true } } } },
+                },
+              },
+            },
           })
 
           await tx.quote.update({
@@ -621,7 +658,31 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
             select: { id: true },
           })
 
-          return order
+          return {
+            order,
+            quoteInfo: {
+              id: quote.id,
+              number: quote.number,
+              customerName: quote.customer?.name ?? null,
+              paymentMode: quote.paymentMode ?? null,
+              deliveryDays: Number(quote.deliveryDays ?? 0),
+              deliveryDate: deliveryDate.toISOString(),
+              city,
+            },
+            reservations: reservations.map((r: any) => ({
+              quantity: Number(r.quantity),
+              productId: r.line?.productId ?? null,
+              productSku: r.line?.product?.sku ?? null,
+              productName: r.line?.product?.name ?? null,
+              batchNumber: r.balance?.batch?.batchNumber ?? null,
+              batchExpiresAt: r.balance?.batch?.expiresAt ? r.balance.batch.expiresAt.toISOString() : null,
+              warehouseCode: r.balance?.location?.warehouse?.code ?? null,
+              warehouseName: r.balance?.location?.warehouse?.name ?? null,
+              warehouseCity: r.balance?.location?.warehouse?.city ?? null,
+              locationCode: r.balance?.location?.code ?? null,
+            })),
+            changedBalances,
+          }
         })
       } catch (e: any) {
         if (e instanceof InsufficientStockCityError) {
@@ -636,10 +697,30 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
         action: 'PROCESS',
         entityType: 'QUOTE',
         entityId: id,
-        after: created,
+        after: created?.order ?? created,
       })
 
-      return reply.status(201).send(created)
+      // Real-time notifications + stock reservation updates
+      const room = `tenant:${tenantId}`
+      app.io?.to(room).emit('sales.quote.processed', {
+        quoteId: created?.quoteInfo?.id ?? id,
+        quoteNumber: created?.quoteInfo?.number ?? null,
+        orderId: created?.order?.id ?? null,
+        orderNumber: created?.order?.number ?? null,
+        customerName: created?.quoteInfo?.customerName ?? null,
+        paymentMode: created?.quoteInfo?.paymentMode ?? null,
+        deliveryDays: created?.quoteInfo?.deliveryDays ?? null,
+        deliveryDate: created?.quoteInfo?.deliveryDate ?? null,
+        city: created?.quoteInfo?.city ?? null,
+        reservations: Array.isArray(created?.reservations) ? created.reservations : [],
+      })
+
+      // Ensure other clients see reserved quantities immediately
+      if (Array.isArray(created?.changedBalances)) {
+        for (const b of created.changedBalances) app.io?.to(room).emit('stock.balance.changed', b)
+      }
+
+      return reply.status(201).send(created.order)
     },
   )
 

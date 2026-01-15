@@ -257,6 +257,9 @@ model Product {
   sku         String
   name        String
   description String?
+  presentationWrapper String?
+  presentationQuantity Decimal?
+  presentationFormat String?
   photoUrl    String?
   photoKey    String?
   cost        Decimal?

@@ -281,6 +281,58 @@ async function main() {
       sku: 'PARA-500TAB',
       name: 'Paracetamol 500mg (Tabletas)',
       description: 'Dataset seed para vencimientos/FEFO',
+      presentationWrapper: 'caja',
+      presentationQuantity: '100',
+      presentationFormat: 'comprimidos',
+      createdBy: demoAdminUser.id,
+    },
+    select: { id: true },
+  })
+
+  // Productos de ejemplo para presentación (envoltorio + cantidad + formato)
+  await db.product.upsert({
+    where: { tenantId_sku: { tenantId: demoTenant.id, sku: 'ATRO-CAJ250COMP' } },
+    update: { name: 'Atrovastatina' },
+    create: {
+      tenantId: demoTenant.id,
+      sku: 'ATRO-CAJ250COMP',
+      name: 'Atrovastatina',
+      description: 'Ejemplo: Caja de 250 comprimidos',
+      presentationWrapper: 'caja',
+      presentationQuantity: '250',
+      presentationFormat: 'comprimidos',
+      createdBy: demoAdminUser.id,
+    },
+    select: { id: true },
+  })
+
+  await db.product.upsert({
+    where: { tenantId_sku: { tenantId: demoTenant.id, sku: 'VALG-FRS60COMP' } },
+    update: { name: 'Valganciclovir' },
+    create: {
+      tenantId: demoTenant.id,
+      sku: 'VALG-FRS60COMP',
+      name: 'Valganciclovir',
+      description: 'Ejemplo: Frasco de 60 comprimidos',
+      presentationWrapper: 'frasco',
+      presentationQuantity: '60',
+      presentationFormat: 'comprimidos',
+      createdBy: demoAdminUser.id,
+    },
+    select: { id: true },
+  })
+
+  await db.product.upsert({
+    where: { tenantId_sku: { tenantId: demoTenant.id, sku: 'OMEP-CAJ1VIAL' } },
+    update: { name: 'Omeprazol 40mg Iny. 10ml' },
+    create: {
+      tenantId: demoTenant.id,
+      sku: 'OMEP-CAJ1VIAL',
+      name: 'Omeprazol 40mg Iny. 10ml',
+      description: 'Ejemplo: Caja de 1 vial',
+      presentationWrapper: 'caja',
+      presentationQuantity: '1',
+      presentationFormat: 'vial',
       createdBy: demoAdminUser.id,
     },
     select: { id: true },

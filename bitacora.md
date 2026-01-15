@@ -169,6 +169,29 @@ Se incorporaron endpoints read-only de reportes para acelerar dashboards y panta
 ### Docs
 - Se actualizó `API_REFERENCE.md` para incluir los endpoints de Entregas y la acción de entrega.
 
+---
+
+## **[14 Ene 2026] Productos: Presentación estructurada + SKU automático**
+
+### Presentación = envoltorio + cantidad + formato
+- Se agregó al modelo de producto una presentación estructurada:
+  - `presentationWrapper` (ej. `caja`, `frasco`)
+  - `presentationQuantity` (cantidad numérica)
+  - `presentationFormat` (ej. `comprimidos`, `vial`)
+- La UI de creación/edición se ajustó para capturar estos 3 valores y mostrar una vista previa tipo "Caja de 250 comprimidos".
+
+### SKU automático (frontend)
+- Al crear producto, el SKU se genera automáticamente combinando nombre + wrapper + cantidad + formato.
+- Si el usuario edita el SKU manualmente, se desactiva la autogeneración para no pisar cambios.
+
+### Seed actualizado
+- Seed principal: `backend/prisma/seed.ts` (se ejecuta con `npm --prefix backend run seed`).
+- Incluye ejemplos con presentación (Atrovastatina, Valganciclovir, Omeprazol) y mantiene idempotencia via `upsert`.
+
+### Docker (backend)
+- El backend corre migrations con `prisma migrate deploy` al iniciar.
+- El seed se puede ejecutar al inicio seteando `RUN_SEED=1` (o dejándolo apagado para producción).
+
 ## **[13 Ene 2026] Cotizaciones persistentes + lugar de entrega + órdenes solo desde cotización**
 
 ### Cotizaciones (Quotes) como origen obligatorio

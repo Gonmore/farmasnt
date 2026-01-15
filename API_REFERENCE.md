@@ -392,7 +392,10 @@ Body
 {
   "sku": "SKU-001",
   "name": "Paracetamol 500mg",
-  "description": "Opcional"
+  "description": "Opcional",
+  "presentationWrapper": "caja",
+  "presentationQuantity": 250,
+  "presentationFormat": "comprimidos"
 }
 ```
 
@@ -402,6 +405,9 @@ Response 201
   "id": "...",
   "sku": "SKU-001",
   "name": "Paracetamol 500mg",
+  "presentationWrapper": "caja",
+  "presentationQuantity": "250",
+  "presentationFormat": "comprimidos",
   "version": 1,
   "createdAt": "2025-01-01T00:00:00.000Z"
 }
@@ -420,7 +426,7 @@ Query
 Response 200
 ```json
 {
-  "items": [{ "id": "...", "sku": "...", "name": "...", "photoUrl": "https://..." , "isActive": true, "version": 1, "updatedAt": "..." }],
+  "items": [{ "id": "...", "sku": "...", "name": "...", "presentationWrapper": "caja", "presentationQuantity": "250", "presentationFormat": "comprimidos", "photoUrl": "https://..." , "isActive": true, "version": 1, "updatedAt": "..." }],
   "nextCursor": "..."
 }
 ```
@@ -435,6 +441,9 @@ Response 200
   "sku": "...",
   "name": "...",
   "description": null,
+  "presentationWrapper": "caja",
+  "presentationQuantity": "250",
+  "presentationFormat": "comprimidos",
   "photoUrl": "https://...",
   "isActive": true,
   "version": 1,
@@ -449,6 +458,9 @@ Body
 - `version` (int, requerido)
 - `name` (opcional)
 - `description` (opcional, puede ser `null`)
+- `presentationWrapper` (opcional, puede ser `null`)
+- `presentationQuantity` (opcional, puede ser `null`)
+- `presentationFormat` (opcional, puede ser `null`)
 - `photoUrl` (opcional, puede ser `null`)
 - `photoKey` (opcional, puede ser `null`)
 - `isActive` (opcional)

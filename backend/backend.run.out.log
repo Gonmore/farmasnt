@@ -1,9 +1,0 @@
-{"level":30,"time":1766075300676,"pid":2544,"hostname":"Thinkpad-L14-G4","msg":"Server listening at http://127.0.0.1:6000"}
-{"level":30,"time":1766075300676,"pid":2544,"hostname":"Thinkpad-L14-G4","msg":"Server listening at http://192.168.10.252:6000"}
-{"level":30,"time":1766075300676,"pid":2544,"hostname":"Thinkpad-L14-G4","msg":"Backend listening on http://localhost:6000"}
-{"level":30,"time":1766075306180,"pid":2544,"hostname":"Thinkpad-L14-G4","reqId":"req-1","req":{"method":"GET","url":"/api/v1/health","host":"127.0.0.1:6000","remoteAddress":"127.0.0.1","remotePort":58916},"msg":"incoming request"}
-{"level":30,"time":1766075306183,"pid":2544,"hostname":"Thinkpad-L14-G4","reqId":"req-1","res":{"statusCode":200},"responseTime":2.8330000042915344,"msg":"request completed"}
-{"level":30,"time":1766075314697,"pid":2544,"hostname":"Thinkpad-L14-G4","reqId":"req-2","req":{"method":"POST","url":"/api/v1/auth/login","host":"127.0.0.1:6000","remoteAddress":"127.0.0.1","remotePort":58916},"msg":"incoming request"}
-{"level":30,"time":1766075315119,"pid":2544,"hostname":"Thinkpad-L14-G4","reqId":"req-2","res":{"statusCode":200},"responseTime":421.94830000400543,"msg":"request completed"}
-{"level":30,"time":1766075315120,"pid":2544,"hostname":"Thinkpad-L14-G4","reqId":"req-3","req":{"method":"GET","url":"/api/v1/warehouses","host":"127.0.0.1:6000","remoteAddress":"127.0.0.1","remotePort":58916},"msg":"incoming request"}
-{"level":30,"time":1766075315149,"pid":2544,"hostname":"Thinkpad-L14-G4","reqId":"req-3","res":{"statusCode":200},"responseTime":28.843399986624718,"msg":"request completed"}
