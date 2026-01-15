@@ -17,7 +17,7 @@ export default defineConfig({
     port: 6001,
     strictPort: false,
     // Allow testing with custom local domains via hosts file (e.g. farmacia.supernovatel.com)
-    allowedHosts: ['localhost', '127.0.0.1', '.supernovatel.com', '.febsa.com'],
+    allowedHosts: ['localhost', '127.0.0.1', '.supernovatel.com', '.febsa.com', 'frontend-farmasnt'],
     proxy: {
       // Avoid Chromium ERR_UNSAFE_PORT for :6000 by proxying through Vite (:6001)
       // In Docker, this should point to the backend service (e.g. http://backend-farmasnt:6000)
@@ -39,7 +39,7 @@ export default defineConfig({
   // Our Docker image serves the built app via `vite preview`, so we must allow
   // the production domain(s) here too.
   preview: {
-    allowedHosts: ['localhost', '127.0.0.1', '.supernovatel.com', '.febsa.com'],
+    allowedHosts: ['localhost', '127.0.0.1', '.supernovatel.com', '.febsa.com', 'frontend-farmasnt'],
     // In Docker production, proxy to backend service
     proxy: {
       '/api': {
