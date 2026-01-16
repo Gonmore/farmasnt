@@ -5,6 +5,7 @@ import { ensureAuditTrailImmutability } from './adapters/db/ensureAuditImmutabil
 import { ensureSystemRoles } from './application/security/ensureSystemRoles.js'
 import { createHttpServer } from './adapters/http/server.js'
 import { attachSocketIo } from './adapters/realtime/socket.js'
+import { startReportScheduler } from './application/reports/reportScheduler.js'
 
 async function main() {
   const env = getEnv()
@@ -29,6 +30,13 @@ async function main() {
     await ensureSystemRoles(db)
   } catch {
     // Ignore until DB is migrated
+  }
+
+  // Scheduled report emails (best-effort; requires DB + SMTP configured)
+  try {
+    startReportScheduler(db)
+  } catch {
+    // Ignore until DB is migrated / configured
   }
 
   await app.listen({ port: env.PORT, host: '0.0.0.0' })

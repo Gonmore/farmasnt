@@ -4,6 +4,14 @@ import { getEnv } from './env.js'
 
 export type Mailer = {
   sendPasswordResetEmail: (input: { to: string; resetUrl: string; tenantName?: string | null }) => Promise<void>
+  sendEmail: (input: { to: string; subject: string; text: string; html?: string }) => Promise<void>
+  sendReportEmail: (input: {
+    to: string
+    subject: string
+    text: string
+    html?: string
+    attachment: { filename: string; contentBase64: string }
+  }) => Promise<void>
 }
 
 function isSmtpConfigured(env: ReturnType<typeof getEnv>): boolean {
@@ -60,6 +68,41 @@ export function getMailer(): Mailer {
         subject,
         text,
         html,
+      })
+    },
+
+    sendEmail: async ({ to, subject, text, html }) => {
+      const env = getEnv()
+      const transporter = getTransporter()
+      await transporter.sendMail({
+        from: env.SMTP_FROM,
+        to,
+        subject,
+        text,
+        html,
+      })
+    },
+
+    sendReportEmail: async ({ to, subject, text, html, attachment }) => {
+      const env = getEnv()
+      const transporter = getTransporter()
+
+      const base64 = attachment.contentBase64.replace(/^data:application\/pdf;base64,/, '')
+      const buf = Buffer.from(base64, 'base64')
+
+      await transporter.sendMail({
+        from: env.SMTP_FROM,
+        to,
+        subject,
+        text,
+        html,
+        attachments: [
+          {
+            filename: attachment.filename,
+            content: buf,
+            contentType: 'application/pdf',
+          },
+        ],
       })
     },
   }

@@ -51,6 +51,17 @@ enum ThemeMode {
   DARK
 }
 
+enum ReportScheduleType {
+  SALES
+  STOCK
+}
+
+enum ReportFrequency {
+  DAILY
+  WEEKLY
+  MONTHLY
+}
+
 model Tenant {
   id        String   @id @default(uuid())
   name      String
@@ -628,6 +639,42 @@ model RefreshToken {
   @@index([tenantId])
   @@index([userId])
   @@index([expiresAt])
+}
+
+model ReportSchedule {
+  id        String   @id @default(uuid())
+  tenantId  String
+
+  type      ReportScheduleType
+  // Free-form key so frontend can schedule a specific report tab (MONTH/CITIES/etc)
+  reportKey String
+  // Filters/params saved for link + context
+  params    Json
+
+  frequency ReportFrequency
+  // Time-of-day in tenant local time (best-effort)
+  hour      Int      @default(8)
+  minute    Int      @default(0)
+  // For WEEKLY: 0=Sunday..6=Saturday
+  dayOfWeek Int?
+  // For MONTHLY: 1..28/29/30/31 (we clamp to month length)
+  dayOfMonth Int?
+
+  recipients String[]
+  enabled   Boolean  @default(true)
+
+  lastRunAt DateTime?
+  nextRunAt DateTime?
+
+  version   Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  createdBy String?
+
+  @@index([tenantId])
+  @@index([tenantId, type])
+  @@index([tenantId, enabled])
+  @@index([tenantId, nextRunAt])
 }
 
 model AuditEvent {

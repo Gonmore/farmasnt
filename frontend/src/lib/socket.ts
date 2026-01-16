@@ -2,7 +2,9 @@ import { io, type Socket } from 'socket.io-client'
 import { getAccessToken } from './auth'
 import { getApiBaseUrl } from './api'
 
-// Use the same base URL as API calls, but convert to WebSocket protocol
+// Use the same base URL as API calls.
+// IMPORTANT: Socket.IO expects an HTTP(S) base URL even if it later upgrades to WebSocket.
+// Passing ws:// can break polling-only mode.
 function getWebSocketUrl(): string {
   const apiUrl = getApiBaseUrl()
   // In production with configured API URL, use relative URLs for proxy redirection
@@ -15,8 +17,8 @@ function getWebSocketUrl(): string {
     return ''
   }
 
-  // Convert https:// to wss:// and http:// to ws://
-  return baseUrl.replace(/^https?:\/\//, (match) => match === 'https://' ? 'wss://' : 'ws://')
+  // Keep http(s) URL as-is.
+  return baseUrl
 }
 
 let socket: Socket | null = null
@@ -42,6 +44,16 @@ export function connectSocket(): Socket | null {
             transports: ['polling'],
             upgrade: false,
           }),
+    })
+
+    socket.on('connect', () => {
+      console.log('Socket connected:', true, 'id=', socket?.id)
+    })
+    socket.on('disconnect', (reason) => {
+      console.log('Socket disconnected:', reason)
+    })
+    socket.on('connect_error', (err) => {
+      console.log('Socket connect_error:', err?.message ?? err)
     })
   }
 

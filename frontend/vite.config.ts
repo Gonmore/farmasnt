@@ -15,7 +15,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 6001,
-    strictPort: false,
+    strictPort: true,
     // Allow testing with custom local domains via hosts file (e.g. farmacia.supernovatel.com)
     allowedHosts: ['localhost', '127.0.0.1', '.supernovatel.com', '.febsa.com', 'frontend-farmasnt'],
     proxy: {
