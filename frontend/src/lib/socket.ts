@@ -46,7 +46,11 @@ export function connectSocket(): Socket | null {
   }
 
   socket.auth = { token }
-  if (!socket.connected) socket.connect()
+  if (!socket.connected) {
+    console.log('Connecting socket...')
+    socket.connect()
+  }
+  console.log('Socket connected:', socket.connected)
   return socket
 }
 

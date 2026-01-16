@@ -70,7 +70,7 @@ export async function exportQuoteToPDF(quoteData: QuotePdfData): Promise<void> {
   pdf.text(`Validez: ${sanitizePdfText(quoteData.validityDays)} día(s)`, margin, yPosition)
   yPosition += 10
 
-  const colWidths = [25, 60, 20, 20, 30, 30]
+  const colWidths = [35, 50, 20, 20, 30, 30]
   const headers = ['SKU', 'Producto', 'Cant.', 'Desc.%', 'Precio Unit.', 'Total']
 
   pdf.setFontSize(9)
@@ -92,21 +92,65 @@ export async function exportQuoteToPDF(quoteData: QuotePdfData): Promise<void> {
       yPosition = margin
     }
 
+    const skuText = sanitizePdfText(item.sku)
+    const skuLines = []
+    if (skuText.length > 10) {
+      // Split SKU into two lines if longer than 10 chars
+      const mid = Math.ceil(skuText.length / 2)
+      skuLines.push(skuText.substring(0, mid), skuText.substring(mid))
+    } else {
+      skuLines.push(skuText)
+    }
+    const nameText = sanitizePdfText(item.name)
+    const nameLines = []
+    if (nameText.length > 30) {
+      // Split into two lines
+      const words = nameText.split(' ')
+      let line1 = ''
+      let line2 = ''
+      for (const word of words) {
+        if ((line1 + ' ' + word).length <= 30) {
+          line1 += (line1 ? ' ' : '') + word
+        } else if ((line2 + ' ' + word).length <= 30) {
+          line2 += (line2 ? ' ' : '') + word
+        } else {
+          // If still too long, truncate
+          line2 = line2.substring(0, 27) + '...'
+          break
+        }
+      }
+      nameLines.push(line1, line2)
+    } else {
+      nameLines.push(nameText)
+    }
+
     const rowData = [
-      sanitizePdfText(item.sku),
-      sanitizePdfText(item.name.length > 25 ? item.name.substring(0, 22) + '...' : item.name),
+      '', // SKU handled separately
+      '', // Name handled separately
       String(item.quantity),
       String(item.discountPct),
       `${money(item.unitPrice)} ${sanitizePdfText(quoteData.currency)}`,
       `${money(item.lineTotal)} ${sanitizePdfText(quoteData.currency)}`,
     ]
 
-    rowData.forEach((data, i) => {
+    const maxLines = Math.max(skuLines.length, nameLines.length)
+
+    // Draw SKU lines
+    skuLines.forEach((line, idx) => {
+      pdf.text(line, margin, yPosition + idx * 4)
+    })
+    // Draw product name lines
+    nameLines.forEach((line, idx) => {
+      pdf.text(line, margin + colWidths[0], yPosition + idx * 4)
+    })
+    // Draw other columns at the first line position
+    for (let i = 2; i < rowData.length; i++) {
       let x = margin
       for (let j = 0; j < i; j++) x += colWidths[j]
-      pdf.text(data, x, yPosition)
-    })
-    yPosition += 5
+      pdf.text(rowData[i], x, yPosition)
+    }
+
+    yPosition += maxLines * 5
   })
 
   yPosition += 5

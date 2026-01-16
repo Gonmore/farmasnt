@@ -776,6 +776,7 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
       })
 
       app.io?.to(`tenant:${tenantId}`).emit('sales.order.confirmed', updated)
+      console.log(`Emitted sales.order.confirmed to tenant:${tenantId}`, updated)
 
       return reply.send(updated)
     },
@@ -825,6 +826,7 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
       })
 
       const room = `tenant:${tenantId}`
+      console.log(`Emitted sales.order.fulfilled to ${room}`, result.updatedOrder)
       app.io?.to(room).emit('sales.order.fulfilled', result.updatedOrder)
       for (const m of result.createdMovements) app.io?.to(room).emit('stock.movement.created', m)
       for (const b of result.changedBalances) app.io?.to(room).emit('stock.balance.changed', b)
@@ -1076,6 +1078,7 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
       })
 
       const room = `tenant:${tenantId}`
+      console.log(`Emitted sales.order.delivered to ${room}`, result.updatedOrder)
       app.io?.to(room).emit('sales.order.delivered', result.updatedOrder)
       for (const m of result.createdMovements) app.io?.to(room).emit('stock.movement.created', m)
       for (const b of result.changedBalances) app.io?.to(room).emit('stock.balance.changed', b)

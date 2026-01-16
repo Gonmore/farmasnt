@@ -16,7 +16,7 @@ import {
   Table,
   MapSelector,
 } from '../../components'
-import { useNavigation } from '../../hooks'
+import { useNavigation, useMediaQuery } from '../../hooks'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { exportQuoteToPDF } from '../../lib/quotePdf'
 
@@ -223,6 +223,9 @@ export function SellerCatalogPage() {
   const tenant = useTenant()
   const theme = useTheme()
   const currency = tenant.branding?.currency || 'BOB'
+
+  // Media query for compact button: screens < 480px or >= 1024px
+  const isCompactButton = useMediaQuery('(max-width: 480px) or (min-width: 1024px)')
 
   const [cursor, setCursor] = useState<string | undefined>()
   const take = 20
@@ -611,7 +614,7 @@ export function SellerCatalogPage() {
           </div>
         </div>
 
-        <div className="grid gap-4 lg:grid-cols-[1fr_360px]">
+        <div className="grid gap-4 grid-cols-1 lg:grid-cols-[1fr_280px] xl:grid-cols-[1fr_360px]">
           <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
             {productsQuery.isLoading && <Loading />}
             {productsQuery.error && (
@@ -624,7 +627,7 @@ export function SellerCatalogPage() {
             {activeProducts.length === 0 && !productsQuery.isLoading && <EmptyState message="No hay productos" />}
 
             {activeProducts.length > 0 && (
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+              <div className="grid grid-cols-[repeat(auto-fit,minmax(140px,1fr))] gap-3">
                 {activeProducts.map((p) => {
                   const stock = stockByProduct.get(p.id)
                   const totalStock = stock?.total ?? 0
@@ -697,7 +700,7 @@ export function SellerCatalogPage() {
                             value={currentQuantity || ''}
                             onChange={(e) => updateProductQuantity(p.id, Number(e.target.value))}
                             min={0}
-                            className="flex-1"
+                            className="w-20 flex-shrink-0"
                           />
                           <Button
                             size="sm"
@@ -705,7 +708,7 @@ export function SellerCatalogPage() {
                             disabled={currentQuantity <= 0}
                             className="px-3"
                           >
-                            +Agregar
+                            {isCompactButton ? '+' : '+Agregar'}
                           </Button>
                         </div>
                       </div>
@@ -1037,10 +1040,10 @@ export function SellerCatalogPage() {
               </div>
 
               {/* Tabla de productos */}
-              <div className="border border-slate-300 dark:border-slate-600 rounded">
-                <Table
+              <div className="border border-slate-300 dark:border-slate-600 rounded overflow-x-auto">
+                <div className="min-w-[600px]">
+                  <Table
                   columns={[
-                    { header: 'SKU', accessor: (r: any) => r.sku },
                     { header: 'Producto', accessor: (r: any) => r.name },
                     {
                       header: 'Cantidad',
@@ -1057,10 +1060,11 @@ export function SellerCatalogPage() {
                             }
                           }}
                           min={0}
-                          className="w-24"
+                          className="[&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none [-moz-appearance:textfield]"
                           disabled={modalReadOnly}
                         />
                       ),
+                      className: 'w-12'
                     },
                     {
                       header: 'Desc. %',
@@ -1071,26 +1075,25 @@ export function SellerCatalogPage() {
                           onChange={(e) => cart.updateDiscountPct(r.productId, clampPct(Number(e.target.value)))}
                           min={0}
                           max={100}
-                          className="w-24"
+                          className="[&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none [-moz-appearance:textfield]"
                           disabled={modalReadOnly}
                         />
                       ),
+                      className: 'w-16'
                     },
                     {
-                      header: 'Precio unit.',
+                      header: `P. Unit (${currency})`,
                       accessor: (r: any) => (
-                        <div className="flex items-center gap-2">
-                          <Input
-                            type="number"
-                            value={String(r.unitPrice)}
-                            onChange={(e) => cart.updatePrice(r.productId, Number(e.target.value))}
-                            min={0}
-                            className="w-28"
-                            disabled={modalReadOnly}
-                          />
-                          <span className="text-xs text-slate-600 dark:text-slate-400">{currency}</span>
-                        </div>
+                        <Input
+                          type="number"
+                          value={String(r.unitPrice)}
+                          onChange={(e) => cart.updatePrice(r.productId, Number(e.target.value))}
+                          min={0}
+                          className="[&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none [-moz-appearance:textfield]"
+                          disabled={modalReadOnly}
+                        />
                       ),
+                      className: 'w-32'
                     },
                     {
                       header: 'Total',
@@ -1113,6 +1116,7 @@ export function SellerCatalogPage() {
                   })}
                   keyExtractor={(r: any) => r.productId}
                 />
+                </div>
               </div>
 
               {/* Totales */}

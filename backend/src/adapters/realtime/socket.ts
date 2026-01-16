@@ -45,6 +45,7 @@ export function attachSocketIo(app: FastifyInstance): Server {
       ;(socket.data as any).userId = claims.sub
       // Rooms per tenant (and later per warehouse)
       socket.join(`tenant:${claims.tenantId}`)
+      console.log(`Socket ${socket.id} joined room tenant:${claims.tenantId}`)
       return next()
     } catch {
       return next(new Error('Unauthorized'))
@@ -52,6 +53,7 @@ export function attachSocketIo(app: FastifyInstance): Server {
   })
 
   io.on('connection', (socket) => {
+    console.log(`Socket connected: ${socket.id}`)
     socket.emit('connected', { ok: true })
   })
 

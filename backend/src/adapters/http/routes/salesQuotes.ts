@@ -702,6 +702,11 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
 
       // Real-time notifications + stock reservation updates
       const room = `tenant:${tenantId}`
+      console.log(`Emitting sales.quote.processed to room ${room}`, {
+        quoteId: created?.quoteInfo?.id ?? id,
+        orderId: created?.order?.id ?? null,
+        orderNumber: created?.order?.number ?? null,
+      })
       app.io?.to(room).emit('sales.quote.processed', {
         quoteId: created?.quoteInfo?.id ?? id,
         quoteNumber: created?.quoteInfo?.number ?? null,
@@ -714,6 +719,12 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
         city: created?.quoteInfo?.city ?? null,
         reservations: Array.isArray(created?.reservations) ? created.reservations : [],
       })
+
+      // Emit order created event if an order was created
+      if (created?.order) {
+        console.log(`Emitting sales.order.created to room ${room}`, created.order)
+        app.io?.to(room).emit('sales.order.created', created.order)
+      }
 
       // Ensure other clients see reserved quantities immediately
       if (Array.isArray(created?.changedBalances)) {

@@ -49,6 +49,8 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
     const socket = connectSocket()
     if (!socket) return
 
+    console.log('Setting up socket listeners')
+
     const push = (n: Omit<AppNotification, 'id' | 'createdAt'>) => {
       const now = new Date().toISOString()
       const full: AppNotification = {
@@ -69,12 +71,15 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
     }
 
     const onOrderCreated = (payload: any) => {
+      console.log('Notification: Order created', payload)
       push({ kind: 'info', title: '🧾 Pedido creado', body: payload?.number ? `Orden: ${payload.number}` : undefined })
     }
     const onOrderConfirmed = (payload: any) => {
+      console.log('Notification: Order confirmed', payload)
       push({ kind: 'success', title: '✅ Pedido confirmado', body: payload?.number ? `Orden: ${payload.number}` : undefined })
     }
     const onOrderFulfilled = (payload: any) => {
+      console.log('Notification: Order fulfilled', payload)
       push({ kind: 'success', title: '📦 Pedido entregado', body: payload?.number ? `Orden: ${payload.number}` : undefined })
     }
 
@@ -106,6 +111,7 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
     }
 
     const onQuoteProcessed = (payload: any) => {
+      console.log('Notification: Quote processed', payload)
       const quoteNumber = payload?.quoteNumber ? String(payload.quoteNumber) : null
       const orderNumber = payload?.orderNumber ? String(payload.orderNumber) : null
       const orderId = payload?.orderId ? String(payload.orderId) : null
@@ -246,6 +252,7 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
   return <NotificationsContext.Provider value={value}>{children}</NotificationsContext.Provider>
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useNotifications() {
   const ctx = useContext(NotificationsContext)
   if (!ctx) throw new Error('useNotifications must be used within NotificationsProvider')
