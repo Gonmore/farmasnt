@@ -44,6 +44,10 @@ services:
         VITE_BACKEND_TARGET: "http://backend-farmasnt:6000"
     container_name: frontend-farmasnt
     restart: always
+    environment:
+      # Vite preview (runtime) bloquea hosts no permitidos; al entrar por IP externa
+      # puede quedar en blanco si el host no está en allowedHosts.
+      VITE_ALLOW_ALL_HOSTS: "1"
     depends_on:
       - backend-farmasnt
     ports:
