@@ -15,6 +15,7 @@ import { registerWarehouseRoutes } from './routes/warehouses.js'
 import { registerCustomerRoutes } from './routes/customers.js'
 import { registerSalesOrderRoutes } from './routes/salesOrders.js'
 import { salesQuotesRoutes } from './routes/salesQuotes.js'
+import { registerSalesPaymentRoutes } from './routes/salesPayments.js'
 import { registerAdminRoutes } from './routes/admin.js'
 import { registerAuditRoutes } from './routes/audit.js'
 import { registerReportRoutes } from './routes/reports.js'
@@ -138,6 +139,7 @@ export async function createHttpServer() {
   await registerCustomerRoutes(app)
   await registerSalesOrderRoutes(app)
   await salesQuotesRoutes(app)
+  await registerSalesPaymentRoutes(app)
   await registerWellKnownRoutes(app)
   await registerAdminRoutes(app)
   await registerAuditRoutes(app)

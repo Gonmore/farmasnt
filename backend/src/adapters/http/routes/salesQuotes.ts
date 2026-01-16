@@ -581,6 +581,8 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
               customerId: quote.customerId,
               quoteId: quote.id,
               status: 'CONFIRMED',
+              // Copy payment terms onto the order so payments can be managed without joining Quote.
+              paymentMode: quote.paymentMode ?? 'CASH',
               note: `Desde cotización ${quote.number}`,
               deliveryDate,
               deliveryCity: quote.deliveryCity ?? quote.customer.city ?? null,

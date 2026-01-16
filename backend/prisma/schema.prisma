@@ -484,6 +484,11 @@ model SalesOrder {
   customerId String
   quoteId    String?
   status     SalesOrderStatus @default(DRAFT)
+  // Payment tracking
+  paymentMode String          @default("CASH")
+  deliveredAt DateTime?
+  paidAt      DateTime?
+  paidBy      String?
   note       String?
   deliveryDate DateTime?
   deliveryCity String?

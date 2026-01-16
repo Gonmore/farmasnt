@@ -59,13 +59,14 @@ async function fulfillOrderInTx(
     version: number
     fromLocationId: string
     note?: string
+    deliveredAt?: Date
   },
 ): Promise<{ orderBefore: any; updatedOrder: any; createdMovements: any[]; changedBalances: any[] }> {
   const todayUtc = startOfTodayUtc()
 
   const order = await tx.salesOrder.findFirst({
     where: { id: args.orderId, tenantId: args.tenantId },
-    select: { id: true, number: true, status: true, version: true, customerId: true },
+    select: { id: true, number: true, status: true, version: true, customerId: true, paymentMode: true },
   })
   if (!order) {
     const err = new Error('Not found') as Error & { statusCode?: number }
@@ -278,8 +279,13 @@ async function fulfillOrderInTx(
 
   const updatedOrder = await tx.salesOrder.update({
     where: { id: order.id },
-    data: { status: 'FULFILLED', version: { increment: 1 }, createdBy: args.userId },
-    select: { id: true, number: true, status: true, version: true, updatedAt: true },
+    data: {
+      status: 'FULFILLED',
+      ...(args.deliveredAt !== undefined ? { deliveredAt: args.deliveredAt } : {}),
+      version: { increment: 1 },
+      createdBy: args.userId,
+    },
+    select: { id: true, number: true, status: true, version: true, paymentMode: true, deliveredAt: true, updatedAt: true },
   })
 
   return { orderBefore: order, updatedOrder, createdMovements, changedBalances }
@@ -308,6 +314,20 @@ function startOfTodayUtc(): Date {
 function toNumber(value: any): number {
   const n = typeof value === 'number' ? value : Number(value)
   return Number.isFinite(n) ? n : 0
+}
+
+function addDaysUtc(date: Date, days: number): Date {
+  const ms = date.getTime() + Math.max(0, days) * 24 * 60 * 60 * 1000
+  return new Date(ms)
+}
+
+function parseCreditDays(paymentMode: string): number {
+  const mode = (paymentMode ?? '').trim().toUpperCase()
+  if (mode === 'CASH') return 0
+  const m = mode.match(/^CREDIT_(\d{1,3})$/)
+  if (!m) return 0
+  const days = Number(m[1])
+  return Number.isFinite(days) ? Math.max(0, days) : 0
 }
 
 async function reserveForOrder(
@@ -879,11 +899,11 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
       const userId = request.auth!.userId
 
       try {
-
+        const deliveredAt = new Date()
         const result = await db.$transaction(async (tx) => {
           const order = await tx.salesOrder.findFirst({
             where: { id, tenantId },
-            select: { id: true, number: true, status: true, version: true },
+            select: { id: true, number: true, status: true, version: true, paymentMode: true },
           })
           if (!order) {
             const err = new Error('Not found') as Error & { statusCode?: number }
@@ -924,6 +944,7 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
               userId,
               version: parsed.data.version,
               fromLocationId: parsed.data.fromLocationId,
+              deliveredAt,
               ...(parsed.data.note !== undefined ? { note: parsed.data.note } : {}),
             })
           }
@@ -1060,8 +1081,8 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
 
           const updatedOrder = await tx.salesOrder.update({
             where: { id: order.id },
-            data: { status: 'FULFILLED', version: { increment: 1 }, createdBy: userId },
-            select: { id: true, number: true, status: true, version: true, updatedAt: true },
+            data: { status: 'FULFILLED', deliveredAt, version: { increment: 1 }, createdBy: userId },
+            select: { id: true, number: true, status: true, version: true, paymentMode: true, deliveredAt: true, updatedAt: true },
           })
 
           return { orderBefore: order, updatedOrder, createdMovements, changedBalances }
@@ -1082,6 +1103,19 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
       app.io?.to(room).emit('sales.order.delivered', result.updatedOrder)
       for (const m of result.createdMovements) app.io?.to(room).emit('stock.movement.created', m)
       for (const b of result.changedBalances) app.io?.to(room).emit('stock.balance.changed', b)
+
+      // Payment due notification (accounts receivable)
+      const creditDays = parseCreditDays(result.updatedOrder.paymentMode)
+      const base = result.updatedOrder.deliveredAt ?? new Date()
+      const dueAt = addDaysUtc(base, creditDays)
+      app.io?.to(room).emit('sales.order.payment.due', {
+        id: result.updatedOrder.id,
+        number: result.updatedOrder.number,
+        paymentMode: result.updatedOrder.paymentMode,
+        deliveredAt: result.updatedOrder.deliveredAt?.toISOString() ?? null,
+        creditDays,
+        dueAt: dueAt.toISOString(),
+      })
 
       return reply.send({ order: result.updatedOrder })
       } catch (e: any) {

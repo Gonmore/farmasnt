@@ -110,6 +110,49 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       })
     }
 
+    const onPaymentDue = (payload: any) => {
+      console.log('Notification: Payment due', payload)
+      const orderNumber = payload?.number ? String(payload.number) : null
+      const orderId = payload?.id ? String(payload.id) : null
+      const creditDays = typeof payload?.creditDays === 'number' ? payload.creditDays : Number(payload?.creditDays)
+      const dueAt = payload?.dueAt ? String(payload.dueAt) : null
+
+      const isVentas = perms.roles.some((r) => r.code === 'VENTAS')
+      if (!isVentas) return
+
+      const dueLabel = Number.isFinite(creditDays) && creditDays > 0 ? `Cobrar en ${creditDays} día(s)` : 'Cobrar ahora'
+      const dueDateLabel = dueAt ? new Date(dueAt).toLocaleDateString() : null
+
+      // Keep A/R list fresh
+      queryClient.invalidateQueries({ queryKey: ['payments'] })
+
+      push({
+        kind: 'warning',
+        title: `💳 ${dueLabel}`,
+        body: [orderNumber ? `Orden: ${orderNumber}` : null, dueDateLabel ? `Fecha: ${dueDateLabel}` : null]
+          .filter(Boolean)
+          .join(' • '),
+        linkTo: orderId ? `/sales/orders/${encodeURIComponent(orderId)}` : '/sales/payments',
+      })
+    }
+
+    const onOrderPaid = (payload: any) => {
+      console.log('Notification: Order paid', payload)
+      const orderNumber = payload?.number ? String(payload.number) : null
+      const orderId = payload?.id ? String(payload.id) : null
+
+      // Keep A/R list + orders fresh
+      queryClient.invalidateQueries({ queryKey: ['payments'] })
+      queryClient.invalidateQueries({ queryKey: ['orders'] })
+
+      push({
+        kind: 'success',
+        title: '✅ Orden cobrada',
+        body: orderNumber ? `Orden: ${orderNumber}` : undefined,
+        linkTo: orderId ? `/sales/orders/${encodeURIComponent(orderId)}` : '/sales/payments',
+      })
+    }
+
     const onQuoteProcessed = (payload: any) => {
       console.log('Notification: Quote processed', payload)
       const quoteNumber = payload?.quoteNumber ? String(payload.quoteNumber) : null
@@ -215,6 +258,8 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
     socket.on('sales.order.confirmed', onOrderConfirmed)
     socket.on('sales.order.fulfilled', onOrderFulfilled)
     socket.on('sales.order.delivered', onOrderDelivered)
+    socket.on('sales.order.payment.due', onPaymentDue)
+    socket.on('sales.order.paid', onOrderPaid)
     socket.on('sales.quote.processed', onQuoteProcessed)
     socket.on('stock.balance.changed', onStockBalanceChanged)
 
@@ -223,6 +268,8 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       socket.off('sales.order.confirmed', onOrderConfirmed)
       socket.off('sales.order.fulfilled', onOrderFulfilled)
       socket.off('sales.order.delivered', onOrderDelivered)
+      socket.off('sales.order.payment.due', onPaymentDue)
+      socket.off('sales.order.paid', onOrderPaid)
       socket.off('sales.quote.processed', onQuoteProcessed)
       socket.off('stock.balance.changed', onStockBalanceChanged)
 

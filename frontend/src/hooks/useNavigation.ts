@@ -96,6 +96,7 @@ export function useNavigation(): NavGroup[] {
         salesItems.push({ to: '/sales/quotes', label: '📝 Cotizaciones' })
       }
       salesItems.push({ to: '/sales/orders', label: '📋 Órdenes' })
+      salesItems.push({ to: '/sales/payments', label: '💳 Pagos' })
     }
 
     if (hasPermission('sales:delivery:read')) {

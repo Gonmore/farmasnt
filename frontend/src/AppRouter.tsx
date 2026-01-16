@@ -21,6 +21,7 @@ import {
   DeliveriesPage,
   QuotesPage,
   QuoteDetailPage,
+  PaymentsPage,
   SalesReportsPage,
   StockReportsPage,
   AuditListPage,
@@ -192,6 +193,14 @@ export function AppRouter() {
           element={
             <ProtectedRoute requiredPermissions={['sales:order:read']}>
               <OrderDetailPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/sales/payments"
+          element={
+            <ProtectedRoute requiredPermissions={['sales:order:read']}>
+              <PaymentsPage />
             </ProtectedRoute>
           }
         />
