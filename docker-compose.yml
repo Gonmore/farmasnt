@@ -24,6 +24,12 @@ services:
       SMTP_PASS: "if5u/WD9kZ"
       SMTP_FROM: "PharmaFlow <saas@supernovatel.com>"
       WEB_ORIGIN: "https://farmasnt.supernovatel.com"
+      # Prisma: si una migración quedó marcada como FAILED (P3009), el contenedor no podrá aplicar nuevas.
+      # Para este caso puntual (20260116063727_pagos) habilitamos una resolución automática y reintento.
+      # IMPORTANTE: si la migración alcanzó a aplicar cambios parcialmente, puede requerir limpieza manual.
+      PRISMA_MIGRATE_RESOLVE_ON_FAIL: "1"
+      PRISMA_MIGRATE_RESOLVE_ACTION: "rolled-back"
+      PRISMA_MIGRATE_RESOLVE_NAMES: "20260116063727_pagos"
     ports:
       - "6000:6000"  # Mantener puerto 6000 para acceso interno
     networks:
