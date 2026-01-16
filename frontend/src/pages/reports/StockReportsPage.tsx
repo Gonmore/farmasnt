@@ -1,12 +1,14 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
-import { ResponsiveContainer, BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip, Legend } from 'recharts'
+import { ResponsiveContainer, BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip, Legend, PieChart, Pie, Cell } from 'recharts'
 import { MainLayout, PageContainer, Button, Input, Loading, ErrorState, EmptyState, Modal, Table } from '../../components'
+import { KPICard, ReportSection, reportColors, getChartColor, chartTooltipStyle, chartGridStyle, chartAxisStyle } from '../../components/reports'
 import { useNavigation } from '../../hooks'
 import { apiFetch } from '../../lib/api'
 import { blobToBase64, exportElementToPdf, pdfBlobFromElement } from '../../lib/exportPdf'
 import { useAuth } from '../../providers/AuthProvider'
+import { useTenant } from '../../providers/TenantProvider'
 
 type StockTab = 'INPUTS' | 'TRANSFERS'
 
@@ -61,6 +63,14 @@ function toNumber(value: string | number | null | undefined): number {
   if (typeof value === 'number') return Number.isFinite(value) ? value : 0
   const n = Number(value)
   return Number.isFinite(n) ? n : 0
+}
+
+function formatDate(date: Date): string {
+  return date.toLocaleDateString('es-ES', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  })
 }
 
 async function fetchInputsByProduct(token: string, q: { from?: string; to?: string; take: number }): Promise<{ items: StockInputsItem[] }> {
@@ -132,6 +142,7 @@ function parseEmails(raw: string): string[] {
 
 export function StockReportsPage() {
   const auth = useAuth()
+  const tenant = useTenant()
   const navGroups = useNavigation()
   const location = useLocation()
 
@@ -277,7 +288,14 @@ export function StockReportsPage() {
           variant="secondary"
           onClick={async () => {
             if (!reportRef.current) return
-            await exportElementToPdf(reportRef.current, { filename: exportFilename, title })
+            await exportElementToPdf(reportRef.current, {
+              filename: exportFilename,
+              title,
+              subtitle: `Período: ${formatDate(new Date(from))} - ${formatDate(new Date(to))}`,
+              companyName: tenant?.data?.name ?? 'Empresa',
+              headerColor: '#3B82F6',
+              logoUrl: tenant?.data?.branding?.logoUrl,
+            })
           }}
         >
           ⬇️ Exportar PDF
@@ -334,12 +352,42 @@ export function StockReportsPage() {
         </div>
 
         <div ref={reportRef} className="space-y-4">
-          <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
-            <h2 className="text-lg font-semibold text-slate-900 dark:text-white">{title}</h2>
+          {/* Header del reporte mejorado */}
+          <div className="overflow-hidden rounded-lg border border-slate-200 bg-gradient-to-br from-blue-50 via-white to-purple-50 dark:border-slate-700 dark:from-slate-900 dark:via-slate-800 dark:to-slate-900">
+            {/* Banner superior */}
+            <div className="h-2 bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500" />
+
+            <div className="p-6">
+              <div className="flex items-start justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="flex h-16 w-16 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 text-3xl shadow-lg backdrop-blur-sm">
+                    📦
+                  </div>
+                  <div>
+                    <h2 className="text-2xl font-bold text-slate-900 dark:text-white">{title}</h2>
+                    <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
+                      Análisis detallado de inventario y movimientos
+                    </p>
+                  </div>
+                </div>
+                <div className="flex flex-col gap-2">
+                  <span className="inline-flex items-center rounded-full bg-blue-100 px-3 py-1 text-xs font-medium text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+                    🏢 {tenant?.data?.name ?? 'Empresa'}
+                  </span>
+                  <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-800 dark:bg-slate-800 dark:text-slate-200">
+                    📅 {formatDate(new Date())}
+                  </span>
+                </div>
+              </div>
+            </div>
           </div>
 
           {tab === 'INPUTS' && (
-            <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+            <ReportSection
+              title="📦 Existencias Ingresadas"
+              subtitle="Productos con mayor ingreso de inventario"
+              icon="📊"
+            >
               {inputsQuery.isLoading && <Loading />}
               {inputsQuery.isError && <ErrorState message={(inputsQuery.error as any)?.message ?? 'Error cargando reporte'} />}
               {!inputsQuery.isLoading && !inputsQuery.isError && (inputsQuery.data?.items?.length ?? 0) === 0 && (
@@ -347,34 +395,123 @@ export function StockReportsPage() {
               )}
               {!inputsQuery.isLoading && !inputsQuery.isError && (inputsQuery.data?.items?.length ?? 0) > 0 && (
                 <>
-                  <div className="h-[360px]">
-                    <ResponsiveContainer width="100%" height="100%">
+                  {/* KPIs de ingresos */}
+                  <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-4">
+                    <KPICard
+                      icon="📦"
+                      label="Productos Ingresados"
+                      value={(inputsQuery.data?.items ?? []).length}
+                      color="primary"
+                    />
+                    <KPICard
+                      icon="📊"
+                      label="Total Movimientos"
+                      value={(inputsQuery.data?.items ?? []).reduce((sum, i) => sum + i.movementsCount, 0)}
+                      color="info"
+                    />
+                    <KPICard
+                      icon="📥"
+                      label="Unidades Totales"
+                      value={(inputsQuery.data?.items ?? []).reduce((sum, i) => sum + toNumber(i.quantity), 0).toFixed(0)}
+                      color="success"
+                    />
+                    <KPICard
+                      icon="⭐"
+                      label="Producto Top"
+                      value={(inputsQuery.data?.items ?? [])[0]?.name?.slice(0, 15) ?? '-'}
+                      subtitle={`${toNumber((inputsQuery.data?.items ?? [])[0]?.quantity).toFixed(0)} unidades`}
+                      color="warning"
+                    />
+                  </div>
+
+                  {/* Gráfico mejorado */}
+                  <div className="mx-auto mb-6 h-[450px] max-w-5xl rounded-lg bg-gradient-to-br from-slate-50 to-white p-4 dark:from-slate-900 dark:to-slate-800">
+                    <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={350}>
                       <BarChart
-                        data={(inputsQuery.data?.items ?? []).map((i) => ({
-                          name: `${i.sku} - ${i.name}`,
+                        data={(inputsQuery.data?.items ?? []).slice(0, 15).map((i, idx) => ({
+                          name: `${i.sku}`,
+                          fullName: i.name,
                           quantity: toNumber(i.quantity),
                           movementsCount: i.movementsCount,
                         }))}
-                        margin={{ left: 10, right: 10 }}
+                        margin={{ left: 10, right: 30, bottom: 80 }}
                       >
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="name" hide />
-                        <YAxis />
-                        <Tooltip />
+                        <CartesianGrid {...chartGridStyle} />
+                        <XAxis dataKey="name" angle={-45} textAnchor="end" height={100} {...chartAxisStyle} />
+                        <YAxis yAxisId="left" {...chartAxisStyle} label={{ value: 'Cantidad', angle: -90, position: 'insideLeft' }} />
+                        <YAxis yAxisId="right" orientation="right" {...chartAxisStyle} label={{ value: 'Movimientos', angle: 90, position: 'insideRight' }} />
+                        <Tooltip
+                          {...chartTooltipStyle}
+                          formatter={(v: any, name: any, props: any) => {
+                            const label = name === 'quantity' ? 'Cantidad Ingresada' : 'Nº Movimientos'
+                            return [v, label]
+                          }}
+                          labelFormatter={(label, payload) => {
+                            if (payload && payload[0] && payload[0].payload) {
+                              return payload[0].payload.fullName
+                            }
+                            return label
+                          }}
+                        />
                         <Legend />
-                        <Bar dataKey="quantity" fill="#2563eb" />
-                        <Bar dataKey="movementsCount" fill="#16a34a" />
+                        <Bar yAxisId="left" dataKey="quantity" fill={reportColors.success[0]} name="Cantidad Ingresada" radius={[8, 8, 0, 0]} />
+                        <Bar yAxisId="right" dataKey="movementsCount" fill={reportColors.primary[0]} name="Movimientos" radius={[8, 8, 0, 0]} />
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
 
-                  <div className="mt-4">
+                  {/* Tabla detallada */}
+                  <div className="rounded-lg border border-slate-200 dark:border-slate-700">
                     <Table
                       columns={[
-                        { header: 'SKU', accessor: (r) => r.sku },
-                        { header: 'Producto', accessor: (r) => r.name },
-                        { header: 'Movimientos', accessor: (r) => String(r.movementsCount) },
-                        { header: 'Cantidad ingresada', accessor: (r) => String(toNumber(r.quantity)) },
+                        {
+                          header: '🏅 Ranking',
+                          accessor: (_, idx) => (
+                            <div className="flex items-center justify-center">
+                              {idx < 3 ? (
+                                <span className="text-2xl">{['🥇', '🥈', '🥉'][idx]}</span>
+                              ) : (
+                                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-sm font-bold dark:bg-slate-700">
+                                  {idx + 1}
+                                </span>
+                              )}
+                            </div>
+                          ),
+                        },
+                        { header: '🔖 SKU', accessor: (r) => <span className="font-mono text-xs">{r.sku}</span> },
+                        { header: '📦 Producto', accessor: (r) => <span className="font-medium">{r.name}</span> },
+                        {
+                          header: '📊 Movimientos',
+                          accessor: (r) => (
+                            <span className="inline-flex items-center rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-medium text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+                              {r.movementsCount}
+                            </span>
+                          ),
+                        },
+                        {
+                          header: '📥 Cantidad Ingresada',
+                          accessor: (r) => (
+                            <span className="font-semibold tabular-nums text-green-600 dark:text-green-400">
+                              {toNumber(r.quantity).toFixed(0)}
+                            </span>
+                          ),
+                        },
+                        {
+                          header: '% del Total',
+                          accessor: (r) => {
+                            const total = (inputsQuery.data?.items ?? []).reduce((sum, i) => sum + toNumber(i.quantity), 0)
+                            const pct = total > 0 ? (toNumber(r.quantity) / total) * 100 : 0
+                            const pctSafe = Number.isFinite(pct) ? pct : 0
+                            return (
+                              <div className="flex items-center gap-2">
+                                <div className="h-2 w-16 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
+                                  <div className="h-full bg-green-500" style={{ width: `${pctSafe}%` }} />
+                                </div>
+                                <span className="text-sm tabular-nums">{pctSafe.toFixed(1)}%</span>
+                              </div>
+                            )
+                          },
+                        },
                       ]}
                       data={inputsQuery.data?.items ?? []}
                       keyExtractor={(r) => r.productId}
@@ -382,11 +519,15 @@ export function StockReportsPage() {
                   </div>
                 </>
               )}
-            </div>
+            </ReportSection>
           )}
 
           {tab === 'TRANSFERS' && (
-            <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+            <ReportSection
+              title="🚚 Traspasos entre Sucursales"
+              subtitle="Movimientos de inventario entre almacenes"
+              icon="🔄"
+            >
               {transfersQuery.isLoading && <Loading />}
               {transfersQuery.isError && (
                 <ErrorState message={(transfersQuery.error as any)?.message ?? 'Error cargando reporte'} />
@@ -396,40 +537,136 @@ export function StockReportsPage() {
               )}
               {!transfersQuery.isLoading && !transfersQuery.isError && (transfersQuery.data?.items?.length ?? 0) > 0 && (
                 <>
-                  <div className="h-[360px]">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart
-                        data={(transfersQuery.data?.items ?? []).map((i) => ({
-                          name: `${i.fromWarehouse?.code ?? 'N/A'} → ${i.toWarehouse?.code ?? 'N/A'}`,
-                          quantity: toNumber(i.quantity),
-                          movementsCount: i.movementsCount,
-                        }))}
-                        margin={{ left: 10, right: 10 }}
-                      >
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="name" hide />
-                        <YAxis />
-                        <Tooltip />
-                        <Legend />
-                        <Bar dataKey="quantity" fill="#f59e0b" />
-                        <Bar dataKey="movementsCount" fill="#2563eb" />
-                      </BarChart>
-                    </ResponsiveContainer>
+                  {/* KPIs de traspasos */}
+                  <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-3">
+                    <KPICard
+                      icon="🔄"
+                      label="Rutas de Traspaso"
+                      value={(transfersQuery.data?.items ?? []).length}
+                      color="info"
+                    />
+                    <KPICard
+                      icon="📊"
+                      label="Total Movimientos"
+                      value={(transfersQuery.data?.items ?? []).reduce((sum, i) => sum + i.movementsCount, 0)}
+                      color="primary"
+                    />
+                    <KPICard
+                      icon="📦"
+                      label="Unidades Transferidas"
+                      value={(transfersQuery.data?.items ?? []).reduce((sum, i) => sum + toNumber(i.quantity), 0).toFixed(0)}
+                      color="warning"
+                    />
                   </div>
 
-                  <div className="mt-4">
+                  <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+                    {/* Gráfico de torta para rutas más activas */}
+                    <div className="h-[400px] rounded-lg bg-gradient-to-br from-slate-50 to-white p-4 dark:from-slate-900 dark:to-slate-800">
+                      <h4 className="mb-4 text-center text-sm font-semibold text-slate-700 dark:text-slate-300">
+                        Distribución por Ruta
+                      </h4>
+                      <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={300}>
+                        <PieChart>
+                          <Pie
+                            data={(transfersQuery.data?.items ?? []).slice(0, 8).map((i) => ({
+                              name: `${i.fromWarehouse?.code ?? 'N/A'} → ${i.toWarehouse?.code ?? 'N/A'}`,
+                              value: toNumber(i.quantity),
+                            }))}
+                            dataKey="value"
+                            nameKey="name"
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={60}
+                            outerRadius={100}
+                            paddingAngle={3}
+                            label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
+                          >
+                            {(transfersQuery.data?.items ?? []).slice(0, 8).map((_, idx) => (
+                              <Cell key={idx} fill={getChartColor(idx, 'rainbow')} />
+                            ))}
+                          </Pie>
+                          <Tooltip {...chartTooltipStyle} formatter={(v: any) => [`${Number(v).toFixed(0)} unid.`, 'Transferido']} />
+                          <Legend verticalAlign="bottom" height={36} />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+
+                    {/* Gráfico de barras */}
+                    <div className="h-[400px] rounded-lg bg-gradient-to-br from-slate-50 to-white p-4 dark:from-slate-900 dark:to-slate-800">
+                      <h4 className="mb-4 text-center text-sm font-semibold text-slate-700 dark:text-slate-300">
+                        Top Rutas por Volumen
+                      </h4>
+                      <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={300}>
+                        <BarChart
+                          data={(transfersQuery.data?.items ?? []).slice(0, 10).map((i) => ({
+                            name: `${i.fromWarehouse?.code ?? 'N/A'} → ${i.toWarehouse?.code ?? 'N/A'}`,
+                            quantity: toNumber(i.quantity),
+                            movementsCount: i.movementsCount,
+                          }))}
+                          margin={{ left: 10, right: 10, bottom: 80 }}
+                        >
+                          <CartesianGrid {...chartGridStyle} />
+                          <XAxis dataKey="name" angle={-45} textAnchor="end" height={100} {...chartAxisStyle} />
+                          <YAxis {...chartAxisStyle} />
+                          <Tooltip {...chartTooltipStyle} />
+                          <Legend />
+                          <Bar dataKey="quantity" fill={reportColors.warning[0]} name="Cantidad" radius={[8, 8, 0, 0]} />
+                          <Bar dataKey="movementsCount" fill={reportColors.primary[1]} name="Movimientos" radius={[8, 8, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+
+                  {/* Tabla detallada */}
+                  <div className="mt-6 rounded-lg border border-slate-200 dark:border-slate-700">
                     <Table
                       columns={[
                         {
-                          header: 'Desde',
-                          accessor: (r) => (r.fromWarehouse ? `${r.fromWarehouse.code ?? ''} ${r.fromWarehouse.name ?? ''}`.trim() : 'N/A'),
+                          header: '🏅 Ranking',
+                          accessor: (_, idx) => (
+                            <div className="flex items-center justify-center">
+                              {idx < 3 ? (
+                                <span className="text-2xl">{['🥇', '🥈', '🥉'][idx]}</span>
+                              ) : (
+                                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-sm font-bold dark:bg-slate-700">
+                                  {idx + 1}
+                                </span>
+                              )}
+                            </div>
+                          ),
                         },
                         {
-                          header: 'Hacia',
-                          accessor: (r) => (r.toWarehouse ? `${r.toWarehouse.code ?? ''} ${r.toWarehouse.name ?? ''}`.trim() : 'N/A'),
+                          header: '📤 Desde',
+                          accessor: (r) => (
+                            <span className="font-medium">
+                              {r.fromWarehouse ? `${r.fromWarehouse.code ?? ''} ${r.fromWarehouse.name ?? ''}`.trim() : 'N/A'}
+                            </span>
+                          ),
                         },
-                        { header: 'Movimientos', accessor: (r) => String(r.movementsCount) },
-                        { header: 'Cantidad transferida', accessor: (r) => String(toNumber(r.quantity)) },
+                        {
+                          header: '📥 Hacia',
+                          accessor: (r) => (
+                            <span className="font-medium">
+                              {r.toWarehouse ? `${r.toWarehouse.code ?? ''} ${r.toWarehouse.name ?? ''}`.trim() : 'N/A'}
+                            </span>
+                          ),
+                        },
+                        {
+                          header: '📊 Movimientos',
+                          accessor: (r) => (
+                            <span className="inline-flex items-center rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-medium text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+                              {r.movementsCount}
+                            </span>
+                          ),
+                        },
+                        {
+                          header: '📦 Cantidad Transferida',
+                          accessor: (r) => (
+                            <span className="font-semibold tabular-nums text-orange-600 dark:text-orange-400">
+                              {toNumber(r.quantity).toFixed(0)}
+                            </span>
+                          ),
+                        },
                       ]}
                       data={transfersQuery.data?.items ?? []}
                       keyExtractor={(r) => `${r.fromWarehouse?.id ?? 'x'}-${r.toWarehouse?.id ?? 'y'}`}
@@ -437,7 +674,7 @@ export function StockReportsPage() {
                   </div>
                 </>
               )}
-            </div>
+            </ReportSection>
           )}
         </div>
 

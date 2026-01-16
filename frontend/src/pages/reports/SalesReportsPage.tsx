@@ -15,8 +15,11 @@ import {
   Pie,
   Cell,
   Legend,
+  Area,
+  AreaChart,
 } from 'recharts'
 import { MainLayout, PageContainer, Button, Input, Loading, ErrorState, EmptyState, Modal, Table } from '../../components'
+import { KPICard, ReportSection, reportColors, getChartColor, chartTooltipStyle, chartGridStyle, chartAxisStyle } from '../../components/reports'
 import { useNavigation } from '../../hooks'
 import { apiFetch } from '../../lib/api'
 import { blobToBase64, exportElementToPdf, pdfBlobFromElement } from '../../lib/exportPdf'
@@ -114,8 +117,6 @@ function statusLabel(s: SalesStatus): string {
   if (s === 'CANCELLED') return 'ANULADO'
   return s
 }
-
-const PIE_COLORS = ['#2563eb', '#16a34a', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#64748b']
 
 async function fetchSalesSummary(token: string, q: { from?: string; to?: string; status?: SalesStatus }): Promise<{ items: SalesSummaryItem[] }> {
   const params = new URLSearchParams()
@@ -410,7 +411,14 @@ export function SalesReportsPage() {
           variant="secondary"
           onClick={async () => {
             if (!reportRef.current) return
-            await exportElementToPdf(reportRef.current, { filename: exportFilename, title })
+            await exportElementToPdf(reportRef.current, {
+              filename: exportFilename,
+              title,
+              subtitle: `Período: ${from} a ${to} | Moneda: ${currency}`,
+              companyName: tenant.branding?.name,
+              headerColor: '#10B981',
+              logoUrl: tenant.branding?.logoUrl,
+            })
           }}
         >
           ⬇️ Exportar PDF
@@ -482,49 +490,137 @@ export function SalesReportsPage() {
           {filters}
         </div>
 
-        <div ref={reportRef} className="space-y-4">
-          <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <h2 className="text-lg font-semibold text-slate-900 dark:text-white">{title}</h2>
-                <p className="text-sm text-slate-600 dark:text-slate-400">Moneda: {currency}</p>
+        <div ref={reportRef} className="space-y-6">
+          {/* Header mejorado del reporte */}
+          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-r from-green-50 via-white to-blue-50 shadow-md dark:border-slate-700 dark:from-green-900/20 dark:via-slate-900 dark:to-blue-900/20">
+            <div className="border-b border-green-200 bg-gradient-to-r from-green-500 to-blue-500 px-6 py-3 dark:border-green-700">
+              <div className="flex items-center gap-3">
+                <div className="rounded-lg bg-white/20 p-2 backdrop-blur">
+                  <span className="text-3xl">📊</span>
+                </div>
+                <div>
+                  <h2 className="text-xl font-bold text-white">{title}</h2>
+                  <p className="text-sm text-white/90">
+                    {from} al {to} • {statusLabel(status)} • Moneda: {currency}
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="p-6">
+              <div className="flex flex-wrap gap-3 text-sm">
+                <div className="flex items-center gap-2 rounded-lg bg-slate-100 px-3 py-2 dark:bg-slate-800">
+                  <span className="text-base">🏢</span>
+                  <span className="font-medium text-slate-700 dark:text-slate-300">{tenant.branding?.name ?? 'Empresa'}</span>
+                </div>
+                <div className="flex items-center gap-2 rounded-lg bg-slate-100 px-3 py-2 dark:bg-slate-800">
+                  <span className="text-base">📅</span>
+                  <span className="text-slate-600 dark:text-slate-400">
+                    Generado: {new Date().toLocaleDateString('es-ES', { year: 'numeric', month: 'long', day: 'numeric' })}
+                  </span>
+                </div>
               </div>
             </div>
           </div>
 
           {tab === 'MONTH' && (
-            <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+            <ReportSection
+              title="📈 Evolución de Ventas"
+              subtitle="Montos y cantidad de órdenes por día"
+              icon="📊"
+            >
               {summaryQuery.isLoading && <Loading />}
               {summaryQuery.isError && <ErrorState message={(summaryQuery.error as any)?.message ?? 'Error cargando reporte'} />}
               {!summaryQuery.isLoading && !summaryQuery.isError && (summaryQuery.data?.items?.length ?? 0) === 0 && (
                 <EmptyState message="No hay ventas en el rango seleccionado." />
               )}
               {!summaryQuery.isLoading && !summaryQuery.isError && (summaryQuery.data?.items?.length ?? 0) > 0 && (
-                <div className="h-[360px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart
-                      data={(summaryQuery.data?.items ?? []).map((i) => ({
-                        day: i.day,
-                        amount: toNumber(i.amount),
-                        ordersCount: i.ordersCount,
-                      }))}
-                    >
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="day" />
-                      <YAxis />
-                      <Tooltip formatter={(v: any, name: any) => (name === 'amount' ? `${money(Number(v))} ${currency}` : v)} />
-                      <Legend />
-                      <Line type="monotone" dataKey="amount" stroke="#2563eb" strokeWidth={2} dot={false} />
-                      <Line type="monotone" dataKey="ordersCount" stroke="#16a34a" strokeWidth={2} dot={false} />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
+                <>
+                  {/* KPIs resumidos */}
+                  <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-3">
+                    <KPICard
+                      icon="💰"
+                      label="Total Facturado"
+                      value={`${money((summaryQuery.data?.items ?? []).reduce((sum, i) => sum + toNumber(i.amount), 0))} ${currency}`}
+                      color="success"
+                      subtitle="En el período"
+                    />
+                    <KPICard
+                      icon="🧾"
+                      label="Órdenes"
+                      value={(summaryQuery.data?.items ?? []).reduce((sum, i) => sum + i.ordersCount, 0)}
+                      color="primary"
+                      subtitle="Total procesadas"
+                    />
+                    <KPICard
+                      icon="📦"
+                      label="Líneas de Venta"
+                      value={(summaryQuery.data?.items ?? []).reduce((sum, i) => sum + i.linesCount, 0)}
+                      color="info"
+                      subtitle="Items vendidos"
+                    />
+                  </div>
+
+                  {/* Gráfico mejorado con área y gradiente */}
+                  <div className="mx-auto h-[400px] max-w-5xl rounded-lg bg-gradient-to-br from-slate-50 to-white p-4 dark:from-slate-900 dark:to-slate-800">
+                    <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={300}>
+                      <AreaChart
+                        data={(summaryQuery.data?.items ?? []).map((i) => ({
+                          day: new Date(i.day).toLocaleDateString('es-ES', { month: 'short', day: 'numeric' }),
+                          amount: toNumber(i.amount),
+                          ordersCount: i.ordersCount,
+                        }))}
+                        margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
+                      >
+                        <defs>
+                          <linearGradient id="colorAmount" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor={reportColors.success[0]} stopOpacity={0.8} />
+                            <stop offset="95%" stopColor={reportColors.success[0]} stopOpacity={0.1} />
+                          </linearGradient>
+                          <linearGradient id="colorOrders" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor={reportColors.primary[0]} stopOpacity={0.8} />
+                            <stop offset="95%" stopColor={reportColors.primary[0]} stopOpacity={0.1} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid {...chartGridStyle} />
+                        <XAxis dataKey="day" {...chartAxisStyle} angle={-45} textAnchor="end" height={80} />
+                        <YAxis yAxisId="left" {...chartAxisStyle} />
+                        <YAxis yAxisId="right" orientation="right" {...chartAxisStyle} />
+                        <Tooltip {...chartTooltipStyle} formatter={(v: any, name: any) => [name === 'amount' ? `${money(Number(v))} ${currency}` : v, name === 'amount' ? 'Facturado' : 'Órdenes']} />
+                        <Legend wrapperStyle={{ paddingTop: '20px' }} />
+                        <Area
+                          yAxisId="left"
+                          type="monotone"
+                          dataKey="amount"
+                          stroke={reportColors.success[0]}
+                          strokeWidth={3}
+                          fillOpacity={1}
+                          fill="url(#colorAmount)"
+                          name="Monto Facturado"
+                        />
+                        <Area
+                          yAxisId="right"
+                          type="monotone"
+                          dataKey="ordersCount"
+                          stroke={reportColors.primary[0]}
+                          strokeWidth={3}
+                          fillOpacity={1}
+                          fill="url(#colorOrders)"
+                          name="Cantidad de Órdenes"
+                        />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                </>
               )}
-            </div>
+            </ReportSection>
           )}
 
           {tab === 'CUSTOMERS' && (
-            <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+            <ReportSection
+              title="👥 Ventas por Cliente"
+              subtitle="Top clientes por volumen de ventas"
+              icon="🏆"
+            >
               {byCustomerQuery.isLoading && <Loading />}
               {byCustomerQuery.isError && <ErrorState message={(byCustomerQuery.error as any)?.message ?? 'Error cargando reporte'} />}
               {!byCustomerQuery.isLoading && !byCustomerQuery.isError && (byCustomerQuery.data?.items?.length ?? 0) === 0 && (
@@ -532,34 +628,91 @@ export function SalesReportsPage() {
               )}
               {!byCustomerQuery.isLoading && !byCustomerQuery.isError && (byCustomerQuery.data?.items?.length ?? 0) > 0 && (
                 <>
-                  <div className="h-[360px]">
-                    <ResponsiveContainer width="100%" height="100%">
+                  {/* KPIs de clientes */}
+                  <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-3">
+                    <KPICard
+                      icon="👤"
+                      label="Total Clientes"
+                      value={(byCustomerQuery.data?.items ?? []).length}
+                      color="primary"
+                    />
+                    <KPICard
+                      icon="💵"
+                      label="Facturación Total"
+                      value={`${money((byCustomerQuery.data?.items ?? []).reduce((sum, i) => sum + toNumber(i.amount), 0))} ${currency}`}
+                      color="success"
+                    />
+                    <KPICard
+                      icon="📊"
+                      label="Promedio por Cliente"
+                      value={`${money((byCustomerQuery.data?.items ?? []).reduce((sum, i) => sum + toNumber(i.amount), 0) / Math.max(1, (byCustomerQuery.data?.items ?? []).length))} ${currency}`}
+                      color="info"
+                    />
+                  </div>
+
+                  {/* Gráfico de barras mejorado */}
+                  <div className="mx-auto mb-6 h-[400px] max-w-5xl rounded-lg bg-gradient-to-br from-slate-50 to-white p-4 dark:from-slate-900 dark:to-slate-800">
+                    <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={300}>
                       <BarChart
-                        data={(byCustomerQuery.data?.items ?? []).map((i) => ({
-                          name: i.customerName,
+                        data={(byCustomerQuery.data?.items ?? []).slice(0, 15).map((i, idx) => ({
+                          name: i.customerName.length > 20 ? i.customerName.slice(0, 17) + '...' : i.customerName,
                           amount: toNumber(i.amount),
                           ordersCount: i.ordersCount,
                         }))}
-                        margin={{ left: 10, right: 10 }}
+                        margin={{ left: 10, right: 10, bottom: 80 }}
                       >
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="name" hide />
-                        <YAxis />
-                        <Tooltip formatter={(v: any, name: any) => (name === 'amount' ? `${money(Number(v))} ${currency}` : v)} />
+                        <CartesianGrid {...chartGridStyle} />
+                        <XAxis dataKey="name" angle={-45} textAnchor="end" height={100} {...chartAxisStyle} />
+                        <YAxis yAxisId="left" {...chartAxisStyle} label={{ value: `Monto (${currency})`, angle: -90, position: 'insideLeft' }} />
+                        <YAxis yAxisId="right" orientation="right" {...chartAxisStyle} label={{ value: 'Órdenes', angle: 90, position: 'insideRight' }} />
+                        <Tooltip {...chartTooltipStyle} formatter={(v: any, name: any) => [name === 'amount' ? `${money(Number(v))} ${currency}` : v, name === 'amount' ? 'Facturado' : 'Órdenes']} />
                         <Legend />
-                        <Bar dataKey="amount" fill="#2563eb" />
-                        <Bar dataKey="ordersCount" fill="#16a34a" />
+                        <Bar yAxisId="left" dataKey="amount" fill={reportColors.success[0]} name="Monto Facturado" radius={[8, 8, 0, 0]} />
+                        <Bar yAxisId="right" dataKey="ordersCount" fill={reportColors.primary[1]} name="Cantidad de Órdenes" radius={[8, 8, 0, 0]} />
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
 
-                  <div className="mt-4">
+                  {/* Tabla detallada con colores alternados */}
+                  <div className="rounded-lg border border-slate-200 dark:border-slate-700">
                     <Table
                       columns={[
-                        { header: 'Cliente', accessor: (r) => r.customerName },
-                        { header: 'Ciudad', accessor: (r) => r.city ?? '-' },
-                        { header: 'Órdenes', accessor: (r) => String(r.ordersCount) },
-                        { header: `Total (${currency})`, accessor: (r) => money(toNumber(r.amount)) },
+                        { 
+                          header: '🏅 Cliente', 
+                          accessor: (r, idx) => (
+                            <div className="flex items-center gap-2">
+                              {idx < 3 && <span className="text-lg">{['🥇', '🥈', '🥉'][idx]}</span>}
+                              <span className="font-medium">{r.customerName}</span>
+                            </div>
+                          )
+                        },
+                        { header: '🏙️ Ciudad', accessor: (r) => r.city ?? '-' },
+                        { header: '📋 Órdenes', accessor: (r) => String(r.ordersCount) },
+                        { header: '📦 Cantidad', accessor: (r) => toNumber(r.quantity).toFixed(0) },
+                        { 
+                          header: `💰 Total (${currency})`, 
+                          accessor: (r) => (
+                            <span className="font-semibold text-green-600 dark:text-green-400">
+                              {money(toNumber(r.amount))}
+                            </span>
+                          )
+                        },
+                        {
+                          header: '% del Total',
+                          accessor: (r) => {
+                            const total = (byCustomerQuery.data?.items ?? []).reduce((sum, i) => sum + toNumber(i.amount), 0)
+                            const pct = total > 0 ? (toNumber(r.amount) / total) * 100 : 0
+                            const pctSafe = Number.isFinite(pct) ? pct : 0
+                            return (
+                              <div className="flex items-center gap-2">
+                                <div className="h-2 w-16 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
+                                  <div className="h-full bg-green-500" style={{ width: `${pctSafe}%` }} />
+                                </div>
+                                <span className="text-sm tabular-nums">{pctSafe.toFixed(1)}%</span>
+                              </div>
+                            )
+                          },
+                        },
                       ]}
                       data={byCustomerQuery.data?.items ?? []}
                       keyExtractor={(r) => r.customerId}
@@ -567,59 +720,136 @@ export function SalesReportsPage() {
                   </div>
                 </>
               )}
-            </div>
+            </ReportSection>
           )}
 
           {tab === 'CITIES' && (
-            <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+            <ReportSection
+              title="🏙️ Ventas por Ciudad"
+              subtitle="Distribución geográfica de ventas"
+              icon="🗺️"
+            >
               {byCityQuery.isLoading && <Loading />}
               {byCityQuery.isError && <ErrorState message={(byCityQuery.error as any)?.message ?? 'Error cargando reporte'} />}
               {!byCityQuery.isLoading && !byCityQuery.isError && (byCityQuery.data?.items?.length ?? 0) === 0 && (
                 <EmptyState message="No hay ventas en el rango seleccionado." />
               )}
               {!byCityQuery.isLoading && !byCityQuery.isError && (byCityQuery.data?.items?.length ?? 0) > 0 && (
-                <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                  <div className="h-[360px]">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                        <Pie
-                          data={(byCityQuery.data?.items ?? []).map((i) => ({
-                            name: i.city,
-                            value: toNumber(i.amount),
-                          }))}
-                          dataKey="value"
-                          nameKey="name"
-                          innerRadius={60}
-                          outerRadius={120}
-                          paddingAngle={2}
-                        >
-                          {(byCityQuery.data?.items ?? []).map((_, idx) => (
-                            <Cell key={idx} fill={PIE_COLORS[idx % PIE_COLORS.length]} />
-                          ))}
-                        </Pie>
-                        <Tooltip formatter={(v: any) => `${money(Number(v))} ${currency}`} />
-                        <Legend />
-                      </PieChart>
-                    </ResponsiveContainer>
-                  </div>
-                  <div>
-                    <Table
-                      columns={[
-                        { header: 'Ciudad', accessor: (r) => r.city },
-                        { header: 'Órdenes', accessor: (r) => String(r.ordersCount) },
-                        { header: `Total (${currency})`, accessor: (r) => money(toNumber(r.amount)) },
-                      ]}
-                      data={byCityQuery.data?.items ?? []}
-                      keyExtractor={(r) => r.city}
+                <>
+                  {/* KPIs */}
+                  <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-3">
+                    <KPICard
+                      icon="📍"
+                      label="Ciudades Activas"
+                      value={(byCityQuery.data?.items ?? []).length}
+                      color="info"
+                    />
+                    <KPICard
+                      icon="🏆"
+                      label="Ciudad Líder"
+                      value={(byCityQuery.data?.items ?? [])[0]?.city ?? '-'}
+                      subtitle={`${money(toNumber((byCityQuery.data?.items ?? [])[0]?.amount))} ${currency}`}
+                      color="warning"
+                    />
+                    <KPICard
+                      icon="💰"
+                      label="Total Facturado"
+                      value={`${money((byCityQuery.data?.items ?? []).reduce((sum, i) => sum + toNumber(i.amount), 0))} ${currency}`}
+                      color="success"
                     />
                   </div>
-                </div>
+
+                  <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+                    {/* Gráfico de torta mejorado */}
+                    <div className="h-[400px] rounded-lg bg-gradient-to-br from-slate-50 to-white p-4 dark:from-slate-900 dark:to-slate-800">
+                      <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={300}>
+                        <PieChart>
+                          <Pie
+                            data={(byCityQuery.data?.items ?? []).map((i) => ({
+                              name: i.city,
+                              value: toNumber(i.amount),
+                            }))}
+                            dataKey="value"
+                            nameKey="name"
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={70}
+                            outerRadius={130}
+                            paddingAngle={4}
+                            label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
+                          >
+                            {(byCityQuery.data?.items ?? []).map((_, idx) => (
+                              <Cell key={idx} fill={getChartColor(idx, 'rainbow')} />
+                            ))}
+                          </Pie>
+                          <Tooltip
+                            {...chartTooltipStyle}
+                            formatter={(v: any) => [`${money(Number(v))} ${currency}`, 'Facturado']}
+                          />
+                          <Legend verticalAlign="bottom" height={36} />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+
+                    {/* Tabla con ranking */}
+                    <div className="rounded-lg border border-slate-200 dark:border-slate-700">
+                      <Table
+                        columns={[
+                          {
+                            header: '🏅 Ciudad',
+                            accessor: (r, idx) => (
+                              <div className="flex items-center gap-2">
+                                {idx < 3 && <span className="text-lg">{['🥇', '🥈', '🥉'][idx]}</span>}
+                                <span className="font-medium">{r.city}</span>
+                              </div>
+                            ),
+                          },
+                          { header: '📋 Órdenes', accessor: (r) => String(r.ordersCount) },
+                          { header: '📦 Cantidad', accessor: (r) => toNumber(r.quantity).toFixed(0) },
+                          {
+                            header: `💰 Total (${currency})`,
+                            accessor: (r) => (
+                              <span className="font-semibold text-green-600 dark:text-green-400">
+                                {money(toNumber(r.amount))}
+                              </span>
+                            ),
+                          },
+                          {
+                            header: '% del Total',
+                            accessor: (r) => {
+                              const total = (byCityQuery.data?.items ?? []).reduce((sum, i) => sum + toNumber(i.amount), 0)
+                              const pct = total > 0 ? (toNumber(r.amount) / total) * 100 : 0
+                              const pctSafe = Number.isFinite(pct) ? pct : 0
+                              return (
+                                <div className="flex items-center gap-2">
+                                  <div className="h-2 w-16 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
+                                    <div
+                                      className="h-full bg-blue-500"
+                                      style={{ width: `${pctSafe}%` }}
+                                    />
+                                  </div>
+                                  <span className="text-sm">{pctSafe.toFixed(1)}%</span>
+                                </div>
+                              )
+                            },
+                          },
+                        ]}
+                        data={byCityQuery.data?.items ?? []}
+                        keyExtractor={(r) => r.city}
+                      />
+                    </div>
+                  </div>
+                </>
               )}
-            </div>
+            </ReportSection>
           )}
 
           {tab === 'TOP_PRODUCTS' && (
-            <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+            <ReportSection
+              title="🧪 Productos Más Vendidos"
+              subtitle="Ranking de productos por facturación y volumen"
+              icon="🏆"
+            >
               {topProductsQuery.isLoading && <Loading />}
               {topProductsQuery.isError && (
                 <ErrorState message={(topProductsQuery.error as any)?.message ?? 'Error cargando reporte'} />
@@ -629,34 +859,106 @@ export function SalesReportsPage() {
               )}
               {!topProductsQuery.isLoading && !topProductsQuery.isError && (topProductsQuery.data?.items?.length ?? 0) > 0 && (
                 <>
-                  <div className="h-[360px]">
-                    <ResponsiveContainer width="100%" height="100%">
+                  {/* KPIs de productos */}
+                  <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-4">
+                    <KPICard
+                      icon="📦"
+                      label="Productos Vendidos"
+                      value={(topProductsQuery.data?.items ?? []).length}
+                      color="primary"
+                    />
+                    <KPICard
+                      icon="⭐"
+                      label="Producto Estrella"
+                      value={(topProductsQuery.data?.items ?? [])[0]?.name?.slice(0, 15) ?? '-'}
+                      subtitle={`${toNumber((topProductsQuery.data?.items ?? [])[0]?.quantity).toFixed(0)} unidades`}
+                      color="warning"
+                    />
+                    <KPICard
+                      icon="📊"
+                      label="Unidades Totales"
+                      value={(topProductsQuery.data?.items ?? []).reduce((sum, i) => sum + toNumber(i.quantity), 0).toFixed(0)}
+                      color="info"
+                    />
+                    <KPICard
+                      icon="💵"
+                      label="Facturación Total"
+                      value={`${money((topProductsQuery.data?.items ?? []).reduce((sum, i) => sum + toNumber(i.amount), 0))} ${currency}`}
+                      color="success"
+                    />
+                  </div>
+
+                  {/* Gráfico mejorado con barras horizontales y colores */}
+                  <div className="mx-auto mb-6 h-[450px] max-w-5xl rounded-lg bg-gradient-to-br from-slate-50 to-white p-4 dark:from-slate-900 dark:to-slate-800">
+                    <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={350}>
                       <BarChart
-                        data={(topProductsQuery.data?.items ?? []).map((i) => ({
-                          name: i.name,
+                        data={(topProductsQuery.data?.items ?? []).slice(0, 12).map((i, idx) => ({
+                          name: i.name.length > 25 ? i.name.slice(0, 22) + '...' : i.name,
                           amount: toNumber(i.amount),
                           quantity: toNumber(i.quantity),
                         }))}
-                        margin={{ left: 10, right: 10 }}
+                        margin={{ left: 10, right: 30, bottom: 80 }}
                       >
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="name" hide />
-                        <YAxis />
-                        <Tooltip formatter={(v: any, name: any) => (name === 'amount' ? `${money(Number(v))} ${currency}` : v)} />
+                        <CartesianGrid {...chartGridStyle} />
+                        <XAxis dataKey="name" angle={-45} textAnchor="end" height={100} {...chartAxisStyle} />
+                        <YAxis yAxisId="left" {...chartAxisStyle} label={{ value: `Monto (${currency})`, angle: -90, position: 'insideLeft' }} />
+                        <YAxis yAxisId="right" orientation="right" {...chartAxisStyle} label={{ value: 'Unidades', angle: 90, position: 'insideRight' }} />
+                        <Tooltip
+                          {...chartTooltipStyle}
+                          formatter={(v: any, name: any) => [name === 'amount' ? `${money(Number(v))} ${currency}` : `${Number(v).toFixed(0)} unid.`, name === 'amount' ? 'Facturado' : 'Cantidad']}
+                        />
                         <Legend />
-                        <Bar dataKey="amount" fill="#2563eb" />
-                        <Bar dataKey="quantity" fill="#f59e0b" />
+                        <Bar yAxisId="left" dataKey="amount" fill={reportColors.success[0]} name="Monto Facturado" radius={[8, 8, 0, 0]} />
+                        <Bar yAxisId="right" dataKey="quantity" fill={reportColors.warning[0]} name="Cantidad Vendida" radius={[8, 8, 0, 0]} />
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
 
-                  <div className="mt-4">
+                  {/* Tabla detallada */}
+                  <div className="rounded-lg border border-slate-200 dark:border-slate-700">
                     <Table
                       columns={[
-                        { header: 'SKU', accessor: (r) => r.sku },
-                        { header: 'Producto', accessor: (r) => r.name },
-                        { header: 'Cantidad', accessor: (r) => String(toNumber(r.quantity)) },
-                        { header: `Total (${currency})`, accessor: (r) => money(toNumber(r.amount)) },
+                        {
+                          header: '🏅 Ranking',
+                          accessor: (_, idx) => (
+                            <div className="flex items-center justify-center">
+                              {idx < 3 ? (
+                                <span className="text-2xl">{['🥇', '🥈', '🥉'][idx]}</span>
+                              ) : (
+                                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-sm font-bold dark:bg-slate-700">
+                                  {idx + 1}
+                                </span>
+                              )}
+                            </div>
+                          ),
+                        },
+                        { header: '🔖 SKU', accessor: (r) => <span className="font-mono text-xs">{r.sku}</span> },
+                        { header: '📦 Producto', accessor: (r) => <span className="font-medium">{r.name}</span> },
+                        { header: '📊 Cantidad', accessor: (r) => <span className="tabular-nums">{toNumber(r.quantity).toFixed(0)}</span> },
+                        {
+                          header: `💰 Total (${currency})`,
+                          accessor: (r) => (
+                            <span className="font-semibold tabular-nums text-green-600 dark:text-green-400">
+                              {money(toNumber(r.amount))}
+                            </span>
+                          ),
+                        },
+                        {
+                          header: '% Ingresos',
+                          accessor: (r) => {
+                            const total = (topProductsQuery.data?.items ?? []).reduce((sum, i) => sum + toNumber(i.amount), 0)
+                            const pct = total > 0 ? (toNumber(r.amount) / total) * 100 : 0
+                            const pctSafe = Number.isFinite(pct) ? pct : 0
+                            return (
+                              <div className="flex items-center gap-2">
+                                <div className="h-2 w-16 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
+                                  <div className="h-full bg-green-500" style={{ width: `${pctSafe}%` }} />
+                                </div>
+                                <span className="text-sm tabular-nums">{pctSafe.toFixed(1)}%</span>
+                              </div>
+                            )
+                          },
+                        },
                       ]}
                       data={topProductsQuery.data?.items ?? []}
                       keyExtractor={(r) => r.productId}
@@ -664,11 +966,15 @@ export function SalesReportsPage() {
                   </div>
                 </>
               )}
-            </div>
+            </ReportSection>
           )}
 
           {tab === 'FUNNEL' && (
-            <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+            <ReportSection
+              title="🔻 Embudo de Ventas"
+              subtitle="Proceso completo desde cotización hasta cobro"
+              icon="📊"
+            >
               {funnelQuery.isLoading && <Loading />}
               {funnelQuery.isError && <ErrorState message={(funnelQuery.error as any)?.message ?? 'Error cargando reporte'} />}
               {!funnelQuery.isLoading && !funnelQuery.isError && (funnelQuery.data?.items?.length ?? 0) === 0 && (
@@ -676,41 +982,68 @@ export function SalesReportsPage() {
               )}
               {!funnelQuery.isLoading && !funnelQuery.isError && (funnelQuery.data?.items?.length ?? 0) > 0 && (
                 <>
-                  <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
-                    {(funnelQuery.data?.items ?? []).map((i) => (
-                      <div
-                        key={i.key}
-                        className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800"
-                      >
-                        <div className="text-xs text-slate-600 dark:text-slate-400">{i.label}</div>
-                        <div className="text-2xl font-semibold text-slate-900 dark:text-white">{i.value}</div>
-                      </div>
-                    ))}
+                  {/* KPIs del embudo con iconos */}
+                  <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-5">
+                    {(funnelQuery.data?.items ?? []).map((i, idx) => {
+                      const icons = ['📝', '⚙️', '📦', '✅', '💰']
+                      const colors: Array<'primary' | 'info' | 'warning' | 'success'> = ['primary', 'info', 'warning', 'success', 'success']
+                      return (
+                        <KPICard
+                          key={i.key}
+                          icon={icons[idx] ?? '📊'}
+                          label={i.label}
+                          value={i.value}
+                          color={colors[idx] ?? 'primary'}
+                        />
+                      )
+                    })}
                   </div>
 
-                  <div className="mt-4 h-[320px]">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={(funnelQuery.data?.items ?? []).map((i) => ({ label: i.label, value: i.value }))}>
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="label" hide />
-                        <YAxis />
-                        <Tooltip />
-                        <Bar dataKey="value" fill="#2563eb" />
+                  {/* Gráfico de embudo visual */}
+                  <div className="mx-auto mb-6 h-[400px] max-w-5xl rounded-lg bg-gradient-to-br from-slate-50 to-white p-4 dark:from-slate-900 dark:to-slate-800">
+                    <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={300}>
+                      <BarChart
+                        data={(funnelQuery.data?.items ?? []).map((i, idx) => ({
+                          label: i.label,
+                          value: i.value,
+                          fill: getChartColor(idx, 'rainbow'),
+                        }))}
+                        layout="horizontal"
+                        margin={{ top: 20, right: 30, left: 20, bottom: 40 }}
+                      >
+                        <CartesianGrid {...chartGridStyle} />
+                        <XAxis type="category" dataKey="label" angle={-15} textAnchor="end" height={60} {...chartAxisStyle} />
+                        <YAxis type="number" {...chartAxisStyle} />
+                        <Tooltip {...chartTooltipStyle} formatter={(v: any) => [v, 'Cantidad']} />
+                        <Bar dataKey="value" radius={[8, 8, 0, 0]}>
+                          {(funnelQuery.data?.items ?? []).map((_, idx) => (
+                            <Cell key={idx} fill={getChartColor(idx, 'rainbow')} />
+                          ))}
+                        </Bar>
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
 
-                  <div className="mt-2 flex flex-wrap gap-4 text-sm text-slate-700 dark:text-slate-300">
-                    <div>
-                      <span className="font-medium">Total entregado:</span> {money(toNumber(funnelQuery.data?.totals?.amountFulfilled))} {currency}
-                    </div>
-                    <div>
-                      <span className="font-medium">Total cobrado:</span> {money(toNumber(funnelQuery.data?.totals?.amountPaid))} {currency}
-                    </div>
+                  {/* Totales monetarios con KPIs */}
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <KPICard
+                      icon="✅"
+                      label="Total Entregado"
+                      value={`${money(toNumber(funnelQuery.data?.totals?.amountFulfilled))} ${currency}`}
+                      color="success"
+                      subtitle="Órdenes completadas"
+                    />
+                    <KPICard
+                      icon="💵"
+                      label="Total Cobrado"
+                      value={`${money(toNumber(funnelQuery.data?.totals?.amountPaid))} ${currency}`}
+                      color="primary"
+                      subtitle="Pagos recibidos"
+                    />
                   </div>
                 </>
               )}
-            </div>
+            </ReportSection>
           )}
         </div>
 

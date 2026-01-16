@@ -4,7 +4,7 @@ import { useScroll } from '../../contexts/ScrollContext'
 
 export interface Column<T> {
   header: ReactNode
-  accessor: (item: T) => ReactNode
+  accessor: (item: T, index: number) => ReactNode
   className?: string
 }
 
@@ -48,14 +48,14 @@ export function Table<T>({ columns, data, keyExtractor, rowClassName }: TablePro
           </tr>
         </thead>
         <tbody>
-          {data.map((item) => (
+          {data.map((item, rowIndex) => (
             <tr
               key={keyExtractor(item)}
               className={`border-b border-slate-100 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-900 py-2 ${rowClassName ? rowClassName(item) : ''}`}
             >
               {columns.map((col, idx) => (
                 <td key={idx} className={`px-4 py-4 text-slate-900 dark:text-slate-100 ${col.className ?? ''}`}>
-                  {col.accessor(item)}
+                  {col.accessor(item, rowIndex)}
                 </td>
               ))}
             </tr>

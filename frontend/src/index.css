@@ -24,6 +24,16 @@ body {
   @apply bg-slate-50 text-slate-900 dark:bg-slate-900 dark:text-slate-100;
 }
 
+/* Ajustes temporales SOLO durante exportación PDF (se agrega/remueve desde exportPdf.ts) */
+.pdf-export {
+  font-size: 13px;
+}
+
+.pdf-export .report-section-title {
+  font-size: 1.125rem; /* ~text-lg */
+  line-height: 1.75rem;
+}
+
 /* Botones primarios adaptados al branding */
 .btn-primary {
   background-color: var(--pf-primary);

@@ -4,6 +4,11 @@ import react from '@vitejs/plugin-react'
 
 // Determine backend target based on environment
 const getBackendTarget = () => {
+  // Check for explicit environment variable first (used in Docker)
+  if (process.env.VITE_BACKEND_TARGET) {
+    return process.env.VITE_BACKEND_TARGET;
+  }
+  
   // In development (vite dev), use localhost
   // In production (vite preview/Docker), use backend service
   const isProduction = process.env.NODE_ENV === 'production';
