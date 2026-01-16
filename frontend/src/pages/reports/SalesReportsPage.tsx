@@ -3,8 +3,6 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import {
   ResponsiveContainer,
-  LineChart,
-  Line,
   CartesianGrid,
   XAxis,
   YAxis,
@@ -415,9 +413,9 @@ export function SalesReportsPage() {
               filename: exportFilename,
               title,
               subtitle: `Período: ${from} a ${to} | Moneda: ${currency}`,
-              companyName: tenant.branding?.name,
+              companyName: tenant.branding?.tenantName ?? 'Empresa',
               headerColor: '#10B981',
-              logoUrl: tenant.branding?.logoUrl,
+              logoUrl: tenant.branding?.logoUrl ?? undefined,
             })
           }}
         >
@@ -510,7 +508,7 @@ export function SalesReportsPage() {
               <div className="flex flex-wrap gap-3 text-sm">
                 <div className="flex items-center gap-2 rounded-lg bg-slate-100 px-3 py-2 dark:bg-slate-800">
                   <span className="text-base">🏢</span>
-                  <span className="font-medium text-slate-700 dark:text-slate-300">{tenant.branding?.name ?? 'Empresa'}</span>
+                  <span className="font-medium text-slate-700 dark:text-slate-300">{tenant.branding?.tenantName ?? 'Empresa'}</span>
                 </div>
                 <div className="flex items-center gap-2 rounded-lg bg-slate-100 px-3 py-2 dark:bg-slate-800">
                   <span className="text-base">📅</span>
@@ -654,7 +652,7 @@ export function SalesReportsPage() {
                   <div className="mx-auto mb-6 h-[400px] max-w-5xl rounded-lg bg-gradient-to-br from-slate-50 to-white p-4 dark:from-slate-900 dark:to-slate-800">
                     <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={300}>
                       <BarChart
-                        data={(byCustomerQuery.data?.items ?? []).slice(0, 15).map((i, idx) => ({
+                        data={(byCustomerQuery.data?.items ?? []).slice(0, 15).map((i) => ({
                           name: i.customerName.length > 20 ? i.customerName.slice(0, 17) + '...' : i.customerName,
                           amount: toNumber(i.amount),
                           ordersCount: i.ordersCount,
@@ -776,7 +774,7 @@ export function SalesReportsPage() {
                             innerRadius={70}
                             outerRadius={130}
                             paddingAngle={4}
-                            label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
+                            label={({ name, percent }) => `${name} (${((percent ?? 0) * 100).toFixed(0)}%)`}
                           >
                             {(byCityQuery.data?.items ?? []).map((_, idx) => (
                               <Cell key={idx} fill={getChartColor(idx, 'rainbow')} />
@@ -892,7 +890,7 @@ export function SalesReportsPage() {
                   <div className="mx-auto mb-6 h-[450px] max-w-5xl rounded-lg bg-gradient-to-br from-slate-50 to-white p-4 dark:from-slate-900 dark:to-slate-800">
                     <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={350}>
                       <BarChart
-                        data={(topProductsQuery.data?.items ?? []).slice(0, 12).map((i, idx) => ({
+                        data={(topProductsQuery.data?.items ?? []).slice(0, 12).map((i) => ({
                           name: i.name.length > 25 ? i.name.slice(0, 22) + '...' : i.name,
                           amount: toNumber(i.amount),
                           quantity: toNumber(i.quantity),

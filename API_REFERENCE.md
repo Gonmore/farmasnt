@@ -1511,6 +1511,131 @@ Response 200
 }
 ```
 
+#### GET /api/v1/reports/sales/by-customer
+Requiere: módulo `SALES` + permiso `sales:order:read`.
+
+Query
+- `from` (date-time, opcional)
+- `to` (date-time, opcional)
+- `status` (opcional)
+- `take` (1..50, default 15)
+
+Response 200
+```json
+{
+  "items": [
+    { "customerId": "...", "customerName": "Cliente", "city": "La Paz", "ordersCount": 3, "quantity": "12", "amount": "450" }
+  ]
+}
+```
+
+#### GET /api/v1/reports/sales/by-city
+Requiere: módulo `SALES` + permiso `sales:order:read`.
+
+Query
+- `from` (date-time, opcional)
+- `to` (date-time, opcional)
+- `status` (opcional)
+- `take` (1..50, default 20)
+
+Response 200
+```json
+{
+  "items": [
+    { "city": "La Paz", "ordersCount": 3, "quantity": "12", "amount": "450" }
+  ]
+}
+```
+
+#### GET /api/v1/reports/sales/funnel
+Requiere: módulo `SALES` + permiso `sales:order:read`.
+
+Query
+- `from` (date-time, opcional)
+- `to` (date-time, opcional)
+
+Response 200
+```json
+{
+  "items": [
+    { "key": "quotes", "label": "Cotizaciones", "value": 10 },
+    { "key": "orders", "label": "Órdenes", "value": 7 },
+    { "key": "fulfilled", "label": "Entregadas", "value": 5 },
+    { "key": "paid", "label": "Cobradas", "value": 4 }
+  ],
+  "totals": { "amountFulfilled": "123.45", "amountPaid": "100.00" }
+}
+```
+
+#### POST /api/v1/reports/sales/email
+Requiere: módulo `SALES` + permiso `sales:order:read`.
+
+Body
+```json
+{
+  "to": "destino@correo.com",
+  "subject": "Reporte de ventas",
+  "filename": "Reporte_Ventas.pdf",
+  "pdfBase64": "JVBERi0xLjcK...",
+  "message": "(opcional)"
+}
+```
+
+Response 200 sin body.
+
+#### Schedules — /api/v1/reports/sales/schedules
+Requiere: módulo `SALES` + permiso `sales:order:read`.
+
+##### GET /api/v1/reports/sales/schedules
+Response 200
+```json
+{
+  "items": [
+    {
+      "id": "...",
+      "reportKey": "sales",
+      "frequency": "DAILY",
+      "hour": 8,
+      "minute": 0,
+      "dayOfWeek": null,
+      "dayOfMonth": null,
+      "recipients": ["a@b.com"],
+      "enabled": true,
+      "lastRunAt": null,
+      "nextRunAt": "2026-01-16T08:00:00.000Z"
+    }
+  ]
+}
+```
+
+##### POST /api/v1/reports/sales/schedules
+Body
+```json
+{
+  "reportKey": "sales",
+  "frequency": "DAILY",
+  "hour": 8,
+  "minute": 0,
+  "dayOfWeek": 1,
+  "dayOfMonth": 1,
+  "recipients": ["a@b.com"],
+  "enabled": true
+}
+```
+
+Response 200 sin body.
+
+##### PATCH /api/v1/reports/sales/schedules/:id
+Body
+```json
+{ "enabled": false }
+```
+
+Response 200 sin body.
+
+##### DELETE /api/v1/reports/sales/schedules/:id
+Response 200 sin body.
+
 ### Stock
 
 #### GET /api/v1/reports/stock/balances-expanded
@@ -1576,4 +1701,59 @@ Response 200
   ]
 }
 ```
+
+#### GET /api/v1/reports/stock/inputs-by-product
+Requiere: módulo `WAREHOUSE` + permiso `stock:read`.
+
+Query
+- `from` (date-time, opcional)
+- `to` (date-time, opcional)
+- `take` (1..50, default 15)
+
+Response 200
+```json
+{
+  "items": [
+    { "productId": "...", "sku": "SKU-001", "name": "Producto", "movementsCount": 2, "quantity": "10" }
+  ]
+}
+```
+
+#### GET /api/v1/reports/stock/transfers-between-warehouses
+Requiere: módulo `WAREHOUSE` + permiso `stock:read`.
+
+Query
+- `from` (date-time, opcional)
+- `to` (date-time, opcional)
+- `take` (1..50, default 10)
+
+Response 200
+```json
+{
+  "items": [
+    {
+      "fromWarehouse": { "id": "...", "code": "WH-01", "name": "Almacén 1" },
+      "toWarehouse": { "id": "...", "code": "WH-02", "name": "Almacén 2" },
+      "movementsCount": 3,
+      "quantity": "25"
+    }
+  ]
+}
+```
+
+#### POST /api/v1/reports/stock/email
+Requiere: módulo `WAREHOUSE` + permiso `stock:read`.
+
+Body (mismo contrato que `POST /api/v1/reports/sales/email`)
+
+Response 200 sin body.
+
+#### Schedules — /api/v1/reports/stock/schedules
+Requiere: módulo `WAREHOUSE` + permiso `stock:read`.
+
+Operaciones:
+- `GET /api/v1/reports/stock/schedules`
+- `POST /api/v1/reports/stock/schedules`
+- `PATCH /api/v1/reports/stock/schedules/:id` (por ahora solo `enabled`)
+- `DELETE /api/v1/reports/stock/schedules/:id`
 

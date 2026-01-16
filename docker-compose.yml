@@ -38,6 +38,8 @@ services:
         VITE_BACKEND_TARGET: "http://backend-farmasnt:6000"
     container_name: frontend-farmasnt
     restart: always
+    depends_on:
+      - backend-farmasnt
     ports:
       - "6001:6001"
     networks:
@@ -45,4 +47,5 @@ services:
 
 networks:
   red-interna:
+    name: red-interna
     external: true

@@ -292,9 +292,9 @@ export function StockReportsPage() {
               filename: exportFilename,
               title,
               subtitle: `Período: ${formatDate(new Date(from))} - ${formatDate(new Date(to))}`,
-              companyName: tenant?.data?.name ?? 'Empresa',
+              companyName: tenant.branding?.tenantName ?? 'Empresa',
               headerColor: '#3B82F6',
-              logoUrl: tenant?.data?.branding?.logoUrl,
+              logoUrl: tenant.branding?.logoUrl ?? undefined,
             })
           }}
         >
@@ -372,7 +372,7 @@ export function StockReportsPage() {
                 </div>
                 <div className="flex flex-col gap-2">
                   <span className="inline-flex items-center rounded-full bg-blue-100 px-3 py-1 text-xs font-medium text-blue-800 dark:bg-blue-900 dark:text-blue-200">
-                    🏢 {tenant?.data?.name ?? 'Empresa'}
+                    🏢 {tenant.branding?.tenantName ?? 'Empresa'}
                   </span>
                   <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-800 dark:bg-slate-800 dark:text-slate-200">
                     📅 {formatDate(new Date())}
@@ -428,7 +428,7 @@ export function StockReportsPage() {
                   <div className="mx-auto mb-6 h-[450px] max-w-5xl rounded-lg bg-gradient-to-br from-slate-50 to-white p-4 dark:from-slate-900 dark:to-slate-800">
                     <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={350}>
                       <BarChart
-                        data={(inputsQuery.data?.items ?? []).slice(0, 15).map((i, idx) => ({
+                        data={(inputsQuery.data?.items ?? []).slice(0, 15).map((i) => ({
                           name: `${i.sku}`,
                           fullName: i.name,
                           quantity: toNumber(i.quantity),
@@ -442,7 +442,7 @@ export function StockReportsPage() {
                         <YAxis yAxisId="right" orientation="right" {...chartAxisStyle} label={{ value: 'Movimientos', angle: 90, position: 'insideRight' }} />
                         <Tooltip
                           {...chartTooltipStyle}
-                          formatter={(v: any, name: any, props: any) => {
+                          formatter={(v: any, name: any) => {
                             const label = name === 'quantity' ? 'Cantidad Ingresada' : 'Nº Movimientos'
                             return [v, label]
                           }}
@@ -579,7 +579,7 @@ export function StockReportsPage() {
                             innerRadius={60}
                             outerRadius={100}
                             paddingAngle={3}
-                            label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
+                            label={({ name, percent }) => `${name} (${((percent ?? 0) * 100).toFixed(0)}%)`}
                           >
                             {(transfersQuery.data?.items ?? []).slice(0, 8).map((_, idx) => (
                               <Cell key={idx} fill={getChartColor(idx, 'rainbow')} />

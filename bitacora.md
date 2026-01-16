@@ -501,3 +501,9 @@ Tenant Admin (Clientes)
 - **Backend**: endpoint `GET /api/v1/sales/deliveries` ahora soporta `status=ALL` y `cities` query param para filtrar.
 - **Documentación**: actualizada API_REFERENCE.md con nuevos params `status=ALL` y `cities`.
 
+### **[16 Ene 2026]** — Reportes renovados + Exportación PDF profesional + build prod estable
+- **Reportes (Ventas/Stock)**: rediseño de UI con secciones, KPIs y gráficos (Recharts) con mejor legibilidad y estilo consistente.
+- **Exportación PDF (carta vertical)**: header/footer con branding, captura con ancho fijo, paginación por “slicing” para respetar márgenes en páginas 2+ y evitar duplicado de contenido.
+- **Fix NaN en tablas**: el componente de tabla genérico ahora pasa `rowIndex` al `accessor(item, index)` (evita `NaN` por índices indefinidos).
+- **Fix build TypeScript en Docker/producción**: ajustes de tipos en reportes (`tenant.branding.tenantName`, `logoUrl` nullable, `percent` optional) y limpieza de imports/parámetros no usados.
+
