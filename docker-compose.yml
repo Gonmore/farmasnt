@@ -6,24 +6,24 @@ services:
     restart: always
     environment:
       # Formato LLAVE: VALOR (Nota el uso de : y sin comillas innecesarias a menos que haya caracteres raros)
-      DATABASE_URL: "postgresql://postgres:D3v3%2Fop3R@postgres-principal:5432/farmasnt?schema=public"
-      PORT: 6000
-      NODE_ENV: "production"
-      JWT_ACCESS_SECRET: "Supern0vat0s2026"
-      JWT_REFRESH_SECRET: "Supern0vat0s2026"
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
+      PORT: ${PORT:-6000}
+      NODE_ENV: ${NODE_ENV:-production}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?set JWT_ACCESS_SECRET in .env}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?set JWT_REFRESH_SECRET in .env}
       # RUN_SEED=1 ejecuta `npm run seed` al arrancar (idempotente)
-      RUN_SEED: "0"
-      SEED_TENANT_NAME: "Demo Pharma"
-      SEED_ADMIN_EMAIL: "admin@demo.local"
-      SEED_ADMIN_PASSWORD: "Admin123!"
-      SEED_PLATFORM_DOMAIN: "farmasnt.supernovatel.com"
-      SMTP_HOST: "mail.supernovatel.com"
-      SMTP_PORT: 465
-      SMTP_SECURE: "true"
-      SMTP_USER: "saas@supernovatel.com"
-      SMTP_PASS: "if5u/WD9kZ"
-      SMTP_FROM: "PharmaFlow <saas@supernovatel.com>"
-      WEB_ORIGIN: "https://farmasnt.supernovatel.com"
+      RUN_SEED: ${RUN_SEED:-0}
+      SEED_TENANT_NAME: ${SEED_TENANT_NAME:-Demo Pharma}
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@demo.local}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
+      SEED_PLATFORM_DOMAIN: ${SEED_PLATFORM_DOMAIN:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-465}
+      SMTP_SECURE: ${SMTP_SECURE:-true}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      WEB_ORIGIN: ${WEB_ORIGIN:?set WEB_ORIGIN in .env}
 
       # Object storage (S3 / MinIO)
       # NOTE: These are required for product photo upload and tenant logo upload.
@@ -40,9 +40,9 @@ services:
       # Prisma: si una migración quedó marcada como FAILED (P3009), el contenedor no podrá aplicar nuevas.
       # Para este caso puntual (20260116063727_pagos) habilitamos una resolución automática y reintento.
       # IMPORTANTE: si la migración alcanzó a aplicar cambios parcialmente, puede requerir limpieza manual.
-      PRISMA_MIGRATE_RESOLVE_ON_FAIL: "1"
-      PRISMA_MIGRATE_RESOLVE_ACTION: "rolled-back"
-      PRISMA_MIGRATE_RESOLVE_NAMES: "20260116063727_pagos"
+      PRISMA_MIGRATE_RESOLVE_ON_FAIL: ${PRISMA_MIGRATE_RESOLVE_ON_FAIL:-1}
+      PRISMA_MIGRATE_RESOLVE_ACTION: ${PRISMA_MIGRATE_RESOLVE_ACTION:-rolled-back}
+      PRISMA_MIGRATE_RESOLVE_NAMES: ${PRISMA_MIGRATE_RESOLVE_NAMES:-20260116063727_pagos}
     ports:
       - "6000:6000"  # Mantener puerto 6000 para acceso interno
     networks:
@@ -53,8 +53,8 @@ services:
       context: ./frontend
       args:
         # Importante: VITE_* se inyecta en build (no en runtime)
-        VITE_API_BASE_URL: "https://farmasnt.supernovatel.com"  # Mantener URL absoluta para evitar problemas SSL
-        VITE_BACKEND_TARGET: "http://backend-farmasnt:6000"
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:?set VITE_API_BASE_URL in .env}
+        VITE_BACKEND_TARGET: ${VITE_BACKEND_TARGET:-http://backend-farmasnt:6000}
     container_name: frontend-farmasnt
     restart: always
     environment:
