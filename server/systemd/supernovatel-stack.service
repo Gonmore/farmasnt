@@ -1,0 +1,25 @@
+[Unit]
+Description=Supernovatel Docker stack (postgres -> proxy -> minio -> projects)
+Wants=docker.service
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=POSTGRES_DIR=/postgres
+Environment=PROXY_DIR=/proxy
+Environment=MINIO_DIR=/minio
+Environment=PROYECTOS_DIR=/proyectos
+# Container names as seen in `docker ps`
+Environment=POSTGRES_CONTAINER_NAME=postgres-principal
+Environment=PROXY_CONTAINER_NAME=nginx-proxy-manager
+Environment=MINIO_CONTAINER_NAME=minio-principal
+# Space-separated folder names inside /proyectos
+Environment=PROJECTS=farmasnt malafama
+ExecStart=/bin/bash /opt/supernovatel/scripts/start-stack.sh
+
+# Optional stop (keeps infra up; stop projects only). Customize to your preference.
+ExecStop=/usr/bin/docker compose -f /proyectos/farmasnt/docker-compose.yml down
+
+[Install]
+WantedBy=multi-user.target

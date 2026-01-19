@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { apiFetch } from '../../lib/api'
+import { getProductLabel } from '../../lib/productName'
 import { useAuth } from '../../providers/AuthProvider'
 import {
   MainLayout,
@@ -25,7 +26,7 @@ type BalanceExpandedItem = {
   productId: string
   batchId: string | null
   locationId: string
-  product: { sku: string; name: string }
+  product: { sku: string; name: string; genericName?: string | null }
   batch: { batchNumber: string; expiresAt: string | null; status: string; version: number } | null
   location: {
     id: string
@@ -63,6 +64,7 @@ type ProductGroup = {
   productId: string
   sku: string
   name: string
+  genericName?: string | null
   totalQuantity: number
   totalReservedQuantity: number
   totalAvailableQuantity: number
@@ -100,6 +102,7 @@ type WarehouseGroup = {
     productId: string
     sku: string
     name: string
+    genericName?: string | null
     quantity: number
     reservedQuantity: number
     availableQuantity: number
@@ -344,6 +347,7 @@ export function InventoryPage() {
           productId: item.productId,
           sku: item.product.sku,
           name: item.product.name,
+          genericName: item.product.genericName ?? null,
           totalQuantity: 0,
           totalReservedQuantity: 0,
           totalAvailableQuantity: 0,
@@ -427,6 +431,7 @@ export function InventoryPage() {
           productId: item.productId,
           sku: item.product.sku,
           name: item.product.name,
+          genericName: item.product.genericName ?? null,
           quantity: 0,
           reservedQuantity: 0,
           availableQuantity: 0,
@@ -520,7 +525,7 @@ export function InventoryPage() {
                       <span className="text-2xl">{expandedProduct === pg.productId ? '📂' : '📁'}</span>
                       <div>
                         <div className="font-medium text-slate-900 dark:text-slate-100">
-                          {pg.sku} - {pg.name}
+                          {getProductLabel({ sku: pg.sku, name: pg.name, genericName: pg.genericName })}
                         </div>
                         <div className="text-sm text-slate-600 dark:text-slate-400">
                           {pg.warehouses.length} sucursal{pg.warehouses.length !== 1 ? 'es' : ''}
@@ -611,7 +616,7 @@ export function InventoryPage() {
                                       onClick={() =>
                                         setMovingItem({
                                           productId: pg.productId,
-                                          productName: `${pg.sku} - ${pg.name}`,
+                                          productName: getProductLabel({ sku: pg.sku, name: pg.name, genericName: pg.genericName }),
                                           batchId: b.batchId,
                                           batchNumber: b.batchNumber,
                                           fromLocationId: b.locationId,
@@ -628,7 +633,7 @@ export function InventoryPage() {
                                       onClick={() => {
                                         setStatusChangeItem({
                                           productId: pg.productId,
-                                          productName: `${pg.sku} - ${pg.name}`,
+                                          productName: getProductLabel({ sku: pg.sku, name: pg.name, genericName: pg.genericName }),
                                           batchId: b.batchId!,
                                           batchNumber: b.batchNumber,
                                           currentStatus: b.status,
@@ -702,7 +707,7 @@ export function InventoryPage() {
                         >
                           <div className="mb-2 flex items-center justify-between">
                             <div className="font-medium text-slate-900 dark:text-slate-100">
-                              📦 {prod.sku} - {prod.name}
+                              📦 {getProductLabel({ sku: prod.sku, name: prod.name, genericName: prod.genericName })}
                             </div>
                             <div className="text-right">
                               <div className="text-lg font-semibold text-slate-700 dark:text-slate-300">{prod.availableQuantity}</div>
@@ -769,7 +774,7 @@ export function InventoryPage() {
                                       onClick={() =>
                                         setMovingItem({
                                           productId: prod.productId,
-                                          productName: `${prod.sku} - ${prod.name}`,
+                                          productName: getProductLabel({ sku: prod.sku, name: prod.name, genericName: prod.genericName }),
                                           batchId: b.batchId,
                                           batchNumber: b.batchNumber,
                                           fromLocationId: b.locationId,
@@ -786,7 +791,7 @@ export function InventoryPage() {
                                       onClick={() => {
                                         setStatusChangeItem({
                                           productId: prod.productId,
-                                          productName: `${prod.sku} - ${prod.name}`,
+                                          productName: getProductLabel({ sku: prod.sku, name: prod.name, genericName: prod.genericName }),
                                           batchId: b.batchId!,
                                           batchNumber: b.batchNumber,
                                           currentStatus: b.status,

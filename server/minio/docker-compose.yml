@@ -1,0 +1,76 @@
+services:
+  minio:
+    image: minio/minio:latest
+    container_name: minio-principal
+    restart: always
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      # Optional: if you prefer managing CORS at MinIO level (can also be handled at nginx)
+      MINIO_API_CORS_ALLOW_ORIGIN: ${MINIO_API_CORS_ALLOW_ORIGIN:-*}
+    volumes:
+      - minio-data:/data
+    ports:
+      - "9000:9000" # S3 API
+      - "9001:9001" # Console
+    networks:
+      - red-interna
+
+  # Creates buckets and sets public read policy.
+  # You can add multiple buckets separated by commas.
+  # Idempotent: safe to run on every reboot.
+  minio-init:
+    image: minio/mc:latest
+    container_name: minio-init
+    depends_on:
+      - minio
+    restart: "no"
+    networks:
+      - red-interna
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      MINIO_ENDPOINT_INTERNAL: ${MINIO_ENDPOINT_INTERNAL:-http://minio-principal:9000}
+      MINIO_BUCKETS: ${MINIO_BUCKETS:-farmasnt-assets}
+    entrypoint: ["/bin/sh", "-lc"]
+    # IMPORTANT: command must be a single argument; otherwise `/bin/sh -lc` will only execute the first token.
+    command:
+      - |
+        set -e
+        echo "[minio-init] Waiting for MinIO..."
+        for i in $$(seq 1 60); do
+          if mc alias set local "$$MINIO_ENDPOINT_INTERNAL" "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" >/dev/null 2>&1; then
+            break
+          fi
+          sleep 2
+        done
+
+        # fail fast if still not reachable
+        mc alias set local "$$MINIO_ENDPOINT_INTERNAL" "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" >/dev/null
+
+        # Create buckets and enable public read
+        IFS=','
+        for bucket in $$MINIO_BUCKETS; do
+          # minio/mc image may not include xargs; strip whitespace with tr
+          bucket_trimmed=$$(printf '%s' "$$bucket" | tr -d '[:space:]')
+          if [ -z "$$bucket_trimmed" ]; then
+            continue
+          fi
+          echo "[minio-init] Ensuring bucket exists: $$bucket_trimmed"
+          mc mb -p "local/$$bucket_trimmed" || true
+
+          echo "[minio-init] Setting anonymous download policy: $$bucket_trimmed"
+          mc anonymous set download "local/$$bucket_trimmed" || true
+        done
+
+        echo "[minio-init] Done."
+
+networks:
+  red-interna:
+    external: true
+    name: red-interna
+
+volumes:
+  minio-data:
+    name: minio-data

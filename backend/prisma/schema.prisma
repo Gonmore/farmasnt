@@ -267,6 +267,7 @@ model Product {
   tenantId    String
   sku         String
   name        String
+  genericName String?
   description String?
   presentationWrapper String?
   presentationQuantity Decimal?

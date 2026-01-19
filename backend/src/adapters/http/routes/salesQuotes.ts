@@ -450,7 +450,7 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
           include: {
             customer: { select: { name: true } },
             lines: {
-              include: { product: { select: { name: true, sku: true } } },
+              include: { product: { select: { name: true, sku: true, genericName: true } } },
             },
           },
         })
@@ -499,6 +499,7 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
           id: line.id,
           productId: line.productId,
           productName: line.product.name,
+          productGenericName: (line.product as any).genericName ?? null,
           productSku: line.product.sku,
           quantity: Number(line.quantity),
           unitPrice: Number(line.unitPrice),
@@ -545,7 +546,7 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
                   quantity: true,
                   unitPrice: true,
                   discountPct: true,
-                  product: { select: { name: true } },
+                  product: { select: { name: true, genericName: true } },
                 },
               },
             },
@@ -640,7 +641,7 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
               line: {
                 select: {
                   productId: true,
-                  product: { select: { name: true, sku: true } },
+                  product: { select: { name: true, sku: true, genericName: true } },
                 },
               },
               balance: {

@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { apiFetch } from '../../lib/api'
+import { getProductLabel } from '../../lib/productName'
 import { useAuth } from '../../providers/AuthProvider'
 import { MainLayout, PageContainer, Select, Input, Button, Table, Loading, ErrorState } from '../../components'
 import { useNavigation } from '../../hooks'
@@ -9,6 +10,7 @@ type ProductListItem = {
   id: string
   sku: string
   name: string
+  genericName?: string | null
   isActive: boolean
 }
 
@@ -320,7 +322,7 @@ export function MovementsPage() {
                     { value: '', label: 'Selecciona un producto' },
                     ...(productsQuery.data?.items ?? [])
                       .filter((p) => p.isActive)
-                      .map((p) => ({ value: p.id, label: `${p.sku} - ${p.name}` })),
+                      .map((p) => ({ value: p.id, label: getProductLabel(p) })),
                   ]}
                   disabled={productsQuery.isLoading}
                 />
@@ -453,7 +455,7 @@ export function MovementsPage() {
                     { value: '', label: 'Selecciona un producto' },
                     ...(productsQuery.data?.items ?? [])
                       .filter((p) => p.isActive)
-                      .map((p) => ({ value: p.id, label: `${p.sku} - ${p.name}` })),
+                      .map((p) => ({ value: p.id, label: getProductLabel(p) })),
                   ]}
                   disabled={productsQuery.isLoading}
                 />
@@ -599,7 +601,7 @@ export function MovementsPage() {
                     { value: '', label: 'Selecciona un producto' },
                     ...(productsQuery.data?.items ?? [])
                       .filter((p) => p.isActive)
-                      .map((p) => ({ value: p.id, label: `${p.sku} - ${p.name}` })),
+                      .map((p) => ({ value: p.id, label: getProductLabel(p) })),
                   ]}
                   disabled={productsQuery.isLoading}
                 />
@@ -778,7 +780,7 @@ export function MovementsPage() {
                     { value: '', label: 'Selecciona un producto' },
                     ...(productsQuery.data?.items ?? [])
                       .filter((p) => p.isActive)
-                      .map((p) => ({ value: p.id, label: `${p.sku} - ${p.name}` })),
+                      .map((p) => ({ value: p.id, label: getProductLabel(p) })),
                   ]}
                   disabled={productsQuery.isLoading}
                 />

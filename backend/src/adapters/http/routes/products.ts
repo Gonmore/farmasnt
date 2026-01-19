@@ -11,20 +11,35 @@ import { getEnv } from '../../../shared/env.js'
 import { createStockMovementTx } from '../../../application/stock/stockMovementService.js'
 import { currentYearUtc, nextSequence } from '../../../application/shared/sequence.js'
 
-const productCreateSchema = z.object({
-  sku: z.string().trim().min(1).max(64),
-  name: z.string().trim().min(1).max(200),
+const productCreateSchema = z
+  .object({
+    sku: z.string().trim().min(1).max(64),
+    // Backwards compatible: older clients send `name`.
+    // Preferred: send `commercialName`.
+    name: z.string().trim().min(1).max(200).optional(),
+    commercialName: z.string().trim().min(1).max(200).optional(),
+    genericName: z.string().trim().min(1).max(200).optional(),
   description: z.string().trim().max(2000).optional(),
   presentationWrapper: z.string().trim().min(1).max(64).optional(),
   presentationQuantity: z.coerce.number().positive().optional(),
   presentationFormat: z.string().trim().min(1).max(64).optional(),
   cost: z.coerce.number().positive().optional(),
   price: z.coerce.number().positive().optional(),
-})
+  })
+  .superRefine((v, ctx) => {
+    const commercial = (v.commercialName ?? v.name ?? '').trim()
+    if (!commercial) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'commercialName (or name) is required', path: ['commercialName'] })
+    }
+  })
 
 const productUpdateSchema = z.object({
   version: z.number().int().positive(),
+  // Backwards compatible: older clients send `name`.
+  // Preferred: send `commercialName`.
   name: z.string().trim().min(1).max(200).optional(),
+  commercialName: z.string().trim().min(1).max(200).optional(),
+  genericName: z.string().trim().min(1).max(200).nullable().optional(),
   description: z.string().trim().max(2000).nullable().optional(),
   presentationWrapper: z.string().trim().min(1).max(64).nullable().optional(),
   presentationQuantity: z.coerce.number().positive().nullable().optional(),
@@ -167,17 +182,20 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
       const userId = request.auth!.userId
 
       try {
+        const commercialName = (parsed.data.commercialName ?? parsed.data.name ?? '').trim()
         const description = parsed.data.description ?? null
         const presentationWrapper = parsed.data.presentationWrapper ?? null
         const presentationQuantity = parsed.data.presentationQuantity ?? null
         const presentationFormat = parsed.data.presentationFormat ?? null
         const cost = parsed.data.cost ?? null
         const price = parsed.data.price ?? null
+        const genericName = parsed.data.genericName ?? null
         const created = await db.product.create({
           data: {
             tenantId,
             sku: parsed.data.sku,
-            name: parsed.data.name,
+            name: commercialName,
+            genericName,
             description,
             presentationWrapper,
             presentationQuantity,
@@ -186,7 +204,7 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
             price,
             createdBy: userId,
           },
-          select: { id: true, sku: true, name: true, presentationWrapper: true, presentationQuantity: true, presentationFormat: true, version: true, createdAt: true },
+          select: { id: true, sku: true, name: true, genericName: true, presentationWrapper: true, presentationQuantity: true, presentationFormat: true, version: true, createdAt: true },
         })
 
         await audit.append({
@@ -231,7 +249,7 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
             }
           : {}),
         orderBy: { id: 'asc' },
-        select: { id: true, sku: true, name: true, presentationWrapper: true, presentationQuantity: true, presentationFormat: true, photoUrl: true, cost: true, price: true, isActive: true, version: true, updatedAt: true },
+        select: { id: true, sku: true, name: true, genericName: true, presentationWrapper: true, presentationQuantity: true, presentationFormat: true, photoUrl: true, cost: true, price: true, isActive: true, version: true, updatedAt: true },
       })
 
       const nextCursor = items.length === parsed.data.take ? items[items.length - 1]!.id : null
@@ -251,7 +269,7 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
 
       const product = await db.product.findFirst({
         where: { id, tenantId },
-        select: { id: true, sku: true, name: true, description: true, presentationWrapper: true, presentationQuantity: true, presentationFormat: true, photoUrl: true, cost: true, price: true, isActive: true, version: true, updatedAt: true },
+        select: { id: true, sku: true, name: true, genericName: true, description: true, presentationWrapper: true, presentationQuantity: true, presentationFormat: true, photoUrl: true, cost: true, price: true, isActive: true, version: true, updatedAt: true },
       })
 
       if (!product) return reply.status(404).send({ message: 'Not found' })
@@ -497,7 +515,7 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
 
       const before = await db.product.findFirst({
         where: { id, tenantId },
-        select: { id: true, sku: true, name: true, description: true, presentationWrapper: true, presentationQuantity: true, presentationFormat: true, isActive: true, version: true },
+        select: { id: true, sku: true, name: true, genericName: true, description: true, presentationWrapper: true, presentationQuantity: true, presentationFormat: true, isActive: true, version: true },
       })
       if (!before) return reply.status(404).send({ message: 'Not found' })
 
@@ -524,7 +542,17 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
         version: { increment: 1 },
         createdBy: userId,
       }
-      if (parsed.data.name !== undefined) updateData.name = parsed.data.name
+      const hasCommercialName = Object.prototype.hasOwnProperty.call(parsed.data, 'commercialName')
+      const hasLegacyName = Object.prototype.hasOwnProperty.call(parsed.data, 'name')
+      if (hasCommercialName || hasLegacyName) {
+        const commercialName = ((parsed.data as any).commercialName ?? (parsed.data as any).name ?? '').trim()
+        if (!commercialName) return reply.status(400).send({ message: 'commercialName (or name) cannot be empty' })
+        updateData.name = commercialName
+      }
+
+      if (Object.prototype.hasOwnProperty.call(parsed.data, 'genericName')) {
+        updateData.genericName = (parsed.data as any).genericName
+      }
       if (parsed.data.description !== undefined) updateData.description = parsed.data.description
       if ((parsed.data as any).presentationWrapper !== undefined) updateData.presentationWrapper = (parsed.data as any).presentationWrapper
       if ((parsed.data as any).presentationQuantity !== undefined) updateData.presentationQuantity = (parsed.data as any).presentationQuantity
@@ -538,7 +566,7 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
       const updated = await db.product.update({
         where: { id },
         data: updateData,
-        select: { id: true, sku: true, name: true, description: true, presentationWrapper: true, presentationQuantity: true, presentationFormat: true, photoUrl: true, cost: true, price: true, isActive: true, version: true, updatedAt: true },
+        select: { id: true, sku: true, name: true, genericName: true, description: true, presentationWrapper: true, presentationQuantity: true, presentationFormat: true, photoUrl: true, cost: true, price: true, isActive: true, version: true, updatedAt: true },
       })
 
       await audit.append({

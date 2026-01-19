@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { apiFetch } from '../../lib/api'
+import { getProductDisplayName } from '../../lib/productName'
 import { useAuth, useCart, useTenant, useTheme } from '../../providers'
 import {
   MainLayout,
@@ -10,6 +11,7 @@ import {
   ErrorState,
   EmptyState,
   CatalogSearch,
+  ProductPhoto,
   Select,
   Input,
   Modal,
@@ -24,6 +26,7 @@ type Product = {
   id: string
   sku: string
   name: string
+  genericName?: string | null
   photoUrl?: string | null
   price?: string | null
   isActive: boolean
@@ -309,7 +312,7 @@ export function SellerCatalogPage() {
     cart.addItem({
       id: product.id,
       sku: product.sku,
-      name: product.name,
+      name: getProductDisplayName(product),
       price: parseFloat(product.price || '0'),
       quantity: quantity,
       photoUrl: product.photoUrl || null,
@@ -662,14 +665,15 @@ export function SellerCatalogPage() {
                       )}
 
                       <div className="aspect-square bg-slate-100 dark:bg-slate-700 flex items-center justify-center">
-                        {p.photoUrl ? (
-                          <img src={p.photoUrl} alt={p.name} className="w-full h-full object-cover" />
-                        ) : (
-                          <div className="text-5xl text-slate-400">📦</div>
-                        )}
+                        <ProductPhoto
+                          url={p.photoUrl}
+                          alt={getProductDisplayName(p)}
+                          className="w-full h-full object-cover"
+                          placeholder={<div className="text-4xl text-slate-400">📦</div>}
+                        />
                       </div>
                       <div className="p-3 space-y-2">
-                        <div className="text-sm font-semibold text-slate-900 dark:text-white line-clamp-2">{p.name}</div>
+                        <div className="text-sm font-semibold text-slate-900 dark:text-white line-clamp-2">{getProductDisplayName(p)}</div>
                         <div className="text-xs text-slate-500">SKU: {p.sku}</div>
 
                         <div className="flex items-center justify-between">

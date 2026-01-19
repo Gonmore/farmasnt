@@ -27,11 +27,15 @@ export async function registerCatalogRoutes(app: FastifyInstance): Promise<void>
         where: {
           tenantId,
           isActive: true,
-          OR: [{ sku: { contains: q, mode: 'insensitive' } }, { name: { contains: q, mode: 'insensitive' } }],
+          OR: [
+            { sku: { contains: q, mode: 'insensitive' } },
+            { name: { contains: q, mode: 'insensitive' } },
+            { genericName: { contains: q, mode: 'insensitive' } },
+          ],
         },
         take,
         orderBy: [{ name: 'asc' }],
-        select: { id: true, sku: true, name: true },
+        select: { id: true, sku: true, name: true, genericName: true },
       })
 
       return { items }

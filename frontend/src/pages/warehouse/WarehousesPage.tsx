@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { apiFetch } from '../../lib/api'
+import { getProductLabel } from '../../lib/productName'
 import { useAuth } from '../../providers/AuthProvider'
 import { useTenant } from '../../providers/TenantProvider'
 import { MainLayout, PageContainer, Table, Loading, ErrorState, EmptyState, PaginationCursor, Button, Modal, Input, Select, CitySelector } from '../../components'
@@ -18,7 +19,7 @@ type WarehouseStockRow = {
   productId: string
   batchId: string
   locationId: string
-  product: { sku: string; name: string }
+  product: { sku: string; name: string; genericName?: string | null }
   batch: { batchNumber: string; expiresAt: string | null; status: string }
   location: { id: string; code: string; warehouse: { id: string; code: string; name: string } }
 }
@@ -425,7 +426,7 @@ export function WarehousesPage() {
           {warehouseStockQuery.data && warehouseStockQuery.data.items.length > 0 && (
             <Table
               columns={[
-                { header: 'Producto', accessor: (r) => `${r.product.sku} - ${r.product.name}` },
+                { header: 'Producto', accessor: (r) => getProductLabel(r.product) },
                 { header: 'Lote', accessor: (r) => r.batch.batchNumber },
                 {
                   header: 'Vence',

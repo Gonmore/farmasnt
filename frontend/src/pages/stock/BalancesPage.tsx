@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { apiFetch } from '../../lib/api'
+import { getProductDisplayName, getProductLabel } from '../../lib/productName'
 import { useAuth } from '../../providers/AuthProvider'
 import { MainLayout, PageContainer, Table, Loading, ErrorState, EmptyState, Select } from '../../components'
 import { useNavigation } from '../../hooks'
@@ -9,6 +10,7 @@ type ProductListItem = {
   id: string
   sku: string
   name: string
+  genericName?: string | null
   isActive: boolean
 }
 
@@ -19,7 +21,7 @@ type BalanceExpandedItem = {
   quantity: string
   reservedQuantity?: string
   updatedAt: string
-  product: { sku: string; name: string }
+  product: { sku: string; name: string; genericName?: string | null }
   batch: { batchNumber: string; expiresAt: string | null; status: string; version: number } | null
   location: {
     code: string
@@ -76,7 +78,7 @@ export function BalancesPage() {
                 { value: '', label: 'Todos' },
                 ...(productsQuery.data?.items ?? [])
                   .filter((p) => p.isActive)
-                  .map((p) => ({ value: p.id, label: `${p.sku} - ${p.name}` })),
+                  .map((p) => ({ value: p.id, label: getProductLabel(p) })),
               ]}
               disabled={productsQuery.isLoading}
             />
@@ -96,7 +98,7 @@ export function BalancesPage() {
             <Table
               columns={[
                 { header: 'SKU', accessor: (b) => b.product.sku },
-                { header: 'Producto', accessor: (b) => b.product.name },
+                { header: 'Producto', accessor: (b) => getProductDisplayName(b.product) },
                 { header: 'Lote', accessor: (b) => b.batch?.batchNumber || 'Sin lote' },
                 {
                   header: 'Estado',

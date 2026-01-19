@@ -1,0 +1,81 @@
+services:
+  backend-farmasnt:
+    build: 
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: backend-farmasnt-dev
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    environment:
+      DATABASE_URL: "postgresql://postgres:D3v3%2Fop3R@postgres-local:5432/farmasnt?schema=public"
+      PORT: 6000
+      NODE_ENV: "development"
+      APP_START_SCRIPT: "dev"
+      CHOKIDAR_USEPOLLING: "true"
+      CHOKIDAR_INTERVAL: "250"
+      JWT_ACCESS_SECRET: "Supern0vat0s2026"
+      JWT_REFRESH_SECRET: "Supern0vat0s2026"
+      RUN_SEED: "0" 
+      SEED_TENANT_NAME: "Demo Pharma Local"
+      SEED_ADMIN_EMAIL: "admin@demo.local"
+      SEED_ADMIN_PASSWORD: "Admin123!"
+      SEED_PLATFORM_DOMAIN: "localhost"
+      SMTP_HOST: "mail.supernovatel.com"
+      SMTP_PORT: 465
+      SMTP_SECURE: "true"
+      SMTP_USER: "saas@supernovatel.com"
+      SMTP_PASS: "if5u/WD9kZ"
+      SMTP_FROM: "PharmaFlow <saas@supernovatel.com>"
+      WEB_ORIGIN: "http://localhost:6001"
+      S3_ENDPOINT: "http://localhost:9000"
+      S3_REGION: "us-east-1"
+      S3_BUCKET: "farmasnt-uploads"
+      S3_ACCESS_KEY_ID: "minioadmin"
+      S3_SECRET_ACCESS_KEY: "minioadmin"
+      S3_PUBLIC_BASE_URL: "http://localhost:9000/farmasnt-uploads"
+      S3_FORCE_PATH_STYLE: "true"
+      PRISMA_MIGRATE_RESOLVE_ON_FAIL: "1"
+      PRISMA_MIGRATE_RESOLVE_ACTION: "rolled-back"
+      PRISMA_MIGRATE_RESOLVE_NAMES: "20260116063727_pagos"
+    ports:
+      - "6000:6000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:6000/api/v1/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 40s
+    networks:
+      - red-desarrollo
+
+  frontend-farmasnt:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: "http://localhost:6000"
+        VITE_BACKEND_TARGET: "http://backend-farmasnt-dev:6000"
+    container_name: frontend-farmasnt-dev
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      VITE_ALLOW_ALL_HOSTS: "1"
+      VITE_BACKEND_TARGET: "http://backend-farmasnt-dev:6000"
+      CHOKIDAR_USEPOLLING: "true"
+      CHOKIDAR_INTERVAL: "250"
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "6001", "--strictPort"]
+    depends_on:
+      backend-farmasnt:
+        condition: service_healthy
+    ports:
+      - "6001:6001"
+    networks:
+      - red-desarrollo
+
+networks:
+  red-desarrollo:
+    external: true
+
+volumes:
+  minio-data:

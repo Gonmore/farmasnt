@@ -1,11 +1,12 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { apiFetch } from '../lib/api'
+import { getProductDisplayName } from '../lib/productName'
 import { useAuth } from '../providers/AuthProvider'
 import { Input, Button, Table, Loading, ErrorState, EmptyState } from './common'
 import { useNavigate } from 'react-router-dom'
 
-type CatalogSearchItem = { id: string; sku: string; name: string }
+type CatalogSearchItem = { id: string; sku: string; name: string; genericName?: string | null }
 
 async function searchCatalog(token: string, query: string, take: number): Promise<{ items: CatalogSearchItem[] }> {
   const params = new URLSearchParams({ q: query, take: String(take) })
@@ -42,7 +43,7 @@ export function CatalogSearch({ className = '' }: CatalogSearchProps) {
       <form onSubmit={handleSearch} className="mb-4">
         <div className="flex gap-2">
           <Input
-            placeholder="Buscar productos por SKU o nombre..."
+            placeholder="Buscar productos por SKU, nombre comercial o genérico..."
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             className="flex-1"
@@ -69,7 +70,7 @@ export function CatalogSearch({ className = '' }: CatalogSearchProps) {
             <Table
               columns={[
                 { header: 'SKU', accessor: (p: CatalogSearchItem) => p.sku },
-                { header: 'Nombre', accessor: (p: CatalogSearchItem) => p.name },
+                { header: 'Nombre', accessor: (p: CatalogSearchItem) => getProductDisplayName(p) },
                 {
                   header: 'Acciones',
                   accessor: (p: CatalogSearchItem) => (

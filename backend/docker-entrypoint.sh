@@ -69,4 +69,6 @@ else
 fi
 
 echo "[backend] Starting server..."
-exec npm run start
+start_script="${APP_START_SCRIPT:-start}"
+echo "[backend] Starting server (npm run $start_script)..."
+exec npm run "$start_script"

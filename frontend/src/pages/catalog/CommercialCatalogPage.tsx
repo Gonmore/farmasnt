@@ -1,14 +1,16 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { apiFetch } from '../../lib/api'
+import { getProductDisplayName } from '../../lib/productName'
 import { useAuth, useCart, useTenant } from '../../providers'
-import { MainLayout, PageContainer, Button, Loading, ErrorState, EmptyState, CatalogSearch } from '../../components'
+import { MainLayout, PageContainer, Button, Loading, ErrorState, EmptyState, CatalogSearch, ProductPhoto } from '../../components'
 import { useNavigation } from '../../hooks'
 
 type Product = {
   id: string
   sku: string
   name: string
+  genericName?: string | null
   photoUrl?: string | null
   price?: string | null
   isActive: boolean
@@ -18,6 +20,7 @@ type ProductDetail = {
   id: string
   sku: string
   name: string
+  genericName?: string | null
   description: string | null
   photoUrl?: string | null
   price?: string | null
@@ -54,6 +57,7 @@ async function fetchProductDetail(token: string, productId: string): Promise<Pro
     id: product.id,
     sku: product.sku,
     name: product.name,
+    genericName: product.genericName ?? null,
     description: product.description,
     photoUrl: product.photoUrl,
     price: product.price,
@@ -104,7 +108,7 @@ export function CommercialCatalogPage() {
     cart.addItem({
       id: product.id,
       sku: product.sku,
-      name: product.name,
+      name: getProductDisplayName(product),
       price: parseFloat(product.price || '0'),
       quantity: 1,
       photoUrl: product.photoUrl || null
@@ -139,15 +143,12 @@ export function CommercialCatalogPage() {
                   >
                     {/* Imagen del producto */}
                     <div className="aspect-square bg-gradient-to-br from-slate-100 to-slate-200 dark:from-slate-700 dark:to-slate-600 flex items-center justify-center relative overflow-hidden">
-                      {product.photoUrl ? (
-                        <img
-                          src={product.photoUrl}
-                          alt={product.name}
-                          className="w-full h-full object-cover hover:scale-110 transition-transform duration-300"
-                        />
-                      ) : (
-                        <div className="text-6xl text-slate-400 drop-shadow-sm">📦</div>
-                      )}
+                      <ProductPhoto
+                        url={product.photoUrl}
+                        alt={getProductDisplayName(product)}
+                        className="w-full h-full object-cover hover:scale-110 transition-transform duration-300"
+                        placeholder={<div className="text-6xl text-slate-400 drop-shadow-sm">📦</div>}
+                      />
                       {/* Overlay sutil */}
                       <div className="absolute inset-0 bg-gradient-to-t from-black/5 to-transparent opacity-0 hover:opacity-100 transition-opacity duration-300" />
                     </div>
@@ -156,7 +157,7 @@ export function CommercialCatalogPage() {
                     <div className="p-3 space-y-2">
                       <div>
                         <h3 className="font-bold text-slate-900 dark:text-white text-base line-clamp-2 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">
-                          {product.name}
+                          {getProductDisplayName(product)}
                         </h3>
                       </div>
 
@@ -245,15 +246,12 @@ export function CommercialCatalogPage() {
                   {/* Imagen con mejor styling */}
                   <div className="space-y-4">
                     <div className="aspect-square bg-gradient-to-br from-slate-100 via-slate-200 to-slate-300 dark:from-slate-700 dark:via-slate-600 dark:to-slate-500 rounded-xl flex items-center justify-center shadow-lg overflow-hidden">
-                      {productDetailQuery.data.photoUrl ? (
-                        <img
-                          src={productDetailQuery.data.photoUrl}
-                          alt={productDetailQuery.data.name}
-                          className="w-full h-full object-cover"
-                        />
-                      ) : (
-                        <div className="text-8xl text-slate-400 drop-shadow-lg">📦</div>
-                      )}
+                      <ProductPhoto
+                        url={productDetailQuery.data.photoUrl}
+                        alt={productDetailQuery.data.name}
+                        className="w-full h-full object-cover"
+                        placeholder={<div className="text-8xl text-slate-400 drop-shadow-lg">📦</div>}
+                      />
                     </div>
                   </div>
 

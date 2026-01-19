@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from '../components'
 import { autoCompressImage } from '../lib/imageUtils'
 
@@ -6,6 +6,7 @@ interface ImageUploadProps {
   currentImageUrl?: string | null
   onImageSelect: (file: File) => void
   onImageRemove: () => void
+  mode?: 'upload' | 'select'
   loading?: boolean
   disabled?: boolean
   accept?: string
@@ -17,16 +18,29 @@ export function ImageUpload({
   currentImageUrl,
   onImageSelect,
   onImageRemove,
+  mode = 'upload',
   loading = false,
   disabled = false,
   accept = 'image/png,image/jpeg,image/webp',
   maxSizeMB = 5,
   className = '',
 }: ImageUploadProps) {
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [isProcessing, setIsProcessing] = useState(false)
+  const [imageLoadError, setImageLoadError] = useState(false)
+
+  useEffect(() => {
+    return () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl)
+    }
+  }, [previewUrl])
+
+  useEffect(() => {
+    setImageLoadError(false)
+  }, [currentImageUrl])
 
   const validateAndProcessFile = useCallback(async (file: File): Promise<File | null> => {
     // Check file type
@@ -69,16 +83,21 @@ export function ImageUpload({
     try {
       const processedFile = await validateAndProcessFile(file)
       if (processedFile) {
-        setSelectedFile(processedFile)
-        // Create preview URL
+        if (previewUrl) URL.revokeObjectURL(previewUrl)
         const url = URL.createObjectURL(processedFile)
         setPreviewUrl(url)
-        onImageSelect(processedFile)
+
+        if (mode === 'select') {
+          setSelectedFile(null)
+          onImageSelect(processedFile)
+        } else {
+          setSelectedFile(processedFile)
+        }
       }
     } finally {
       setIsProcessing(false)
     }
-  }, [validateAndProcessFile, onImageSelect])
+  }, [validateAndProcessFile, onImageSelect, mode, previewUrl])
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -125,6 +144,15 @@ export function ImageUpload({
     }
   }, [previewUrl])
 
+  const handleRemove = useCallback(() => {
+    setSelectedFile(null)
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl)
+      setPreviewUrl(null)
+    }
+    onImageRemove()
+  }, [onImageRemove, previewUrl])
+
   const displayImageUrl = previewUrl || currentImageUrl
 
   return (
@@ -142,12 +170,13 @@ export function ImageUpload({
         onDragOver={disabled ? undefined : handleDragOver}
         onDragLeave={disabled ? undefined : handleDragLeave}
       >
-        {displayImageUrl ? (
+        {displayImageUrl && !imageLoadError ? (
           <div className="space-y-3">
             <img
               src={displayImageUrl}
-              alt="Preview"
+              alt="Foto del producto"
               className="mx-auto max-h-48 w-auto rounded-lg object-contain bg-white shadow-md dark:bg-slate-900"
+              onError={() => setImageLoadError(true)}
             />
             {previewUrl && (
               <p className="text-center text-sm text-slate-600 dark:text-slate-400">
@@ -168,11 +197,20 @@ export function ImageUpload({
               <>
                 <div className="mb-4 text-4xl">📸</div>
                 <p className="mb-2 text-sm font-medium text-slate-900 dark:text-slate-100">
-                  {disabled ? 'Carga deshabilitada' : 'Arrastra una imagen aquí'}
+                  {disabled
+                    ? 'Carga deshabilitada'
+                    : imageLoadError
+                      ? 'No se pudo cargar la imagen guardada'
+                      : 'Arrastra una imagen aquí'}
                 </p>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
                   PNG, JPG, WebP hasta {maxSizeMB}MB
                 </p>
+                {imageLoadError && currentImageUrl && (
+                  <p className="mt-2 text-xs text-slate-500 dark:text-slate-400 break-all">
+                    URL: {currentImageUrl}
+                  </p>
+                )}
               </>
             )}
           </div>
@@ -180,6 +218,7 @@ export function ImageUpload({
 
         {/* Hidden file input */}
         <input
+          ref={fileInputRef}
           type="file"
           accept={accept}
           onChange={handleFileInputChange}
@@ -191,7 +230,7 @@ export function ImageUpload({
 
       {/* Action Buttons */}
       <div className="flex flex-wrap gap-2">
-        {selectedFile ? (
+        {mode === 'upload' && selectedFile ? (
           <>
             <Button
               type="button"
@@ -219,17 +258,17 @@ export function ImageUpload({
               size="sm"
               variant="secondary"
               disabled={disabled || loading}
-              onClick={() => document.querySelector<HTMLInputElement>('input[type="file"]')?.click()}
+              onClick={() => fileInputRef.current?.click()}
             >
               Seleccionar archivo
             </Button>
-            {currentImageUrl && (
+            {displayImageUrl && (
               <Button
                 type="button"
                 size="sm"
                 variant="secondary"
                 disabled={disabled || loading}
-                onClick={onImageRemove}
+                onClick={handleRemove}
               >
                 Quitar imagen
               </Button>

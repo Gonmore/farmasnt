@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import type { FormEvent } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { apiFetch, getApiBaseUrl } from '../../lib/api'
+import { getProductDisplayName } from '../../lib/productName'
 import { useAuth } from '../../providers/AuthProvider'
 import { MainLayout, PageContainer, Button, Input, Select, Loading, ErrorState, ImageUpload } from '../../components'
 import { useNavigation } from '../../hooks'
@@ -11,6 +12,7 @@ type Product = {
   id: string
   sku: string
   name: string
+  genericName?: string | null
   description: string | null
   presentationWrapper?: string | null
   presentationQuantity?: string | null
@@ -134,6 +136,7 @@ async function createProduct(
   data: {
     sku: string
     name: string
+    genericName?: string
     description?: string
     presentationWrapper?: string
     presentationQuantity?: number
@@ -155,6 +158,7 @@ async function updateProduct(
   data: {
     version: number
     name?: string
+    genericName?: string | null
     description?: string | null
     presentationWrapper?: string | null
     presentationQuantity?: number | null
@@ -198,11 +202,26 @@ async function presignProductPhotoUpload(token: string, productId: string, file:
 }
 
 async function uploadToPresignedUrl(uploadUrl: string, file: File): Promise<void> {
-  const resp = await fetch(uploadUrl, {
-    method: 'PUT',
-    headers: { 'Content-Type': file.type || 'application/octet-stream' },
-    body: file,
-  })
+  let resp: Response
+  try {
+    resp = await fetch(uploadUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': file.type || 'application/octet-stream' },
+      body: file,
+    })
+  } catch (err) {
+    let origin = ''
+    try {
+      origin = new URL(uploadUrl).origin
+    } catch {
+      origin = ''
+    }
+    const msg = err instanceof Error ? err.message : String(err)
+    throw new Error(
+      `Error de red subiendo la imagen${origin ? ` a ${origin}` : ''}. ` +
+        `Verifica que el storage (MinIO/S3) esté levantado y permita CORS. Detalle: ${msg}`,
+    )
+  }
   if (!resp.ok) {
     const text = await resp.text().catch(() => '')
     throw new Error(text || `Upload failed: ${resp.status}`)
@@ -392,8 +411,13 @@ export function ProductDetailPage() {
 
   const [selectedBatchId, setSelectedBatchId] = useState<string>('')
 
-  // Product photo state (existing products only)
-  // Note: Photo upload is now handled directly by ImageUpload component
+  // Product naming
+  const [genericName, setGenericName] = useState('')
+
+  // Product photo state
+  // - Existing products: ImageUpload uploads via presign
+  // - New product: ImageUpload stores a pending file; uploaded right after create
+  const [pendingPhotoFile, setPendingPhotoFile] = useState<File | null>(null)
 
   // Initial stock on batch creation (optional)
   const [warehouseIdForInitialStock, setWarehouseIdForInitialStock] = useState<string>('')
@@ -426,6 +450,7 @@ export function ProductDetailPage() {
       setSku(productQuery.data.sku)
       setSkuAuto(false)
       setName(productQuery.data.name)
+      setGenericName(productQuery.data.genericName ?? '')
       setDescription(productQuery.data.description || '')
       setCost(productQuery.data.cost || '')
       setPrice(productQuery.data.price || '')
@@ -488,24 +513,21 @@ export function ProductDetailPage() {
     mutationFn: (data: {
       sku: string
       name: string
+      genericName?: string
       description?: string
       presentationWrapper?: string
       presentationQuantity?: number
       presentationFormat?: string
       cost?: number
       price?: number
-    }) =>
-      createProduct(auth.accessToken!, data),
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['products'] })
-      navigate(`/catalog/products/${data.id}`)
-    },
+    }) => createProduct(auth.accessToken!, data),
   })
 
   const updateMutation = useMutation({
     mutationFn: (data: {
       version: number
       name?: string
+      genericName?: string | null
       description?: string | null
       presentationWrapper?: string | null
       presentationQuantity?: number | null
@@ -515,6 +537,21 @@ export function ProductDetailPage() {
       isActive?: boolean
     }) =>
       updateProduct(auth.accessToken!, id!, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['product', id] })
+      queryClient.invalidateQueries({ queryKey: ['products'] })
+    },
+  })
+
+  const toggleActiveMutation = useMutation({
+    mutationFn: async (nextIsActive: boolean) => {
+      if (!id) throw new Error('Missing product id')
+      if (!productQuery.data) throw new Error('Product not loaded')
+      return updateProduct(auth.accessToken!, id, {
+        version: productQuery.data.version,
+        isActive: nextIsActive,
+      })
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['product', id] })
       queryClient.invalidateQueries({ queryKey: ['products'] })
@@ -665,7 +702,7 @@ export function ProductDetailPage() {
     },
   })
 
-  const handleSubmit = (e: FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
 
     const qty = finalQuantityText ? Number(finalQuantityText.replace(',', '.')) : NaN
@@ -673,6 +710,7 @@ export function ProductDetailPage() {
     
     if (isNew) {
       const payload: any = { sku, name, description: description || undefined }
+      if (genericName.trim()) payload.genericName = genericName.trim()
       if (hasPresentation) {
         payload.presentationWrapper = finalWrapper
         payload.presentationQuantity = qty
@@ -680,11 +718,35 @@ export function ProductDetailPage() {
       }
       if (cost) payload.cost = parseFloat(cost)
       if (price) payload.price = parseFloat(price)
-      createMutation.mutate(payload)
+      try {
+        const created = await createMutation.mutateAsync(payload)
+
+        if (pendingPhotoFile) {
+          try {
+            const presign = await presignProductPhotoUpload(auth.accessToken!, created.id, pendingPhotoFile)
+            await uploadToPresignedUrl(presign.uploadUrl, pendingPhotoFile)
+            await updateProduct(auth.accessToken!, created.id, {
+              version: created.version,
+              photoUrl: presign.publicUrl,
+              photoKey: presign.key,
+            })
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : 'Error subiendo la foto'
+            alert(`Producto creado, pero la foto no se pudo subir: ${msg}`)
+          }
+        }
+
+        setPendingPhotoFile(null)
+        queryClient.invalidateQueries({ queryKey: ['products'] })
+        navigate(`/catalog/products/${created.id}`)
+      } catch {
+        // errors are shown by createMutation.error
+      }
     } else if (productQuery.data) {
       const payload: any = {
         version: productQuery.data.version,
         name,
+        genericName: genericName.trim() ? genericName.trim() : null,
         description: description || null,
         isActive,
       }
@@ -772,7 +834,7 @@ export function ProductDetailPage() {
   return (
     <MainLayout navGroups={navGroups}>
       <PageContainer
-        title={isNew ? 'Crear Producto' : `Producto: ${sku}`}
+        title={isNew ? 'Crear Producto' : `Producto: ${getProductDisplayName({ sku, name, genericName })}`}
         actions={
           <Button variant="secondary" onClick={() => navigate('/catalog/products')}>
             Volver
@@ -788,11 +850,22 @@ export function ProductDetailPage() {
             <form onSubmit={handleSubmit} className="space-y-6">
                 <div className="group">
                 <Input
-                  label="Nombre"
+                  label="Nombre comercial"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  placeholder="Ej: Omeprazol 20mg"
+                  placeholder="Ej: Abasor 150 mg"
                   required
+                  disabled={createMutation.isPending || updateMutation.isPending}
+                  className="transition-all duration-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+
+              <div className="group">
+                <Input
+                  label="Nombre genérico"
+                  value={genericName}
+                  onChange={(e) => setGenericName(e.target.value)}
+                  placeholder="Ej: Pregabalina 150 mg"
                   disabled={createMutation.isPending || updateMutation.isPending}
                   className="transition-all duration-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 />
@@ -945,27 +1018,39 @@ export function ProductDetailPage() {
                 </div>
               )}
 
-              {!isNew && (
-                <div>
-                  <div className="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100">📸 Foto del Producto</div>
-                  <ImageUpload
-                    currentImageUrl={productQuery.data?.photoUrl}
-                    onImageSelect={(file) => uploadPhotoMutation.mutate(file)}
-                    onImageRemove={() => removePhotoMutation.mutate()}
-                    loading={uploadPhotoMutation.isPending || removePhotoMutation.isPending}
-                    disabled={updateMutation.isPending}
-                  />
-                  {(uploadPhotoMutation.error || removePhotoMutation.error) && (
-                    <p className="mt-2 text-sm text-red-600">
-                      {uploadPhotoMutation.error instanceof Error
-                        ? uploadPhotoMutation.error.message
-                        : removePhotoMutation.error instanceof Error
-                          ? removePhotoMutation.error.message
-                          : 'Error'}
-                    </p>
-                  )}
-                </div>
-              )}
+              <div>
+                <div className="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100">📸 Foto del Producto</div>
+                <ImageUpload
+                  mode="select"
+                  currentImageUrl={isNew ? null : productQuery.data?.photoUrl}
+                  onImageSelect={(file) => {
+                    if (isNew) setPendingPhotoFile(file)
+                    else uploadPhotoMutation.mutate(file)
+                  }}
+                  onImageRemove={() => {
+                    if (isNew) setPendingPhotoFile(null)
+                    else removePhotoMutation.mutate()
+                  }}
+                  loading={
+                    (isNew ? createMutation.isPending : uploadPhotoMutation.isPending || removePhotoMutation.isPending)
+                  }
+                  disabled={isNew ? createMutation.isPending : updateMutation.isPending}
+                />
+                {isNew && pendingPhotoFile && (
+                  <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">
+                    Imagen lista: {pendingPhotoFile.name}
+                  </p>
+                )}
+                {!isNew && (uploadPhotoMutation.error || removePhotoMutation.error) && (
+                  <p className="mt-2 text-sm text-red-600">
+                    {uploadPhotoMutation.error instanceof Error
+                      ? uploadPhotoMutation.error.message
+                      : removePhotoMutation.error instanceof Error
+                        ? removePhotoMutation.error.message
+                        : 'Error'}
+                  </p>
+                )}
+              </div>
 
               <div className="flex gap-2">
                 <Button
@@ -975,6 +1060,33 @@ export function ProductDetailPage() {
                 >
                   {isNew ? '✨ Crear Producto' : '💾 Guardar Cambios'}
                 </Button>
+
+                {!isNew && productQuery.data && (
+                  <Button
+                    type="button"
+                    variant={productQuery.data.isActive ? 'danger' : 'secondary'}
+                    disabled={updateMutation.isPending}
+                    loading={toggleActiveMutation.isPending}
+                    className="whitespace-nowrap"
+                    onClick={() => {
+                      if (!productQuery.data) return
+                      if (productQuery.data.isActive) {
+                        const ok = confirm(
+                          '¿Eliminar producto?\n\nEsto NO lo borra de la base de datos: lo desactivará (soft delete).\nEl producto dejará de aparecer como activo.',
+                        )
+                        if (!ok) return
+                        toggleActiveMutation.mutate(false)
+                      } else {
+                        const ok = confirm('¿Reactivar producto?')
+                        if (!ok) return
+                        toggleActiveMutation.mutate(true)
+                      }
+                    }}
+                  >
+                    {productQuery.data.isActive ? '🗑️ Eliminar' : '✅ Reactivar'}
+                  </Button>
+                )}
+
                 {(createMutation.error || updateMutation.error) && (
                   <span className="text-sm text-red-600">
                     {createMutation.error instanceof Error
@@ -982,6 +1094,12 @@ export function ProductDetailPage() {
                       : updateMutation.error instanceof Error
                         ? updateMutation.error.message
                         : 'Error'}
+                  </span>
+                )}
+
+                {!isNew && toggleActiveMutation.error && (
+                  <span className="text-sm text-red-600">
+                    {toggleActiveMutation.error instanceof Error ? toggleActiveMutation.error.message : 'Error'}
                   </span>
                 )}
               </div>

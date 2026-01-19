@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
 import { apiFetch } from '../../lib/api'
+import { getProductDisplayName } from '../../lib/productName'
 import { MainLayout, PageContainer, Button, Loading, ErrorState, Table, Badge } from '../../components'
 import { useNavigation } from '../../hooks'
 import { useAuth } from '../../providers/AuthProvider'
@@ -12,7 +13,7 @@ type OrderLine = {
   batchId: string | null
   quantity: string | number
   unitPrice: string | number
-  product: { sku: string; name: string }
+  product: { sku: string; name: string; genericName?: string | null }
 }
 
 type SalesOrderDetail = {
@@ -156,7 +157,7 @@ export function OrderDetailPage() {
               <Table
                 columns={[
                   { header: 'SKU', accessor: (r: any) => r.product.sku },
-                  { header: 'Producto', accessor: (r: any) => r.product.name },
+                  { header: 'Producto', accessor: (r: any) => getProductDisplayName(r.product) },
                   { header: 'Cant.', accessor: (r: any) => toNumber(r.quantity) },
                   { header: 'Unit.', accessor: (r: any) => `${money(toNumber(r.unitPrice))} ${currency}` },
                   { header: 'Total', accessor: (r: any) => `${money(toNumber(r.quantity) * toNumber(r.unitPrice))} ${currency}` },

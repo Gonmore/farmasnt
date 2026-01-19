@@ -736,7 +736,7 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
               batchId: true,
               quantity: true,
               unitPrice: true,
-              product: { select: { sku: true, name: true } },
+              product: { select: { sku: true, name: true, genericName: true } },
             },
           },
         },

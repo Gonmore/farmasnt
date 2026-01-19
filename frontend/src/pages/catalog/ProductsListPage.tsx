@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { apiFetch } from '../../lib/api'
+import { getProductDisplayName } from '../../lib/productName'
 import { useAuth } from '../../providers/AuthProvider'
 import { MainLayout, PageContainer, Button, Table, Loading, ErrorState, EmptyState, PaginationCursor, Modal, ExpiryBadge, CatalogSearch } from '../../components'
 import { useNavigation } from '../../hooks'
@@ -11,6 +12,7 @@ type ProductListItem = {
   id: string
   sku: string
   name: string
+  genericName?: string | null
   isActive: boolean
   version: number
   updatedAt: string
@@ -194,7 +196,7 @@ export function ProductsListPage() {
               <Table
                 columns={[
                   { header: 'SKU', accessor: (p) => p.sku },
-                  { header: 'Nombre', accessor: (p) => p.name },
+                  { header: 'Nombre', accessor: (p) => getProductDisplayName(p) },
                   {
                     header: 'Receta',
                     accessor: (p) => (
@@ -204,7 +206,7 @@ export function ProductsListPage() {
                           onClick={() => p.hasRecipe && setRecipeModal({ isOpen: true, product: p })}
                           title={p.hasRecipe ? "Ver receta completa" : "Sin receta"}
                         >
-                          {p.hasRecipe ? '🧪' : '❌'}
+                          {p.hasRecipe ? '🧪' : '➖'}
                         </div>
                       </div>
                     ),
@@ -218,7 +220,7 @@ export function ProductsListPage() {
                           onClick={() => p.batches.length > 0 && setStockModal({ isOpen: true, product: p })}
                           title={p.batches.length > 0 ? "Ver stock completo" : "Sin stock"}
                         >
-                          {p.batches.length > 0 ? p.batches.reduce((total: number, batch: any) => total + parseInt(batch.totalAvailableQuantity || batch.totalQuantity), 0) : '❌'}
+                          {p.batches.length > 0 ? p.batches.reduce((total: number, batch: any) => total + parseInt(batch.totalAvailableQuantity || batch.totalQuantity), 0) : '➖'}
                         </div>
                       </div>
                     ),
@@ -254,7 +256,7 @@ export function ProductsListPage() {
       <Modal
         isOpen={recipeModal.isOpen}
         onClose={() => setRecipeModal({ isOpen: false, product: null })}
-        title={`Receta - ${recipeModal.product?.name || ''}`}
+        title={`Receta - ${recipeModal.product ? getProductDisplayName(recipeModal.product) : ''}`}
         maxWidth="lg"
       >
         <div className="space-y-4">
