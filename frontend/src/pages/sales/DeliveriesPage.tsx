@@ -18,7 +18,7 @@ import { useNavigation } from '../../hooks'
 import { usePermissions } from '../../hooks/usePermissions'
 import { apiFetch } from '../../lib/api'
 import { useAuth } from '../../providers/AuthProvider'
-import { EyeIcon } from '@heroicons/react/24/outline'
+import { EyeIcon, CheckCircleIcon } from '@heroicons/react/24/outline'
 
 type DeliveryListItem = {
   id: string
@@ -310,7 +310,8 @@ export function DeliveriesPage() {
                         {o.status !== 'FULFILLED' && perms.hasPermission('sales:delivery:write') ? (
                           <Button
                             size="sm"
-                            variant="primary"
+                            variant="ghost"
+                            icon={<CheckCircleIcon className="w-4 h-4" />}
                             disabled={deliverMutation.isPending}
                             onClick={async () => {
                               const ok = window.confirm(`¿Marcar la OV ${o.number} como entregada? Esto descontará stock.`)

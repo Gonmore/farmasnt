@@ -512,3 +512,6 @@ Tenant Admin (Clientes)
 - **Catálogo comercial**: actualización de botones en cada item del catálogo. Botón "Ver" cambiado a `variant="outline"` con ícono `EyeIcon` (removido emoji). Botón "Agregar" cambiado a `variant="success"` con ícono `ShoppingCartIcon` (removido emoji). Simplificación de clases CSS personalizadas para usar variants consistentes del sistema de diseño.
 - **Compilación**: frontend y backend compilan exitosamente tras los cambios.
 
+### **[20 Ene 2026]** — Alineación de botones en página de entregas
+- **Botón "Marcar como entregado"**: cambiado a `variant="ghost"` con ícono `CheckCircleIcon` para mantener consistencia con otros botones de acción en tablas (como "Ver").
+
