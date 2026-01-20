@@ -32,15 +32,15 @@ export function Header({ onMenuClick, showMenuButton = false }: HeaderProps) {
   }, [tenant.branding?.logoUrl])
 
   const getLogoClassName = () => {
-    if (!logoDimensions) return 'h-10 w-auto'
+    if (!logoDimensions) return 'h-12 w-auto'
     
     const aspectRatio = logoDimensions.width / logoDimensions.height
-    if (aspectRatio >= 0.9 && aspectRatio <= 1.1) {
-      // Cuadrado
+    if (aspectRatio >= 0.8 && aspectRatio <= 1.2) {
+      // Casi cuadrado
       return 'h-12 w-12 object-contain'
     } else {
       // Rectangular
-      return 'h-10 w-auto'
+      return 'h-12 w-auto'
     }
   }
 

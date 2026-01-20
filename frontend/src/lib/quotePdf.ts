@@ -39,6 +39,15 @@ function sanitizePdfText(value: string): string {
   return (value ?? '').replace(/[^\x20-\x7E]/g, '').trim()
 }
 
+function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
+  return result ? {
+    r: parseInt(result[1], 16),
+    g: parseInt(result[2], 16),
+    b: parseInt(result[3], 16)
+  } : null
+}
+
 export async function exportQuoteToPDF(quoteData: QuotePdfData): Promise<void> {
   const pdf = new jsPDF('p', 'mm', 'letter')
   const pageWidth = pdf.internal.pageSize.getWidth()
@@ -46,12 +55,12 @@ export async function exportQuoteToPDF(quoteData: QuotePdfData): Promise<void> {
   const margin = 20
   let yPosition = margin
 
+  // Header with title and logo
   pdf.setFontSize(18)
   pdf.setFont('helvetica', 'bold')
   pdf.text('COTIZACIÓN', pageWidth / 2, yPosition, { align: 'center' })
-  yPosition += 15
 
-  // Add logo if available
+  // Add logo on the right if available
   if (quoteData.logoUrl) {
     try {
       const img = new Image()
@@ -69,23 +78,58 @@ export async function exportQuoteToPDF(quoteData: QuotePdfData): Promise<void> {
       ctx.drawImage(img, 0, 0)
       const imgData = canvas.toDataURL('image/png')
       
-      // Logo dimensions: max 30mm height, maintain aspect ratio
-      const maxHeight = 30
+      // Logo dimensions: 20mm height, maintain aspect ratio
+      const logoHeight = 20
       const aspectRatio = img.naturalWidth / img.naturalHeight
-      const logoWidth = maxHeight * aspectRatio
-      const logoHeight = maxHeight
+      const logoWidth = logoHeight * aspectRatio
       
-      pdf.addImage(imgData, 'PNG', margin, yPosition - 10, logoWidth, logoHeight)
-      yPosition += logoHeight + 5
+      pdf.addImage(imgData, 'PNG', pageWidth - margin - logoWidth, yPosition - 15, logoWidth, logoHeight)
     } catch (error) {
       console.warn('Failed to load logo for PDF:', error)
     }
   }
 
+  yPosition += 15
+
   pdf.setFontSize(12)
   pdf.setFont('helvetica', 'bold')
   pdf.text(sanitizePdfText(quoteData.tenant.branding?.tenantName ?? 'Empresa'), margin, yPosition)
   yPosition += 8
+
+  pdf.setFontSize(10)
+  pdf.setFont('helvetica', 'normal')
+  pdf.text(`Cotización: ${sanitizePdfText(quoteData.quoteNumber)}`, margin, yPosition)
+  yPosition += 6
+  pdf.text(`Fecha: ${new Date().toLocaleDateString()}`, margin, yPosition)
+  yPosition += 6
+  pdf.text(`Cliente: ${sanitizePdfText(quoteData.customerName)}`, margin, yPosition)
+  yPosition += 6
+  if ((quoteData.quotedBy ?? '').trim()) {
+    pdf.text(`Cotizado por: ${sanitizePdfText(quoteData.quotedBy ?? '')}`, margin, yPosition)
+    yPosition += 6
+  }
+  pdf.text(`Validez: ${sanitizePdfText(quoteData.validityDays)} día(s)`, margin, yPosition)
+  yPosition += 10
+
+  // Add watermark
+  const primaryColor = quoteData.tenant.branding?.primary || '#0f172a'
+  const rgb = hexToRgb(primaryColor)
+  if (rgb) {
+    pdf.saveGraphicsState()
+    pdf.setTextColor(rgb.r, rgb.g, rgb.b, 0.1) // Semi-transparent
+    pdf.setFontSize(60)
+    pdf.setFont('helvetica', 'bold')
+    
+    // Rotate and position watermark
+    const centerX = pageWidth / 2
+    const centerY = pageHeight / 2
+    pdf.text(quoteData.quoteNumber, centerX, centerY, { 
+      angle: 45,
+      align: 'center',
+      renderingMode: 'fill'
+    })
+    pdf.restoreGraphicsState()
+  }
 
   pdf.setFontSize(10)
   pdf.setFont('helvetica', 'normal')

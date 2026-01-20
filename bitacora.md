@@ -525,3 +525,7 @@ Tenant Admin (Clientes)
 - **Navbar logos cuadrados**: aumentado tamaño de `h-10 w-10` a `h-12 w-12` para mejor visibilidad.
 - **Cotizaciones PDF**: agregado logo del tenant en la exportación PDF cuando existe. Logo posicionado arriba del nombre de la empresa con altura máxima de 30mm manteniendo proporciones.
 
+### **[20 Ene 2026]** — Mejoras en logos navbar y cotizaciones PDF
+- **Navbar logos**: ampliado rango de detección de logos cuadrados (0.8-1.2 aspect ratio) y aumentado tamaño base a h-12 para mejor visibilidad.
+- **Cotizaciones PDF**: logo reposicionado a la derecha en la fila del título "COTIZACIÓN". Agregada marca de agua diagonal con número de cotización usando color primario del branding (transparente 10%).
+
