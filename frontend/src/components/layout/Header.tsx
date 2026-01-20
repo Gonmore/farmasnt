@@ -16,7 +16,33 @@ export function Header({ onMenuClick, showMenuButton = false }: HeaderProps) {
   const theme = useTheme()
   const notifications = useNotifications()
   const [notificationsOpen, setNotificationsOpen] = useState(false)
+  const [logoDimensions, setLogoDimensions] = useState<{ width: number; height: number } | null>(null)
   const dropdownRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (tenant.branding?.logoUrl) {
+      const img = new Image()
+      img.onload = () => {
+        setLogoDimensions({ width: img.naturalWidth, height: img.naturalHeight })
+      }
+      img.src = tenant.branding.logoUrl
+    } else {
+      setLogoDimensions(null)
+    }
+  }, [tenant.branding?.logoUrl])
+
+  const getLogoClassName = () => {
+    if (!logoDimensions) return 'h-10 w-auto'
+    
+    const aspectRatio = logoDimensions.width / logoDimensions.height
+    if (aspectRatio >= 0.9 && aspectRatio <= 1.1) {
+      // Cuadrado
+      return 'h-10 w-10 object-contain'
+    } else {
+      // Rectangular
+      return 'h-10 w-auto'
+    }
+  }
 
   useEffect(() => {
     const onDocClick = (e: MouseEvent) => {
@@ -50,7 +76,7 @@ export function Header({ onMenuClick, showMenuButton = false }: HeaderProps) {
               <img 
                 src={tenant.branding.logoUrl} 
                 alt={tenant.branding.tenantName || 'Logo'} 
-                className="h-10 w-auto" 
+                className={getLogoClassName()} 
               />
             ) : (
               <img 

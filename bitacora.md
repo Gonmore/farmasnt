@@ -515,3 +515,9 @@ Tenant Admin (Clientes)
 ### **[20 Ene 2026]** — Alineación de botones en página de entregas
 - **Botón "Marcar como entregado"**: cambiado a `variant="ghost"` con ícono `CheckCircleIcon` para mantener consistencia con otros botones de acción en tablas (como "Ver").
 
+### **[20 Ene 2026]** — Optimización de logos en navbar según dimensiones
+- **Detección automática de dimensiones**: agregado código para detectar si el logo del tenant es cuadrado (aspect ratio entre 0.9 y 1.1) y aplicar clases CSS apropiadas.
+- **Logos cuadrados**: usan `h-10 w-10 object-contain` para mantener proporciones sin distorsión.
+- **Logos rectangulares**: mantienen `h-10 w-auto` como antes.
+- **Logos por defecto**: sin cambios (Supernovatel logos son rectangulares).
+
