@@ -48,15 +48,15 @@ export async function exportQuoteToPDF(quoteData: QuotePdfData): Promise<void> {
 
   // Add watermark first (background)
   pdf.saveGraphicsState()
-  pdf.setTextColor(135, 206, 235, 0.05) // Sky blue, very transparent
-  pdf.setFontSize(80)
+  pdf.setTextColor(135, 206, 235) // Sky blue RGB: 135, 206, 235
+  pdf.setGState({ opacity: 0.08 }) // Very transparent
+  pdf.setFontSize(70)
   pdf.setFont('helvetica', 'bold')
   const centerX = pageWidth / 2
-  const centerY = pageHeight / 2
+  const centerY = pageHeight / 2 + 20 // Move down a bit
   pdf.text(quoteData.quoteNumber, centerX, centerY, { 
     angle: 45,
-    align: 'center',
-    renderingMode: 'fill'
+    align: 'center'
   })
   pdf.restoreGraphicsState()
 
@@ -120,7 +120,7 @@ export async function exportQuoteToPDF(quoteData: QuotePdfData): Promise<void> {
     }
   }
 
-  yPosition += 10
+  yPosition += 18 // More space between header and body
 
   // Products table
   const colWidths = [35, 50, 20, 20, 30, 30]

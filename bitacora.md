@@ -541,3 +541,7 @@ Tenant Admin (Clientes)
 - **Footer**: Forma de pago, tiempo de entrega y lugar de entrega debajo de los totales.
 - **Marca de agua**: Número de cotización en diagonal de fondo con color celeste translúcido (5% transparencia).
 
+### **[20 Ene 2026]** — Ajustes de espaciado y marca de agua en PDF cotizaciones
+- **Espaciado**: Aumentado espacio entre header y tabla de productos de 10mm a 18mm para mejor legibilidad.
+- **Marca de agua**: Ajustada transparencia a 8%, movida hacia abajo (+20mm), y corregido color celeste (RGB: 135, 206, 235).
+
