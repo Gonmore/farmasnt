@@ -224,7 +224,6 @@ export function ImageUpload({
           onChange={handleFileInputChange}
           disabled={disabled || loading || isProcessing}
           className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
-          capture="environment" // Prefer rear camera on mobile
         />
       </div>
 
