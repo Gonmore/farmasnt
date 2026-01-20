@@ -533,3 +533,11 @@ Tenant Admin (Clientes)
 - **Logo en PDF**: reposicionado a la izquierda del header, aumentado tamaño a 40mm de altura (doble del anterior).
 - **Marca de agua**: cambiada a color celeste (sky blue) con mayor transparencia (3%) para mejor legibilidad del contenido.
 
+### **[20 Ene 2026]** — Reorganización completa del PDF de cotizaciones
+- **Layout profesional**: Título "COTIZACIÓN" centrado arriba, seguido de dos columnas en la sección de detalles.
+- **Columna izquierda**: Nombre de la empresa y detalles (número cotización, fecha, cliente, cotizado por, validez).
+- **Columna derecha**: Logo de la empresa (35mm altura) alineado a la derecha en la misma sección.
+- **Tabla de productos**: Ubicada en el body con columnas optimizadas.
+- **Footer**: Forma de pago, tiempo de entrega y lugar de entrega debajo de los totales.
+- **Marca de agua**: Número de cotización en diagonal de fondo con color celeste translúcido (5% transparencia).
+

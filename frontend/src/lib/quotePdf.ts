@@ -46,43 +46,30 @@ export async function exportQuoteToPDF(quoteData: QuotePdfData): Promise<void> {
   const margin = 20
   let yPosition = margin
 
-  // Header with title and logo
+  // Add watermark first (background)
+  pdf.saveGraphicsState()
+  pdf.setTextColor(135, 206, 235, 0.05) // Sky blue, very transparent
+  pdf.setFontSize(80)
+  pdf.setFont('helvetica', 'bold')
+  const centerX = pageWidth / 2
+  const centerY = pageHeight / 2
+  pdf.text(quoteData.quoteNumber, centerX, centerY, { 
+    angle: 45,
+    align: 'center',
+    renderingMode: 'fill'
+  })
+  pdf.restoreGraphicsState()
+
+  // Title
   pdf.setFontSize(18)
   pdf.setFont('helvetica', 'bold')
   pdf.text('COTIZACIÓN', pageWidth / 2, yPosition, { align: 'center' })
-
-  // Add logo on the left if available
-  if (quoteData.logoUrl) {
-    try {
-      const img = new Image()
-      img.crossOrigin = 'anonymous'
-      await new Promise((resolve, reject) => {
-        img.onload = resolve
-        img.onerror = reject
-        img.src = quoteData.logoUrl!
-      })
-      
-      const canvas = document.createElement('canvas')
-      const ctx = canvas.getContext('2d')!
-      canvas.width = img.naturalWidth
-      canvas.height = img.naturalHeight
-      ctx.drawImage(img, 0, 0)
-      const imgData = canvas.toDataURL('image/png')
-      
-      // Logo dimensions: 40mm height, maintain aspect ratio
-      const logoHeight = 40
-      const aspectRatio = img.naturalWidth / img.naturalHeight
-      const logoWidth = logoHeight * aspectRatio
-      
-      pdf.addImage(imgData, 'PNG', margin, yPosition - 5, logoWidth, logoHeight)
-      yPosition += logoHeight + 10
-    } catch (error) {
-      console.warn('Failed to load logo for PDF:', error)
-    }
-  }
-
   yPosition += 15
 
+  // Save starting position for details section
+  const detailsStartY = yPosition
+
+  // Left column: Company name and details
   pdf.setFontSize(12)
   pdf.setFont('helvetica', 'bold')
   pdf.text(sanitizePdfText(quoteData.tenant.branding?.tenantName ?? 'Empresa'), margin, yPosition)
@@ -101,39 +88,41 @@ export async function exportQuoteToPDF(quoteData: QuotePdfData): Promise<void> {
     yPosition += 6
   }
   pdf.text(`Validez: ${sanitizePdfText(quoteData.validityDays)} día(s)`, margin, yPosition)
-  yPosition += 10
 
-  // Add watermark
-  pdf.saveGraphicsState()
-  pdf.setTextColor(135, 206, 235, 0.03) // Sky blue, very transparent
-  pdf.setFontSize(80)
-  pdf.setFont('helvetica', 'bold')
-  
-  // Rotate and position watermark
-  const centerX = pageWidth / 2
-  const centerY = pageHeight / 2
-  pdf.text(quoteData.quoteNumber, centerX, centerY, { 
-    angle: 45,
-    align: 'center',
-    renderingMode: 'fill'
-  })
-  pdf.restoreGraphicsState()
-
-  pdf.setFontSize(10)
-  pdf.setFont('helvetica', 'normal')
-  pdf.text(`Cotización: ${sanitizePdfText(quoteData.quoteNumber)}`, margin, yPosition)
-  yPosition += 6
-  pdf.text(`Fecha: ${new Date().toLocaleDateString()}`, margin, yPosition)
-  yPosition += 6
-  pdf.text(`Cliente: ${sanitizePdfText(quoteData.customerName)}`, margin, yPosition)
-  yPosition += 6
-  if ((quoteData.quotedBy ?? '').trim()) {
-    pdf.text(`Cotizado por: ${sanitizePdfText(quoteData.quotedBy ?? '')}`, margin, yPosition)
-    yPosition += 6
+  // Right side: Logo (if available)
+  if (quoteData.logoUrl) {
+    try {
+      const img = new Image()
+      img.crossOrigin = 'anonymous'
+      await new Promise((resolve, reject) => {
+        img.onload = resolve
+        img.onerror = reject
+        img.src = quoteData.logoUrl!
+      })
+      
+      const canvas = document.createElement('canvas')
+      const ctx = canvas.getContext('2d')!
+      canvas.width = img.naturalWidth
+      canvas.height = img.naturalHeight
+      ctx.drawImage(img, 0, 0)
+      const imgData = canvas.toDataURL('image/png')
+      
+      // Logo dimensions: 35mm height, maintain aspect ratio
+      const logoHeight = 35
+      const aspectRatio = img.naturalWidth / img.naturalHeight
+      const logoWidth = logoHeight * aspectRatio
+      
+      // Position logo on the right side
+      const logoX = pageWidth - margin - logoWidth
+      pdf.addImage(imgData, 'PNG', logoX, detailsStartY, logoWidth, logoHeight)
+    } catch (error) {
+      console.warn('Failed to load logo for PDF:', error)
+    }
   }
-  pdf.text(`Validez: ${sanitizePdfText(quoteData.validityDays)} día(s)`, margin, yPosition)
+
   yPosition += 10
 
+  // Products table
   const colWidths = [35, 50, 20, 20, 30, 30]
   const headers = ['SKU', 'Producto', 'Cant.', 'Desc.%', 'Precio Unit.', 'Total']
 
