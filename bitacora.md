@@ -521,3 +521,7 @@ Tenant Admin (Clientes)
 - **Logos rectangulares**: mantienen `h-10 w-auto` como antes.
 - **Logos por defecto**: sin cambios (Supernovatel logos son rectangulares).
 
+### **[20 Ene 2026]** — Mejora de logos en navbar y cotizaciones PDF
+- **Navbar logos cuadrados**: aumentado tamaño de `h-10 w-10` a `h-12 w-12` para mejor visibilidad.
+- **Cotizaciones PDF**: agregado logo del tenant en la exportación PDF cuando existe. Logo posicionado arriba del nombre de la empresa con altura máxima de 30mm manteniendo proporciones.
+

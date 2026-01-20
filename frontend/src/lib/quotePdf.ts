@@ -27,6 +27,7 @@ export type QuotePdfData = {
   totalAfterGlobal: number
   currency: string
   tenant: any
+  logoUrl?: string
 }
 
 function money(n: number): string {
@@ -49,6 +50,37 @@ export async function exportQuoteToPDF(quoteData: QuotePdfData): Promise<void> {
   pdf.setFont('helvetica', 'bold')
   pdf.text('COTIZACIÓN', pageWidth / 2, yPosition, { align: 'center' })
   yPosition += 15
+
+  // Add logo if available
+  if (quoteData.logoUrl) {
+    try {
+      const img = new Image()
+      img.crossOrigin = 'anonymous'
+      await new Promise((resolve, reject) => {
+        img.onload = resolve
+        img.onerror = reject
+        img.src = quoteData.logoUrl!
+      })
+      
+      const canvas = document.createElement('canvas')
+      const ctx = canvas.getContext('2d')!
+      canvas.width = img.naturalWidth
+      canvas.height = img.naturalHeight
+      ctx.drawImage(img, 0, 0)
+      const imgData = canvas.toDataURL('image/png')
+      
+      // Logo dimensions: max 30mm height, maintain aspect ratio
+      const maxHeight = 30
+      const aspectRatio = img.naturalWidth / img.naturalHeight
+      const logoWidth = maxHeight * aspectRatio
+      const logoHeight = maxHeight
+      
+      pdf.addImage(imgData, 'PNG', margin, yPosition - 10, logoWidth, logoHeight)
+      yPosition += logoHeight + 5
+    } catch (error) {
+      console.warn('Failed to load logo for PDF:', error)
+    }
+  }
 
   pdf.setFontSize(12)
   pdf.setFont('helvetica', 'bold')

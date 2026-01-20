@@ -112,6 +112,7 @@ export function QuoteDetailPage() {
                       totalAfterGlobal: q.total,
                       currency,
                       tenant,
+                      logoUrl: tenant.branding?.logoUrl || undefined,
                     })
                   }}
                 >

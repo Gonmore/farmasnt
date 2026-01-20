@@ -37,7 +37,7 @@ export function Header({ onMenuClick, showMenuButton = false }: HeaderProps) {
     const aspectRatio = logoDimensions.width / logoDimensions.height
     if (aspectRatio >= 0.9 && aspectRatio <= 1.1) {
       // Cuadrado
-      return 'h-10 w-10 object-contain'
+      return 'h-12 w-12 object-contain'
     } else {
       // Rectangular
       return 'h-10 w-auto'
