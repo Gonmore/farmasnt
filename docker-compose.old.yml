@@ -1,15 +1,17 @@
 services:
   backend-farmasnt:
-    # Sustituimos 'build' por la imagen de tu registro
-    image: gonmore14/backend-farmasnt:latest
+    build:
+      context: ./backend
     container_name: backend-farmasnt
     restart: always
     environment:
+      # Formato LLAVE: VALOR (Nota el uso de : y sin comillas innecesarias a menos que haya caracteres raros)
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
       PORT: ${PORT:-6000}
-      NODE_ENV: production
+      NODE_ENV: ${NODE_ENV:-production}
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?set JWT_ACCESS_SECRET in .env}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?set JWT_REFRESH_SECRET in .env}
+      # RUN_SEED=1 ejecuta `npm run seed` al arrancar (idempotente)
       RUN_SEED: ${RUN_SEED:-0}
       SEED_TENANT_NAME: ${SEED_TENANT_NAME:-Demo Pharma}
       SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@demo.local}
@@ -22,27 +24,42 @@ services:
       SMTP_PASS: ${SMTP_PASS:-}
       SMTP_FROM: ${SMTP_FROM:-}
       WEB_ORIGIN: ${WEB_ORIGIN:?set WEB_ORIGIN in .env}
+
+      # Object storage (S3 / MinIO)
+      # NOTE: These are required for product photo upload and tenant logo upload.
+      # Recommend setting them via server env / .env (not hardcoding secrets here).
       S3_ENDPOINT: ${S3_ENDPOINT:-}
       S3_REGION: ${S3_REGION:-us-east-1}
       S3_BUCKET: ${S3_BUCKET:-}
       S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
       S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+      # Must be browser-reachable (usually via nginx), e.g. https://assets.example.com/<bucket>
       S3_PUBLIC_BASE_URL: ${S3_PUBLIC_BASE_URL:-}
+      # MinIO typically requires path-style URLs
       S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
+      # Prisma: si una migración quedó marcada como FAILED (P3009), el contenedor no podrá aplicar nuevas.
+      # Para este caso puntual (20260116063727_pagos) habilitamos una resolución automática y reintento.
+      # IMPORTANTE: si la migración alcanzó a aplicar cambios parcialmente, puede requerir limpieza manual.
       PRISMA_MIGRATE_RESOLVE_ON_FAIL: ${PRISMA_MIGRATE_RESOLVE_ON_FAIL:-1}
       PRISMA_MIGRATE_RESOLVE_ACTION: ${PRISMA_MIGRATE_RESOLVE_ACTION:-rolled-back}
       PRISMA_MIGRATE_RESOLVE_NAMES: ${PRISMA_MIGRATE_RESOLVE_NAMES:-20260116063727_pagos}
     ports:
-      - "6000:6000"
+      - "6000:6000"  # Mantener puerto 6000 para acceso interno
     networks:
       - red-interna
 
   frontend-farmasnt:
-    # Sustituimos 'build' por la imagen de tu registro
-    image: gonmore14/frontend-farmasnt:latest
+    build:
+      context: ./frontend
+      args:
+        # Importante: VITE_* se inyecta en build (no en runtime)
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:?set VITE_API_BASE_URL in .env}
+        VITE_BACKEND_TARGET: ${VITE_BACKEND_TARGET:-http://backend-farmasnt:6000}
     container_name: frontend-farmasnt
     restart: always
     environment:
+      # Vite preview (runtime) bloquea hosts no permitidos; al entrar por IP externa
+      # puede quedar en blanco si el host no está en allowedHosts.
       VITE_ALLOW_ALL_HOSTS: "1"
     depends_on:
       - backend-farmasnt

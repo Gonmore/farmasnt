@@ -48,12 +48,11 @@ export async function exportQuoteToPDF(quoteData: QuotePdfData): Promise<void> {
 
   // Add watermark first (background)
   pdf.saveGraphicsState()
-  pdf.setTextColor(135, 206, 235) // Sky blue RGB: 135, 206, 235
-  pdf.setGState({ opacity: 0.08 }) // Very transparent
   pdf.setFontSize(70)
   pdf.setFont('helvetica', 'bold')
-  const centerX = pageWidth / 2
+  const centerX = pageWidth / 2 + 15 // Move to the right to respect margins
   const centerY = pageHeight / 2 + 20 // Move down a bit
+  pdf.setTextColor(200, 220, 235) // Very light sky blue for watermark
   pdf.text(quoteData.quoteNumber, centerX, centerY, { 
     angle: 45,
     align: 'center'

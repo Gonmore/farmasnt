@@ -1,8 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
+import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { apiFetch } from '../../lib/api'
 import { exportQuoteToPDF } from '../../lib/quotePdf'
-import { openWhatsAppShare } from '../../lib/whatsapp'
 import { MainLayout, PageContainer, Button, Loading, ErrorState, Table } from '../../components'
 import { useNavigation } from '../../hooks'
 import { useAuth } from '../../providers/AuthProvider'
@@ -66,6 +66,8 @@ export function QuoteDetailPage() {
   const tenant = useTenant()
   const currency = tenant.branding?.currency || 'BOB'
 
+  const [isExporting, setIsExporting] = useState(false)
+
   const quoteQuery = useQuery({
     queryKey: ['quote', id],
     queryFn: () => fetchQuote(auth.accessToken!, id!),
@@ -78,16 +80,20 @@ export function QuoteDetailPage() {
         title="Cotización"
         actions={
           <div className="flex gap-2">
-            <Button variant="secondary" onClick={() => navigate('/sales/quotes')}>Volver</Button>
+            <Button variant="outline" onClick={() => navigate('/sales/quotes')}>Volver</Button>
             {quoteQuery.data && (
               <>
                 {quoteQuery.data.status !== 'PROCESSED' && (
                   <Button variant="secondary" onClick={() => navigate(`/catalog/seller?quoteId=${quoteQuery.data.id}`)}>Editar</Button>
                 )}
                 <Button
+                  variant="primary"
+                  loading={isExporting}
                   onClick={async () => {
                     const q = quoteQuery.data!
-                    await exportQuoteToPDF({
+                    setIsExporting(true)
+                    try {
+                      await exportQuoteToPDF({
                       quoteNumber: q.number,
                       customerName: q.customerName,
                       quotedBy: q.quotedBy ?? undefined,
@@ -113,22 +119,62 @@ export function QuoteDetailPage() {
                       currency,
                       tenant,
                       logoUrl: tenant.branding?.logoUrl || undefined,
-                    })
+                      })
+                    } catch (error) {
+                      console.error('Error exporting PDF:', error)
+                      alert('Error al exportar PDF')
+                    } finally {
+                      setIsExporting(false)
+                    }
                   }}
                 >
-                  📄 Exportar PDF
+                  {isExporting ? 'Exportando...' : 'Exportar PDF'}
                 </Button>
                 <Button
-                  variant="secondary"
-                  onClick={() => {
+                  variant="success"
+                  onClick={async () => {
                     const q = quoteQuery.data!
-                    const origin = window.location.origin
-                    const link = `${origin}/sales/quotes/${q.id}`
-                    const msg = `Cotización ${q.number} (${q.customerName})\nTotal: ${money(q.total)} ${currency}\n${link}`
-                    openWhatsAppShare(msg)
+                    setIsExporting(true)
+                    try {
+                      await exportQuoteToPDF({
+                        quoteNumber: q.number,
+                        customerName: q.customerName,
+                        quotedBy: q.quotedBy ?? undefined,
+                        validityDays: String(q.validityDays),
+                        paymentMode: paymentLabel(q.paymentMode),
+                        deliveryDays: String(q.deliveryDays),
+                        deliveryCity: q.deliveryCity ?? undefined,
+                        deliveryZone: q.deliveryZone ?? undefined,
+                        deliveryAddress: q.deliveryAddress ?? undefined,
+                        globalDiscountPct: String(q.globalDiscountPct),
+                        proposalValue: q.proposalValue ?? '',
+                        items: q.lines.map((l) => ({
+                          sku: l.productSku,
+                          name: l.productName,
+                          quantity: l.quantity,
+                          discountPct: l.discountPct,
+                          unitPrice: l.unitPrice,
+                          lineTotal: l.total,
+                        })),
+                        subtotal: q.subtotal,
+                        globalDiscountAmount: q.globalDiscountAmount,
+                        totalAfterGlobal: q.total,
+                        currency,
+                        tenant,
+                        logoUrl: tenant.branding?.logoUrl || undefined,
+                      })
+                      // Note: PDF is downloaded. For WhatsApp, user needs to manually share the downloaded PDF.
+                      const msg = `Cotización ${q.number} generada. Por favor comparta el archivo PDF descargado.`
+                      alert(msg)
+                    } catch (error) {
+                      console.error('Error exporting PDF:', error)
+                      alert('Error al generar PDF para WhatsApp')
+                    } finally {
+                      setIsExporting(false)
+                    }
                   }}
                 >
-                  📲 WhatsApp
+                  WhatsApp PDF
                 </Button>
               </>
             )}

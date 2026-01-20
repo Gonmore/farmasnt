@@ -545,3 +545,11 @@ Tenant Admin (Clientes)
 - **Espaciado**: Aumentado espacio entre header y tabla de productos de 10mm a 18mm para mejor legibilidad.
 - **Marca de agua**: Ajustada transparencia a 8%, movida hacia abajo (+20mm), y corregido color celeste (RGB: 135, 206, 235).
 
+### **[20 Ene 2026]** — Corrección de error PDF y actualización de botones en cotizaciones
+- **Error PDF**: Corregido error `setGState` usando color más claro (RGB: 200, 220, 235) para marca de agua en lugar de transparencia compleja.
+- **Botones actualizados**:
+  - "Volver": Cambiado a variant `outline`
+  - "Exportar PDF": Cambiado a variant `primary` con estado de carga ("Exportando..." mientras genera)
+  - "WhatsApp PDF": Cambiado a variant `success`, ahora exporta el PDF en lugar de enviar link
+- **Manejo de errores**: Agregado try/catch en exportación PDF con mensajes de error claros.
+
