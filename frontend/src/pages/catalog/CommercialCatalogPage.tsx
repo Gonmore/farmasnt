@@ -5,6 +5,7 @@ import { getProductDisplayName } from '../../lib/productName'
 import { useAuth, useCart, useTenant } from '../../providers'
 import { MainLayout, PageContainer, Button, Loading, ErrorState, EmptyState, CatalogSearch, ProductPhoto } from '../../components'
 import { useNavigation } from '../../hooks'
+import { EyeIcon, ShoppingCartIcon } from '@heroicons/react/24/outline'
 
 type Product = {
   id: string
@@ -169,18 +170,21 @@ export function CommercialCatalogPage() {
                       <div className="flex gap-1">
                         <Button
                           size="sm"
-                          variant="secondary"
+                          variant="outline"
+                          icon={<EyeIcon className="w-4 h-4" />}
                           onClick={() => handleViewDetail(product.id)}
-                          className="flex-1 text-xs bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 transition-all duration-200 shadow-sm hover:shadow-md"
+                          className="flex-1 text-xs"
                         >
-                          👁️ Ver
+                          Ver
                         </Button>
                         <Button
                           size="sm"
+                          variant="success"
+                          icon={<ShoppingCartIcon className="w-4 h-4" />}
                           onClick={() => handleAddToCart(product)}
-                          className="flex-1 text-xs bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white shadow-md hover:shadow-lg transition-all duration-200 transform hover:scale-105"
+                          className="flex-1 text-xs"
                         >
-                          🛒 Agregar
+                          Agregar
                         </Button>
                       </div>
                     </div>

@@ -507,3 +507,8 @@ Tenant Admin (Clientes)
 - **Fix NaN en tablas**: el componente de tabla genérico ahora pasa `rowIndex` al `accessor(item, index)` (evita `NaN` por índices indefinidos).
 - **Fix build TypeScript en Docker/producción**: ajustes de tipos en reportes (`tenant.branding.tenantName`, `logoUrl` nullable, `percent` optional) y limpieza de imports/parámetros no usados.
 
+### **[20 Ene 2026]** — Mejoras en UI: menú lateral y botones del catálogo comercial
+- **Menú lateral**: agregado scroll automático al elemento activo seleccionado para mantener la visibilidad al navegar (especialmente en opciones inferiores como "Branding"). Ajuste de estilos para temas claro/oscuro: elemento activo en tema claro usa `bg-slate-100 text-slate-900`, en tema oscuro mantiene `bg-[var(--pf-primary)] text-white`.
+- **Catálogo comercial**: actualización de botones en cada item del catálogo. Botón "Ver" cambiado a `variant="outline"` con ícono `EyeIcon` (removido emoji). Botón "Agregar" cambiado a `variant="success"` con ícono `ShoppingCartIcon` (removido emoji). Simplificación de clases CSS personalizadas para usar variants consistentes del sistema de diseño.
+- **Compilación**: frontend y backend compilan exitosamente tras los cambios.
+
