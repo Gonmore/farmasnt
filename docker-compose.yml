@@ -1,7 +1,7 @@
 services:
   backend-farmasnt:
     # Sustituimos 'build' por la imagen de tu registro
-    image: gonmore14/backend-farmasnt:latest
+    image: gonmore14/backend-farmasnt:${APP_VERSION:-latest}
     container_name: backend-farmasnt
     restart: always
     environment:
@@ -39,7 +39,7 @@ services:
 
   frontend-farmasnt:
     # Sustituimos 'build' por la imagen de tu registro
-    image: gonmore14/frontend-farmasnt:latest
+    image: gonmore14/frontend-farmasnt:${APP_VERSION:-latest}
     container_name: frontend-farmasnt
     restart: always
     environment:

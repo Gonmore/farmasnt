@@ -21,19 +21,21 @@ docker push $USER_DOCKER/frontend-farmasnt:$VERSION
 
 echo "🚀 2. Actualizando servidor remoto..."
 
-# Este bloque se ejecuta dentro de tu servidor
 ssh $SERVER_USER@$SERVER_IP << EOF
   cd $SERVER_PATH
   
-  # Actualiza las imágenes en el archivo docker-compose.yml
-  sed -i "s|image: $USER_DOCKER/backend-farmasnt:.*|image: $USER_DOCKER/backend-farmasnt:$VERSION|" docker-compose.yml
-  sed -i "s|image: $USER_DOCKER/frontend-farmasnt:.*|image: $USER_DOCKER/frontend-farmasnt:$VERSION|" docker-compose.yml
+  # Reemplazo robusto: busca cualquier línea que contenga 'image:' y el nombre del repo
+  # y reemplaza TODA la línea por la nueva imagen con la versión.
+  sed -i "s|.*image:.*backend-farmasnt:.*|    image: $USER_DOCKER/backend-farmasnt:$VERSION|" docker-compose.yml
+  sed -i "s|.*image:.*frontend-farmasnt:.*|    image: $USER_DOCKER/frontend-farmasnt:$VERSION|" docker-compose.yml
   
-  # Despliegue
+  echo "📥 Descargando nuevas imágenes ($VERSION)..."
   docker compose pull
+  
+  echo "🔄 Reiniciando contenedores..."
   docker compose up -d
   
-  # Limpieza de imágenes viejas para no agotar el espacio
+  echo "🧹 Limpiando imágenes antiguas para liberar espacio..."
   docker image prune -f
 EOF
 
