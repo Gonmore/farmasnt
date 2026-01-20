@@ -2,8 +2,9 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiFetch } from '../../lib/api'
 import { useAuth } from '../../providers/AuthProvider'
-import { MainLayout, PageContainer, Table, Loading, ErrorState, EmptyState, Button, Modal, Input } from '../../components'
+import { MainLayout, PageContainer, Button, Table, Loading, ErrorState, EmptyState, Modal, Input } from '../../components'
 import { useNavigation } from '../../hooks'
+import { UserGroupIcon, PowerIcon, KeyIcon, PlusIcon } from '@heroicons/react/24/outline'
 
 type AdminUserListItem = {
   id: string
@@ -37,9 +38,9 @@ export function UsersPage() {
   const [createEmail, setCreateEmail] = useState('')
   const [createPassword, setCreatePassword] = useState('')
   const [createFullName, setCreateFullName] = useState('')
-  const [createRoleIds, setCreateRoleIds] = useState<string[]>([])
+  const [createRoleId, setCreateRoleId] = useState<string>('')
 
-  const [selectedRoleIds, setSelectedRoleIds] = useState<string[]>([])
+  const [selectedRoleId, setSelectedRoleId] = useState<string>('')
 
   const usersQuery = useQuery({
     queryKey: ['admin-users'],
@@ -62,7 +63,7 @@ export function UsersPage() {
           email: createEmail,
           password: createPassword,
           fullName: createFullName.trim() ? createFullName.trim() : undefined,
-          roleIds: createRoleIds.length ? createRoleIds : undefined,
+          roleIds: createRoleId ? [createRoleId] : undefined,
         }),
       })
     },
@@ -72,7 +73,7 @@ export function UsersPage() {
       setCreateEmail('')
       setCreatePassword('')
       setCreateFullName('')
-      setCreateRoleIds([])
+      setCreateRoleId('')
     },
   })
 
@@ -116,7 +117,7 @@ export function UsersPage() {
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ['admin-users'] })
       setRolesOpen(null)
-      setSelectedRoleIds([])
+      setSelectedRoleId('')
     },
   })
 
@@ -124,7 +125,7 @@ export function UsersPage() {
     <MainLayout navGroups={navGroups}>
       <PageContainer title="Usuarios">
         <div className="mb-3 flex justify-end">
-          <Button onClick={() => setCreateOpen(true)}>Crear usuario</Button>
+          <Button variant="primary" icon={<PlusIcon />} onClick={() => setCreateOpen(true)}>Crear usuario</Button>
         </div>
 
         <div className="rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
@@ -140,32 +141,39 @@ export function UsersPage() {
                 { header: 'Creado', accessor: (u) => new Date(u.createdAt).toLocaleDateString() },
                 {
                   header: 'Acciones',
+                  className: 'text-center w-auto',
                   accessor: (u) => (
-                    <div className="flex flex-wrap gap-2">
+                    <div className="flex items-center justify-center gap-1">
                       <Button
-                        variant="secondary"
+                        variant="ghost"
+                        size="sm"
+                        icon={<UserGroupIcon className="w-4 h-4" />}
                         onClick={() => {
                           setRolesOpen({ open: true, userId: u.id, email: u.email })
-                          setSelectedRoleIds(u.roleIds ?? [])
+                          setSelectedRoleId((u.roleIds ?? [])[0] ?? '')
                         }}
                       >
                         Roles
                       </Button>
                       <Button
-                        variant="secondary"
+                        variant="ghost"
+                        size="sm"
+                        icon={<PowerIcon className="w-4 h-4" />}
                         onClick={() => statusMutation.mutate({ userId: u.id, isActive: !u.isActive })}
                         disabled={statusMutation.isPending}
                       >
                         {u.isActive ? 'Desactivar' : 'Activar'}
                       </Button>
                       <Button
-                        variant="secondary"
+                        variant="ghost"
+                        size="sm"
+                        icon={<KeyIcon className="w-4 h-4" />}
                         onClick={() => {
                           setResetOpen({ open: true, userId: u.id, email: u.email })
                           setTempPassword(null)
                         }}
                       >
-                        Reset clave
+                        Reset
                       </Button>
                     </div>
                   ),
@@ -208,13 +216,10 @@ export function UsersPage() {
                   {rolesQuery.data.items.map((r) => (
                     <label key={r.id} className="flex items-center gap-2 py-1 text-sm text-slate-800 dark:text-slate-200">
                       <input
-                        type="checkbox"
-                        checked={createRoleIds.includes(r.id)}
-                        onChange={(e) => {
-                          setCreateRoleIds((prev) =>
-                            e.target.checked ? [...prev, r.id] : prev.filter((x) => x !== r.id),
-                          )
-                        }}
+                        type="radio"
+                        name="createRole"
+                        checked={createRoleId === r.id}
+                        onChange={() => setCreateRoleId(r.id)}
                       />
                       <span>
                         {r.name} ({r.code})
@@ -254,11 +259,10 @@ export function UsersPage() {
               {(rolesQuery.data?.items ?? []).map((r) => (
                 <label key={r.id} className="flex items-center gap-2 py-1 text-sm text-slate-800 dark:text-slate-200">
                   <input
-                    type="checkbox"
-                    checked={selectedRoleIds.includes(r.id)}
-                    onChange={(e) => {
-                      setSelectedRoleIds((prev) => (e.target.checked ? [...prev, r.id] : prev.filter((x) => x !== r.id)))
-                    }}
+                    type="radio"
+                    name="editRole"
+                    checked={selectedRoleId === r.id}
+                    onChange={() => setSelectedRoleId(r.id)}
                   />
                   <span>
                     {r.name} ({r.code})
@@ -278,7 +282,7 @@ export function UsersPage() {
                 Cancelar
               </Button>
               <Button
-                onClick={() => rolesOpen && rolesMutation.mutate({ userId: rolesOpen.userId, roleIds: selectedRoleIds })}
+                onClick={() => rolesOpen && rolesMutation.mutate({ userId: rolesOpen.userId, roleIds: selectedRoleId ? [selectedRoleId] : [] })}
                 disabled={rolesMutation.isPending}
               >
                 Guardar
@@ -293,7 +297,7 @@ export function UsersPage() {
             setResetOpen(null)
             setTempPassword(null)
           }}
-          title={resetOpen ? `Reset password: ${resetOpen.email}` : 'Reset password'}
+          title={resetOpen ? `Resetear contraseña: ${resetOpen.email}` : 'Resetear contraseña'}
         >
           <div className="space-y-4">
             <Button

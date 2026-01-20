@@ -4,8 +4,7 @@ import * as React from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { apiFetch } from '../../lib/api'
 import { useAuth } from '../../providers/AuthProvider'
-import { useTenant } from '../../providers/TenantProvider'
-import { MainLayout, PageContainer, Input, Button, Loading, ErrorState, Select, MapSelector, CitySelector } from '../../components'
+import { MainLayout, PageContainer, Input, Button, Loading, ErrorState, Select, MapSelector } from '../../components'
 import { useNavigation } from '../../hooks'
 
 type Customer = {
@@ -30,6 +29,8 @@ type Customer = {
   createdAt: string
 }
 
+type BranchCitiesResponse = { items: string[] }
+
 async function fetchCustomer(token: string, customerId: string): Promise<Customer> {
   return apiFetch(`/api/v1/customers/${customerId}`, { token })
 }
@@ -43,6 +44,10 @@ async function createCustomer(
     token,
     body: JSON.stringify(data),
   })
+}
+
+async function fetchBranchCities(token: string): Promise<BranchCitiesResponse> {
+  return apiFetch('/api/v1/customers/branch-cities', { token })
 }
 
 async function updateCustomer(
@@ -77,14 +82,11 @@ async function updateCustomer(
 
 export function CustomerDetailPage() {
   const auth = useAuth()
-  const tenant = useTenant()
   const navigate = useNavigate()
   const navGroups = useNavigation()
   const queryClient = useQueryClient()
   const { customerId } = useParams<{ customerId?: string }>()
   const isNew = !customerId
-
-  const tenantCountry = (tenant.branding?.country ?? '').trim() || 'BOLIVIA'
   const [mapMode, setMapMode] = useState<'manual' | 'interactive'>('manual')
 
   const [name, setName] = useState('')
@@ -116,6 +118,12 @@ export function CustomerDetailPage() {
     queryKey: ['customer', customerId],
     queryFn: () => fetchCustomer(auth.accessToken!, customerId!),
     enabled: !!auth.accessToken && !!customerId,
+  })
+
+  const branchCitiesQuery = useQuery({
+    queryKey: ['customer-branch-cities'],
+    queryFn: () => fetchBranchCities(auth.accessToken!),
+    enabled: !!auth.accessToken,
   })
 
   // Cargar datos cuando se obtiene el cliente
@@ -223,6 +231,21 @@ export function CustomerDetailPage() {
   if (!isNew && customerQuery.error) return <ErrorState message="Error al cargar cliente" retry={customerQuery.refetch} />
 
   const isSubmitting = isNew ? createMutation.isPending : updateMutation.isPending
+
+  const branchCities = (branchCitiesQuery.data?.items ?? []).map((c) => c.trim()).filter((c) => c.length > 0)
+  const selectedCityNormalized = city.trim().toUpperCase()
+  const branchCitySet = new Set(branchCities.map((c) => c.toUpperCase()))
+  const cityOptions = [
+    // Keep current selection visible even if no longer an active branch city.
+    ...(selectedCityNormalized && !branchCitySet.has(selectedCityNormalized)
+      ? [{ value: selectedCityNormalized, label: `${selectedCityNormalized} (sin sucursal activa)` }]
+      : []),
+    ...branchCities
+      .map((c) => c.toUpperCase())
+      .filter((c, index, arr) => arr.indexOf(c) === index)
+      .sort((a, b) => a.localeCompare(b))
+      .map((c) => ({ value: c, label: c })),
+  ]
 
   return (
     <MainLayout navGroups={navGroups}>
@@ -333,17 +356,29 @@ export function CustomerDetailPage() {
             />
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-                  Ciudad
-                </label>
-                <CitySelector
-                  country={tenantCountry}
-                  value={city}
-                  onChange={setCity}
-                  disabled={isSubmitting}
-                />
-              </div>
+              <Select
+                label="Ciudad"
+                value={city}
+                onChange={(e) => setCity(e.target.value)}
+                disabled={
+                  isSubmitting ||
+                  branchCitiesQuery.isLoading ||
+                  branchCitiesQuery.isError ||
+                  cityOptions.length === 0
+                }
+                error={branchCitiesQuery.isError ? 'No se pudo cargar ciudades de sucursales' : undefined}
+                options={[
+                  {
+                    value: '',
+                    label: branchCitiesQuery.isLoading
+                      ? 'Cargando ciudades…'
+                      : cityOptions.length
+                        ? 'Seleccionar ciudad'
+                        : 'No hay ciudades disponibles',
+                  },
+                  ...cityOptions,
+                ]}
+              />
               <Input
                 label="Zona"
                 type="text"

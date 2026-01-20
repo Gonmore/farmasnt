@@ -3,9 +3,9 @@ import { useEffect, useState, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { apiFetch } from '../../lib/api'
 import { useAuth } from '../../providers/AuthProvider'
-import { useTheme } from '../../providers'
 import { MainLayout, PageContainer, Button, Table, Loading, ErrorState, EmptyState, PaginationCursor, Input, Badge, Modal } from '../../components'
 import { useNavigation } from '../../hooks'
+import { EyeIcon, PencilIcon, ArrowPathIcon, PlusIcon } from '@heroicons/react/24/outline'
 
 type QuoteListItem = {
   id: string
@@ -44,7 +44,6 @@ export function QuotesPage() {
   const auth = useAuth()
   const navigate = useNavigate()
   const navGroups = useNavigation()
-  const theme = useTheme()
   const queryClient = useQueryClient()
   const [searchParams, setSearchParams] = useSearchParams()
   const highlightId = searchParams.get('highlight')
@@ -107,14 +106,9 @@ export function QuotesPage() {
   const processErrorMsg = String((processMutation.error as any)?.message ?? '')
   const isStockError = processMutation.isError && processErrorMsg.toLowerCase().includes('cantidad de existencias insuficientes')
 
-  const iconClass = theme.mode === 'dark' ? 'text-slate-100' : 'text-slate-900'
-  const ICON_VIEW = `◉\uFE0E`
-  const ICON_EDIT = `✎\uFE0E`
-  const ICON_PROCESS = `⟳\uFE0E`
-
   return (
     <MainLayout navGroups={navGroups}>
-      <PageContainer title="Cotizaciones" actions={<Button onClick={() => navigate('/catalog/seller')}>Crear Cotización</Button>}>
+      <PageContainer title="Cotizaciones" actions={<Button variant="primary" icon={<PlusIcon />} onClick={() => navigate('/catalog/seller')}>Crear Cotización</Button>}>
         {processMutation.isError && !isStockError && (
           <div className="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-200">
             Error al procesar cotización: {(processMutation.error as any)?.message ?? 'Error'}
@@ -194,46 +188,40 @@ export function QuotesPage() {
                   { header: 'Fecha', accessor: (q) => new Date(q.createdAt).toLocaleDateString(), className: showExtraColumns ? '' : 'hidden' },
                   {
                     header: 'Acciones',
+                    className: 'text-center w-auto sticky right-0 bg-white dark:bg-slate-900 z-10',
                     accessor: (q) => (
-                      <div className="flex gap-2">
+                      <div className="flex items-center justify-center gap-1">
                         <Button
-                          size="sm"
                           variant="ghost"
-                          title="Ver"
+                          size="sm"
+                          icon={<EyeIcon className="w-4 h-4" />}
                           onClick={() => navigate(`/sales/quotes/${q.id}`)}
-                          className={iconClass}
                         >
-                          {ICON_VIEW}
+                          Ver
                         </Button>
                         {q.status !== 'PROCESSED' && (
                           <>
                             <Button
-                              size="sm"
                               variant="ghost"
-                              title="Editar"
+                              size="sm"
+                              icon={<PencilIcon className="w-4 h-4" />}
                               onClick={() => navigate(`/catalog/seller?quoteId=${q.id}`)}
-                              className={iconClass}
                             >
-                              {ICON_EDIT}
+                              Editar
                             </Button>
                             <Button
-                              size="sm"
                               variant="ghost"
-                              title="Procesar cotización"
+                              size="sm"
+                              icon={<ArrowPathIcon className="w-4 h-4" />}
                               onClick={() => processMutation.mutate(q.id)}
                               loading={processMutation.isPending}
-                              className={iconClass}
                             >
-                              {ICON_PROCESS}
+                              Procesar
                             </Button>
                           </>
                         )}
-                        {q.status === 'PROCESSED' && (
-                          <span className={iconClass} title="Procesada">✓</span>
-                        )}
                       </div>
                     ),
-                    className: 'sticky right-0 bg-white dark:bg-slate-900 z-10'
                   },
                 ]}
                 data={quotesQuery.data.items}

@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
 import { apiFetch } from '../../lib/api'
 import { getProductDisplayName } from '../../lib/productName'
+import { openWhatsAppShare } from '../../lib/whatsapp'
 import { MainLayout, PageContainer, Button, Loading, ErrorState, Table, Badge } from '../../components'
 import { useNavigation } from '../../hooks'
 import { useAuth } from '../../providers/AuthProvider'
@@ -35,6 +36,14 @@ type SalesOrderDetail = {
   customer: { id: string; name: string; nit: string | null }
   quote: { id: string; number: string } | null
   lines: OrderLine[]
+}
+
+function orderStatusLabel(status: SalesOrderDetail['status']): string {
+  if (status === 'DRAFT') return 'Borrador'
+  if (status === 'CONFIRMED') return 'Confirmada'
+  if (status === 'FULFILLED') return 'Entregada'
+  if (status === 'CANCELLED') return 'Cancelada'
+  return status
 }
 
 function toNumber(value: unknown): number {
@@ -74,13 +83,28 @@ export function OrderDetailPage() {
   return (
     <MainLayout navGroups={navGroups}>
       <PageContainer
-        title="Orden de venta"
+        title="Orden de Venta"
         actions={
           <div className="flex gap-2">
             <Button variant="secondary" onClick={() => navigate('/sales/orders')}>Volver</Button>
             {orderQuery.data?.quote?.id && (
               <Button variant="secondary" onClick={() => navigate(`/sales/quotes/${orderQuery.data!.quote!.id}`)}>
                 Ver cotización
+              </Button>
+            )}
+            {orderQuery.data && (
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  const o = orderQuery.data!
+                  const origin = window.location.origin
+                  const link = `${origin}/sales/orders/${o.id}`
+                  const customerName = o.customer?.name ?? ''
+                  const msg = `Orden de venta ${o.number}${customerName ? ` (${customerName})` : ''}\nTotal: ${money(total)} ${currency}\n${link}`
+                  openWhatsAppShare(msg)
+                }}
+              >
+                📲 WhatsApp
               </Button>
             )}
           </div>
@@ -105,7 +129,7 @@ export function OrderDetailPage() {
                           : 'default'
                   }
                 >
-                  {orderQuery.data.status}
+                  {orderStatusLabel(orderQuery.data.status)}
                 </Badge>
               </div>
 
@@ -159,7 +183,7 @@ export function OrderDetailPage() {
                   { header: 'SKU', accessor: (r: any) => r.product.sku },
                   { header: 'Producto', accessor: (r: any) => getProductDisplayName(r.product) },
                   { header: 'Cant.', accessor: (r: any) => toNumber(r.quantity) },
-                  { header: 'Unit.', accessor: (r: any) => `${money(toNumber(r.unitPrice))} ${currency}` },
+                  { header: 'P. unit.', accessor: (r: any) => `${money(toNumber(r.unitPrice))} ${currency}` },
                   { header: 'Total', accessor: (r: any) => `${money(toNumber(r.quantity) * toNumber(r.unitPrice))} ${currency}` },
                 ]}
                 data={orderQuery.data.lines}

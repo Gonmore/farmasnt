@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { MainLayout, PageContainer, Table, Button, Loading, ErrorState, EmptyState, Badge, Input, Modal } from '../../components';
+import { MainLayout, PageContainer, Table, Button, IconButton, Loading, ErrorState, EmptyState, Badge, Input, Modal } from '../../components';
 import { useNavigation } from '../../hooks';
 import { api } from '../../lib/api';
+import { ICON_EDIT } from '../../lib/actionIcons';
 
 interface TenantDomain {
   domain: string;
@@ -455,36 +456,30 @@ export function TenantsPage() {
               },
               {
                 header: 'Acciones',
+                className: 'text-center w-auto',
                 accessor: (tenant: Tenant) => (
-                  <div className="flex gap-2">
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={() => handleEditBranches(tenant)}
-                    >
-                      Editar
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="secondary"
+                  <div className="flex items-center justify-center gap-1">
+                    <IconButton label="Editar" icon={ICON_EDIT} onClick={() => handleEditBranches(tenant)} />
+                    <IconButton
+                      label="Usuarios"
+                      icon={'👥'}
                       onClick={() => {
                         setUsersTenant(tenant);
                         setTempPassword(null);
                       }}
-                    >
-                      Usuarios
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant={tenant.isActive ? 'danger' : 'primary'}
-                      onClick={() => toggleActiveMutation.mutate({ 
-                        tenantId: tenant.id, 
-                        isActive: !tenant.isActive 
-                      })}
+                    />
+                    <IconButton
+                      label={tenant.isActive ? 'Desactivar' : 'Activar'}
+                      icon={'⏻'}
+                      onClick={() =>
+                        toggleActiveMutation.mutate({
+                          tenantId: tenant.id,
+                          isActive: !tenant.isActive,
+                        })
+                      }
                       disabled={toggleActiveMutation.isPending}
-                    >
-                      {tenant.isActive ? 'Desactivar' : 'Activar'}
-                    </Button>
+                      className={tenant.isActive ? 'text-red-600 dark:text-red-300' : ''}
+                    />
                   </div>
                 ),
               },
@@ -624,25 +619,22 @@ export function TenantsPage() {
                     header: 'Acciones',
                     accessor: (u: PlatformUser) => (
                       <div className="flex flex-wrap gap-2">
-                        <Button
-                          size="sm"
-                          variant="secondary"
+                        <IconButton
+                          label={u.isActive ? 'Desactivar' : 'Activar'}
+                          icon={'⏻'}
                           onClick={() => updateUserStatusMutation.mutate({ userId: u.id, isActive: !u.isActive })}
                           disabled={updateUserStatusMutation.isPending}
-                        >
-                          {u.isActive ? 'Desactivar' : 'Activar'}
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="secondary"
+                          className={u.isActive ? 'text-red-600 dark:text-red-300' : ''}
+                        />
+                        <IconButton
+                          label="Reset clave"
+                          icon={'🔑'}
                           onClick={() => {
                             setTempPassword(null);
                             resetUserPasswordMutation.mutate(u.id);
                           }}
                           disabled={resetUserPasswordMutation.isPending}
-                        >
-                          Reset clave
-                        </Button>
+                        />
                       </div>
                     ),
                   },

@@ -9,6 +9,11 @@ const searchQuerySchema = z.object({
   take: z.coerce.number().int().min(1).max(50).default(20),
 })
 
+const checkSkuQuerySchema = z.object({
+  sku: z.string().min(1).max(100),
+  excludeId: z.string().optional(),
+})
+
 export async function registerCatalogRoutes(app: FastifyInstance): Promise<void> {
   const db = prisma()
 
@@ -39,6 +44,30 @@ export async function registerCatalogRoutes(app: FastifyInstance): Promise<void>
       })
 
       return { items }
+    },
+  )
+
+  // Check SKU uniqueness
+  app.get(
+    '/api/v1/catalog/products/check-sku',
+    { preHandler: [requireAuth(), requirePermission(Permissions.CatalogRead)] },
+    async (request, reply) => {
+      const parsed = checkSkuQuerySchema.safeParse(request.query)
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
+
+      const { sku, excludeId } = parsed.data
+      const tenantId = request.auth!.tenantId
+
+      const existing = await db.product.findFirst({
+        where: {
+          tenantId,
+          sku,
+          ...(excludeId ? { id: { not: excludeId } } : {}),
+        },
+        select: { id: true },
+      })
+
+      return { exists: !!existing }
     },
   )
 }

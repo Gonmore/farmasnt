@@ -31,6 +31,7 @@ import {
   TenantsPage,
   ContactSettingsPage,
 } from './pages'
+import { ButtonStylesDemo } from './pages/demo/ButtonStylesDemo'
 
 /**
  * Main application router with all routes
@@ -281,6 +282,16 @@ export function AppRouter() {
           element={
             <ProtectedRoute requiredPermissions={['platform:tenants:manage']}>
               <ContactSettingsPage />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Demo routes (development only) */}
+        <Route
+          path="/demo/buttons"
+          element={
+            <ProtectedRoute>
+              <ButtonStylesDemo />
             </ProtectedRoute>
           }
         />

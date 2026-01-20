@@ -6,6 +6,7 @@ import { apiFetch } from '../../lib/api'
 import { useNavigation } from '../../hooks'
 import { useAuth } from '../../providers/AuthProvider'
 import { useTenant } from '../../providers/TenantProvider'
+import { EyeIcon } from '@heroicons/react/24/outline'
 
 type PaymentStatus = 'DUE' | 'PAID' | 'ALL'
 
@@ -174,9 +175,15 @@ export function PaymentsPage() {
                 },
                 {
                   header: 'Acciones',
+                  className: 'text-center w-auto',
                   accessor: (p) => (
-                    <div className="flex items-center gap-2">
-                      <Button size="sm" variant="ghost" onClick={() => navigate(`/sales/orders/${encodeURIComponent(p.id)}`)}>
+                    <div className="flex items-center justify-center gap-1">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        icon={<EyeIcon className="w-4 h-4" />}
+                        onClick={() => navigate(`/sales/orders/${encodeURIComponent(p.id)}`)}
+                      >
                         Ver
                       </Button>
                       {!p.paidAt && (

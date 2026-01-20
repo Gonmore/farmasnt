@@ -18,6 +18,7 @@ import { useNavigation } from '../../hooks'
 import { usePermissions } from '../../hooks/usePermissions'
 import { apiFetch } from '../../lib/api'
 import { useAuth } from '../../providers/AuthProvider'
+import { EyeIcon } from '@heroicons/react/24/outline'
 
 type DeliveryListItem = {
   id: string
@@ -151,10 +152,12 @@ export function DeliveriesPage() {
   const deliverMutation = useMutation({
     mutationFn: (vars: { orderId: string; version: number; fromLocationId?: string }) => deliverOrder(auth.accessToken!, vars),
     onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['deliveries'] }),
-        queryClient.invalidateQueries({ queryKey: ['orders'] }),
-      ])
+      await queryClient.invalidateQueries({ queryKey: ['deliveries'] })
+      await queryClient.invalidateQueries({ queryKey: ['orders'] })
+      setDeliverTarget(null)
+      setDeliverLocationModalOpen(false)
+      setDeliverWarehouseId('')
+      setDeliverLocationId('')
     },
     onError: (err: any) => {
       const msg = (err?.message as string | undefined) ?? 'No se pudo marcar como entregado'
@@ -300,11 +303,10 @@ export function DeliveriesPage() {
                   },
                   {
                     header: 'Acciones',
+                    className: 'text-center w-auto',
                     accessor: (o) => (
-                      <div className="flex items-center gap-2">
-                        <Button size="sm" variant="ghost" onClick={() => navigate(`/sales/orders/${o.id}`)}>
-                          Ver OV
-                        </Button>
+                      <div className="flex items-center justify-center gap-1">
+                        <Button variant="ghost" size="sm" icon={<EyeIcon className="w-4 h-4" />} onClick={() => navigate(`/sales/orders/${o.id}`)}>Ver</Button>
                         {o.status !== 'FULFILLED' && perms.hasPermission('sales:delivery:write') ? (
                           <Button
                             size="sm"

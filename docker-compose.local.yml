@@ -64,7 +64,9 @@ services:
       VITE_BACKEND_TARGET: "http://backend-farmasnt-dev:6000"
       CHOKIDAR_USEPOLLING: "true"
       CHOKIDAR_INTERVAL: "250"
-    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "6001", "--strictPort"]
+      NODE_ENV: "development"
+      NPM_CONFIG_PRODUCTION: "false"
+    command: ["sh", "-c", "npm ci --include=dev && npm run dev -- --host 0.0.0.0 --port 6001 --strictPort"]
     depends_on:
       backend-farmasnt:
         condition: service_healthy

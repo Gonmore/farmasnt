@@ -7,6 +7,7 @@ import { useAuth } from '../../providers/AuthProvider'
 import { MainLayout, PageContainer, Button, Table, Loading, ErrorState, EmptyState, PaginationCursor, Modal, ExpiryBadge, CatalogSearch } from '../../components'
 import { useNavigation } from '../../hooks'
 import type { ExpiryStatus } from '../../components'
+import { EyeIcon, PlusIcon } from '@heroicons/react/24/outline'
 
 type ProductListItem = {
   id: string
@@ -167,8 +168,8 @@ export function ProductsListPage() {
       <PageContainer
         title="🏷️ Productos"
         actions={
-          <Button onClick={() => navigate('/catalog/products/new')}>
-            ➕ Crear Producto
+          <Button variant="primary" icon={<PlusIcon />} onClick={() => navigate('/catalog/products/new')}>
+            Crear Producto
           </Button>
         }
       >
@@ -185,8 +186,8 @@ export function ProductsListPage() {
             <EmptyState
               message="No hay productos"
               action={
-                <Button onClick={() => navigate('/catalog/products/new')}>
-                  ➕ Crear primer producto
+                <Button variant="primary" icon={<PlusIcon />} onClick={() => navigate('/catalog/products/new')}>
+                  Crear primer producto
                 </Button>
               }
             />
@@ -227,14 +228,11 @@ export function ProductsListPage() {
                   },
                   {
                     header: 'Acciones',
+                    className: 'text-center w-auto',
                     accessor: (p) => (
-                      <button
-                        className="text-2xl hover:scale-110 transition-transform"
-                        onClick={() => navigate(`/catalog/products/${p.id}`)}
-                        title="Ver producto"
-                      >
-                        👁️
-                      </button>
+                      <div className="flex items-center justify-center gap-1">
+                        <Button variant="ghost" size="sm" icon={<EyeIcon className="w-4 h-4" />} onClick={() => navigate(`/catalog/products/${p.id}`)}>Ver</Button>
+                      </div>
                     ),
                   },
                 ]}

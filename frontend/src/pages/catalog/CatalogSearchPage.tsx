@@ -3,9 +3,10 @@ import { useState } from 'react'
 import { apiFetch } from '../../lib/api'
 import { getProductDisplayName } from '../../lib/productName'
 import { useAuth } from '../../providers/AuthProvider'
-import { MainLayout, PageContainer, Input, Table, Loading, ErrorState, EmptyState, Button } from '../../components'
+import { MainLayout, PageContainer, Input, Table, Loading, ErrorState, EmptyState, Button, IconButton } from '../../components'
 import { useNavigation } from '../../hooks'
 import { useNavigate } from 'react-router-dom'
+import { ICON_VIEW } from '../../lib/actionIcons'
 
 type CatalogSearchItem = { id: string; sku: string; name: string; genericName?: string | null }
 
@@ -70,10 +71,11 @@ export function CatalogSearchPage() {
                 { header: 'Nombre', accessor: (item) => getProductDisplayName(item) },
                 {
                   header: 'Acciones',
+                  className: 'text-center w-auto',
                   accessor: (item) => (
-                    <Button size="sm" variant="ghost" onClick={() => navigate(`/catalog/products/${item.id}`)}>
-                      Ver
-                    </Button>
+                    <div className="flex items-center justify-center gap-1">
+                      <IconButton label="Ver" icon={ICON_VIEW} onClick={() => navigate(`/catalog/products/${item.id}`)} />
+                    </div>
                   ),
                 },
               ]}

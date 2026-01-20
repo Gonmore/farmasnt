@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
-import { MainLayout, PageContainer, Button, Input, Loading, ErrorState, CountrySelector } from '../../components'
+import { MainLayout, PageContainer, Button, Input, Loading, ErrorState, CountrySelector, ImageUpload } from '../../components'
 import { useNavigation } from '../../hooks'
 
 type BrandingData = {
@@ -14,6 +14,50 @@ type BrandingData = {
   defaultTheme: 'LIGHT' | 'DARK'
   currency: string
   country?: string | null
+}
+
+type PresignResponse = {
+  uploadUrl: string
+  publicUrl: string
+  key: string
+  expiresInSeconds: number
+  method: 'PUT'
+}
+
+function guessContentType(file: File): string {
+  if (file.type && file.type.trim()) return file.type
+  const name = (file.name || '').toLowerCase()
+  if (name.endsWith('.png')) return 'image/png'
+  if (name.endsWith('.jpg') || name.endsWith('.jpeg')) return 'image/jpeg'
+  if (name.endsWith('.webp')) return 'image/webp'
+  return 'application/octet-stream'
+}
+
+async function uploadToPresignedUrl(uploadUrl: string, file: File, contentType: string): Promise<void> {
+  let resp: Response
+  try {
+    resp = await fetch(uploadUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': contentType || 'application/octet-stream' },
+      body: file,
+    })
+  } catch (err) {
+    let origin = ''
+    try {
+      origin = new URL(uploadUrl).origin
+    } catch {
+      origin = ''
+    }
+    const msg = err instanceof Error ? err.message : String(err)
+    throw new Error(
+      `Error de red subiendo el logo${origin ? ` a ${origin}` : ''}. ` +
+        `Verifica que el storage (MinIO/S3) esté levantado y permita CORS. Detalle: ${msg}`,
+    )
+  }
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => '')
+    throw new Error(text || `Error subiendo el logo: ${resp.status}`)
+  }
 }
 
 export function BrandingPage() {
@@ -52,6 +96,30 @@ export function BrandingPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tenant', 'branding'] })
+      queryClient.invalidateQueries({ queryKey: ['tenantBranding'] })
+      queryClient.invalidateQueries({ queryKey: ['publicTenantBranding'] })
+    },
+  })
+
+  const uploadLogoMutation = useMutation({
+    mutationFn: async (file: File) => {
+      const contentType = guessContentType(file)
+      if (contentType === 'application/octet-stream') {
+        throw new Error('No se pudo detectar el tipo de imagen. Usa PNG, JPG o WebP.')
+      }
+      const presignResp = await api.post<PresignResponse>('/api/v1/admin/tenant/branding/logo-upload', {
+        fileName: file.name,
+        contentType,
+      })
+
+      const presign = presignResp.data
+      await uploadToPresignedUrl(presign.uploadUrl, file, contentType)
+
+      await updateMutation.mutateAsync({ logoUrl: presign.publicUrl })
+      return presign
+    },
+    onSuccess: (presign) => {
+      setLogoUrl(presign.publicUrl)
     },
   })
 
@@ -96,11 +164,38 @@ export function BrandingPage() {
       <PageContainer title="Branding">
         <div className="rounded-lg border border-slate-200 bg-white p-6 dark:border-slate-700 dark:bg-slate-900">
           <form onSubmit={handleSubmit} className="space-y-6">
-            {/* Logo URL */}
+            {/* Logo */}
             <div>
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                Logo URL
+                Logo
               </label>
+
+              <ImageUpload
+                currentImageUrl={logoUrl || null}
+                onImageSelect={(file) => uploadLogoMutation.mutate(file)}
+                onImageRemove={() => {
+                  const ok = window.confirm('¿Quitar el logo del tenant?')
+                  if (!ok) return
+                  setLogoUrl('')
+                  updateMutation.mutate({ logoUrl: null })
+                }}
+                mode="upload"
+                loading={uploadLogoMutation.isPending || updateMutation.isPending}
+                disabled={updateMutation.isPending}
+                accept="image/png,image/jpeg,image/webp"
+                maxSizeMB={2}
+              />
+
+              {(uploadLogoMutation.isError || uploadLogoMutation.error) && (
+                <p className="mt-2 text-sm text-red-700 dark:text-red-400">
+                  {uploadLogoMutation.error instanceof Error ? uploadLogoMutation.error.message : 'Error al subir el logo'}
+                </p>
+              )}
+
+              <div className="mt-4">
+                <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-2">
+                  O pega una URL (opcional)
+                </label>
               <Input
                 type="url"
                 value={logoUrl}
@@ -108,8 +203,9 @@ export function BrandingPage() {
                 placeholder="https://example.com/logo.png"
               />
               <p className="mt-1 text-xs text-slate-500">
-                URL completa del logo de tu empresa (se recomienda formato PNG o SVG)
+                  Si usas URL externa, asegúrate de que sea pública y estable.
               </p>
+              </div>
               {logoUrl && (
                 <div className="mt-3 p-4 border border-slate-200 dark:border-slate-700 rounded-lg bg-slate-50 dark:bg-slate-800">
                   <p className="text-xs text-slate-600 dark:text-slate-400 mb-2">Vista previa:</p>

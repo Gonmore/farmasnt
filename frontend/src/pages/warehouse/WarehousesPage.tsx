@@ -7,6 +7,7 @@ import { useAuth } from '../../providers/AuthProvider'
 import { useTenant } from '../../providers/TenantProvider'
 import { MainLayout, PageContainer, Table, Loading, ErrorState, EmptyState, PaginationCursor, Button, Modal, Input, Select, CitySelector } from '../../components'
 import { useNavigation } from '../../hooks'
+import { PencilIcon, ArrowPathIcon, MapPinIcon, PlusIcon } from '@heroicons/react/24/outline'
 
 type WarehouseListItem = { id: string; code: string; name: string; city?: string | null; isActive: boolean; totalQuantity: string }
 type ListResponse = { items: WarehouseListItem[]; nextCursor: string | null }
@@ -209,8 +210,8 @@ export function WarehousesPage() {
       <PageContainer
         title="🏬 Sucursales"
         actions={
-          <Button onClick={() => setShowCreate(true)}>
-            ➕ Crear Sucursal
+          <Button variant="primary" icon={<PlusIcon />} onClick={() => setShowCreate(true)}>
+            Crear Sucursal
           </Button>
         }
       >
@@ -242,9 +243,12 @@ export function WarehousesPage() {
                   },
                   {
                     header: 'Acciones',
+                    className: 'text-center w-auto',
                     accessor: (w) => (
-                      <div className="flex gap-2">
-                        <button
+                      <div className="flex items-center justify-center gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
                           onClick={() => {
                             setStockWarehouse(w)
                             setMovingRow(null)
@@ -253,22 +257,18 @@ export function WarehousesPage() {
                             setMoveToLocationId('')
                             setMoveError('')
                           }}
-                          className="text-sm text-[var(--pf-primary)] hover:underline"
                         >
-                          📊 Ver stock
-                        </button>
-                        <button
-                          onClick={() => handleEdit(w)}
-                          className="text-sm text-blue-600 hover:underline dark:text-blue-400"
-                        >
-                          ✏️ Editar
-                        </button>
-                        <button
+                          Ver stock
+                        </Button>
+                        <Button variant="ghost" size="sm" icon={<PencilIcon className="w-4 h-4" />} onClick={() => handleEdit(w)}>Editar</Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          icon={<MapPinIcon className="w-4 h-4" />}
                           onClick={() => navigate(`/warehouse/warehouses/${w.id}/locations`)}
-                          className="text-sm text-[var(--pf-primary)] hover:underline"
                         >
-                          📍 Ver Ubicaciones
-                        </button>
+                          Ubicaciones
+                        </Button>
                       </div>
                     ),
                   },
@@ -445,8 +445,12 @@ export function WarehousesPage() {
                 },
                 {
                   header: 'Acciones',
+                  className: 'text-center',
                   accessor: (r) => (
-                    <button
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      icon={<ArrowPathIcon className="w-4 h-4" />}
                       onClick={() => {
                         setMovingRow(r)
                         setMoveQty('')
@@ -454,10 +458,9 @@ export function WarehousesPage() {
                         setMoveToLocationId('')
                         setMoveError('')
                       }}
-                      className="text-sm text-[var(--pf-primary)] hover:underline"
                     >
                       Mover
-                    </button>
+                    </Button>
                   ),
                 },
               ]}

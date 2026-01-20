@@ -45,6 +45,9 @@ export async function createStockMovementTx(
   if (input.type === 'TRANSFER' && (!input.fromLocationId || !input.toLocationId)) {
     throw Object.assign(new Error('fromLocationId and toLocationId are required'), { statusCode: 400 })
   }
+  if (input.type === 'TRANSFER' && input.fromLocationId && input.toLocationId && input.fromLocationId === input.toLocationId) {
+    throw Object.assign(new Error('fromLocationId and toLocationId must be different'), { statusCode: 400 })
+  }
   if (input.type === 'ADJUSTMENT' && !(input.fromLocationId ?? input.toLocationId)) {
     throw Object.assign(new Error('fromLocationId or toLocationId is required'), { statusCode: 400 })
   }
@@ -73,13 +76,19 @@ export async function createStockMovementTx(
   const fromLocationId = input.fromLocationId ?? null
   const toLocationId = input.toLocationId ?? null
 
-  const ensureLocation = async (locationId: string) => {
-    const loc = await tx.location.findFirst({ where: { id: locationId, tenantId, isActive: true }, select: { id: true } })
+  const ensureLocation = async (locationId: string, opts?: { mustBeActive?: boolean }) => {
+    const mustBeActive = opts?.mustBeActive ?? true
+    const loc = await tx.location.findFirst({
+      where: { id: locationId, tenantId, ...(mustBeActive ? { isActive: true } : {}) },
+      select: { id: true },
+    })
     if (!loc) throw Object.assign(new Error('Location not found'), { statusCode: 404 })
   }
 
-  if (fromLocationId) await ensureLocation(fromLocationId)
-  if (toLocationId) await ensureLocation(toLocationId)
+  // Allow moving stock OUT of inactive locations (so you can empty them),
+  // but require destination locations to be active.
+  if (fromLocationId) await ensureLocation(fromLocationId, { mustBeActive: false })
+  if (toLocationId) await ensureLocation(toLocationId, { mustBeActive: true })
 
   const lockBalanceSafe = async (locationId: string) => {
     if (batchId === null) {

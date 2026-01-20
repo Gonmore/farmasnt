@@ -5,6 +5,7 @@ import { apiFetch } from '../../lib/api'
 import { useAuth } from '../../providers/AuthProvider'
 import { MainLayout, PageContainer, Button, Table, Loading, ErrorState, EmptyState, Badge, PaginationCursor } from '../../components'
 import { useNavigation } from '../../hooks'
+import { EyeIcon } from '@heroicons/react/24/outline'
 
 type OrderListItem = {
   id: string
@@ -15,6 +16,14 @@ type OrderListItem = {
 }
 
 type ListResponse = { items: OrderListItem[]; nextCursor: string | null }
+
+function orderStatusLabel(status: OrderListItem['status']): string {
+  if (status === 'DRAFT') return 'Borrador'
+  if (status === 'CONFIRMED') return 'Confirmada'
+  if (status === 'FULFILLED') return 'Entregada'
+  if (status === 'CANCELLED') return 'Cancelada'
+  return status
+}
 
 async function fetchOrders(token: string, take: number, cursor?: string): Promise<ListResponse> {
   const params = new URLSearchParams({ take: String(take) })
@@ -61,18 +70,29 @@ export function OrdersPage() {
                   {
                     header: 'Estado',
                     accessor: (o) => (
-                      <Badge variant={o.status === 'FULFILLED' ? 'success' : o.status === 'CONFIRMED' ? 'info' : 'default'}>
-                        {o.status}
+                      <Badge
+                        variant={
+                          o.status === 'FULFILLED'
+                            ? 'success'
+                            : o.status === 'CONFIRMED'
+                              ? 'info'
+                              : o.status === 'CANCELLED'
+                                ? 'danger'
+                                : 'default'
+                        }
+                      >
+                        {orderStatusLabel(o.status)}
                       </Badge>
                     ),
                   },
                   { header: 'Última actualización', accessor: (o) => new Date(o.updatedAt).toLocaleDateString() },
                   {
                     header: 'Acciones',
+                    className: 'text-center w-auto',
                     accessor: (o) => (
-                      <Button size="sm" variant="ghost" onClick={() => navigate(`/sales/orders/${o.id}`)}>
-                        Ver
-                      </Button>
+                      <div className="flex items-center justify-center gap-1">
+                        <Button variant="ghost" size="sm" icon={<EyeIcon className="w-4 h-4" />} onClick={() => navigate(`/sales/orders/${o.id}`)}>Ver</Button>
+                      </div>
                     ),
                   },
                 ]}

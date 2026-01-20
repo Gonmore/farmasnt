@@ -5,6 +5,7 @@ import { getProductDisplayName } from '../lib/productName'
 import { useAuth } from '../providers/AuthProvider'
 import { Input, Button, Table, Loading, ErrorState, EmptyState } from './common'
 import { useNavigate } from 'react-router-dom'
+import { MagnifyingGlassIcon } from '@heroicons/react/24/outline'
 
 type CatalogSearchItem = { id: string; sku: string; name: string; genericName?: string | null }
 
@@ -48,8 +49,8 @@ export function CatalogSearch({ className = '' }: CatalogSearchProps) {
             onChange={(e) => setQuery(e.target.value)}
             className="flex-1"
           />
-          <Button type="submit" disabled={query.length === 0}>
-            🔍 Buscar
+          <Button variant="outline" icon={<MagnifyingGlassIcon />} type="submit" disabled={query.length === 0}>
+            Buscar
           </Button>
         </div>
       </form>
@@ -73,10 +74,13 @@ export function CatalogSearch({ className = '' }: CatalogSearchProps) {
                 { header: 'Nombre', accessor: (p: CatalogSearchItem) => getProductDisplayName(p) },
                 {
                   header: 'Acciones',
+                  className: 'text-center w-auto',
                   accessor: (p: CatalogSearchItem) => (
-                    <Button size="sm" variant="ghost" onClick={() => handleProductClick(p.id)}>
-                      👁️ Ver
-                    </Button>
+                    <div className="flex items-center justify-center gap-1">
+                      <Button size="sm" variant="ghost" onClick={() => handleProductClick(p.id)}>
+                        👁️ Ver
+                      </Button>
+                    </div>
                   ),
                 },
               ]}

@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
 import { apiFetch } from '../../lib/api'
 import { exportQuoteToPDF } from '../../lib/quotePdf'
+import { openWhatsAppShare } from '../../lib/whatsapp'
 import { MainLayout, PageContainer, Button, Loading, ErrorState, Table } from '../../components'
 import { useNavigation } from '../../hooks'
 import { useAuth } from '../../providers/AuthProvider'
@@ -116,6 +117,18 @@ export function QuoteDetailPage() {
                 >
                   📄 Exportar PDF
                 </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    const q = quoteQuery.data!
+                    const origin = window.location.origin
+                    const link = `${origin}/sales/quotes/${q.id}`
+                    const msg = `Cotización ${q.number} (${q.customerName})\nTotal: ${money(q.total)} ${currency}\n${link}`
+                    openWhatsAppShare(msg)
+                  }}
+                >
+                  📲 WhatsApp
+                </Button>
               </>
             )}
           </div>
@@ -169,7 +182,7 @@ export function QuoteDetailPage() {
                   { header: 'Producto', accessor: (r: any) => r.productName },
                   { header: 'Cant.', accessor: (r: any) => r.quantity },
                   { header: 'Desc.%', accessor: (r: any) => r.discountPct },
-                  { header: 'Unit.', accessor: (r: any) => `${money(r.unitPrice)} ${currency}` },
+                  { header: 'P. unit.', accessor: (r: any) => `${money(r.unitPrice)} ${currency}` },
                   { header: 'Total', accessor: (r: any) => `${money(r.total)} ${currency}` },
                 ]}
                 data={quoteQuery.data.lines}

@@ -16,7 +16,7 @@ import {
   Area,
   AreaChart,
 } from 'recharts'
-import { MainLayout, PageContainer, Button, Input, Loading, ErrorState, EmptyState, Modal, Table } from '../../components'
+import { MainLayout, PageContainer, Button, IconButton, Input, Loading, ErrorState, EmptyState, Modal, Table } from '../../components'
 import { KPICard, ReportSection, reportColors, getChartColor, chartTooltipStyle, chartGridStyle, chartAxisStyle } from '../../components/reports'
 import { useNavigation } from '../../hooks'
 import { apiFetch } from '../../lib/api'
@@ -1150,26 +1150,26 @@ export function SalesReportsPage() {
                     { header: 'Próximo', accessor: (r) => (r.nextRunAt ? new Date(r.nextRunAt).toLocaleString() : '-') },
                     {
                       header: 'Acciones',
+                      className: 'text-center w-auto',
                       accessor: (r) => (
-                        <div className="flex items-center gap-2">
-                          <Button
-                            size="sm"
+                        <div className="flex items-center justify-center gap-1">
+                          <IconButton
+                            label={r.enabled ? 'Desactivar' : 'Activar'}
+                            icon={'⏻'}
                             variant={r.enabled ? 'ghost' : 'primary'}
                             loading={toggleScheduleMutation.isPending}
                             onClick={() => toggleScheduleMutation.mutate({ id: r.id, enabled: !r.enabled })}
-                          >
-                            {r.enabled ? 'Desactivar' : 'Activar'}
-                          </Button>
-                          <Button
-                            size="sm"
+                            className={r.enabled ? 'text-red-600 dark:text-red-300' : ''}
+                          />
+                          <IconButton
+                            label="Eliminar"
+                            icon={'🗑️'}
                             variant="danger"
                             loading={deleteScheduleMutation.isPending}
                             onClick={() => {
                               if (window.confirm('¿Eliminar este envío programado?')) deleteScheduleMutation.mutate(r.id)
                             }}
-                          >
-                            Eliminar
-                          </Button>
+                          />
                         </div>
                       ),
                     },

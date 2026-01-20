@@ -54,6 +54,39 @@ export async function registerCustomerRoutes(app: FastifyInstance): Promise<void
   const db = prisma()
   const audit = new AuditService(db)
 
+  // Cities that have at least one active branch (warehouse)
+  // Used by Sales/Customers UI to restrict customer.city values
+  app.get(
+    '/api/v1/customers/branch-cities',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'SALES'), requirePermission(Permissions.SalesOrderRead)],
+    },
+    async (request, reply) => {
+      const tenantId = request.auth!.tenantId
+
+      const rows = await db.warehouse.findMany({
+        where: {
+          tenantId,
+          isActive: true,
+          city: { not: null },
+        },
+        distinct: ['city'],
+        select: { city: true },
+      })
+
+      const items = Array.from(
+        new Set(
+          rows
+            .map((r) => (r.city ?? '').trim())
+            .filter((c) => c.length > 0)
+            .map((c) => c.toUpperCase()),
+        ),
+      ).sort((a, b) => a.localeCompare(b))
+
+      return reply.send({ items })
+    },
+  )
+
   app.post(
     '/api/v1/customers',
     {

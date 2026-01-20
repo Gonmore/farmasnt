@@ -302,7 +302,8 @@ export function ProductDetailPage() {
   const auth = useAuth()
   const navigate = useNavigate()
   const navGroups = useNavigation()
-  const { id } = useParams<{ id: string }>()
+  const params = useParams<{ id: string }>()
+  const { id } = params
   const queryClient = useQueryClient()
   const isNew = id === 'new'
 
@@ -443,6 +444,20 @@ export function ProductDetailPage() {
     queryFn: () => fetchRecipe(auth.accessToken!, id!),
     enabled: !!auth.accessToken && !isNew && !!id,
   })
+
+  // Check SKU uniqueness for new products
+  const skuCheckQuery = useQuery({
+    queryKey: ['product-sku-check', sku, params.id],
+    queryFn: async () => {
+      if (!sku || sku.trim() === '') return { exists: false }
+      const response = await apiFetch(`/api/v1/catalog/products/check-sku?sku=${encodeURIComponent(sku)}${params.id !== 'new' ? `&excludeId=${params.id}` : ''}`, { token: auth.accessToken })
+      return response as { exists: boolean }
+    },
+    enabled: sku.length > 0 && isNew,
+    staleTime: 0
+  })
+
+  const skuExists = skuCheckQuery.data?.exists || false
 
   // Initialize form when data loads
   useEffect(() => {
@@ -961,8 +976,14 @@ export function ProductDetailPage() {
                   }}
                   placeholder="Se genera automáticamente"
                   disabled={createMutation.isPending || updateMutation.isPending}
-                  className="transition-all duration-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  className={`transition-all duration-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${skuExists ? 'border-red-500 focus:ring-red-500' : ''}`}
+                  required
                 />
+                {skuExists && (
+                  <p className="mt-1 text-sm text-red-600 dark:text-red-400">
+                    ⚠️ Este SKU ya existe. Por favor usa uno diferente.
+                  </p>
+                )}
               </div>
               
               <div className="group">
@@ -1056,6 +1077,7 @@ export function ProductDetailPage() {
                 <Button
                   type="submit"
                   loading={createMutation.isPending || updateMutation.isPending}
+                  disabled={createMutation.isPending || updateMutation.isPending || skuExists}
                   className="w-full bg-gradient-to-r from-blue-500 to-purple-600 py-3 text-lg font-semibold shadow-lg hover:from-blue-600 hover:to-purple-700 hover:shadow-xl"
                 >
                   {isNew ? '✨ Crear Producto' : '💾 Guardar Cambios'}

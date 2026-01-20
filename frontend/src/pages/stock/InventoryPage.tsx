@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { apiFetch } from '../../lib/api'
+import { exportToXlsx } from '../../lib/exportXlsx'
 import { getProductLabel } from '../../lib/productName'
 import { useAuth } from '../../providers/AuthProvider'
 import {
@@ -17,6 +18,7 @@ import {
 } from '../../components'
 import { useNavigation } from '../../hooks'
 import type { ExpiryStatus } from '../../components/common/ExpiryBadge'
+import { ArrowPathIcon, DocumentArrowDownIcon } from '@heroicons/react/24/outline'
 
 type BalanceExpandedItem = {
   id: string
@@ -124,6 +126,11 @@ type WarehouseGroup = {
 
 async function fetchBalances(token: string): Promise<{ items: BalanceExpandedItem[] }> {
   const params = new URLSearchParams({ take: '200' })
+  return apiFetch(`/api/v1/reports/stock/balances-expanded?${params}`, { token })
+}
+
+async function fetchBalancesForExport(token: string): Promise<{ items: BalanceExpandedItem[] }> {
+  const params = new URLSearchParams({ take: '5000' })
   return apiFetch(`/api/v1/reports/stock/balances-expanded?${params}`, { token })
 }
 
@@ -281,6 +288,7 @@ export function InventoryPage() {
       if (!Number.isFinite(qtyNum) || qtyNum <= 0) throw new Error('Ingresá una cantidad válida (mayor a 0)')
       if (!moveToWarehouseId) throw new Error('Seleccioná el almacén destino')
       if (!moveToLocationId) throw new Error('Seleccioná la ubicación destino')
+      if (moveToLocationId === movingItem.fromLocationId) throw new Error('Seleccioná una ubicación destino diferente')
 
       return createTransferMovement(auth.accessToken!, {
         productId: movingItem.productId,
@@ -466,6 +474,47 @@ export function InventoryPage() {
     [warehousesQuery.data],
   )
 
+  const exportMutation = useMutation({
+    mutationFn: async () => fetchBalancesForExport(auth.accessToken!),
+    onSuccess: (data) => {
+      const rows = (data.items ?? []).map((item) => {
+        const total = Number(item.quantity || '0')
+        const reserved = Number(item.reservedQuantity ?? '0')
+        const available = Math.max(0, total - reserved)
+
+        return {
+          SKU: item.product.sku,
+          Producto: getProductLabel(item.product),
+          Lote: item.batch?.batchNumber ?? '-',
+          Vence: item.batch?.expiresAt ? new Date(item.batch.expiresAt).toLocaleDateString() : '',
+          'Estado lote': item.batch?.status ?? '',
+          'Sucursal (código)': item.location.warehouse.code,
+          'Sucursal (nombre)': item.location.warehouse.name,
+          Ubicación: item.location.code,
+          Total: total,
+          Reservado: reserved,
+          Disponible: available,
+          'Actualizado': new Date(item.updatedAt).toLocaleString(),
+        }
+      })
+
+      const date = new Date().toISOString().slice(0, 10)
+      exportToXlsx(`inventario_${date}.xlsx`, [
+        {
+          name: 'Inventario',
+          rows,
+        },
+        {
+          name: 'Meta',
+          rows: [{ Generado: new Date().toLocaleString(), Filas: rows.length }],
+        },
+      ])
+    },
+    onError: (e) => {
+      window.alert(e instanceof Error ? e.message : 'Error al exportar a Excel')
+    },
+  })
+
   return (
     <MainLayout navGroups={navGroups}>
       <PageContainer
@@ -473,19 +522,28 @@ export function InventoryPage() {
         actions={
           <div className="flex gap-2">
             <Button
-              variant={groupBy === 'product' ? 'primary' : 'secondary'}
+              variant={groupBy === 'product' ? 'primary' : 'outline'}
               onClick={() => setGroupBy('product')}
             >
-              📊 Por Producto
+              Por Producto
             </Button>
             <Button
-              variant={groupBy === 'warehouse' ? 'primary' : 'secondary'}
+              variant={groupBy === 'warehouse' ? 'primary' : 'outline'}
               onClick={() => setGroupBy('warehouse')}
             >
-              🏢 Por Sucursal
+              Por Sucursal
             </Button>
-            <Button variant="secondary" onClick={() => balancesQuery.refetch()}>
-              🔄 Actualizar
+            <Button variant="outline" icon={<ArrowPathIcon />} onClick={() => balancesQuery.refetch()}>
+              Actualizar
+            </Button>
+            <Button
+              variant="outline"
+              icon={<DocumentArrowDownIcon />}
+              onClick={() => exportMutation.mutate()}
+              loading={exportMutation.isPending}
+              disabled={!auth.accessToken}
+            >
+              Exportar Excel
             </Button>
           </div>
         }
@@ -609,10 +667,14 @@ export function InventoryPage() {
                               },
                               { header: '✅ Disponible', accessor: (b) => b.availableQuantity },
                               {
-                                header: '⚡ Acción',
+                                header: 'Acción',
+                                className: 'text-center',
                                 accessor: (b) => (
                                   <div className="flex gap-2">
-                                    <button
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      icon={<ArrowPathIcon className="w-4 h-4" />}
                                       onClick={() =>
                                         setMovingItem({
                                           productId: pg.productId,
@@ -625,11 +687,13 @@ export function InventoryPage() {
                                           availableQty: String(b.availableQuantity),
                                         })
                                       }
-                                      className="rounded bg-[var(--pf-primary)] px-3 py-1 text-sm text-white hover:opacity-80"
                                     >
-                                      🚚 Mover
-                                    </button>
-                                    <button
+                                      Mover
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      icon={<ArrowPathIcon className="w-4 h-4" />}
                                       onClick={() => {
                                         setStatusChangeItem({
                                           productId: pg.productId,
@@ -641,10 +705,9 @@ export function InventoryPage() {
                                         })
                                         setNewStatus(b.status === 'QUARANTINE' ? 'RELEASED' : 'QUARANTINE')
                                       }}
-                                      className="rounded bg-orange-500 px-3 py-1 text-sm text-white hover:opacity-80"
                                     >
-                                      🔄 Estado
-                                    </button>
+                                      Estado
+                                    </Button>
                                   </div>
                                 ),
                               },
@@ -767,10 +830,14 @@ export function InventoryPage() {
                               },
                               { header: '✅ Disponible', accessor: (b) => b.availableQuantity },
                               {
-                                header: '⚡ Acción',
+                                header: 'Acción',
+                                className: 'text-center',
                                 accessor: (b) => (
                                   <div className="flex gap-2">
-                                    <button
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      icon={<ArrowPathIcon className="w-4 h-4" />}
                                       onClick={() =>
                                         setMovingItem({
                                           productId: prod.productId,
@@ -783,11 +850,13 @@ export function InventoryPage() {
                                           availableQty: String(b.availableQuantity),
                                         })
                                       }
-                                      className="rounded bg-[var(--pf-primary)] px-3 py-1 text-sm text-white hover:opacity-80"
                                     >
-                                      🚚 Mover
-                                    </button>
-                                    <button
+                                      Mover
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      icon={<ArrowPathIcon className="w-4 h-4" />}
                                       onClick={() => {
                                         setStatusChangeItem({
                                           productId: prod.productId,
@@ -799,10 +868,9 @@ export function InventoryPage() {
                                         })
                                         setNewStatus(b.status === 'QUARANTINE' ? 'RELEASED' : 'QUARANTINE')
                                       }}
-                                      className="rounded bg-orange-500 px-3 py-1 text-sm text-white hover:opacity-80"
                                     >
-                                      🔄 Estado
-                                    </button>
+                                      Estado
+                                    </Button>
                                   </div>
                                 ),
                               },

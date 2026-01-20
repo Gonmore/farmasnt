@@ -59,7 +59,7 @@ const stockBalancesExpandedQuerySchema = z.object({
   warehouseId: z.string().uuid().optional(),
   locationId: z.string().uuid().optional(),
   productId: z.string().uuid().optional(),
-  take: z.coerce.number().int().min(1).max(200).default(100),
+  take: z.coerce.number().int().min(1).max(5000).default(100),
 })
 
 const stockMovementsExpandedQuerySchema = dateRangeQuerySchema.extend({

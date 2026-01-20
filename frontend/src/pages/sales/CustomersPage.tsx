@@ -5,6 +5,7 @@ import { apiFetch } from '../../lib/api'
 import { useAuth } from '../../providers/AuthProvider'
 import { MainLayout, PageContainer, Button, Table, Loading, ErrorState, EmptyState, PaginationCursor } from '../../components'
 import { useNavigation } from '../../hooks'
+import { EyeIcon, PlusIcon } from '@heroicons/react/24/outline'
 
 type CustomerListItem = {
   id: string
@@ -60,7 +61,7 @@ export function CustomersPage() {
     <MainLayout navGroups={navGroups}>
       <PageContainer
         title="👥 Clientes"
-        actions={<Button onClick={() => navigate('/sales/customers/new')}>➕ Crear Cliente</Button>}
+        actions={<Button variant="primary" icon={<PlusIcon />} onClick={() => navigate('/sales/customers/new')}>Crear Cliente</Button>}
       >
         {/* Filtro de ciudades - Chips simples */}
         {availableCities.length > 0 && (
@@ -124,10 +125,11 @@ export function CustomersPage() {
                   { header: 'Teléfono', accessor: (c) => c.phone || '-' },
                   {
                     header: 'Acciones',
+                    className: 'text-center w-auto',
                     accessor: (c) => (
-                      <Button size="sm" variant="ghost" onClick={() => navigate(`/sales/customers/${c.id}`)}>
-                        👁️ Ver
-                      </Button>
+                      <div className="flex items-center justify-center gap-1">
+                        <Button variant="ghost" size="sm" icon={<EyeIcon className="w-4 h-4" />} onClick={() => navigate(`/sales/customers/${c.id}`)}>Ver</Button>
+                      </div>
                     ),
                   },
                 ]}

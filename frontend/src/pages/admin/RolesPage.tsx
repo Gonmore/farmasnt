@@ -2,8 +2,9 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiFetch } from '../../lib/api'
 import { useAuth } from '../../providers/AuthProvider'
-import { MainLayout, PageContainer, Table, Loading, ErrorState, EmptyState, Button, Modal, Input } from '../../components'
+import { MainLayout, PageContainer, Button, Table, Loading, ErrorState, EmptyState, Modal, Input } from '../../components'
 import { useNavigation } from '../../hooks'
+import { CogIcon, PlusIcon } from '@heroicons/react/24/outline'
 
 type AdminRoleListItem = {
   id: string
@@ -145,8 +146,8 @@ export function RolesPage() {
       <PageContainer 
         title="Roles"
         actions={
-          <Button onClick={() => setCreateOpen(true)}>
-            + Nuevo Rol
+          <Button variant="primary" icon={<PlusIcon />} onClick={() => setCreateOpen(true)}>
+            Nuevo Rol
           </Button>
         }
       >
@@ -162,16 +163,11 @@ export function RolesPage() {
                 { header: 'Sistema', accessor: (r) => (r.isSystem ? 'Sí' : 'No') },
                 {
                   header: 'Acciones',
+                  className: 'text-center w-auto',
                   accessor: (r) => (
-                    <div className="flex gap-2">
+                    <div className="flex items-center justify-center gap-1">
                       {!r.isSystem && (
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => handleEditPermissions(r)}
-                        >
-                          Editar Permisos
-                        </Button>
+                        <Button variant="ghost" size="sm" icon={<CogIcon className="w-4 h-4" />} onClick={() => handleEditPermissions(r)}>Permisos</Button>
                       )}
                     </div>
                   ),
