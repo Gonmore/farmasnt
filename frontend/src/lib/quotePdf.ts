@@ -39,15 +39,6 @@ function sanitizePdfText(value: string): string {
   return (value ?? '').replace(/[^\x20-\x7E]/g, '').trim()
 }
 
-function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
-  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
-  return result ? {
-    r: parseInt(result[1], 16),
-    g: parseInt(result[2], 16),
-    b: parseInt(result[3], 16)
-  } : null
-}
-
 export async function exportQuoteToPDF(quoteData: QuotePdfData): Promise<void> {
   const pdf = new jsPDF('p', 'mm', 'letter')
   const pageWidth = pdf.internal.pageSize.getWidth()
@@ -60,7 +51,7 @@ export async function exportQuoteToPDF(quoteData: QuotePdfData): Promise<void> {
   pdf.setFont('helvetica', 'bold')
   pdf.text('COTIZACIÓN', pageWidth / 2, yPosition, { align: 'center' })
 
-  // Add logo on the right if available
+  // Add logo on the left if available
   if (quoteData.logoUrl) {
     try {
       const img = new Image()
@@ -78,12 +69,13 @@ export async function exportQuoteToPDF(quoteData: QuotePdfData): Promise<void> {
       ctx.drawImage(img, 0, 0)
       const imgData = canvas.toDataURL('image/png')
       
-      // Logo dimensions: 20mm height, maintain aspect ratio
-      const logoHeight = 20
+      // Logo dimensions: 40mm height, maintain aspect ratio
+      const logoHeight = 40
       const aspectRatio = img.naturalWidth / img.naturalHeight
       const logoWidth = logoHeight * aspectRatio
       
-      pdf.addImage(imgData, 'PNG', pageWidth - margin - logoWidth, yPosition - 15, logoWidth, logoHeight)
+      pdf.addImage(imgData, 'PNG', margin, yPosition - 5, logoWidth, logoHeight)
+      yPosition += logoHeight + 10
     } catch (error) {
       console.warn('Failed to load logo for PDF:', error)
     }
@@ -112,24 +104,20 @@ export async function exportQuoteToPDF(quoteData: QuotePdfData): Promise<void> {
   yPosition += 10
 
   // Add watermark
-  const primaryColor = quoteData.tenant.branding?.primary || '#0f172a'
-  const rgb = hexToRgb(primaryColor)
-  if (rgb) {
-    pdf.saveGraphicsState()
-    pdf.setTextColor(rgb.r, rgb.g, rgb.b, 0.1) // Semi-transparent
-    pdf.setFontSize(60)
-    pdf.setFont('helvetica', 'bold')
-    
-    // Rotate and position watermark
-    const centerX = pageWidth / 2
-    const centerY = pageHeight / 2
-    pdf.text(quoteData.quoteNumber, centerX, centerY, { 
-      angle: 45,
-      align: 'center',
-      renderingMode: 'fill'
-    })
-    pdf.restoreGraphicsState()
-  }
+  pdf.saveGraphicsState()
+  pdf.setTextColor(135, 206, 235, 0.03) // Sky blue, very transparent
+  pdf.setFontSize(80)
+  pdf.setFont('helvetica', 'bold')
+  
+  // Rotate and position watermark
+  const centerX = pageWidth / 2
+  const centerY = pageHeight / 2
+  pdf.text(quoteData.quoteNumber, centerX, centerY, { 
+    angle: 45,
+    align: 'center',
+    renderingMode: 'fill'
+  })
+  pdf.restoreGraphicsState()
 
   pdf.setFontSize(10)
   pdf.setFont('helvetica', 'normal')

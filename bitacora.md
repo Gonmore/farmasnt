@@ -529,3 +529,7 @@ Tenant Admin (Clientes)
 - **Navbar logos**: ampliado rango de detección de logos cuadrados (0.8-1.2 aspect ratio) y aumentado tamaño base a h-12 para mejor visibilidad.
 - **Cotizaciones PDF**: logo reposicionado a la derecha en la fila del título "COTIZACIÓN". Agregada marca de agua diagonal con número de cotización usando color primario del branding (transparente 10%).
 
+### **[20 Ene 2026]** — Ajustes finales en cotizaciones PDF
+- **Logo en PDF**: reposicionado a la izquierda del header, aumentado tamaño a 40mm de altura (doble del anterior).
+- **Marca de agua**: cambiada a color celeste (sky blue) con mayor transparencia (3%) para mejor legibilidad del contenido.
+
