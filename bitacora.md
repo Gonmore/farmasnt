@@ -553,3 +553,37 @@ Tenant Admin (Clientes)
   - "WhatsApp PDF": Cambiado a variant `success`, ahora exporta el PDF en lugar de enviar link
 - **Manejo de errores**: Agregado try/catch en exportación PDF con mensajes de error claros.
 
+### **[20 Ene 2026]** — Optimizaciones para vista móvil
+- **Catálogo Comercial**: Botón "Agregar" muestra solo icono en móvil (oculta texto con `hidden sm:inline`)
+- **Inventario**: 
+  - Botones de filtro movidos a segunda fila (fuera de PageContainer actions)
+  - Texto reducido en móvil con clase `text-xs sm:text-sm`
+  - Mantiene funcionalidad completa: Por Producto, Por Sucursal, Actualizar, Exportar Excel
+- **Sucursales**: Botones "Editar" y "Ubicaciones" muestran solo iconos en móvil
+- **Pagos**: Botones de filtro (Por cobrar, Cobradas, Ver todas) movidos a segunda fila
+- **Entregas**: Botones de filtro (Pendientes, Entregadas, Ver todas) movidos a segunda fila
+- **Movimientos - Transferencias**: 
+  - Corregido bug crítico: botón "Realizar Transferencia" no tenía funcionalidad
+  - Agregada función `createTransferMovement` y mutation `transferMutation`
+  - Ahora valida stock disponible y ejecuta transferencias correctamente entre ubicaciones
+  - Agregado estado de carga y mensajes de éxito/error
+
+### **[22 Feb 2025]** — Corrección y documentación del Database Seed
+- **Problemas corregidos en seed.ts**:
+  - Cambiado `SalesOrderStatus.COMPLETED` por `FULFILLED` (valor válido del enum)
+  - Agregados campos requeridos `number` y `numberYear` a `StockMovement`
+  - Corregida lógica de ubicaciones: `fromLocationId` para ventas (OUT), `toLocationId` para compras (IN)
+  - Cambiado tipos de movimiento: `SALE`/`PURCHASE` por `OUT`/`IN` (valores válidos del enum `StockMovementType`)
+  - Corregido campo `reason` por `note` en `StockMovement`
+  - Cambiado tipos de datos: `quantity` de string a número/Decimal
+  - Agregada limpieza de `Quote` y `QuoteLine` antes de eliminar productos (evita errores de foreign key)
+  - Removida creación de `SalesOrderPayment` (modelo inexistente, pagos integrados en `SalesOrder`)
+- **Datos generados por seed funcional**:
+  - 43 productos con precios, costos y márgenes
+  - 315 órdenes de venta históricas (Bs 169,169 total)
+  - Movimientos de stock completos (ventas OUT y reposiciones IN)
+  - 3 clientes, 3 almacenes, productos con stock bajo y próximos a vencer
+- **Documentación actualizada**:
+  - Agregada sección "Database Seeding" en `API_REFERENCE.md` con comandos e instrucciones Docker
+  - Actualizada bitácora con detalles de correcciones realizadas
+

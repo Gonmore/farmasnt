@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { MainLayout, PageContainer, Button, Table, Loading, ErrorState, EmptyState, Badge } from '../../components'
 import { apiFetch } from '../../lib/api'
@@ -89,41 +89,36 @@ export function PaymentsPage() {
     },
   })
 
-  const actions = useMemo(
-    () => (
-      <div className="flex flex-wrap items-center gap-2">
-        <Button
-          size="sm"
-          variant={status === 'DUE' ? 'primary' : 'ghost'}
-          onClick={() => setStatus('DUE')}
-        >
-          Por cobrar
-        </Button>
-        <Button
-          size="sm"
-          variant={status === 'PAID' ? 'primary' : 'ghost'}
-          onClick={() => setStatus('PAID')}
-        >
-          Cobradas
-        </Button>
-        <div className="w-px self-stretch bg-slate-200 dark:bg-slate-700" />
-        <Button
-          size="sm"
-          variant={status === 'ALL' ? 'primary' : 'ghost'}
-          onClick={() => setStatus('ALL')}
-        >
-          Ver todas
-        </Button>
-      </div>
-    ),
-    [status],
-  )
-
   const items = paymentsQuery.data?.items ?? []
 
   return (
     <MainLayout navGroups={navGroups}>
-      <PageContainer title="Pagos" actions={actions}>
+      <PageContainer title="Pagos">
+        {/* Botones de filtro - segunda fila en móvil */}
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          <Button
+            size="sm"
+            variant={status === 'DUE' ? 'primary' : 'ghost'}
+            onClick={() => setStatus('DUE')}
+          >
+            Por cobrar
+          </Button>
+          <Button
+            size="sm"
+            variant={status === 'PAID' ? 'primary' : 'ghost'}
+            onClick={() => setStatus('PAID')}
+          >
+            Cobradas
+          </Button>
+          <div className="w-px self-stretch bg-slate-200 dark:bg-slate-700" />
+          <Button
+            size="sm"
+            variant={status === 'ALL' ? 'primary' : 'ghost'}
+            onClick={() => setStatus('ALL')}
+          >
+            Ver todas
+          </Button>
+        </div>
         <div className="rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
           {paymentsQuery.isLoading && <Loading />}
           {paymentsQuery.error && <ErrorState message="Error al cargar pagos" retry={paymentsQuery.refetch} />}

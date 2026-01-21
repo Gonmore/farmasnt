@@ -23,19 +23,36 @@ echo "🚀 2. Actualizando servidor remoto..."
 
 ssh $SERVER_USER@$SERVER_IP << EOF
   cd $SERVER_PATH
+  set -e
+
+  # Cargamos variables del servidor (para RUN_SEED_ON_DEPLOY y similares)
+  if [ -f .env ]; then
+    set -a
+    . ./.env
+    set +a
+  fi
   
-  # Reemplazo robusto: busca cualquier línea que contenga 'image:' y el nombre del repo
-  # y reemplaza TODA la línea por la nueva imagen con la versión.
-  sed -i "s|.*image:.*backend-farmasnt:.*|    image: $USER_DOCKER/backend-farmasnt:$VERSION|" docker-compose.yml
-  sed -i "s|.*image:.*frontend-farmasnt:.*|    image: $USER_DOCKER/frontend-farmasnt:$VERSION|" docker-compose.yml
+  # Creamos o sobreescribimos el archivo de versión
+  echo "APP_VERSION=$VERSION" > .env.version
   
   echo "📥 Descargando nuevas imágenes ($VERSION)..."
-  docker compose pull
+  # Le decimos a docker compose que use nuestro nuevo archivo de versión
+  docker compose --env-file .env --env-file .env.version pull
+
+  echo "🧬 Aplicando migraciones Prisma (si hay nuevas)..."
+  docker compose --env-file .env --env-file .env.version --profile tools run --rm backend-migrate
   
   echo "🔄 Reiniciando contenedores..."
-  docker compose up -d
+  docker compose --env-file .env --env-file .env.version up -d
+
+  if [ "${RUN_SEED_ON_DEPLOY:-0}" = "1" ]; then
+    echo "🌱 Ejecutando seed (tools profile)..."
+    docker compose --env-file .env --env-file .env.version --profile tools run --rm backend-seed
+  else
+    echo "🌱 Seed omitido (set RUN_SEED_ON_DEPLOY=1 para ejecutarlo)"
+  fi
   
-  echo "🧹 Limpiando imágenes antiguas para liberar espacio..."
+  echo "🧹 Limpiando imágenes antiguas..."
   docker image prune -f
 EOF
 

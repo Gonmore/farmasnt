@@ -1757,3 +1757,56 @@ Operaciones:
 - `PATCH /api/v1/reports/stock/schedules/:id` (por ahora solo `enabled`)
 - `DELETE /api/v1/reports/stock/schedules/:id`
 
+---
+
+## Database Seeding
+
+### Seed Command
+Para poblar la base de datos con datos de prueba:
+
+```bash
+# Desde el directorio backend/
+npx prisma db seed
+```
+
+### Datos generados por el seed:
+- **Platform Tenant**: Supernovatel (admin@supernovatel.com / Admin123!)
+- **Demo Tenant**: Demo Pharma (admin@demo.local / Admin123!)
+- **Productos**: 43 productos con precios, costos y stock distribuido
+- **Órdenes de venta**: 315 órdenes históricas con valor total de Bs 169,169
+- **Movimientos de stock**: Registros de ventas (OUT) y reposiciones (IN)
+- **Clientes**: 3 clientes de prueba
+- **Almacenes**: 3 almacenes con ubicaciones
+- **Productos con stock bajo**: 5 productos
+- **Productos próximos a vencer**: 6 productos
+
+### Variables de entorno para seed:
+- `SEED_TENANT_NAME`: Nombre del tenant demo (default: "Demo Pharma")
+- `SEED_ADMIN_EMAIL`: Email del admin (default: "admin@demo.local")
+- `SEED_ADMIN_PASSWORD`: Password del admin (default: "Admin123!")
+- `SEED_PLATFORM_DOMAIN`: Dominio de la plataforma (default: "farmacia.supernovatel.com")
+
+### Docker - Local Development
+```bash
+# Construir y ejecutar servicios
+docker-compose -f docker-compose.local.yml up --build
+
+# Ejecutar seed dentro del contenedor
+docker-compose -f docker-compose.local.yml exec backend npx prisma db seed
+```
+
+### Docker - Production
+```bash
+# Construir imagen de producción
+docker build -f backend/Dockerfile -t pharmaflow-backend:latest backend/
+
+# Ejecutar seed en producción (requiere variables de entorno)
+docker run --rm \
+  --env-file .env.production \
+  --network pharmaflow_network \
+  pharmaflow-backend:latest \
+  npx prisma db seed
+```
+
+**Nota**: Asegurarse de que la base de datos esté accesible y las migraciones aplicadas antes de ejecutar el seed.
+

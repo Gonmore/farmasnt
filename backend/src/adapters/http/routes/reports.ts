@@ -137,6 +137,45 @@ type StockTransfersBetweenWarehousesRow = {
   quantity: string | null
 }
 
+type SalesByMonthRow = {
+  month: string
+  ordersCount: bigint
+  linesCount: bigint
+  quantity: string | null
+  amount: string | null
+}
+
+type ProductMarginsRow = {
+  productId: string
+  sku: string
+  name: string
+  qtySold: string | null
+  revenue: string | null
+  costPrice: string | null
+  costTotal: string | null
+}
+
+type LowStockRow = {
+  productId: string
+  sku: string
+  name: string
+  currentStock: string | null
+  minStock: string | null
+  avgDailySales: string | null
+  daysOfStock: string | null
+}
+
+type ExpiryAlertRow = {
+  productId: string
+  sku: string
+  name: string
+  locationId: string
+  locationName: string | null
+  lotNumber: string | null
+  expiryDate: Date | null
+  quantity: string | null
+}
+
 export async function registerReportRoutes(app: FastifyInstance): Promise<void> {
   const db = prisma()
   const mailer = getMailer()
@@ -357,6 +396,356 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
           amountPaid: r?.amountPaid ?? '0',
         },
       })
+    },
+  )
+
+  // Sales by month for comparison report
+  app.get(
+    '/api/v1/reports/sales/by-month',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'SALES'), requirePermission(Permissions.ReportSalesRead)],
+    },
+    async (request, reply) => {
+      const parsed = salesSummaryQuerySchema.safeParse(request.query)
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
+
+      const tenantId = request.auth!.tenantId
+      const { from, to, status } = parsed.data
+
+      const rows = await db.$queryRaw<SalesByMonthRow[]>`
+        SELECT
+          to_char(date_trunc('month', so."createdAt"), 'YYYY-MM') as "month",
+          count(distinct so.id) as "ordersCount",
+          count(sol.id) as "linesCount",
+          sum(sol.quantity)::text as "quantity",
+          sum(sol.quantity * sol."unitPrice")::text as "amount"
+        FROM "SalesOrder" so
+        JOIN "SalesOrderLine" sol
+          ON sol."salesOrderId" = so.id
+          AND sol."tenantId" = so."tenantId"
+        WHERE so."tenantId" = ${tenantId}
+          AND (${status ?? null}::text IS NULL OR so.status = ${status ?? null}::"SalesOrderStatus")
+          AND (${from ?? null}::timestamptz IS NULL OR so."createdAt" >= ${from ?? null})
+          AND (${to ?? null}::timestamptz IS NULL OR so."createdAt" < ${to ?? null})
+        GROUP BY 1
+        ORDER BY 1 ASC
+      `
+
+      const items = rows.map((r) => ({
+        month: r.month,
+        orderCount: Number(r.ordersCount),
+        linesCount: Number(r.linesCount),
+        quantity: r.quantity ?? '0',
+        total: Number(r.amount ?? '0'),
+      }))
+
+      return reply.send({ items })
+    },
+  )
+
+  // Product margins report
+  app.get(
+    '/api/v1/reports/sales/margins',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'SALES'), requirePermission(Permissions.ReportSalesRead)],
+    },
+    async (request, reply) => {
+      const parsed = salesTopProductsQuerySchema.safeParse(request.query)
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
+
+      const tenantId = request.auth!.tenantId
+      const { from, to, take, status } = parsed.data
+
+      const rows = await db.$queryRaw<ProductMarginsRow[]>`
+        SELECT
+          p.id as "productId",
+          p.sku,
+          p.name,
+          sum(sol.quantity)::text as "qtySold",
+          sum(sol.quantity * sol."unitPrice")::text as "revenue",
+          p.cost::text as "costPrice",
+          (sum(sol.quantity) * COALESCE(p.cost, 0))::text as "costTotal"
+        FROM "SalesOrder" so
+        JOIN "SalesOrderLine" sol
+          ON sol."salesOrderId" = so.id
+          AND sol."tenantId" = so."tenantId"
+        JOIN "Product" p
+          ON p.id = sol."productId"
+          AND p."tenantId" = sol."tenantId"
+        WHERE so."tenantId" = ${tenantId}
+          AND (${status ?? null}::text IS NULL OR so.status = ${status ?? null}::"SalesOrderStatus")
+          AND (${from ?? null}::timestamptz IS NULL OR so."createdAt" >= ${from ?? null})
+          AND (${to ?? null}::timestamptz IS NULL OR so."createdAt" < ${to ?? null})
+        GROUP BY p.id, p.sku, p.name, p.cost
+        ORDER BY sum(sol.quantity * sol."unitPrice") DESC
+        LIMIT ${take}
+      `
+
+      const items = rows.map((r) => {
+        const revenue = Number(r.revenue ?? '0')
+        const costTotal = Number(r.costTotal ?? '0')
+        const profit = revenue - costTotal
+        const marginPct = revenue > 0 ? (profit / revenue) * 100 : 0
+
+        return {
+          productId: r.productId,
+          sku: r.sku,
+          name: r.name,
+          qtySold: Number(r.qtySold ?? '0'),
+          revenue,
+          costPrice: Number(r.costPrice ?? '0'),
+          costTotal,
+          profit,
+          marginPct,
+        }
+      })
+
+      const totals = items.reduce(
+        (acc, i) => ({
+          revenue: acc.revenue + i.revenue,
+          costTotal: acc.costTotal + i.costTotal,
+          profit: acc.profit + i.profit,
+        }),
+        { revenue: 0, costTotal: 0, profit: 0 },
+      )
+      const avgMargin = totals.revenue > 0 ? (totals.profit / totals.revenue) * 100 : 0
+
+      return reply.send({ items, totals: { ...totals, avgMargin } })
+    },
+  )
+
+  // Low stock / stock alerts report
+  app.get(
+    '/api/v1/reports/stock/low-stock',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.ReportStockRead)],
+    },
+    async (request, reply) => {
+      const parsed = z.object({ take: z.coerce.number().int().min(1).max(200).default(50) }).safeParse(request.query)
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
+
+      const tenantId = request.auth!.tenantId
+      const { take } = parsed.data
+
+      // Get current stock and compare with a default minStock of 10 (or less for products with low sales)
+      // TODO: Add minStock field to Product model for configurable thresholds
+      const rows = await db.$queryRaw<LowStockRow[]>`
+        WITH current_stock AS (
+          SELECT
+            ib."productId",
+            sum(ib.quantity - ib."reservedQuantity") as total_stock
+          FROM "InventoryBalance" ib
+          WHERE ib."tenantId" = ${tenantId}
+          GROUP BY ib."productId"
+        ),
+        daily_sales AS (
+          SELECT
+            sol."productId",
+            sum(sol.quantity) / 30.0 as avg_daily
+          FROM "SalesOrder" so
+          JOIN "SalesOrderLine" sol
+            ON sol."salesOrderId" = so.id
+            AND sol."tenantId" = so."tenantId"
+          WHERE so."tenantId" = ${tenantId}
+            AND so.status = 'FULFILLED'::"SalesOrderStatus"
+            AND so."createdAt" >= now() - interval '30 days'
+          GROUP BY sol."productId"
+        )
+        SELECT
+          p.id as "productId",
+          p.sku,
+          p.name,
+          COALESCE(cs.total_stock, 0)::text as "currentStock",
+          10::text as "minStock",
+          COALESCE(ds.avg_daily, 0)::text as "avgDailySales",
+          CASE
+            WHEN COALESCE(ds.avg_daily, 0) > 0 THEN (COALESCE(cs.total_stock, 0) / ds.avg_daily)::text
+            ELSE null
+          END as "daysOfStock"
+        FROM "Product" p
+        LEFT JOIN current_stock cs ON cs."productId" = p.id
+        LEFT JOIN daily_sales ds ON ds."productId" = p.id
+        WHERE p."tenantId" = ${tenantId}
+          AND p."isActive" = true
+          AND (
+            COALESCE(cs.total_stock, 0) <= 10
+            OR COALESCE(cs.total_stock, 0) < COALESCE(ds.avg_daily * 7, 0)
+          )
+        ORDER BY COALESCE(cs.total_stock, 0) ASC, p.name ASC
+        LIMIT ${take}
+      `
+
+      const items = rows.map((r) => ({
+        productId: r.productId,
+        sku: r.sku,
+        name: r.name,
+        currentStock: Number(r.currentStock ?? '0'),
+        minStock: Number(r.minStock ?? '0'),
+        avgDailySales: Number(r.avgDailySales ?? '0'),
+        daysOfStock: r.daysOfStock ? Number(r.daysOfStock) : null,
+      }))
+
+      return reply.send({ items })
+    },
+  )
+
+  // Expiry alerts report
+  app.get(
+    '/api/v1/reports/stock/expiry-alerts',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.ReportStockRead)],
+    },
+    async (request, reply) => {
+      const parsed = z
+        .object({
+          daysAhead: z.coerce.number().int().min(1).max(365).default(30),
+          take: z.coerce.number().int().min(1).max(200).default(50),
+        })
+        .safeParse(request.query)
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
+
+      const tenantId = request.auth!.tenantId
+      const { daysAhead, take } = parsed.data
+
+      // Get current balances for batches that are expiring soon
+      const rows = await db.$queryRaw<ExpiryAlertRow[]>`
+        SELECT
+          p.id as "productId",
+          p.sku,
+          p.name,
+          l.id as "locationId",
+          l.code as "locationName",
+          b."batchNumber" as "lotNumber",
+          b."expiresAt" as "expiryDate",
+          (ib.quantity - ib."reservedQuantity")::text as "quantity"
+        FROM "InventoryBalance" ib
+        JOIN "Product" p ON p.id = ib."productId" AND p."tenantId" = ib."tenantId"
+        JOIN "Location" l ON l.id = ib."locationId" AND l."tenantId" = ib."tenantId"
+        JOIN "Batch" b ON b.id = ib."batchId" AND b."tenantId" = ib."tenantId"
+        WHERE ib."tenantId" = ${tenantId}
+          AND ib."batchId" IS NOT NULL
+          AND (ib.quantity - ib."reservedQuantity") > 0
+          AND b."expiresAt" IS NOT NULL
+          AND b."expiresAt" <= now() + interval '1 day' * ${daysAhead}
+        ORDER BY b."expiresAt" ASC
+        LIMIT ${take}
+      `
+
+      const items = rows.map((r) => ({
+        productId: r.productId,
+        sku: r.sku,
+        name: r.name,
+        locationId: r.locationId,
+        locationName: r.locationName,
+        lotNumber: r.lotNumber,
+        expiryDate: r.expiryDate?.toISOString().split('T')[0] ?? null,
+        quantity: Number(r.quantity ?? '0'),
+        daysUntilExpiry: r.expiryDate
+          ? Math.ceil((new Date(r.expiryDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+          : null,
+      }))
+
+      return reply.send({ items })
+    },
+  )
+
+  // Stock rotation report
+  app.get(
+    '/api/v1/reports/stock/rotation',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.ReportStockRead)],
+    },
+    async (request, reply) => {
+      const parsed = dateRangeQuerySchema.extend({ take: z.coerce.number().int().min(1).max(200).default(50) }).safeParse(request.query)
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
+
+      const tenantId = request.auth!.tenantId
+      const { from, to, take } = parsed.data
+
+      const rows = await db.$queryRaw<
+        {
+          productId: string
+          sku: string
+          name: string
+          movementsIn: bigint
+          movementsOut: bigint
+          qtyIn: string | null
+          qtyOut: string | null
+          currentStock: string | null
+        }[]
+      >`
+        WITH movement_stats AS (
+          SELECT
+            sm."productId",
+            count(*) FILTER (
+              WHERE sm.type = 'IN'::"StockMovementType"
+                OR (sm.type = 'ADJUSTMENT'::"StockMovementType" AND sm."toLocationId" IS NOT NULL)
+            ) as "movementsIn",
+            count(*) FILTER (
+              WHERE sm.type = 'OUT'::"StockMovementType"
+                OR (sm.type = 'ADJUSTMENT'::"StockMovementType" AND sm."toLocationId" IS NULL)
+            ) as "movementsOut",
+            sum(sm.quantity) FILTER (
+              WHERE sm.type = 'IN'::"StockMovementType"
+                OR (sm.type = 'ADJUSTMENT'::"StockMovementType" AND sm."toLocationId" IS NOT NULL)
+            )::text as "qtyIn",
+            sum(sm.quantity) FILTER (
+              WHERE sm.type = 'OUT'::"StockMovementType"
+                OR (sm.type = 'ADJUSTMENT'::"StockMovementType" AND sm."toLocationId" IS NULL)
+            )::text as "qtyOut"
+          FROM "StockMovement" sm
+          WHERE sm."tenantId" = ${tenantId}
+            AND (${from ?? null}::timestamptz IS NULL OR sm."createdAt" >= ${from ?? null})
+            AND (${to ?? null}::timestamptz IS NULL OR sm."createdAt" < ${to ?? null})
+          GROUP BY sm."productId"
+        ),
+        current_stock AS (
+          SELECT
+            ib."productId",
+            sum(ib.quantity - ib."reservedQuantity")::text as total_stock
+          FROM "InventoryBalance" ib
+          WHERE ib."tenantId" = ${tenantId}
+          GROUP BY ib."productId"
+        )
+        SELECT
+          p.id as "productId",
+          p.sku,
+          p.name,
+          COALESCE(ms."movementsIn", 0) as "movementsIn",
+          COALESCE(ms."movementsOut", 0) as "movementsOut",
+          ms."qtyIn",
+          ms."qtyOut",
+          cs.total_stock as "currentStock"
+        FROM "Product" p
+        LEFT JOIN movement_stats ms ON ms."productId" = p.id
+        LEFT JOIN current_stock cs ON cs."productId" = p.id
+        WHERE p."tenantId" = ${tenantId}
+          AND p."isActive" = true
+          AND (ms."movementsIn" > 0 OR ms."movementsOut" > 0 OR cs.total_stock IS NOT NULL)
+        ORDER BY COALESCE(ms."movementsOut", 0) + COALESCE(ms."movementsIn", 0) DESC
+        LIMIT ${take}
+      `
+
+      const items = rows.map((r) => {
+        const movementsIn = Number(r.movementsIn)
+        const movementsOut = Number(r.movementsOut)
+        const totalMovements = movementsIn + movementsOut
+        return {
+          productId: r.productId,
+          sku: r.sku,
+          name: r.name,
+          movementsIn,
+          movementsOut,
+          totalMovements,
+          qtyIn: Number(r.qtyIn ?? '0'),
+          qtyOut: Number(r.qtyOut ?? '0'),
+          currentStock: Number(r.currentStock ?? '0'),
+        }
+      })
+
+      const avgMovements = items.length > 0 ? items.reduce((s, i) => s + i.totalMovements, 0) / items.length : 0
+
+      return reply.send({ items, avgMovements })
     },
   )
 

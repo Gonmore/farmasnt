@@ -10,7 +10,7 @@ import { blobToBase64, exportElementToPdf, pdfBlobFromElement } from '../../lib/
 import { useAuth } from '../../providers/AuthProvider'
 import { useTenant } from '../../providers/TenantProvider'
 
-type StockTab = 'INPUTS' | 'TRANSFERS'
+type StockTab = 'INPUTS' | 'TRANSFERS' | 'ROTATION' | 'NOMOVEMENT' | 'LOWSTOCK' | 'EXPIRY'
 
 type StockInputsItem = {
   productId: string
@@ -42,6 +42,40 @@ type ScheduleItem = {
 }
 
 type ScheduleListResponse = { items: ScheduleItem[] }
+
+type RotationItem = {
+  productId: string
+  sku: string
+  name: string
+  movementsIn: number
+  movementsOut: number
+  totalMovements: number
+  qtyIn: number
+  qtyOut: number
+  currentStock: number
+}
+
+type LowStockItem = {
+  productId: string
+  sku: string
+  name: string
+  currentStock: number
+  minStock: number
+  avgDailySales: number
+  daysOfStock: number | null
+}
+
+type ExpiryAlertItem = {
+  productId: string
+  sku: string
+  name: string
+  locationId: string
+  locationName: string | null
+  lotNumber: string | null
+  expiryDate: string | null
+  quantity: number
+  daysUntilExpiry: number | null
+}
 
 function toIsoDate(d: Date): string {
   const y = d.getFullYear()
@@ -97,6 +131,23 @@ async function sendStockReportEmail(token: string, input: { to: string; subject:
 
 async function listStockSchedules(token: string): Promise<ScheduleListResponse> {
   return apiFetch(`/api/v1/reports/stock/schedules`, { token })
+}
+
+async function fetchRotation(token: string, q: { from?: string; to?: string; take: number }): Promise<{ items: RotationItem[]; from: string; to: string }> {
+  const params = new URLSearchParams({ take: String(q.take) })
+  if (q.from) params.set('from', q.from)
+  if (q.to) params.set('to', q.to)
+  return apiFetch(`/api/v1/reports/stock/rotation?${params}`, { token })
+}
+
+async function fetchLowStock(token: string, take: number): Promise<{ items: LowStockItem[] }> {
+  const params = new URLSearchParams({ take: String(take) })
+  return apiFetch(`/api/v1/reports/stock/low-stock?${params}`, { token })
+}
+
+async function fetchExpiryAlerts(token: string, daysAhead: number, take: number): Promise<{ items: ExpiryAlertItem[] }> {
+  const params = new URLSearchParams({ daysAhead: String(daysAhead), take: String(take) })
+  return apiFetch(`/api/v1/reports/stock/expiry-alerts?${params}`, { token })
 }
 
 async function createStockSchedule(
@@ -157,7 +208,7 @@ export function StockReportsPage() {
     const qsFrom = sp.get('from')
     const qsTo = sp.get('to')
 
-    if (qsTab && ['INPUTS', 'TRANSFERS'].includes(qsTab)) {
+    if (qsTab && ['INPUTS', 'TRANSFERS', 'ROTATION', 'NOMOVEMENT', 'LOWSTOCK', 'EXPIRY'].includes(qsTab)) {
       setTab(qsTab as StockTab)
     }
     if (qsFrom && /^\d{4}-\d{2}-\d{2}$/.test(qsFrom)) setFrom(qsFrom)
@@ -181,8 +232,15 @@ export function StockReportsPage() {
 
   const title = useMemo(() => {
     const period = `${from} a ${to}`
-    if (tab === 'INPUTS') return `Existencias ingresadas por producto (${period})`
-    return `Traspasos entre sucursales (${period})`
+    switch (tab) {
+      case 'INPUTS': return `Existencias ingresadas por producto (${period})`
+      case 'TRANSFERS': return `Traspasos entre sucursales (${period})`
+      case 'ROTATION': return `Rotación de inventario (${period})`
+      case 'NOMOVEMENT': return `Productos sin movimiento (${period})`
+      case 'LOWSTOCK': return `Stock bajo / Por agotar`
+      case 'EXPIRY': return `Productos próximos a vencer`
+      default: return `Reporte de Stock (${period})`
+    }
   }, [from, to, tab])
 
   const exportFilename = useMemo(() => {
@@ -200,6 +258,24 @@ export function StockReportsPage() {
     queryKey: ['reports', 'stock', 'transfersBetweenWarehouses', { from, to }],
     queryFn: () => fetchTransfers(auth.accessToken!, { from, to, take: 50 }),
     enabled: !!auth.accessToken && tab === 'TRANSFERS',
+  })
+
+  const rotationQuery = useQuery({
+    queryKey: ['reports', 'stock', 'rotation', { from, to }],
+    queryFn: () => fetchRotation(auth.accessToken!, { from, to, take: 50 }),
+    enabled: !!auth.accessToken && (tab === 'ROTATION' || tab === 'NOMOVEMENT'),
+  })
+
+  const lowStockQuery = useQuery({
+    queryKey: ['reports', 'stock', 'lowStock'],
+    queryFn: () => fetchLowStock(auth.accessToken!, 50),
+    enabled: !!auth.accessToken && tab === 'LOWSTOCK',
+  })
+
+  const expiryQuery = useQuery({
+    queryKey: ['reports', 'stock', 'expiry'],
+    queryFn: () => fetchExpiryAlerts(auth.accessToken!, 60, 50),
+    enabled: !!auth.accessToken && tab === 'EXPIRY',
   })
 
   const emailMutation = useMutation({
@@ -271,84 +347,95 @@ export function StockReportsPage() {
     },
   })
 
-  const actions = useMemo(
-    () => (
-      <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" variant={tab === 'INPUTS' ? 'primary' : 'ghost'} onClick={() => setTab('INPUTS')}>
-          📥 Ingresos
-        </Button>
-        <Button size="sm" variant={tab === 'TRANSFERS' ? 'primary' : 'ghost'} onClick={() => setTab('TRANSFERS')}>
-          🔁 Traspasos
-        </Button>
-
-        <div className="w-px self-stretch bg-slate-200 dark:bg-slate-700" />
-
-        <Button
-          size="sm"
-          variant="secondary"
-          onClick={async () => {
-            if (!reportRef.current) return
-            await exportElementToPdf(reportRef.current, {
-              filename: exportFilename,
-              title,
-              subtitle: `Período: ${formatDate(new Date(from))} - ${formatDate(new Date(to))}`,
-              companyName: tenant.branding?.tenantName ?? 'Empresa',
-              headerColor: '#3B82F6',
-              logoUrl: tenant.branding?.logoUrl ?? undefined,
-            })
-          }}
-        >
-          ⬇️ Exportar PDF
-        </Button>
-        <Button size="sm" variant="secondary" onClick={() => setEmailModalOpen(true)}>
-          ✉️ Enviar
-        </Button>
-        <Button size="sm" variant="secondary" onClick={() => setScheduleModalOpen(true)}>
-          ⏱ Programar
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => {
-            const url = window.location.href
-            const text = encodeURIComponent(`Reporte: ${title}\n${url}`)
-            window.open(`https://wa.me/?text=${text}`, '_blank', 'noopener,noreferrer')
-          }}
-        >
-          💬 WhatsApp
-        </Button>
-      </div>
-    ),
-    [exportFilename, tab, title],
-  )
-
-  const filters = useMemo(
-    () => (
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-        <Input label="Desde" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
-        <Input label="Hasta" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
-        <div className="flex items-end">
-          <Button
-            variant="ghost"
-            onClick={() => {
-              const now = new Date()
-              setFrom(toIsoDate(startOfMonth(now)))
-              setTo(toIsoDate(startOfNextMonth(now)))
-            }}
-          >
-            Reset mes actual
-          </Button>
-        </div>
-      </div>
-    ),
-    [from, to],
-  )
-
   return (
     <MainLayout navGroups={navGroups}>
-      <PageContainer title="Reportes de Stock" actions={actions}>
+      <PageContainer title="📦 Reportes de Stock">
+        {/* LÍNEA 2: Tipo de Reporte | Acciones */}
         <div className="mb-4 rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
-          {filters}
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            {/* Tipos de reporte - botones outline */}
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="mr-2 text-sm font-medium text-slate-600 dark:text-slate-400">Tipo de reporte:</span>
+              <Button size="sm" variant={tab === 'INPUTS' ? 'primary' : 'outline'} onClick={() => setTab('INPUTS')}>
+                📥 Ingresos
+              </Button>
+              <Button size="sm" variant={tab === 'TRANSFERS' ? 'primary' : 'outline'} onClick={() => setTab('TRANSFERS')}>
+                🔁 Traspasos
+              </Button>
+              <Button size="sm" variant={tab === 'ROTATION' ? 'primary' : 'outline'} onClick={() => setTab('ROTATION')}>
+                🔄 Rotación
+              </Button>
+              <Button size="sm" variant={tab === 'NOMOVEMENT' ? 'primary' : 'outline'} onClick={() => setTab('NOMOVEMENT')}>
+                💤 Sin Movimiento
+              </Button>
+              <Button size="sm" variant={tab === 'LOWSTOCK' ? 'primary' : 'outline'} onClick={() => setTab('LOWSTOCK')}>
+                ⚠️ Stock Bajo
+              </Button>
+              <Button size="sm" variant={tab === 'EXPIRY' ? 'primary' : 'outline'} onClick={() => setTab('EXPIRY')}>
+                📅 Por Vencer
+              </Button>
+            </div>
+            
+            {/* Acciones - botones ghost */}
+            <div className="flex flex-wrap items-center gap-2 border-t border-slate-200 pt-3 dark:border-slate-700 lg:border-t-0 lg:border-l lg:pl-4 lg:pt-0">
+              <span className="mr-2 hidden text-sm font-medium text-slate-600 dark:text-slate-400 lg:inline">Acciones:</span>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={async () => {
+                  if (!reportRef.current) return
+                  await exportElementToPdf(reportRef.current, {
+                    filename: exportFilename,
+                    title,
+                    subtitle: `Período: ${formatDate(new Date(from))} - ${formatDate(new Date(to))}`,
+                    companyName: tenant.branding?.tenantName ?? 'Empresa',
+                    headerColor: '#3B82F6',
+                    logoUrl: tenant.branding?.logoUrl ?? undefined,
+                  })
+                }}
+              >
+                ⬇️ PDF
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setEmailModalOpen(true)}>
+                ✉️ Enviar
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setScheduleModalOpen(true)}>
+                ⏱ Programar
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  const url = window.location.href
+                  const text = encodeURIComponent(`Reporte: ${title}\n${url}`)
+                  window.open(`https://wa.me/?text=${text}`, '_blank', 'noopener,noreferrer')
+                }}
+              >
+                💬 WhatsApp
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        {/* LÍNEA 3: Filtros de período */}
+        <div className="mb-4 rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <Input label="Desde" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+            <Input label="Hasta" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+            <div className="col-span-2 flex items-end md:col-span-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  const now = new Date()
+                  setFrom(toIsoDate(startOfMonth(now)))
+                  setTo(toIsoDate(startOfNextMonth(now)))
+                }}
+              >
+                Reset mes
+              </Button>
+            </div>
+          </div>
         </div>
 
         <div ref={reportRef} className="space-y-4">
@@ -674,6 +761,497 @@ export function StockReportsPage() {
                   </div>
                 </>
               )}
+            </ReportSection>
+          )}
+
+          {/* Reporte de Rotación de Inventario */}
+          {tab === 'ROTATION' && (
+            <ReportSection
+              title="🔄 Rotación de Inventario"
+              subtitle="Velocidad de movimiento de productos"
+              icon="📈"
+            >
+              {rotationQuery.isLoading && <Loading />}
+              {rotationQuery.isError && <ErrorState message={(rotationQuery.error as any)?.message ?? 'Error cargando reporte'} />}
+              {!rotationQuery.isLoading && !rotationQuery.isError && (rotationQuery.data?.items?.length ?? 0) === 0 && (
+                <EmptyState message="No hay datos de rotación disponibles." />
+              )}
+              {!rotationQuery.isLoading && !rotationQuery.isError && (rotationQuery.data?.items?.length ?? 0) > 0 && (() => {
+                const items = rotationQuery.data?.items ?? []
+                const totalMovements = items.reduce((s, i) => s + i.totalMovements, 0)
+                const avgRotation = items.length > 0 ? totalMovements / items.length : 0
+                const highRotation = items.filter(i => i.totalMovements > avgRotation).length
+                const lowRotation = items.filter(i => i.totalMovements <= avgRotation / 2).length
+
+                return (
+                  <>
+                    {/* KPIs de rotación */}
+                    <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
+                      <KPICard
+                        icon="🔄"
+                        label="Total Movimientos"
+                        value={totalMovements.toString()}
+                        color="primary"
+                        subtitle="En el período"
+                      />
+                      <KPICard
+                        icon="📊"
+                        label="Rotación Promedio"
+                        value={avgRotation.toFixed(1)}
+                        color="info"
+                        subtitle="Movimientos por producto"
+                      />
+                      <KPICard
+                        icon="🚀"
+                        label="Alta Rotación"
+                        value={highRotation.toString()}
+                        color="success"
+                        subtitle="Productos de rápido movimiento"
+                      />
+                      <KPICard
+                        icon="🐢"
+                        label="Baja Rotación"
+                        value={lowRotation.toString()}
+                        color="warning"
+                        subtitle="Productos de lento movimiento"
+                      />
+                    </div>
+
+                    {/* Clasificación por velocidad */}
+                    <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-3">
+                      <div className="rounded-lg border border-green-200 bg-green-50 p-4 dark:border-green-800 dark:bg-green-900/20">
+                        <h4 className="mb-2 flex items-center gap-2 font-semibold text-green-800 dark:text-green-200">
+                          <span className="text-xl">🚀</span> Alta Rotación
+                        </h4>
+                        <p className="text-sm text-green-700 dark:text-green-300">
+                          {highRotation} productos con más de {avgRotation.toFixed(0)} movimientos
+                        </p>
+                        <ul className="mt-2 space-y-1 text-sm text-green-600 dark:text-green-400">
+                          {items.filter(i => i.totalMovements > avgRotation).slice(0, 3).map((item, idx) => (
+                            <li key={idx}>• {item.name.slice(0, 25)}... ({item.totalMovements} mov.)</li>
+                          ))}
+                        </ul>
+                      </div>
+
+                      <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 dark:border-blue-800 dark:bg-blue-900/20">
+                        <h4 className="mb-2 flex items-center gap-2 font-semibold text-blue-800 dark:text-blue-200">
+                          <span className="text-xl">📊</span> Rotación Media
+                        </h4>
+                        <p className="text-sm text-blue-700 dark:text-blue-300">
+                          {items.filter(i => i.totalMovements <= avgRotation && i.totalMovements > avgRotation / 2).length} productos
+                        </p>
+                      </div>
+
+                      <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 dark:border-amber-800 dark:bg-amber-900/20">
+                        <h4 className="mb-2 flex items-center gap-2 font-semibold text-amber-800 dark:text-amber-200">
+                          <span className="text-xl">🐢</span> Baja Rotación
+                        </h4>
+                        <p className="text-sm text-amber-700 dark:text-amber-300">
+                          {lowRotation} productos requieren atención
+                        </p>
+                        <ul className="mt-2 space-y-1 text-sm text-amber-600 dark:text-amber-400">
+                          {items.filter(i => i.totalMovements <= avgRotation / 2).slice(0, 3).map((item, idx) => (
+                            <li key={idx}>• {item.name.slice(0, 25)}... ({item.totalMovements} mov.)</li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+
+                    {/* Tabla de rotación */}
+                    <Table
+                      columns={[
+                        { header: 'SKU', accessor: (r) => <span className="font-mono text-xs">{r.sku}</span> },
+                        { header: 'Producto', accessor: (r) => r.name },
+                        { header: 'Entradas', accessor: (r) => r.movementsIn, className: 'text-center' },
+                        { header: 'Salidas', accessor: (r) => r.movementsOut, className: 'text-center' },
+                        { header: 'Total Mov.', accessor: (r) => r.totalMovements, className: 'text-center' },
+                        { header: 'Stock Actual', accessor: (r) => r.currentStock, className: 'text-right' },
+                        { 
+                          header: 'Clasificación', 
+                          accessor: (r) => {
+                            if (r.totalMovements > avgRotation) return <span className="rounded bg-green-100 px-2 py-1 text-xs font-medium text-green-800 dark:bg-green-900 dark:text-green-200">Alta</span>
+                            if (r.totalMovements > avgRotation / 2) return <span className="rounded bg-blue-100 px-2 py-1 text-xs font-medium text-blue-800 dark:bg-blue-900 dark:text-blue-200">Media</span>
+                            return <span className="rounded bg-amber-100 px-2 py-1 text-xs font-medium text-amber-800 dark:bg-amber-900 dark:text-amber-200">Baja</span>
+                          }
+                        },
+                      ]}
+                      data={items}
+                      keyExtractor={(r) => r.productId}
+                    />
+                  </>
+                )
+              })()}
+            </ReportSection>
+          )}
+
+          {/* Reporte de Productos Sin Movimiento */}
+          {tab === 'NOMOVEMENT' && (
+            <ReportSection
+              title="💤 Productos Sin Movimiento"
+              subtitle="Inventario estancado que requiere atención"
+              icon="⚠️"
+            >
+              {rotationQuery.isLoading && <Loading />}
+              {rotationQuery.isError && <ErrorState message={(rotationQuery.error as any)?.message ?? 'Error cargando reporte'} />}
+              {!rotationQuery.isLoading && !rotationQuery.isError && (() => {
+                const items = rotationQuery.data?.items ?? []
+                const avgMovement = items.reduce((s, i) => s + i.totalMovements, 0) / (items.length || 1)
+                const noMovementItems = items.filter(i => i.totalMovements <= 1).slice(0, 15)
+
+                return (
+                  <>
+                    <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-900/20">
+                      <p className="text-sm text-amber-700 dark:text-amber-300">
+                        ⚠️ <strong>Nota:</strong> Este reporte muestra productos con muy bajo movimiento en el período seleccionado.
+                        Considere promociones o ajustes de inventario.
+                      </p>
+                    </div>
+
+                    {/* KPIs */}
+                    <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-3">
+                      <KPICard
+                        icon="💤"
+                        label="Productos Estancados"
+                        value={noMovementItems.length.toString()}
+                        color="warning"
+                        subtitle="Con ≤1 movimiento"
+                      />
+                      <KPICard
+                        icon="📊"
+                        label="Movimiento Promedio"
+                        value={avgMovement.toFixed(1)}
+                        color="info"
+                        subtitle="Por producto"
+                      />
+                      <KPICard
+                        icon="💡"
+                        label="Recomendación"
+                        value="Revisar"
+                        color="primary"
+                        subtitle="Estrategia de ventas"
+                      />
+                    </div>
+
+                    {noMovementItems.length > 0 ? (
+                      <>
+                        {/* Lista de productos sin movimiento */}
+                        <div className="mb-6 space-y-2">
+                          <h4 className="font-semibold text-slate-700 dark:text-slate-300">📦 Productos sin movimiento o con movimiento mínimo</h4>
+                          {noMovementItems.map((item, idx) => (
+                            <div 
+                              key={idx}
+                              className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800"
+                            >
+                              <div className="flex items-center gap-3">
+                                <span className="text-2xl">📦</span>
+                                <div>
+                                  <p className="font-medium text-slate-800 dark:text-slate-200">{item.name}</p>
+                                  <p className="text-sm text-slate-500 dark:text-slate-400">SKU: {item.sku}</p>
+                                </div>
+                              </div>
+                              <div className="text-right">
+                                <p className="font-semibold text-amber-600 dark:text-amber-400">{item.totalMovements} mov.</p>
+                                <p className="text-xs text-slate-500">{toNumber(item.currentStock).toFixed(0)} unid.</p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Recomendaciones */}
+                        <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 dark:border-blue-800 dark:bg-blue-900/20">
+                          <h4 className="mb-2 font-semibold text-blue-800 dark:text-blue-200">💡 Acciones Recomendadas</h4>
+                          <ul className="list-inside list-disc space-y-1 text-sm text-blue-700 dark:text-blue-300">
+                            <li>Crear promociones o descuentos para mover inventario estancado</li>
+                            <li>Revisar si los productos están correctamente exhibidos</li>
+                            <li>Considerar devolución al proveedor si es posible</li>
+                            <li>Evaluar si continuar comprando estos productos</li>
+                          </ul>
+                        </div>
+                      </>
+                    ) : (
+                      <EmptyState message="¡Excelente! No hay productos sin movimiento en este período." />
+                    )}
+                  </>
+                )
+              })()}
+            </ReportSection>
+          )}
+
+          {/* Reporte de Stock Bajo */}
+          {tab === 'LOWSTOCK' && (
+            <ReportSection
+              title="⚠️ Stock Bajo / Por Agotar"
+              subtitle="Productos que necesitan reposición urgente"
+              icon="📉"
+            >
+              {lowStockQuery.isLoading && <Loading />}
+              {lowStockQuery.isError && <ErrorState message={(lowStockQuery.error as any)?.message ?? 'Error cargando reporte'} />}
+              {!lowStockQuery.isLoading && !lowStockQuery.isError && (lowStockQuery.data?.items?.length ?? 0) === 0 && (
+                <EmptyState message="No hay productos con stock bajo." />
+              )}
+              {!lowStockQuery.isLoading && !lowStockQuery.isError && (lowStockQuery.data?.items?.length ?? 0) > 0 && (() => {
+                const items = lowStockQuery.data?.items ?? []
+                const critical = items.filter(i => i.currentStock <= 5)
+                const low = items.filter(i => i.currentStock > 5 && i.currentStock <= 10)
+
+                return (
+                  <>
+                    {/* KPIs */}
+                    <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
+                      <KPICard
+                        icon="🔴"
+                        label="Crítico"
+                        value={critical.length.toString()}
+                        color="warning"
+                        subtitle="Stock ≤ 5 unidades"
+                      />
+                      <KPICard
+                        icon="🟡"
+                        label="Bajo"
+                        value={low.length.toString()}
+                        color="info"
+                        subtitle="Stock ≤ 10 unidades"
+                      />
+                      <KPICard
+                        icon="📦"
+                        label="Total Alertas"
+                        value={items.length.toString()}
+                        color="primary"
+                        subtitle="Productos monitoreados"
+                      />
+                      <KPICard
+                        icon="📊"
+                        label="Días Promedio"
+                        value={items.length > 0 
+                          ? (items.reduce((s, i) => s + (i.daysOfStock ?? 0), 0) / items.length).toFixed(0)
+                          : '0'
+                        }
+                        color="info"
+                        subtitle="Cobertura de stock"
+                      />
+                    </div>
+
+                    {/* Lista de alertas críticas */}
+                    {critical.length > 0 && (
+                      <div className="mb-6 space-y-3">
+                        <h4 className="font-semibold text-slate-700 dark:text-slate-300">🔴 Productos con Stock Crítico</h4>
+                        {critical.slice(0, 10).map((item, idx) => (
+                          <div 
+                            key={idx}
+                            className="flex items-center justify-between rounded-lg border border-red-200 bg-red-50 p-3 dark:border-red-800 dark:bg-red-900/20"
+                          >
+                            <div className="flex items-center gap-3">
+                              <span className="text-2xl">🔴</span>
+                              <div>
+                                <p className="font-medium text-red-800 dark:text-red-200">{item.name}</p>
+                                <p className="text-sm text-red-600 dark:text-red-400">
+                                  SKU: {item.sku} • Mínimo: {item.minStock} unid.
+                                </p>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-2xl font-bold text-red-700 dark:text-red-300">{item.currentStock}</p>
+                              <p className="text-xs text-red-500">
+                                {item.daysOfStock !== null ? `${item.daysOfStock} días` : 'Sin ventas'}
+                              </p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Lista de alertas bajas */}
+                    {low.length > 0 && (
+                      <div className="mb-6 space-y-3">
+                        <h4 className="font-semibold text-slate-700 dark:text-slate-300">🟡 Productos con Stock Bajo</h4>
+                        {low.slice(0, 10).map((item, idx) => (
+                          <div 
+                            key={idx}
+                            className="flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-900/20"
+                          >
+                            <div className="flex items-center gap-3">
+                              <span className="text-2xl">🟡</span>
+                              <div>
+                                <p className="font-medium text-amber-800 dark:text-amber-200">{item.name}</p>
+                                <p className="text-sm text-amber-600 dark:text-amber-400">
+                                  SKU: {item.sku} • Mínimo: {item.minStock} unid.
+                                </p>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-2xl font-bold text-amber-700 dark:text-amber-300">{item.currentStock}</p>
+                              <p className="text-xs text-amber-500">
+                                {item.daysOfStock !== null ? `${item.daysOfStock} días` : 'Sin ventas'}
+                              </p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Recomendaciones */}
+                    <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 dark:border-blue-800 dark:bg-blue-900/20">
+                      <h4 className="mb-2 font-semibold text-blue-800 dark:text-blue-200">💡 Acciones Urgentes</h4>
+                      <ul className="list-inside list-disc space-y-1 text-sm text-blue-700 dark:text-blue-300">
+                        <li>Generar órdenes de compra para productos críticos</li>
+                        <li>Contactar proveedores para entrega urgente</li>
+                        <li>Revisar si hay existencias en otras sucursales para traspaso</li>
+                        <li>Configurar alertas automáticas de reposición</li>
+                      </ul>
+                    </div>
+                  </>
+                )
+              })()}
+            </ReportSection>
+          )}
+
+          {/* Reporte de Productos Por Vencer */}
+          {tab === 'EXPIRY' && (
+            <ReportSection
+              title="📅 Productos Próximos a Vencer"
+              subtitle="Control de caducidades para evitar pérdidas"
+              icon="⏰"
+            >
+              {expiryQuery.isLoading && <Loading />}
+              {expiryQuery.isError && <ErrorState message={(expiryQuery.error as any)?.message ?? 'Error cargando reporte'} />}
+              {!expiryQuery.isLoading && !expiryQuery.isError && (expiryQuery.data?.items?.length ?? 0) === 0 && (
+                <EmptyState message="No hay productos próximos a vencer en los próximos 60 días." />
+              )}
+              {!expiryQuery.isLoading && !expiryQuery.isError && (expiryQuery.data?.items?.length ?? 0) > 0 && (() => {
+                const items = expiryQuery.data?.items ?? []
+                const expired = items.filter(i => (i.daysUntilExpiry ?? 999) < 0)
+                const thisWeek = items.filter(i => (i.daysUntilExpiry ?? 999) >= 0 && (i.daysUntilExpiry ?? 999) <= 7)
+                const thisMonth = items.filter(i => (i.daysUntilExpiry ?? 999) > 7 && (i.daysUntilExpiry ?? 999) <= 30)
+
+                return (
+                  <>
+                    {/* KPIs */}
+                    <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
+                      <KPICard
+                        icon="🔴"
+                        label="Vencidos"
+                        value={expired.length.toString()}
+                        color="warning"
+                        subtitle="Ya caducados"
+                      />
+                      <KPICard
+                        icon="🟠"
+                        label="Esta Semana"
+                        value={thisWeek.length.toString()}
+                        color="warning"
+                        subtitle="Vencen en 7 días"
+                      />
+                      <KPICard
+                        icon="🟡"
+                        label="Este Mes"
+                        value={thisMonth.length.toString()}
+                        color="info"
+                        subtitle="Vencen en 30 días"
+                      />
+                      <KPICard
+                        icon="📦"
+                        label="Total Items"
+                        value={items.length.toString()}
+                        color="primary"
+                        subtitle="Próximos 60 días"
+                      />
+                    </div>
+
+                    {/* Productos ya vencidos */}
+                    {expired.length > 0 && (
+                      <div className="mb-6 space-y-3">
+                        <h4 className="font-semibold text-slate-700 dark:text-slate-300">🔴 Productos Vencidos</h4>
+                        {expired.slice(0, 5).map((item, idx) => (
+                          <div 
+                            key={idx}
+                            className="flex items-center justify-between rounded-lg border border-red-200 bg-red-50 p-3 dark:border-red-800 dark:bg-red-900/20"
+                          >
+                            <div className="flex items-center gap-3">
+                              <span className="text-2xl">❌</span>
+                              <div>
+                                <p className="font-medium text-red-800 dark:text-red-200">{item.name}</p>
+                                <p className="text-sm text-red-600 dark:text-red-400">
+                                  Lote: {item.lotNumber ?? 'N/A'} • Venció: {item.expiryDate ?? 'N/A'}
+                                </p>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <p className="font-bold text-red-700 dark:text-red-300">{item.quantity} unid.</p>
+                              <p className="text-xs text-red-500">{item.locationName ?? 'Sin ubicación'}</p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Esta semana */}
+                    {thisWeek.length > 0 && (
+                      <div className="mb-6 space-y-3">
+                        <h4 className="font-semibold text-slate-700 dark:text-slate-300">🟠 Vencen esta Semana</h4>
+                        {thisWeek.slice(0, 5).map((item, idx) => (
+                          <div 
+                            key={idx}
+                            className="flex items-center justify-between rounded-lg border border-orange-200 bg-orange-50 p-3 dark:border-orange-800 dark:bg-orange-900/20"
+                          >
+                            <div className="flex items-center gap-3">
+                              <span className="text-2xl">⏰</span>
+                              <div>
+                                <p className="font-medium text-orange-800 dark:text-orange-200">{item.name}</p>
+                                <p className="text-sm text-orange-600 dark:text-orange-400">
+                                  Lote: {item.lotNumber ?? 'N/A'} • Vence: {item.expiryDate ?? 'N/A'}
+                                </p>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <p className="font-bold text-orange-700 dark:text-orange-300">{item.quantity} unid.</p>
+                              <p className="text-xs text-orange-500">{item.daysUntilExpiry} días</p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Este mes */}
+                    {thisMonth.length > 0 && (
+                      <div className="mb-6 space-y-3">
+                        <h4 className="font-semibold text-slate-700 dark:text-slate-300">🟡 Vencen este Mes</h4>
+                        {thisMonth.slice(0, 5).map((item, idx) => (
+                          <div 
+                            key={idx}
+                            className="flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-900/20"
+                          >
+                            <div className="flex items-center gap-3">
+                              <span className="text-2xl">📅</span>
+                              <div>
+                                <p className="font-medium text-amber-800 dark:text-amber-200">{item.name}</p>
+                                <p className="text-sm text-amber-600 dark:text-amber-400">
+                                  Lote: {item.lotNumber ?? 'N/A'} • Vence: {item.expiryDate ?? 'N/A'}
+                                </p>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <p className="font-bold text-amber-700 dark:text-amber-300">{item.quantity} unid.</p>
+                              <p className="text-xs text-amber-500">{item.daysUntilExpiry} días</p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Recomendaciones */}
+                    <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 dark:border-blue-800 dark:bg-blue-900/20">
+                      <h4 className="mb-2 font-semibold text-blue-800 dark:text-blue-200">💡 Estrategias para Productos por Vencer</h4>
+                      <ul className="list-inside list-disc space-y-1 text-sm text-blue-700 dark:text-blue-300">
+                        <li>Crear promociones especiales (2x1, descuentos)</li>
+                        <li>Priorizar en sistema FEFO (First Expire, First Out)</li>
+                        <li>Considerar donaciones a organizaciones benéficas</li>
+                        <li>Contactar al proveedor para posibles devoluciones</li>
+                        <li>Registrar merma si el producto está vencido</li>
+                      </ul>
+                    </div>
+                  </>
+                )
+              })()}
             </ReportSection>
           )}
         </div>

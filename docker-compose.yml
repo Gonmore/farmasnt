@@ -37,6 +37,40 @@ services:
     networks:
       - red-interna
 
+  backend-seed:
+    image: gonmore14/backend-farmasnt:${APP_VERSION:-latest}
+    container_name: backend-farmasnt-seed
+    restart: "no"
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
+      NODE_ENV: production
+      SEED_TENANT_NAME: ${SEED_TENANT_NAME:-Demo Pharma}
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@demo.local}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
+      SEED_PLATFORM_DOMAIN: ${SEED_PLATFORM_DOMAIN:-}
+      PRISMA_MIGRATE_RESOLVE_ON_FAIL: ${PRISMA_MIGRATE_RESOLVE_ON_FAIL:-1}
+      PRISMA_MIGRATE_RESOLVE_ACTION: ${PRISMA_MIGRATE_RESOLVE_ACTION:-rolled-back}
+      PRISMA_MIGRATE_RESOLVE_NAMES: ${PRISMA_MIGRATE_RESOLVE_NAMES:-20260116063727_pagos}
+    command: ["sh", "-lc", "npm run seed"]
+    networks:
+      - red-interna
+    profiles: ["tools"]
+
+  backend-migrate:
+    image: gonmore14/backend-farmasnt:${APP_VERSION:-latest}
+    container_name: backend-farmasnt-migrate
+    restart: "no"
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
+      NODE_ENV: production
+      PRISMA_MIGRATE_RESOLVE_ON_FAIL: ${PRISMA_MIGRATE_RESOLVE_ON_FAIL:-1}
+      PRISMA_MIGRATE_RESOLVE_ACTION: ${PRISMA_MIGRATE_RESOLVE_ACTION:-rolled-back}
+      PRISMA_MIGRATE_RESOLVE_NAMES: ${PRISMA_MIGRATE_RESOLVE_NAMES:-20260116063727_pagos}
+    command: ["sh", "-lc", "npm run prisma:migrate"]
+    networks:
+      - red-interna
+    profiles: ["tools"]
+
   frontend-farmasnt:
     # Sustituimos 'build' por la imagen de tu registro
     image: gonmore14/frontend-farmasnt:${APP_VERSION:-latest}

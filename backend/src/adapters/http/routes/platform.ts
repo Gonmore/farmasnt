@@ -7,9 +7,13 @@ import { requireAuth, requirePermission } from '../../../application/security/rb
 import { Permissions } from '../../../application/security/permissions.js'
 import { AuditService } from '../../../application/audit/auditService.js'
 
+const uuidLike = z
+  .string()
+  .regex(/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/, 'Invalid UUID')
+
 const listQuerySchema = z.object({
   take: z.coerce.number().int().min(1).max(50).default(20),
-  cursor: z.string().uuid().optional(),
+  cursor: uuidLike.optional(),
   q: z.string().trim().min(1).max(200).optional(),
 })
 
@@ -18,13 +22,16 @@ const createTenantSchema = z.object({
   branchCount: z.coerce.number().int().min(1).max(50).default(1),
   adminEmail: z.string().email().max(200),
   adminPassword: z.string().min(6).max(200),
-  primaryDomain: z
-    .string()
-    .trim()
-    .min(3)
-    .max(255)
-    .optional()
-    .transform((v) => (v ? v.toLowerCase() : v)),
+  primaryDomain: z.preprocess(
+    (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),
+    z
+      .string()
+      .trim()
+      .min(3)
+      .max(255)
+      .optional()
+      .transform((v) => (v ? v.toLowerCase() : v)),
+  ),
   // Subscription fields
   contactName: z.string().trim().min(2).max(200),
   contactEmail: z.string().email().max(200),
@@ -32,28 +39,28 @@ const createTenantSchema = z.object({
   subscriptionMonths: z.coerce.number().int().min(1).max(36).default(12), // 1-36 meses
 })
 
-  const platformTenantAdminCreateSchema = z.object({
-    tenantId: z.string().uuid(),
-    email: z.string().email().max(200),
-    password: z.string().min(6).max(200),
-    fullName: z.string().trim().max(200).optional(),
-  })
+const platformTenantAdminCreateSchema = z.object({
+  tenantId: uuidLike,
+  email: z.string().email().max(200),
+  password: z.string().min(6).max(200),
+  fullName: z.string().trim().max(200).optional(),
+})
 
-  const platformUserStatusUpdateSchema = z.object({
-    isActive: z.coerce.boolean(),
-  })
+const platformUserStatusUpdateSchema = z.object({
+  isActive: z.coerce.boolean(),
+})
 
-  const platformUserResetPasswordSchema = z.object({
-    newPassword: z.string().min(6).max(200).optional(),
-  })
+const platformUserResetPasswordSchema = z.object({
+  newPassword: z.string().min(6).max(200).optional(),
+})
 
-  function normalizeEmail(raw: string): string {
-    return raw.trim().toLowerCase()
-  }
+function normalizeEmail(raw: string): string {
+  return raw.trim().toLowerCase()
+}
 
-  function generateTempPassword(): string {
-    return crypto.randomBytes(12).toString('base64url')
-  }
+function generateTempPassword(): string {
+  return crypto.randomBytes(12).toString('base64url')
+}
 
 function normalizeDomain(input: string): string {
   const v = input.trim().toLowerCase()
@@ -335,14 +342,81 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
           select: { id: true },
         })
 
+        await tx.userRole.create({ data: { userId: user.id, roleId: role.id } })
+
+        // Create branches as warehouses
+        for (let i = 1; i <= branchCount; i++) {
+          const code = `BR-${String(i).padStart(2, '0')}`
+          const wh = await tx.warehouse.create({
+            data: {
+              tenantId: t.id,
+              code,
+              name: `Sucursal ${i}`,
+              createdBy: actor.userId,
+            },
+            select: { id: true },
+          })
+
+          await tx.location.create({
+            data: {
+              tenantId: t.id,
+              warehouseId: wh.id,
+              code: 'BIN-01',
+              type: 'BIN',
+              createdBy: actor.userId,
+            },
+          })
+        }
+
+        if (primaryDomain) {
+          await tx.tenantDomain.create({
+            data: {
+              tenantId: t.id,
+              domain: primaryDomain,
+              isPrimary: true,
+              verifiedAt: new Date(),
+              createdBy: actor.userId,
+            },
+          })
+        }
+
+        return t
+      })
+
+      await audit.append({
+        tenantId: actor.tenantId,
+        actorUserId: actor.userId,
+        action: 'platform.tenant.create',
+        entityType: 'Tenant',
+        entityId: tenant.id,
+        metadata: { 
+          name: tenant.name, 
+          branchCount, 
+          primaryDomain, 
+          contactName, 
+          contactEmail, 
+          contactPhone, 
+          subscriptionMonths,
+          subscriptionExpiresAt: tenant.subscriptionExpiresAt,
+        },
+      })
+
+      return reply.status(201).send({ 
+        id: tenant.id, 
+        name: tenant.name,
+        subscriptionExpiresAt: tenant.subscriptionExpiresAt,
+      })
+    },
+  )
+
   // Platform: list users (cross-tenant)
   app.get('/api/v1/platform/users', { preHandler: guard }, async (request, reply) => {
     const parsed = z
       .object({
         take: z.coerce.number().int().min(1).max(50).default(20),
-        cursor: z.string().uuid().optional(),
+        cursor: uuidLike.optional(),
         q: z.string().trim().min(1).max(200).optional(),
-        tenantId: z.string().uuid().optional(),
+        tenantId: uuidLike.optional(),
       })
       .safeParse(request.query)
     if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
@@ -485,73 +559,6 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
 
     return reply.send({ userId: id, temporaryPassword: tempPassword })
   })
-
-        await tx.userRole.create({ data: { userId: user.id, roleId: role.id } })
-
-        // Create branches as warehouses
-        for (let i = 1; i <= branchCount; i++) {
-          const code = `BR-${String(i).padStart(2, '0')}`
-          const wh = await tx.warehouse.create({
-            data: {
-              tenantId: t.id,
-              code,
-              name: `Sucursal ${i}`,
-              createdBy: actor.userId,
-            },
-            select: { id: true },
-          })
-
-          await tx.location.create({
-            data: {
-              tenantId: t.id,
-              warehouseId: wh.id,
-              code: 'BIN-01',
-              type: 'BIN',
-              createdBy: actor.userId,
-            },
-          })
-        }
-
-        if (primaryDomain) {
-          await tx.tenantDomain.create({
-            data: {
-              tenantId: t.id,
-              domain: primaryDomain,
-              isPrimary: true,
-              verifiedAt: new Date(),
-              createdBy: actor.userId,
-            },
-          })
-        }
-
-        return t
-      })
-
-      await audit.append({
-        tenantId: actor.tenantId,
-        actorUserId: actor.userId,
-        action: 'platform.tenant.create',
-        entityType: 'Tenant',
-        entityId: tenant.id,
-        metadata: { 
-          name: tenant.name, 
-          branchCount, 
-          primaryDomain, 
-          contactName, 
-          contactEmail, 
-          contactPhone, 
-          subscriptionMonths,
-          subscriptionExpiresAt: tenant.subscriptionExpiresAt,
-        },
-      })
-
-      return reply.status(201).send({ 
-        id: tenant.id, 
-        name: tenant.name,
-        subscriptionExpiresAt: tenant.subscriptionExpiresAt,
-      })
-    },
-  )
 
   // --- Tenant domain management (future-facing, but ready) ---
   app.get(

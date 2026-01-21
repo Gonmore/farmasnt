@@ -40,6 +40,20 @@ function normalizeHost(raw: unknown): string | null {
   return first.replace(/:\d+$/, '')
 }
 
+function isUniversalAuthHost(host: string, nodeEnv: string): boolean {
+  // Production universal access is limited to the platform domain.
+  if (host === 'farmasnt.supernovatel.com' || host.endsWith('.farmasnt.supernovatel.com')) return true
+
+  // In local/dev environments we commonly access the app via localhost.
+  // Treat it as universal to avoid forcing custom Host setup just to login.
+  if (nodeEnv !== 'production') {
+    if (host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0') return true
+    if (host.endsWith('.localhost')) return true
+  }
+
+  return false
+}
+
 export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
   const env = getEnv()
   const db = prisma()
@@ -59,11 +73,13 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
       normalizeHost(request.headers.host) ??
       normalizeHost((request as any).hostname)
 
+    const universalHost = host ? isUniversalAuthHost(host, env.NODE_ENV) : false
+
     // If DB hasn't been migrated yet (TenantDomain table missing), do not fail login.
     let tenantId: string | undefined
     if (host) {
-      // Special case: farmasnt.supernovatel.com allows login from any tenant (universal access)
-      if (host === 'farmasnt.supernovatel.com' || host.endsWith('.farmasnt.supernovatel.com')) {
+      // Universal access hosts allow searching across tenants
+      if (universalHost) {
         tenantId = undefined // Allow searching across all tenants
       } else {
         try {
@@ -93,8 +109,8 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
     if (!user) {
       // If no tenant was resolved from host, check if this email exists in multiple tenants.
       // In that case, we can't safely choose one and we require a host-based tenant.
-      // Exception: farmasnt.supernovatel.com allows universal access
-      if (!tenantId && host !== 'farmasnt.supernovatel.com' && !host?.endsWith('.farmasnt.supernovatel.com')) {
+      // Exception: universal hosts allow cross-tenant resolution
+      if (!tenantId && !universalHost) {
         const count = await db.user.count({ where: { email: normalizedEmail, isActive: true, tenant: { isActive: true } } })
         if (count > 1) return reply.status(409).send({ message: 'Ambiguous user email across tenants; use the correct tenant domain' })
       }

@@ -171,48 +171,43 @@ export function DeliveriesPage() {
 
   const items = deliveriesQuery.data?.items ?? []
 
-  const actions = useMemo(
-    () => (
-      <div className="flex flex-wrap items-center gap-2">
-        <Button
-          size="sm"
-          variant={status === 'PENDING' ? 'primary' : 'ghost'}
-          onClick={() => {
-            setStatus('PENDING')
-            setCursor(undefined)
-          }}
-        >
-          Pendientes
-        </Button>
-        <Button
-          size="sm"
-          variant={status === 'DELIVERED' ? 'primary' : 'ghost'}
-          onClick={() => {
-            setStatus('DELIVERED')
-            setCursor(undefined)
-          }}
-        >
-          Entregadas
-        </Button>
-        <div className="w-px self-stretch bg-slate-200 dark:bg-slate-700" />
-        <Button
-          size="sm"
-          variant={status === 'ALL' ? 'primary' : 'ghost'}
-          onClick={() => {
-            setStatus('ALL')
-            setCursor(undefined)
-          }}
-        >
-          Ver todas
-        </Button>
-      </div>
-    ),
-    [navigate, status],
-  )
-
   return (
     <MainLayout navGroups={navGroups}>
-      <PageContainer title="Entregas" actions={actions}>
+      <PageContainer title="Entregas">
+        {/* Botones de filtro - segunda fila en móvil */}
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          <Button
+            size="sm"
+            variant={status === 'PENDING' ? 'primary' : 'ghost'}
+            onClick={() => {
+              setStatus('PENDING')
+              setCursor(undefined)
+            }}
+          >
+            Pendientes
+          </Button>
+          <Button
+            size="sm"
+            variant={status === 'DELIVERED' ? 'primary' : 'ghost'}
+            onClick={() => {
+              setStatus('DELIVERED')
+              setCursor(undefined)
+            }}
+          >
+            Entregadas
+          </Button>
+          <div className="w-px self-stretch bg-slate-200 dark:bg-slate-700" />
+          <Button
+            size="sm"
+            variant={status === 'ALL' ? 'primary' : 'ghost'}
+            onClick={() => {
+              setStatus('ALL')
+              setCursor(undefined)
+            }}
+          >
+            Ver todas
+          </Button>
+        </div>
         {/* Filtro de ciudades - Chips simples */}
         {availableCities.length > 0 && (
           <div className="mb-4">

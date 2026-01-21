@@ -288,6 +288,24 @@ async function main() {
     create: { userId: demoAdminUser.id, roleId: demoAdminRole.id },
   })
 
+  // ============= LIMPIEZA DE DATOS ANTERIORES =============
+  console.log('\n🧹 Limpiando datos anteriores...')
+  
+  // Eliminar en orden inverso de dependencias
+  await db.salesOrderLine.deleteMany({ where: { tenantId: demoTenant.id } })
+  await db.salesOrder.deleteMany({ where: { tenantId: demoTenant.id } })
+  await db.quoteLine.deleteMany({ where: { tenantId: demoTenant.id } })
+  await db.quote.deleteMany({ where: { tenantId: demoTenant.id } })
+  await db.stockMovement.deleteMany({ where: { tenantId: demoTenant.id } })
+  await db.inventoryBalance.deleteMany({ where: { tenantId: demoTenant.id } })
+  await db.batch.deleteMany({ where: { tenantId: demoTenant.id } })
+  await db.product.deleteMany({ where: { tenantId: demoTenant.id } })
+  await db.customer.deleteMany({ where: { tenantId: demoTenant.id } })
+  await db.location.deleteMany({ where: { tenantId: demoTenant.id } })
+  await db.warehouse.deleteMany({ where: { tenantId: demoTenant.id } })
+  
+  console.log('   ✅ Datos anteriores limpiados')
+
   // ============= DATA DE PRUEBA (Demo Tenant) =============
   // Basic warehouse/location for immediate stock tests
   const wh = await db.warehouse.upsert({
@@ -798,6 +816,363 @@ async function main() {
       createdBy: demoAdminUser.id,
     },
   })
+
+  // ============= DATOS EXTENSIVOS PARA REPORTES ATRACTIVOS =============
+  console.log('\n🔄 Generando datos extensivos para reportes...')
+  
+  // Productos de farmacia completos con precios y costos
+  const farmaciaProducts = [
+    { sku: 'MED-001', name: 'Paracetamol 500mg Tab x 100', price: 35, cost: 22, stock: 150 },
+    { sku: 'MED-002', name: 'Ibuprofeno 400mg Tab x 50', price: 28, cost: 18, stock: 200 },
+    { sku: 'MED-003', name: 'Omeprazol 20mg Cap x 28', price: 45, cost: 28, stock: 85 },
+    { sku: 'MED-004', name: 'Amoxicilina 500mg Cap x 21', price: 55, cost: 35, stock: 120 },
+    { sku: 'MED-005', name: 'Losartán 50mg Tab x 30', price: 42, cost: 26, stock: 95 },
+    { sku: 'MED-006', name: 'Metformina 850mg Tab x 60', price: 38, cost: 24, stock: 175 },
+    { sku: 'MED-007', name: 'Atorvastatina 20mg Tab x 30', price: 65, cost: 42, stock: 65 },
+    { sku: 'MED-008', name: 'Amlodipino 5mg Tab x 30', price: 32, cost: 20, stock: 110 },
+    { sku: 'MED-009', name: 'Vitamina C 1000mg Tab x 60', price: 48, cost: 30, stock: 220 },
+    { sku: 'MED-010', name: 'Vitamina D3 1000UI Cap x 30', price: 55, cost: 35, stock: 140 },
+    { sku: 'MED-011', name: 'Complejo B Tab x 100', price: 38, cost: 24, stock: 185 },
+    { sku: 'MED-012', name: 'Omega 3 1000mg Cap x 60', price: 75, cost: 48, stock: 90 },
+    { sku: 'MED-013', name: 'Clonazepam 2mg Tab x 30', price: 85, cost: 55, stock: 45 },
+    { sku: 'MED-014', name: 'Diazepam 5mg Tab x 20', price: 35, cost: 22, stock: 60 },
+    { sku: 'MED-015', name: 'Alprazolam 0.5mg Tab x 30', price: 65, cost: 42, stock: 55 },
+    { sku: 'MED-016', name: 'Cetirizina 10mg Tab x 10', price: 18, cost: 11, stock: 280 },
+    { sku: 'MED-017', name: 'Loratadina 10mg Tab x 10', price: 15, cost: 9, stock: 310 },
+    { sku: 'MED-018', name: 'Dexametasona 4mg Tab x 10', price: 22, cost: 14, stock: 155 },
+    { sku: 'MED-019', name: 'Prednisona 20mg Tab x 20', price: 28, cost: 18, stock: 125 },
+    { sku: 'MED-020', name: 'Azitromicina 500mg Tab x 3', price: 35, cost: 22, stock: 95 },
+    // Productos con stock bajo para alertas
+    { sku: 'MED-021', name: 'Insulina Glargina 100UI Pluma', price: 450, cost: 320, stock: 8 },
+    { sku: 'MED-022', name: 'Salbutamol Inhalador 100mcg', price: 125, cost: 85, stock: 5 },
+    { sku: 'MED-023', name: 'Budesonida Inhalador 200mcg', price: 185, cost: 125, stock: 3 },
+    { sku: 'MED-024', name: 'Tramadol 50mg Cap x 10', price: 55, cost: 35, stock: 6 },
+    { sku: 'MED-025', name: 'Morfina 10mg Tab x 20', price: 95, cost: 65, stock: 4 },
+    // Productos de cuidado personal
+    { sku: 'CUI-001', name: 'Jabón Antibacterial 250ml', price: 18, cost: 11, stock: 350 },
+    { sku: 'CUI-002', name: 'Crema Hidratante 200ml', price: 45, cost: 28, stock: 180 },
+    { sku: 'CUI-003', name: 'Protector Solar FPS50 100ml', price: 85, cost: 55, stock: 95 },
+    { sku: 'CUI-004', name: 'Shampoo Anticaspa 400ml', price: 65, cost: 42, stock: 145 },
+    { sku: 'CUI-005', name: 'Alcohol en Gel 500ml', price: 25, cost: 15, stock: 420 },
+  ]
+
+  const createdProducts: { id: string; sku: string; price: number; stock: number }[] = []
+  
+  for (const p of farmaciaProducts) {
+    const prod = await db.product.upsert({
+      where: { tenantId_sku: { tenantId: demoTenant.id, sku: p.sku } },
+      update: { name: p.name, price: p.price.toString(), cost: p.cost.toString() },
+      create: {
+        tenantId: demoTenant.id,
+        sku: p.sku,
+        name: p.name,
+        price: p.price.toString(),
+        cost: p.cost.toString(),
+        createdBy: demoAdminUser.id,
+      },
+      select: { id: true },
+    })
+    createdProducts.push({ id: prod.id, sku: p.sku, price: p.price, stock: p.stock })
+  }
+  console.log(`   ✅ ${createdProducts.length} productos creados con precios y costos`)
+
+  // Crear batches y stock para los nuevos productos
+  for (const p of createdProducts) {
+    const stockData = farmaciaProducts.find(fp => fp.sku === p.sku)!
+    
+    // Crear batch
+    const batch = await db.batch.upsert({
+      where: { tenantId_productId_batchNumber: { tenantId: demoTenant.id, productId: p.id, batchNumber: `${p.sku}-2025-01` } },
+      update: { expiresAt: addDaysUtc(todayUtc, 365 + Math.floor(Math.random() * 365)) },
+      create: {
+        tenantId: demoTenant.id,
+        productId: p.id,
+        batchNumber: `${p.sku}-2025-01`,
+        expiresAt: addDaysUtc(todayUtc, 365 + Math.floor(Math.random() * 365)),
+        createdBy: demoAdminUser.id,
+      },
+      select: { id: true },
+    })
+
+    // Distribuir stock en las 3 ubicaciones
+    const stockLaPaz = Math.ceil(stockData.stock * 0.5)
+    const stockCbba = Math.ceil(stockData.stock * 0.3)
+    const stockScz = stockData.stock - stockLaPaz - stockCbba
+
+    await db.inventoryBalance.upsert({
+      where: {
+        tenantId_locationId_productId_batchId: {
+          tenantId: demoTenant.id,
+          locationId: loc.id,
+          productId: p.id,
+          batchId: batch.id,
+        },
+      },
+      update: { quantity: stockLaPaz.toString() },
+      create: {
+        tenantId: demoTenant.id,
+        locationId: loc.id,
+        productId: p.id,
+        batchId: batch.id,
+        quantity: stockLaPaz.toString(),
+        createdBy: demoAdminUser.id,
+      },
+    })
+
+    if (stockCbba > 0) {
+      await db.inventoryBalance.upsert({
+        where: {
+          tenantId_locationId_productId_batchId: {
+            tenantId: demoTenant.id,
+            locationId: locCochabamba.id,
+            productId: p.id,
+            batchId: batch.id,
+          },
+        },
+        update: { quantity: stockCbba.toString() },
+        create: {
+          tenantId: demoTenant.id,
+          locationId: locCochabamba.id,
+          productId: p.id,
+          batchId: batch.id,
+          quantity: stockCbba.toString(),
+          createdBy: demoAdminUser.id,
+        },
+      })
+    }
+
+    if (stockScz > 0) {
+      await db.inventoryBalance.upsert({
+        where: {
+          tenantId_locationId_productId_batchId: {
+            tenantId: demoTenant.id,
+            locationId: locSantaCruz.id,
+            productId: p.id,
+            batchId: batch.id,
+          },
+        },
+        update: { quantity: stockScz.toString() },
+        create: {
+          tenantId: demoTenant.id,
+          locationId: locSantaCruz.id,
+          productId: p.id,
+          batchId: batch.id,
+          quantity: stockScz.toString(),
+          createdBy: demoAdminUser.id,
+        },
+      })
+    }
+  }
+  console.log('   ✅ Stock distribuido en todas las ubicaciones')
+
+  // Crear productos con vencimientos próximos para alertas de expiración
+  const expiringProducts = [
+    { sku: 'EXP-001', name: 'Suero Oral x500ml', expiryDays: -5, qty: 12 }, // Vencido
+    { sku: 'EXP-002', name: 'Leche de Fórmula NAN 1', expiryDays: 3, qty: 8 }, // Vence en 3 días
+    { sku: 'EXP-003', name: 'Yogurt Probiótico x6', expiryDays: 7, qty: 24 }, // Vence en 7 días
+    { sku: 'EXP-004', name: 'Jarabe para la Tos 120ml', expiryDays: 15, qty: 15 }, // Vence en 15 días
+    { sku: 'EXP-005', name: 'Vitamina C Efervescente x20', expiryDays: 25, qty: 30 }, // Vence en 25 días
+    { sku: 'EXP-006', name: 'Colirio Oftálmico 15ml', expiryDays: 45, qty: 20 }, // Vence en 45 días
+  ]
+
+  for (const ep of expiringProducts) {
+    const prod = await db.product.upsert({
+      where: { tenantId_sku: { tenantId: demoTenant.id, sku: ep.sku } },
+      update: { name: ep.name },
+      create: {
+        tenantId: demoTenant.id,
+        sku: ep.sku,
+        name: ep.name,
+        price: '35',
+        cost: '22',
+        createdBy: demoAdminUser.id,
+      },
+      select: { id: true },
+    })
+
+    const batch = await db.batch.upsert({
+      where: { tenantId_productId_batchNumber: { tenantId: demoTenant.id, productId: prod.id, batchNumber: `${ep.sku}-EXP` } },
+      update: { expiresAt: addDaysUtc(todayUtc, ep.expiryDays) },
+      create: {
+        tenantId: demoTenant.id,
+        productId: prod.id,
+        batchNumber: `${ep.sku}-EXP`,
+        expiresAt: addDaysUtc(todayUtc, ep.expiryDays),
+        createdBy: demoAdminUser.id,
+      },
+      select: { id: true },
+    })
+
+    await db.inventoryBalance.upsert({
+      where: {
+        tenantId_locationId_productId_batchId: {
+          tenantId: demoTenant.id,
+          locationId: loc.id,
+          productId: prod.id,
+          batchId: batch.id,
+        },
+      },
+      update: { quantity: ep.qty.toString() },
+      create: {
+        tenantId: demoTenant.id,
+        locationId: loc.id,
+        productId: prod.id,
+        batchId: batch.id,
+        quantity: ep.qty.toString(),
+        createdBy: demoAdminUser.id,
+      },
+    })
+  }
+  console.log('   ✅ Productos con vencimientos próximos creados')
+
+  // ============= ÓRDENES DE VENTA HISTÓRICAS =============
+  const customers = [customerLaPaz, customerCochabamba, customerSantaCruz]
+  const warehouses = [
+    { warehouse: wh, location: loc },
+    { warehouse: whCochabamba, location: locCochabamba },
+    { warehouse: whSantaCruz, location: locSantaCruz },
+  ]
+
+  // Generar órdenes de los últimos 12 meses con variación estacional
+  const monthlyMultipliers = [0.8, 0.9, 1.0, 1.1, 1.2, 1.0, 0.9, 1.1, 1.3, 1.2, 1.4, 1.5] // Más ventas en fin de año
+  
+  let totalOrders = 0
+  let totalSalesValue = 0
+
+  for (let monthOffset = 11; monthOffset >= 0; monthOffset--) {
+    const monthDate = new Date(todayUtc)
+    monthDate.setMonth(monthDate.getMonth() - monthOffset)
+    
+    const multiplier = monthlyMultipliers[monthDate.getMonth()]
+    const ordersThisMonth = Math.floor(15 + Math.random() * 20 * multiplier) // 15-35+ órdenes por mes
+    
+    for (let o = 0; o < ordersThisMonth; o++) {
+      const customer = customers[Math.floor(Math.random() * customers.length)]
+      const warehouseData = warehouses[Math.floor(Math.random() * warehouses.length)]
+      
+      // Fecha aleatoria dentro del mes
+      const orderDay = Math.floor(1 + Math.random() * 28)
+      const orderDate = new Date(monthDate.getFullYear(), monthDate.getMonth(), orderDay, 
+        8 + Math.floor(Math.random() * 10), Math.floor(Math.random() * 60))
+      
+      // Seleccionar 1-5 productos aleatorios
+      const numProducts = 1 + Math.floor(Math.random() * 5)
+      const selectedProducts = [...createdProducts]
+        .sort(() => Math.random() - 0.5)
+        .slice(0, numProducts)
+      
+      let orderTotal = 0
+      const lineItems = selectedProducts.map(sp => {
+        const qty = 1 + Math.floor(Math.random() * 5)
+        const unitPrice = sp.price
+        const lineTotal = qty * unitPrice
+        orderTotal += lineTotal
+        
+        return {
+          productId: sp.id,
+          quantity: qty.toString(),
+          unitPrice: unitPrice.toString(),
+          createdBy: demoAdminUser.id,
+        }
+      })
+
+      // Crear la orden
+      const order = await db.salesOrder.create({
+        data: {
+          tenantId: demoTenant.id,
+          number: `ORD-${monthDate.getFullYear()}${String(monthDate.getMonth() + 1).padStart(2, '0')}-${String(totalOrders + 1).padStart(4, '0')}`,
+          customerId: customer.id,
+          status: 'FULFILLED',
+          note: `Orden generada para demo - ${monthDate.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })}`,
+          createdAt: orderDate,
+          updatedAt: orderDate,
+          createdBy: demoAdminUser.id,
+          lines: {
+            create: lineItems.map(li => ({
+              tenantId: demoTenant.id,
+              ...li,
+            })),
+          },
+        },
+      })
+
+      // Crear movimientos de stock para cada línea
+      for (const li of lineItems) {
+        // Buscar un batch existente para el producto
+        const existingBatch = await db.batch.findFirst({
+          where: { tenantId: demoTenant.id, productId: li.productId },
+          select: { id: true },
+        })
+        
+        if (existingBatch) {
+          await db.stockMovement.create({
+            data: {
+              tenantId: demoTenant.id,
+              number: `SM-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+              numberYear: new Date().getFullYear(),
+              productId: li.productId,
+              batchId: existingBatch.id,
+              fromLocationId: warehouseData.location.id,
+              type: 'OUT',
+              quantity: -li.quantity,
+              note: `Venta ${order.id}`,
+              referenceType: 'SALES_ORDER',
+              referenceId: order.id,
+              createdAt: orderDate,
+              createdBy: demoAdminUser.id,
+            },
+          })
+        }
+      }
+
+      totalOrders++
+      totalSalesValue += orderTotal
+    }
+  }
+  console.log(`   ✅ ${totalOrders} órdenes de venta creadas (valor total: Bs ${totalSalesValue.toLocaleString()})`)
+
+  // ============= MOVIMIENTOS DE STOCK ADICIONALES (ENTRADAS) =============
+  // Crear movimientos de entrada para simular reposiciones
+  for (let i = 0; i < 50; i++) {
+    const product = createdProducts[Math.floor(Math.random() * createdProducts.length)]
+    const warehouseData = warehouses[Math.floor(Math.random() * warehouses.length)]
+    const qty = 10 + Math.floor(Math.random() * 50)
+    const daysAgo = Math.floor(Math.random() * 180)
+    const movDate = addDaysUtc(todayUtc, -daysAgo)
+
+    const existingBatch = await db.batch.findFirst({
+      where: { tenantId: demoTenant.id, productId: product.id },
+      select: { id: true },
+    })
+
+    if (existingBatch) {
+      await db.stockMovement.create({
+        data: {
+          tenantId: demoTenant.id,
+          number: `SM-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          numberYear: new Date().getFullYear(),
+          productId: product.id,
+          batchId: existingBatch.id,
+          toLocationId: warehouseData.location.id,
+          type: 'IN',
+          quantity: qty,
+          note: `Reposición de inventario`,
+          createdAt: movDate,
+          createdBy: demoAdminUser.id,
+        },
+      })
+    }
+  }
+  console.log('   ✅ Movimientos de entrada (reposiciones) creados')
+
+  console.log('\n📊 Resumen de datos para reportes:')
+  console.log(`   - Productos: ${createdProducts.length + expiringProducts.length + 7}`)
+  console.log(`   - Órdenes de venta: ${totalOrders}`)
+  console.log(`   - Valor total de ventas: Bs ${totalSalesValue.toLocaleString()}`)
+  console.log(`   - Clientes: 3`)
+  console.log(`   - Almacenes: 3`)
+  console.log(`   - Productos con stock bajo: 5`)
+  console.log(`   - Productos próximos a vencer: 6`)
 
   // eslint-disable-next-line no-console
   console.log('✅ Seed completed successfully!')

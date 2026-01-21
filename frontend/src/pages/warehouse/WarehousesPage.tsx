@@ -260,14 +260,16 @@ export function WarehousesPage() {
                         >
                           Ver stock
                         </Button>
-                        <Button variant="ghost" size="sm" icon={<PencilIcon className="w-4 h-4" />} onClick={() => handleEdit(w)}>Editar</Button>
+                        <Button variant="ghost" size="sm" icon={<PencilIcon className="w-4 h-4" />} onClick={() => handleEdit(w)}>
+                          <span className="hidden sm:inline">Editar</span>
+                        </Button>
                         <Button
                           variant="ghost"
                           size="sm"
                           icon={<MapPinIcon className="w-4 h-4" />}
                           onClick={() => navigate(`/warehouse/warehouses/${w.id}/locations`)}
                         >
-                          Ubicaciones
+                          <span className="hidden sm:inline">Ubicaciones</span>
                         </Button>
                       </div>
                     ),

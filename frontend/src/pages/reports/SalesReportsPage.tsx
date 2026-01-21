@@ -62,6 +62,41 @@ type SalesFunnelItem = { key: string; label: string; value: number }
 
 type FunnelResponse = { items: SalesFunnelItem[]; totals: { amountFulfilled: string; amountPaid: string } }
 
+type SalesByMonthItem = {
+  month: string
+  orderCount: number
+  linesCount: number
+  quantity: string
+  total: number
+}
+
+type ProductMarginsItem = {
+  productId: string
+  sku: string
+  name: string
+  qtySold: number
+  revenue: number
+  costPrice: number
+  costTotal: number
+  profit: number
+  marginPct: number
+}
+
+type MarginsResponse = {
+  items: ProductMarginsItem[]
+  totals: { revenue: number; costTotal: number; profit: number; avgMargin: number }
+}
+
+type LowStockItem = {
+  productId: string
+  sku: string
+  name: string
+  currentStock: number
+  minStock: number
+  avgDailySales: number
+  daysOfStock: number | null
+}
+
 type ScheduleItem = {
   id: string
   reportKey: string
@@ -78,7 +113,20 @@ type ScheduleItem = {
 
 type ScheduleListResponse = { items: ScheduleItem[] }
 
-type ReportTab = 'MONTH' | 'CUSTOMERS' | 'CITIES' | 'TOP_PRODUCTS' | 'FUNNEL'
+type ReportTab = 'MONTH' | 'CUSTOMERS' | 'CITIES' | 'TOP_PRODUCTS' | 'FUNNEL' | 'COMPARISON' | 'MARGINS'
+
+// Tipo para órdenes detalladas (drill-down)
+type OrderDetailItem = {
+  id: string
+  number: string
+  status: string
+  customerId: string
+  customerName: string
+  total: number
+  createdAt: string
+  deliveredAt: string | null
+  paidAt: string | null
+}
 
 function toIsoDate(d: Date): string {
   const y = d.getFullYear()
@@ -157,11 +205,80 @@ async function fetchTopProducts(
   return apiFetch(`/api/v1/reports/sales/top-products?${params}`, { token })
 }
 
+// Función para obtener órdenes por ciudad (drill-down)
+async function fetchOrdersByCity(
+  token: string,
+  q: { from?: string; to?: string; city: string; status?: SalesStatus },
+): Promise<{ items: OrderDetailItem[] }> {
+  const params = new URLSearchParams({ take: '100' })
+  if (q.from) params.set('from', q.from)
+  if (q.to) params.set('to', q.to)
+  if (q.city) params.set('deliveryCity', q.city)
+  if (q.status && q.status !== 'ALL') params.set('status', q.status)
+  return apiFetch(`/api/v1/sales/orders?${params}`, { token })
+}
+
+// Función para obtener órdenes por cliente (drill-down)
+async function fetchOrdersByCustomer(
+  token: string,
+  q: { from?: string; to?: string; customerId: string; status?: SalesStatus },
+): Promise<{ items: OrderDetailItem[] }> {
+  const params = new URLSearchParams({ take: '100' })
+  if (q.from) params.set('from', q.from)
+  if (q.to) params.set('to', q.to)
+  if (q.customerId) params.set('customerId', q.customerId)
+  if (q.status && q.status !== 'ALL') params.set('status', q.status)
+  return apiFetch(`/api/v1/sales/orders?${params}`, { token })
+}
+
+// Función para obtener órdenes por producto (drill-down)
+async function fetchOrdersByProduct(
+  token: string,
+  q: { from?: string; to?: string; productId: string; status?: SalesStatus },
+): Promise<{ items: OrderDetailItem[] }> {
+  const params = new URLSearchParams({ take: '100' })
+  if (q.from) params.set('from', q.from)
+  if (q.to) params.set('to', q.to)
+  if (q.productId) params.set('productId', q.productId)
+  if (q.status && q.status !== 'ALL') params.set('status', q.status)
+  return apiFetch(`/api/v1/sales/orders?${params}`, { token })
+}
+
 async function fetchFunnel(token: string, q: { from?: string; to?: string }): Promise<FunnelResponse> {
   const params = new URLSearchParams()
   if (q.from) params.set('from', q.from)
   if (q.to) params.set('to', q.to)
   return apiFetch(`/api/v1/reports/sales/funnel?${params}`, { token })
+}
+
+async function fetchSalesByMonth(
+  token: string,
+  q: { from?: string; to?: string; status?: SalesStatus },
+): Promise<{ items: SalesByMonthItem[] }> {
+  const params = new URLSearchParams()
+  if (q.from) params.set('from', q.from)
+  if (q.to) params.set('to', q.to)
+  if (q.status && q.status !== 'ALL') params.set('status', q.status)
+  return apiFetch(`/api/v1/reports/sales/by-month?${params}`, { token })
+}
+
+async function fetchProductMargins(
+  token: string,
+  q: { from?: string; to?: string; take: number; status?: SalesStatus },
+): Promise<MarginsResponse> {
+  const params = new URLSearchParams({ take: String(q.take) })
+  if (q.from) params.set('from', q.from)
+  if (q.to) params.set('to', q.to)
+  if (q.status && q.status !== 'ALL') params.set('status', q.status)
+  return apiFetch(`/api/v1/reports/sales/margins?${params}`, { token })
+}
+
+async function fetchLowStock(
+  token: string,
+  q: { take: number },
+): Promise<{ items: LowStockItem[] }> {
+  const params = new URLSearchParams({ take: String(q.take) })
+  return apiFetch(`/api/v1/reports/stock/low-stock?${params}`, { token })
 }
 
 async function sendSalesReportEmail(token: string, input: { to: string; subject: string; filename: string; pdfBase64: string; message?: string }) {
@@ -232,6 +349,12 @@ export function SalesReportsPage() {
   const [to, setTo] = useState<string>(toIsoDate(startOfNextMonth(today)))
   const [status, setStatus] = useState<SalesStatus>('FULFILLED')
 
+  // Estados para drill-down
+  const [drillDownOpen, setDrillDownOpen] = useState(false)
+  const [drillDownTitle, setDrillDownTitle] = useState('')
+  const [drillDownType, setDrillDownType] = useState<'city' | 'customer' | 'product' | null>(null)
+  const [drillDownParam, setDrillDownParam] = useState<string>('')
+
   useEffect(() => {
     const sp = new URLSearchParams(location.search)
     const qsTab = sp.get('tab')
@@ -239,7 +362,7 @@ export function SalesReportsPage() {
     const qsTo = sp.get('to')
     const qsStatus = sp.get('status')
 
-    if (qsTab && ['MONTH', 'CUSTOMERS', 'CITIES', 'TOP_PRODUCTS', 'FUNNEL'].includes(qsTab)) {
+    if (qsTab && ['MONTH', 'CUSTOMERS', 'CITIES', 'TOP_PRODUCTS', 'FUNNEL', 'COMPARISON', 'MARGINS'].includes(qsTab)) {
       setTab(qsTab as ReportTab)
     }
     if (qsFrom && /^\d{4}-\d{2}-\d{2}$/.test(qsFrom)) setFrom(qsFrom)
@@ -271,8 +394,39 @@ export function SalesReportsPage() {
     if (tab === 'CUSTOMERS') return `Ventas por cliente (${period})`
     if (tab === 'CITIES') return `Ventas por ciudad (${period})`
     if (tab === 'TOP_PRODUCTS') return `Productos más vendidos (${period})`
+    if (tab === 'COMPARISON') return `Comparativa de períodos (${period})`
+    if (tab === 'MARGINS') return `Márgenes y utilidades (${period})`
     return `Embudo Ventas → Entregas → Cobros (${period})`
   }, [from, to, tab])
+
+  // Query para drill-down por ciudad
+  const drillDownCityQuery = useQuery({
+    queryKey: ['reports', 'sales', 'drilldown', 'city', drillDownParam, { from, to, status }],
+    queryFn: () => fetchOrdersByCity(auth.accessToken!, { from, to, city: drillDownParam, status }),
+    enabled: !!auth.accessToken && drillDownOpen && drillDownType === 'city' && !!drillDownParam,
+  })
+
+  // Query para drill-down por cliente
+  const drillDownCustomerQuery = useQuery({
+    queryKey: ['reports', 'sales', 'drilldown', 'customer', drillDownParam, { from, to, status }],
+    queryFn: () => fetchOrdersByCustomer(auth.accessToken!, { from, to, customerId: drillDownParam, status }),
+    enabled: !!auth.accessToken && drillDownOpen && drillDownType === 'customer' && !!drillDownParam,
+  })
+
+  // Query para drill-down por producto
+  const drillDownProductQuery = useQuery({
+    queryKey: ['reports', 'sales', 'drilldown', 'product', drillDownParam, { from, to, status }],
+    queryFn: () => fetchOrdersByProduct(auth.accessToken!, { from, to, productId: drillDownParam, status }),
+    enabled: !!auth.accessToken && drillDownOpen && drillDownType === 'product' && !!drillDownParam,
+  })
+
+  // Función helper para abrir drill-down
+  const openDrillDown = (type: 'city' | 'customer' | 'product', param: string, title: string) => {
+    setDrillDownType(type)
+    setDrillDownParam(param)
+    setDrillDownTitle(title)
+    setDrillDownOpen(true)
+  }
 
   const summaryQuery = useQuery({
     queryKey: ['reports', 'sales', 'summary', { from, to, status }],
@@ -303,6 +457,22 @@ export function SalesReportsPage() {
     queryFn: () => fetchFunnel(auth.accessToken!, { from, to }),
     enabled: !!auth.accessToken && tab === 'FUNNEL',
   })
+
+  // Query para comparativa mensual
+  const byMonthQuery = useQuery({
+    queryKey: ['reports', 'sales', 'byMonth', { from, to, status }],
+    queryFn: () => fetchSalesByMonth(auth.accessToken!, { from, to, status }),
+    enabled: !!auth.accessToken && tab === 'COMPARISON',
+  })
+
+  // Query para márgenes
+  const marginsQuery = useQuery({
+    queryKey: ['reports', 'sales', 'margins', { from, to, status }],
+    queryFn: () => fetchProductMargins(auth.accessToken!, { from, to, take: 30, status }),
+    enabled: !!auth.accessToken && tab === 'MARGINS',
+  })
+
+
 
   const exportFilename = useMemo(() => {
     const base = tab.toLowerCase()
@@ -379,113 +549,112 @@ export function SalesReportsPage() {
     },
   })
 
-  const actions = useMemo(
-    () => (
-      <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" variant={tab === 'MONTH' ? 'primary' : 'ghost'} onClick={() => setTab('MONTH')}>
-          📅 Mes
-        </Button>
-        <Button size="sm" variant={tab === 'CUSTOMERS' ? 'primary' : 'ghost'} onClick={() => setTab('CUSTOMERS')}>
-          👥 Clientes
-        </Button>
-        <Button size="sm" variant={tab === 'CITIES' ? 'primary' : 'ghost'} onClick={() => setTab('CITIES')}>
-          🏙️ Ciudades
-        </Button>
-        <Button
-          size="sm"
-          variant={tab === 'TOP_PRODUCTS' ? 'primary' : 'ghost'}
-          onClick={() => setTab('TOP_PRODUCTS')}
-        >
-          🧪 Productos
-        </Button>
-        <Button size="sm" variant={tab === 'FUNNEL' ? 'primary' : 'ghost'} onClick={() => setTab('FUNNEL')}>
-          🔻 Embudo
-        </Button>
-
-        <div className="w-px self-stretch bg-slate-200 dark:bg-slate-700" />
-
-        <Button
-          size="sm"
-          variant="secondary"
-          onClick={async () => {
-            if (!reportRef.current) return
-            await exportElementToPdf(reportRef.current, {
-              filename: exportFilename,
-              title,
-              subtitle: `Período: ${from} a ${to} | Moneda: ${currency}`,
-              companyName: tenant.branding?.tenantName ?? 'Empresa',
-              headerColor: '#10B981',
-              logoUrl: tenant.branding?.logoUrl ?? undefined,
-            })
-          }}
-        >
-          ⬇️ Exportar PDF
-        </Button>
-        <Button size="sm" variant="secondary" onClick={() => setEmailModalOpen(true)}>
-          ✉️ Enviar
-        </Button>
-        <Button size="sm" variant="secondary" onClick={() => setScheduleModalOpen(true)}>
-          ⏱ Programar
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => {
-            const url = window.location.href
-            const text = encodeURIComponent(`Reporte: ${title}\n${url}`)
-            window.open(`https://wa.me/?text=${text}`, '_blank', 'noopener,noreferrer')
-          }}
-        >
-          💬 WhatsApp
-        </Button>
-      </div>
-    ),
-    [exportFilename, tab, title],
-  )
-
-  const filters = useMemo(
-    () => (
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-        <Input label="Desde" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
-        <Input label="Hasta" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
-
-        <div className="w-full">
-          <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Estado</label>
-          <select
-            className="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-[var(--pf-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--pf-primary)] dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
-            value={status}
-            onChange={(e) => setStatus(e.target.value as SalesStatus)}
-          >
-            <option value="ALL">{statusLabel('ALL')}</option>
-            <option value="DRAFT">{statusLabel('DRAFT')}</option>
-            <option value="CONFIRMED">{statusLabel('CONFIRMED')}</option>
-            <option value="FULFILLED">{statusLabel('FULFILLED')}</option>
-            <option value="CANCELLED">{statusLabel('CANCELLED')}</option>
-          </select>
-        </div>
-
-        <div className="flex items-end">
-          <Button
-            variant="ghost"
-            onClick={() => {
-              const now = new Date()
-              setFrom(toIsoDate(startOfMonth(now)))
-              setTo(toIsoDate(startOfNextMonth(now)))
-            }}
-          >
-            Reset mes actual
-          </Button>
-        </div>
-      </div>
-    ),
-    [from, status, to],
-  )
-
   return (
     <MainLayout navGroups={navGroups}>
-      <PageContainer title="Reportes de Ventas" actions={actions}>
+      <PageContainer title="📊 Reportes de Ventas">
+        {/* LÍNEA 2: Tipo de Reporte | Acciones */}
         <div className="mb-4 rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
-          {filters}
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            {/* Tipos de reporte - botones outline */}
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="mr-2 text-sm font-medium text-slate-600 dark:text-slate-400">Tipo de reporte:</span>
+              <Button size="sm" variant={tab === 'MONTH' ? 'primary' : 'outline'} onClick={() => setTab('MONTH')}>
+                📅 Mes
+              </Button>
+              <Button size="sm" variant={tab === 'CUSTOMERS' ? 'primary' : 'outline'} onClick={() => setTab('CUSTOMERS')}>
+                👥 Clientes
+              </Button>
+              <Button size="sm" variant={tab === 'CITIES' ? 'primary' : 'outline'} onClick={() => setTab('CITIES')}>
+                🏙️ Ciudades
+              </Button>
+              <Button size="sm" variant={tab === 'TOP_PRODUCTS' ? 'primary' : 'outline'} onClick={() => setTab('TOP_PRODUCTS')}>
+                🧪 Productos
+              </Button>
+              <Button size="sm" variant={tab === 'FUNNEL' ? 'primary' : 'outline'} onClick={() => setTab('FUNNEL')}>
+                🔻 Embudo
+              </Button>
+              <Button size="sm" variant={tab === 'COMPARISON' ? 'primary' : 'outline'} onClick={() => setTab('COMPARISON')}>
+                📊 Comparativa
+              </Button>
+              <Button size="sm" variant={tab === 'MARGINS' ? 'primary' : 'outline'} onClick={() => setTab('MARGINS')}>
+                💹 Márgenes
+              </Button>
+            </div>
+            
+            {/* Acciones - botones ghost */}
+            <div className="flex flex-wrap items-center gap-2 border-t border-slate-200 pt-3 dark:border-slate-700 lg:border-t-0 lg:border-l lg:pl-4 lg:pt-0">
+              <span className="mr-2 hidden text-sm font-medium text-slate-600 dark:text-slate-400 lg:inline">Acciones:</span>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={async () => {
+                  if (!reportRef.current) return
+                  await exportElementToPdf(reportRef.current, {
+                    filename: exportFilename,
+                    title,
+                    subtitle: `Período: ${from} a ${to} | Moneda: ${currency}`,
+                    companyName: tenant.branding?.tenantName ?? 'Empresa',
+                    headerColor: '#10B981',
+                    logoUrl: tenant.branding?.logoUrl ?? undefined,
+                  })
+                }}
+              >
+                ⬇️ PDF
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setEmailModalOpen(true)}>
+                ✉️ Enviar
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setScheduleModalOpen(true)}>
+                ⏱ Programar
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  const url = window.location.href
+                  const text = encodeURIComponent(`Reporte: ${title}\n${url}`)
+                  window.open(`https://wa.me/?text=${text}`, '_blank', 'noopener,noreferrer')
+                }}
+              >
+                💬 WhatsApp
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        {/* LÍNEA 3: Filtros de período */}
+        <div className="mb-4 rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <Input label="Desde" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+            <Input label="Hasta" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+            <div className="w-full">
+              <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Estado</label>
+              <select
+                className="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-[var(--pf-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--pf-primary)] dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+                value={status}
+                onChange={(e) => setStatus(e.target.value as SalesStatus)}
+              >
+                <option value="ALL">{statusLabel('ALL')}</option>
+                <option value="DRAFT">{statusLabel('DRAFT')}</option>
+                <option value="CONFIRMED">{statusLabel('CONFIRMED')}</option>
+                <option value="FULFILLED">{statusLabel('FULFILLED')}</option>
+                <option value="CANCELLED">{statusLabel('CANCELLED')}</option>
+              </select>
+            </div>
+            <div className="flex items-end">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  const now = new Date()
+                  setFrom(toIsoDate(startOfMonth(now)))
+                  setTo(toIsoDate(startOfNextMonth(now)))
+                }}
+              >
+                Reset mes
+              </Button>
+            </div>
+          </div>
         </div>
 
         <div ref={reportRef} className="space-y-6">
@@ -671,8 +840,11 @@ export function SalesReportsPage() {
                     </ResponsiveContainer>
                   </div>
 
-                  {/* Tabla detallada con colores alternados */}
+                  {/* Tabla detallada - clickeable para drill-down */}
                   <div className="rounded-lg border border-slate-200 dark:border-slate-700">
+                    <div className="bg-blue-50 dark:bg-blue-900/20 px-4 py-2 text-xs text-blue-700 dark:text-blue-300">
+                      💡 Haz click en un cliente para ver sus órdenes detalladas
+                    </div>
                     <Table
                       columns={[
                         { 
@@ -714,6 +886,7 @@ export function SalesReportsPage() {
                       ]}
                       data={byCustomerQuery.data?.items ?? []}
                       keyExtractor={(r) => r.customerId}
+                      onRowClick={(r) => openDrillDown('customer', r.customerId, `Órdenes de ${r.customerName}`)}
                     />
                   </div>
                 </>
@@ -789,8 +962,11 @@ export function SalesReportsPage() {
                       </ResponsiveContainer>
                     </div>
 
-                    {/* Tabla con ranking */}
+                    {/* Tabla con ranking - clickeable para drill-down */}
                     <div className="rounded-lg border border-slate-200 dark:border-slate-700">
+                      <div className="bg-blue-50 dark:bg-blue-900/20 px-4 py-2 text-xs text-blue-700 dark:text-blue-300">
+                        💡 Haz click en una ciudad para ver las órdenes detalladas
+                      </div>
                       <Table
                         columns={[
                           {
@@ -834,6 +1010,7 @@ export function SalesReportsPage() {
                         ]}
                         data={byCityQuery.data?.items ?? []}
                         keyExtractor={(r) => r.city}
+                        onRowClick={(r) => openDrillDown('city', r.city, `Órdenes en ${r.city}`)}
                       />
                     </div>
                   </div>
@@ -912,8 +1089,11 @@ export function SalesReportsPage() {
                     </ResponsiveContainer>
                   </div>
 
-                  {/* Tabla detallada */}
+                  {/* Tabla detallada - clickeable para drill-down */}
                   <div className="rounded-lg border border-slate-200 dark:border-slate-700">
+                    <div className="bg-blue-50 dark:bg-blue-900/20 px-4 py-2 text-xs text-blue-700 dark:text-blue-300">
+                      💡 Haz click en un producto para ver las órdenes donde se vendió
+                    </div>
                     <Table
                       columns={[
                         {
@@ -960,6 +1140,7 @@ export function SalesReportsPage() {
                       ]}
                       data={topProductsQuery.data?.items ?? []}
                       keyExtractor={(r) => r.productId}
+                      onRowClick={(r) => openDrillDown('product', r.productId, `Órdenes con ${r.name}`)}
                     />
                   </div>
                 </>
@@ -1041,6 +1222,219 @@ export function SalesReportsPage() {
                   </div>
                 </>
               )}
+            </ReportSection>
+          )}
+
+          {/* Reporte Comparativo mes a mes */}
+          {tab === 'COMPARISON' && (
+            <ReportSection
+              title="📊 Comparativa de Meses"
+              subtitle="Evolución de ventas comparando períodos"
+              icon="📈"
+            >
+              {byMonthQuery.isLoading && <Loading />}
+              {byMonthQuery.isError && <ErrorState message={(byMonthQuery.error as any)?.message ?? 'Error cargando reporte'} />}
+              {!byMonthQuery.isLoading && !byMonthQuery.isError && (byMonthQuery.data?.items?.length ?? 0) === 0 && (
+                <EmptyState message="No hay datos para comparar en el rango seleccionado." />
+              )}
+              {!byMonthQuery.isLoading && !byMonthQuery.isError && (byMonthQuery.data?.items?.length ?? 0) > 0 && (() => {
+                const items = byMonthQuery.data?.items ?? []
+                const latest = items[items.length - 1]
+                const previous = items[items.length - 2]
+                const growthPct = previous && previous.total > 0 
+                  ? ((latest.total - previous.total) / previous.total) * 100 
+                  : 0
+                const avgMonthly = items.reduce((s, i) => s + i.total, 0) / items.length
+
+                return (
+                  <>
+                    {/* KPIs de comparación */}
+                    <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
+                      <KPICard
+                        icon="📅"
+                        label="Último Mes"
+                        value={`${money(latest?.total ?? 0)} ${currency}`}
+                        color="primary"
+                        subtitle={latest?.month ?? '-'}
+                      />
+                      <KPICard
+                        icon="📆"
+                        label="Mes Anterior"
+                        value={`${money(previous?.total ?? 0)} ${currency}`}
+                        color="info"
+                        subtitle={previous?.month ?? '-'}
+                      />
+                      <KPICard
+                        icon={growthPct >= 0 ? '📈' : '📉'}
+                        label="Crecimiento"
+                        value={`${growthPct >= 0 ? '+' : ''}${growthPct.toFixed(1)}%`}
+                        color={growthPct >= 0 ? 'success' : 'warning'}
+                        subtitle="vs mes anterior"
+                      />
+                      <KPICard
+                        icon="📊"
+                        label="Promedio Mensual"
+                        value={`${money(avgMonthly)} ${currency}`}
+                        color="primary"
+                        subtitle={`${items.length} meses`}
+                      />
+                    </div>
+
+                    {/* Gráfico de líneas comparativo */}
+                    <div className="mb-6 h-[350px] rounded-lg bg-gradient-to-br from-slate-50 to-white p-4 dark:from-slate-900 dark:to-slate-800">
+                      <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={280}>
+                        <AreaChart data={items} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+                          <CartesianGrid {...chartGridStyle} />
+                          <XAxis dataKey="month" {...chartAxisStyle} />
+                          <YAxis {...chartAxisStyle} tickFormatter={(v) => money(v)} />
+                          <Tooltip {...chartTooltipStyle} formatter={(v: any) => [`${money(v)} ${currency}`, 'Ventas']} />
+                          <defs>
+                            <linearGradient id="colorTotal" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#10B981" stopOpacity={0.8}/>
+                              <stop offset="95%" stopColor="#10B981" stopOpacity={0.1}/>
+                            </linearGradient>
+                          </defs>
+                          <Area type="monotone" dataKey="total" stroke="#10B981" strokeWidth={3} fill="url(#colorTotal)" />
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    </div>
+
+                    {/* Tabla de meses */}
+                    <Table
+                      data={items.map((i, idx) => ({ ...i, idx: idx + 1 }))}
+                      keyExtractor={(item) => item.idx.toString()}
+                      columns={[
+                        { header: 'Mes', accessor: (item) => item.month },
+                        { header: 'Órdenes', accessor: (item) => item.orderCount, className: 'text-right' },
+                        { header: `Total (${currency})`, accessor: (r) => money(r.total), className: 'text-right' },
+                        { 
+                          header: 'Variación', 
+                          accessor: (r, idx) => {
+                            const prev = items[idx - 1]
+                            if (!prev) return '-'
+                            const pct = prev.total > 0 ? ((r.total - prev.total) / prev.total) * 100 : 0
+                            return (
+                              <span className={pct >= 0 ? 'text-green-600' : 'text-red-600'}>
+                                {pct >= 0 ? '↑' : '↓'} {Math.abs(pct).toFixed(1)}%
+                              </span>
+                            )
+                          },
+                          className: 'text-right'
+                        },
+                      ]}
+                    />
+                  </>
+                )
+              })()}
+            </ReportSection>
+          )}
+
+          {/* Reporte de Márgenes / Utilidades */}
+          {tab === 'MARGINS' && (
+            <ReportSection
+              title="💹 Márgenes y Utilidades"
+              subtitle="Análisis de rentabilidad por producto"
+              icon="💰"
+            >
+              {marginsQuery.isLoading && <Loading />}
+              {marginsQuery.isError && <ErrorState message={(marginsQuery.error as any)?.message ?? 'Error cargando reporte'} />}
+              {!marginsQuery.isLoading && !marginsQuery.isError && (marginsQuery.data?.items?.length ?? 0) === 0 && (
+                <EmptyState message="No hay datos de productos para analizar márgenes." />
+              )}
+              {!marginsQuery.isLoading && !marginsQuery.isError && (marginsQuery.data?.items?.length ?? 0) > 0 && (() => {
+                const items = marginsQuery.data?.items ?? []
+                const totals = marginsQuery.data?.totals ?? { revenue: 0, costTotal: 0, profit: 0, avgMargin: 0 }
+                const hasCostData = items.some(i => i.costPrice > 0)
+
+                return (
+                  <>
+                    {!hasCostData && (
+                      <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-900/20">
+                        <p className="text-sm text-amber-700 dark:text-amber-300">
+                          ⚠️ <strong>Nota:</strong> Los productos no tienen precio de costo configurado.
+                          Para obtener márgenes reales, configure el campo "Precio de Costo" en cada producto.
+                        </p>
+                      </div>
+                    )}
+
+                    {/* KPIs de rentabilidad */}
+                    <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
+                      <KPICard
+                        icon="💵"
+                        label="Ingresos Totales"
+                        value={`${money(totals.revenue)} ${currency}`}
+                        color="primary"
+                        subtitle="Ventas brutas"
+                      />
+                      <KPICard
+                        icon="📦"
+                        label="Costo Total"
+                        value={`${money(totals.costTotal)} ${currency}`}
+                        color="warning"
+                        subtitle="Costo de productos"
+                      />
+                      <KPICard
+                        icon="💰"
+                        label="Utilidad Bruta"
+                        value={`${money(totals.profit)} ${currency}`}
+                        color="success"
+                        subtitle="Ingresos - Costos"
+                      />
+                      <KPICard
+                        icon="📊"
+                        label="Margen Promedio"
+                        value={`${totals.avgMargin.toFixed(1)}%`}
+                        color="info"
+                        subtitle="Utilidad / Ingresos"
+                      />
+                    </div>
+
+                    {/* Gráfico de márgenes por producto */}
+                    <div className="mb-6 h-[400px] rounded-lg bg-gradient-to-br from-slate-50 to-white p-4 dark:from-slate-900 dark:to-slate-800">
+                      <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={300}>
+                        <BarChart
+                          data={items.slice(0, 10).map((i) => ({
+                            name: i.name.length > 15 ? i.name.slice(0, 15) + '…' : i.name,
+                            fullName: i.name,
+                            revenue: i.revenue,
+                            profit: i.profit,
+                          }))}
+                          layout="horizontal"
+                          margin={{ top: 20, right: 30, left: 20, bottom: 60 }}
+                        >
+                          <CartesianGrid {...chartGridStyle} />
+                          <XAxis dataKey="name" angle={-30} textAnchor="end" height={80} {...chartAxisStyle} />
+                          <YAxis {...chartAxisStyle} tickFormatter={(v) => money(v)} />
+                          <Tooltip 
+                            {...chartTooltipStyle} 
+                            formatter={(v: any, name?: string) => [
+                              `${money(v)} ${currency}`, 
+                              name === 'revenue' ? 'Ingreso' : name === 'profit' ? 'Utilidad' : name || 'Valor'
+                            ]} 
+                          />
+                          <Legend />
+                          <Bar dataKey="revenue" name="Ingreso" fill="#3B82F6" radius={[4, 4, 0, 0]} />
+                          <Bar dataKey="profit" name="Utilidad" fill="#10B981" radius={[4, 4, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+
+                    {/* Tabla de productos con márgenes */}
+                    <Table
+                      data={items}
+                      keyExtractor={(item) => item.name}
+                      columns={[
+                        { header: 'Producto', accessor: (item) => item.name },
+                        { header: 'Unidades', accessor: (item) => item.qtySold, className: 'text-right' },
+                        { header: `Ingreso (${currency})`, accessor: (r) => money(r.revenue), className: 'text-right' },
+                        { header: `Costo`, accessor: (r) => money(r.costTotal), className: 'text-right text-slate-500' },
+                        { header: `Utilidad`, accessor: (r) => <span className={r.profit >= 0 ? 'text-green-600 font-medium' : 'text-red-600 font-medium'}>{money(r.profit)}</span>, className: 'text-right' },
+                        { header: 'Margen %', accessor: (r) => <span className={r.marginPct >= 0 ? 'text-green-600' : 'text-red-600'}>{r.marginPct.toFixed(1)}%</span>, className: 'text-right' },
+                      ]}
+                    />
+                  </>
+                )
+              })()}
             </ReportSection>
           )}
         </div>
@@ -1183,6 +1577,139 @@ export function SalesReportsPage() {
             <p className="text-xs text-slate-500 dark:text-slate-400">
               Nota: para que esto funcione debes aplicar la migración nueva y configurar SMTP en el backend.
             </p>
+          </div>
+        </Modal>
+
+        {/* Modal de Drill-Down - Detalle de órdenes */}
+        <Modal 
+          isOpen={drillDownOpen} 
+          onClose={() => {
+            setDrillDownOpen(false)
+            setDrillDownType(null)
+            setDrillDownParam('')
+          }} 
+          title={drillDownTitle} 
+          maxWidth="xl"
+        >
+          <div className="space-y-4">
+            <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-700 dark:border-blue-700 dark:bg-blue-900/20 dark:text-blue-300">
+              📋 Detalle de órdenes para el período {from} - {to}
+            </div>
+
+            {/* Loading states */}
+            {(drillDownType === 'city' && drillDownCityQuery.isLoading) ||
+             (drillDownType === 'customer' && drillDownCustomerQuery.isLoading) ||
+             (drillDownType === 'product' && drillDownProductQuery.isLoading) ? (
+              <Loading />
+            ) : null}
+
+            {/* Error states */}
+            {(drillDownType === 'city' && drillDownCityQuery.isError) ||
+             (drillDownType === 'customer' && drillDownCustomerQuery.isError) ||
+             (drillDownType === 'product' && drillDownProductQuery.isError) ? (
+              <ErrorState message="Error cargando órdenes" />
+            ) : null}
+
+            {/* Data display */}
+            {(() => {
+              const items = drillDownType === 'city' 
+                ? (drillDownCityQuery.data?.items ?? [])
+                : drillDownType === 'customer'
+                  ? (drillDownCustomerQuery.data?.items ?? [])
+                  : drillDownType === 'product'
+                    ? (drillDownProductQuery.data?.items ?? [])
+                    : []
+
+              const isLoading = drillDownType === 'city' 
+                ? drillDownCityQuery.isLoading
+                : drillDownType === 'customer'
+                  ? drillDownCustomerQuery.isLoading
+                  : drillDownProductQuery.isLoading
+
+              if (isLoading) return null
+              if (items.length === 0) return <EmptyState message="No hay órdenes en este filtro" />
+
+              return (
+                <>
+                  {/* Resumen */}
+                  <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+                    <div className="rounded-lg bg-slate-100 p-3 text-center dark:bg-slate-800">
+                      <div className="text-2xl font-bold text-slate-900 dark:text-white">{items.length}</div>
+                      <div className="text-xs text-slate-600 dark:text-slate-400">Órdenes</div>
+                    </div>
+                    <div className="rounded-lg bg-green-100 p-3 text-center dark:bg-green-900/20">
+                      <div className="text-2xl font-bold text-green-700 dark:text-green-400">
+                        {money(items.reduce((sum, o) => sum + (o.total || 0), 0))} {currency}
+                      </div>
+                      <div className="text-xs text-green-600 dark:text-green-400">Total</div>
+                    </div>
+                    <div className="rounded-lg bg-blue-100 p-3 text-center dark:bg-blue-900/20">
+                      <div className="text-2xl font-bold text-blue-700 dark:text-blue-400">
+                        {items.filter(o => o.deliveredAt).length}
+                      </div>
+                      <div className="text-xs text-blue-600 dark:text-blue-400">Entregadas</div>
+                    </div>
+                    <div className="rounded-lg bg-purple-100 p-3 text-center dark:bg-purple-900/20">
+                      <div className="text-2xl font-bold text-purple-700 dark:text-purple-400">
+                        {items.filter(o => o.paidAt).length}
+                      </div>
+                      <div className="text-xs text-purple-600 dark:text-purple-400">Cobradas</div>
+                    </div>
+                  </div>
+
+                  {/* Tabla de órdenes */}
+                  <div className="max-h-96 overflow-auto rounded-lg border border-slate-200 dark:border-slate-700">
+                    <Table
+                      columns={[
+                        { header: '# Orden', accessor: (o) => <span className="font-mono text-xs">{o.number}</span> },
+                        { header: 'Cliente', accessor: (o) => o.customerName },
+                        { 
+                          header: 'Estado', 
+                          accessor: (o) => {
+                            const statusColors: Record<string, string> = {
+                              'DRAFT': 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
+                              'CONFIRMED': 'bg-blue-100 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300',
+                              'FULFILLED': 'bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-300',
+                              'CANCELLED': 'bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-300',
+                            }
+                            return (
+                              <span className={`rounded px-2 py-1 text-xs font-medium ${statusColors[o.status] || ''}`}>
+                                {statusLabel(o.status as SalesStatus)}
+                              </span>
+                            )
+                          }
+                        },
+                        { 
+                          header: `Total (${currency})`, 
+                          accessor: (o) => (
+                            <span className="font-semibold text-green-600 dark:text-green-400">
+                              {money(o.total || 0)}
+                            </span>
+                          )
+                        },
+                        { header: 'Fecha', accessor: (o) => new Date(o.createdAt).toLocaleDateString() },
+                        { 
+                          header: '✓ Entrega', 
+                          accessor: (o) => o.deliveredAt ? '✅' : '⏳'
+                        },
+                        { 
+                          header: '💰 Pago', 
+                          accessor: (o) => o.paidAt ? '✅' : '⏳'
+                        },
+                      ]}
+                      data={items}
+                      keyExtractor={(o) => o.id}
+                    />
+                  </div>
+                </>
+              )
+            })()}
+
+            <div className="flex justify-end">
+              <Button variant="ghost" onClick={() => setDrillDownOpen(false)}>
+                Cerrar
+              </Button>
+            </div>
           </div>
         </Modal>
       </PageContainer>

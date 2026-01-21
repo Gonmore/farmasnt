@@ -107,7 +107,11 @@ function CreateTenantModal({ isOpen, onClose, onSuccess }: { isOpen: boolean; on
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    createMutation.mutate(formData);
+    const payload: CreateTenantData = { ...formData };
+    if (typeof payload.primaryDomain === 'string' && payload.primaryDomain.trim() === '') {
+      delete (payload as any).primaryDomain;
+    }
+    createMutation.mutate(payload);
   };
 
   return (

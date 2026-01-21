@@ -517,37 +517,46 @@ export function InventoryPage() {
 
   return (
     <MainLayout navGroups={navGroups}>
-      <PageContainer
-        title="📦 Inventario Completo"
-        actions={
-          <div className="flex gap-2">
-            <Button
-              variant={groupBy === 'product' ? 'primary' : 'outline'}
-              onClick={() => setGroupBy('product')}
-            >
-              Por Producto
-            </Button>
-            <Button
-              variant={groupBy === 'warehouse' ? 'primary' : 'outline'}
-              onClick={() => setGroupBy('warehouse')}
-            >
-              Por Sucursal
-            </Button>
-            <Button variant="outline" icon={<ArrowPathIcon />} onClick={() => balancesQuery.refetch()}>
-              Actualizar
-            </Button>
-            <Button
-              variant="outline"
-              icon={<DocumentArrowDownIcon />}
-              onClick={() => exportMutation.mutate()}
-              loading={exportMutation.isPending}
-              disabled={!auth.accessToken}
-            >
-              Exportar Excel
-            </Button>
-          </div>
-        }
-      >
+      <PageContainer title="📦 Inventario Completo">
+        {/* Botones de filtro - segunda fila en móvil */}
+        <div className="mb-4 flex flex-wrap gap-2">
+          <Button
+            size="sm"
+            variant={groupBy === 'product' ? 'primary' : 'outline'}
+            onClick={() => setGroupBy('product')}
+            className="text-xs sm:text-sm"
+          >
+            Por Producto
+          </Button>
+          <Button
+            size="sm"
+            variant={groupBy === 'warehouse' ? 'primary' : 'outline'}
+            onClick={() => setGroupBy('warehouse')}
+            className="text-xs sm:text-sm"
+          >
+            Por Sucursal
+          </Button>
+          <Button 
+            size="sm"
+            variant="outline" 
+            icon={<ArrowPathIcon />} 
+            onClick={() => balancesQuery.refetch()}
+            className="text-xs sm:text-sm"
+          >
+            Actualizar
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            icon={<DocumentArrowDownIcon />}
+            onClick={() => exportMutation.mutate()}
+            loading={exportMutation.isPending}
+            disabled={!auth.accessToken}
+            className="text-xs sm:text-sm"
+          >
+            Exportar Excel
+          </Button>
+        </div>
         <div className="space-y-4">
           {balancesQuery.isLoading && <Loading />}
           {balancesQuery.error && (

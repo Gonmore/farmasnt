@@ -39,9 +39,9 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!auth.isAuthenticated) {
       disconnectSocket()
-      setNotifications([])
-      setLastReadAt(null)
-      setToast(null)
+      setNotifications((prev) => (prev.length > 0 ? [] : prev))
+      setLastReadAt((prev) => (prev !== null ? null : prev))
+      setToast((prev) => (prev !== null ? null : prev))
       if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
       return
     }

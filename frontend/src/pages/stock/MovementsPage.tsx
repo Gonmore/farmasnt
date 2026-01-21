@@ -90,6 +90,24 @@ async function createBatch(
   })
 }
 
+async function createTransferMovement(
+  token: string,
+  data: {
+    productId: string
+    batchId: string
+    fromLocationId: string
+    toLocationId: string
+    quantity: string
+    note?: string
+  },
+): Promise<any> {
+  return apiFetch(`/api/v1/stock/movements`, {
+    token,
+    method: 'POST',
+    body: JSON.stringify({ type: 'TRANSFER', ...data }),
+  })
+}
+
 function dateOnlyToUtcIso(dateString: string): string {
   const [year, month, day] = dateString.split('-')
   return new Date(parseInt(year), parseInt(month) - 1, parseInt(day)).toISOString().split('T')[0]
@@ -171,6 +189,43 @@ export function MovementsPage() {
     },
     onError: (error: any) => {
       setCreateBatchError(error instanceof Error ? error.message : 'Error al crear lote')
+    },
+  })
+
+  const transferMutation = useMutation({
+    mutationFn: async () => {
+      const selectedRow = stockRows.find((r) => r.id === selectedStockKey)
+      if (!selectedRow) throw new Error('Seleccioná una existencia para transferir')
+
+      const qtyNum = moveAllStock ? Number(selectedRow.availableQuantity || '0') : Number(quantity)
+      if (!Number.isFinite(qtyNum) || qtyNum <= 0) throw new Error('Ingresá una cantidad válida (mayor a 0)')
+
+      const available = Number(selectedRow.availableQuantity || '0')
+      if (qtyNum > available) throw new Error(`No podés transferir más de lo disponible (${available}).`)
+      if (!toWarehouseId) throw new Error('Seleccioná el almacén destino')
+      if (!toLocationId) throw new Error('Seleccioná la ubicación destino')
+
+      return createTransferMovement(auth.accessToken!, {
+        productId,
+        batchId: selectedRow.batchId,
+        fromLocationId: selectedRow.locationId,
+        toLocationId: toLocationId,
+        quantity: String(qtyNum),
+      })
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['productBatches', 'forMovements', productId] })
+      await queryClient.invalidateQueries({ queryKey: ['balances'] })
+      setSelectedStockKey('')
+      setQuantity('')
+      setMoveAllStock(true)
+      setToWarehouseId('')
+      setToLocationId('')
+      alert('Transferencia realizada exitosamente')
+    },
+    onError: (err: any) => {
+      const msg = err instanceof Error ? err.message : 'Error al transferir'
+      window.alert(msg)
     },
   })
 
@@ -578,7 +633,13 @@ export function MovementsPage() {
                     )}
 
                     {toLocationId && (
-                      <Button type="button" className="w-full">
+                      <Button 
+                        type="button" 
+                        className="w-full"
+                        onClick={() => transferMutation.mutate()}
+                        loading={transferMutation.isPending}
+                        disabled={transferMutation.isPending}
+                      >
                         Realizar Transferencia
                       </Button>
                     )}

@@ -13,9 +13,10 @@ export interface TableProps<T> {
   data: T[]
   keyExtractor: (item: T) => string
   rowClassName?: (item: T) => string
+  onRowClick?: (item: T) => void
 }
 
-export function Table<T>({ columns, data, keyExtractor, rowClassName }: TableProps<T>) {
+export function Table<T>({ columns, data, keyExtractor, rowClassName, onRowClick }: TableProps<T>) {
   const { scrollLeft, setScrollLeft, setMaxScroll } = useScroll()
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -51,7 +52,8 @@ export function Table<T>({ columns, data, keyExtractor, rowClassName }: TablePro
           {data.map((item, rowIndex) => (
             <tr
               key={keyExtractor(item)}
-              className={`border-b border-slate-100 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-900 py-2 ${rowClassName ? rowClassName(item) : ''}`}
+              className={`border-b border-slate-100 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-900 py-2 ${onRowClick ? 'cursor-pointer' : ''} ${rowClassName ? rowClassName(item) : ''}`}
+              onClick={onRowClick ? () => onRowClick(item) : undefined}
             >
               {columns.map((col, idx) => (
                 <td key={idx} className={`px-4 py-4 text-slate-900 dark:text-slate-100 ${col.className ?? ''}`}>

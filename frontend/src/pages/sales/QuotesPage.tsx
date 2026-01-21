@@ -188,7 +188,7 @@ export function QuotesPage() {
                   { header: 'Fecha', accessor: (q) => new Date(q.createdAt).toLocaleDateString(), className: showExtraColumns ? '' : 'hidden' },
                   {
                     header: 'Acciones',
-                    className: 'text-center w-auto sticky right-0 bg-white dark:bg-slate-900 z-10',
+                    className: 'text-center w-auto',
                     accessor: (q) => (
                       <div className="flex items-center justify-center gap-1">
                         <Button

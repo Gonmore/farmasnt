@@ -184,7 +184,7 @@ export function CommercialCatalogPage() {
                           onClick={() => handleAddToCart(product)}
                           className="flex-1 text-xs"
                         >
-                          Agregar
+                          <span className="hidden sm:inline">Agregar</span>
                         </Button>
                       </div>
                     </div>

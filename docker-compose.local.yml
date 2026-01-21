@@ -49,6 +49,26 @@ services:
     networks:
       - red-desarrollo
 
+  backend-seed:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: backend-farmasnt-seed
+    environment:
+      DATABASE_URL: "postgresql://postgres:D3v3%2Fop3R@postgres-local:5432/farmasnt?schema=public"
+      NODE_ENV: "development"
+      SEED_TENANT_NAME: "Demo Pharma Local"
+      SEED_ADMIN_EMAIL: "admin@demo.local"
+      SEED_ADMIN_PASSWORD: "Admin123!"
+      SEED_PLATFORM_DOMAIN: "localhost"
+      PRISMA_MIGRATE_RESOLVE_ON_FAIL: "1"
+      PRISMA_MIGRATE_RESOLVE_ACTION: "rolled-back"
+      PRISMA_MIGRATE_RESOLVE_NAMES: "20260116063727_pagos"
+    command: ["sh", "-lc", "npm run prisma:migrate && npm run seed"]
+    networks:
+      - red-desarrollo
+    profiles: ["tools"]
+
   frontend-farmasnt:
     build:
       context: ./frontend
