@@ -87,16 +87,6 @@ type MarginsResponse = {
   totals: { revenue: number; costTotal: number; profit: number; avgMargin: number }
 }
 
-type LowStockItem = {
-  productId: string
-  sku: string
-  name: string
-  currentStock: number
-  minStock: number
-  avgDailySales: number
-  daysOfStock: number | null
-}
-
 type ScheduleItem = {
   id: string
   reportKey: string
@@ -271,14 +261,6 @@ async function fetchProductMargins(
   if (q.to) params.set('to', q.to)
   if (q.status && q.status !== 'ALL') params.set('status', q.status)
   return apiFetch(`/api/v1/reports/sales/margins?${params}`, { token })
-}
-
-async function fetchLowStock(
-  token: string,
-  q: { take: number },
-): Promise<{ items: LowStockItem[] }> {
-  const params = new URLSearchParams({ take: String(q.take) })
-  return apiFetch(`/api/v1/reports/stock/low-stock?${params}`, { token })
 }
 
 async function sendSalesReportEmail(token: string, input: { to: string; subject: string; filename: string; pdfBase64: string; message?: string }) {

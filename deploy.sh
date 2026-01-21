@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # --- CONFIGURACIÓN ---
 USER_DOCKER="gonmore14"
 SERVER_USER="home"
@@ -25,11 +26,14 @@ ssh $SERVER_USER@$SERVER_IP << EOF
   cd $SERVER_PATH
   set -e
 
-  # Cargamos variables del servidor (para RUN_SEED_ON_DEPLOY y similares)
+  # NO "source" .env: docker env-files permiten espacios sin quotes (ej: SEED_TENANT_NAME=Demo Pharma)
+  # que rompen el parser de shell. Solo leemos RUN_SEED_ON_DEPLOY de forma segura.
+  RUN_SEED_ON_DEPLOY=0
   if [ -f .env ]; then
-    set -a
-    . ./.env
-    set +a
+    value=$(grep -E '^RUN_SEED_ON_DEPLOY=' .env | tail -n 1 | cut -d= -f2- | tr -d '\r')
+    if [ -n "${value:-}" ]; then
+      RUN_SEED_ON_DEPLOY="$value"
+    fi
   fi
   
   # Creamos o sobreescribimos el archivo de versión
@@ -45,7 +49,7 @@ ssh $SERVER_USER@$SERVER_IP << EOF
   echo "🔄 Reiniciando contenedores..."
   docker compose --env-file .env --env-file .env.version up -d
 
-  if [ "${RUN_SEED_ON_DEPLOY:-0}" = "1" ]; then
+  if [ "${RUN_SEED_ON_DEPLOY:-0}" = "1" ] || [ "${RUN_SEED_ON_DEPLOY:-0}" = "true" ] || [ "${RUN_SEED_ON_DEPLOY:-0}" = "TRUE" ]; then
     echo "🌱 Ejecutando seed (tools profile)..."
     docker compose --env-file .env --env-file .env.version --profile tools run --rm backend-seed
   else
