@@ -1022,7 +1022,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
           productId: true,
           batchId: true,
           locationId: true,
-          product: { select: { sku: true, name: true, genericName: true } },
+          product: { select: { sku: true, name: true, genericName: true, presentationWrapper: true, presentationQuantity: true, presentationFormat: true } },
           batch: { select: { batchNumber: true, expiresAt: true, status: true, version: true } },
           location: {
             select: {

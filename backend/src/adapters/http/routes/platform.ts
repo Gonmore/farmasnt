@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import bcrypt from 'bcryptjs'
 import crypto from 'node:crypto'
+import { parse as parseCsv } from 'csv-parse/sync'
 import { prisma } from '../../db/prisma.js'
 import { requireAuth, requirePermission } from '../../../application/security/rbac.js'
 import { Permissions } from '../../../application/security/permissions.js'
@@ -60,6 +61,42 @@ function normalizeEmail(raw: string): string {
 
 function generateTempPassword(): string {
   return crypto.randomBytes(12).toString('base64url')
+}
+
+function normalizeCsvHeader(input: string): string {
+  return input
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+}
+
+function pickFirstNonEmpty(...values: Array<string | undefined | null>): string | null {
+  for (const v of values) {
+    const s = typeof v === 'string' ? v.trim() : ''
+    if (s) return s
+  }
+  return null
+}
+
+function extractContactName(input: string | null): string | null {
+  if (!input) return null
+  const raw = input.trim()
+  if (!raw) return null
+  // Some rows look like: "NOMBRE CONTACTO - FARMACIA X" -> keep only before '-'
+  const beforeDash = raw.split(/\s*-\s*/)[0]?.trim()
+  return beforeDash || raw
+}
+
+function extractCustomerNameFromContact(input: string | null): string | null {
+  if (!input) return null
+  const raw = input.trim()
+  if (!raw) return null
+  const parts = raw.split(/\s*-\s*/).map((p) => p.trim()).filter(Boolean)
+  if (parts.length >= 2) return parts.slice(1).join(' - ')
+  return null
 }
 
 function normalizeDomain(input: string): string {
@@ -559,6 +596,207 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
 
     return reply.send({ userId: id, temporaryPassword: tempPassword })
   })
+
+  // --- Bulk import: Customers (CSV) ---
+  app.post(
+    '/api/v1/platform/tenants/:tenantId/import/customers',
+    { preHandler: guard, bodyLimit: 15 * 1024 * 1024 },
+    async (request, reply) => {
+      const tenantId = (request.params as any)?.tenantId as string | undefined
+      if (!tenantId) return reply.status(400).send({ message: 'Invalid tenantId' })
+
+      const bodySchema = z.object({
+        csv: z.string().min(1),
+        dryRun: z.coerce.boolean().optional().default(true),
+      })
+
+      const parsed = bodySchema.safeParse(request.body)
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid request', issues: parsed.error.issues })
+
+      const actor = request.auth!
+
+      const tenant = await db.tenant.findFirst({ where: { id: tenantId, isActive: true }, select: { id: true, name: true } })
+      if (!tenant) return reply.status(404).send({ message: 'Tenant not found' })
+
+      const schema = {
+        entity: 'customers' as const,
+        required: ['name'] as const,
+        optional: ['nit', 'contactName', 'email', 'phone', 'address', 'city', 'zone', 'mapsUrl', 'businessName'] as const,
+        notes: [
+          'name se toma de la columna "Nombre" (si está vacía, se intenta derivar del texto después de "-" en "Nombre de contacto").',
+          'contactName se toma del texto antes de "-" en "Nombre de contacto".',
+          'phone usa "Teléfono 1" o "Teléfono móvil" (primer valor no vacío).',
+        ],
+      }
+
+      let records: any[]
+      try {
+        records = parseCsv(parsed.data.csv, {
+          columns: true,
+          skip_empty_lines: true,
+          relax_quotes: true,
+          relax_column_count: true,
+          trim: true,
+          bom: true,
+        })
+      } catch (e: any) {
+        return reply.status(400).send({ message: 'CSV inválido', detail: String(e?.message ?? e) })
+      }
+
+      if (!Array.isArray(records) || records.length === 0) {
+        return reply.status(400).send({ message: 'CSV vacío o sin filas' })
+      }
+
+      const headerMap = new Map<string, string>()
+      for (const key of Object.keys(records[0] ?? {})) {
+        headerMap.set(normalizeCsvHeader(key), key)
+      }
+
+      const keyNit = headerMap.get('nit')
+      const keyContact = headerMap.get('nombre de contacto')
+      const keyName = headerMap.get('nombre')
+      const keyAddress = headerMap.get('direccion')
+      const keyEmail = headerMap.get('correo electronico')
+      const keyZone = headerMap.get('zona')
+      const keyPhone1 = headerMap.get('telefono 1')
+      const keyPhoneMobile = headerMap.get('telefono movil')
+      const keyCity = headerMap.get('ciudad')
+      const keyMaps = headerMap.get('ubicacion')
+
+      const errors: Array<{ row: number; message: string }> = []
+      const mapped = records.map((r, idx) => {
+        const rowNumber = idx + 2 // header is row 1
+        const nitRaw = keyNit ? String(r[keyNit] ?? '').trim() : ''
+        const contactRaw = keyContact ? String(r[keyContact] ?? '').trim() : ''
+        const nameRaw = keyName ? String(r[keyName] ?? '').trim() : ''
+
+        const nameFromContact = extractCustomerNameFromContact(contactRaw) ?? null
+        const name = pickFirstNonEmpty(nameRaw, nameFromContact, contactRaw) // last fallback
+        if (!name) errors.push({ row: rowNumber, message: 'Falta nombre (Nombre / Nombre de contacto)' })
+
+        const contactName = extractContactName(contactRaw)
+        const phone = pickFirstNonEmpty(
+          keyPhone1 ? String(r[keyPhone1] ?? '').trim() : '',
+          keyPhoneMobile ? String(r[keyPhoneMobile] ?? '').trim() : '',
+        )
+
+        const customer = {
+          tenantId: tenant.id,
+          name: name ?? '(sin nombre)',
+          businessName: null as string | null,
+          nit: nitRaw || null,
+          contactName,
+          email: keyEmail ? (String(r[keyEmail] ?? '').trim() || null) : null,
+          phone,
+          address: keyAddress ? (String(r[keyAddress] ?? '').trim() || null) : null,
+          city: keyCity ? (String(r[keyCity] ?? '').trim() || null) : null,
+          zone: keyZone ? (String(r[keyZone] ?? '').trim() || null) : null,
+          mapsUrl: keyMaps ? (String(r[keyMaps] ?? '').trim() || null) : null,
+          isActive: true,
+          createdBy: actor.userId,
+        }
+
+        return customer
+      })
+
+      // Basic duplicate detection (within the file + against DB)
+      const seenNit = new Set<string>()
+      const seenName = new Set<string>()
+      const deduped: typeof mapped = []
+      for (let i = 0; i < mapped.length; i++) {
+        const c = mapped[i]!
+        const nit = (c.nit ?? '').trim()
+        const nameKey = c.name.trim().toLowerCase()
+        const dupNit = nit && seenNit.has(nit)
+        const dupName = !nit && seenName.has(nameKey)
+        if (dupNit || dupName) {
+          errors.push({ row: i + 2, message: 'Duplicado en el archivo (NIT o nombre)' })
+          continue
+        }
+        if (nit) seenNit.add(nit)
+        seenName.add(nameKey)
+        deduped.push(c)
+      }
+
+      const nits = deduped.map((d) => d.nit).filter((x): x is string => !!x)
+      const names = deduped.map((d) => d.name.trim())
+
+      const existingByNit = nits.length
+        ? await db.customer.findMany({ where: { tenantId: tenant.id, nit: { in: nits } }, select: { nit: true } })
+        : []
+      const existingNitSet = new Set(existingByNit.map((x) => (x.nit ?? '').trim()).filter(Boolean))
+
+      const existingByName = await db.customer.findMany({ where: { tenantId: tenant.id, name: { in: names } }, select: { name: true } })
+      const existingNameSet = new Set(existingByName.map((x) => x.name.trim().toLowerCase()))
+
+      const toCreate = deduped.filter((d) => {
+        const nit = (d.nit ?? '').trim()
+        if (nit && existingNitSet.has(nit)) return false
+        if (existingNameSet.has(d.name.trim().toLowerCase())) return false
+        return true
+      })
+
+      const preview = toCreate.slice(0, 10).map((c) => ({
+        name: c.name,
+        nit: c.nit,
+        contactName: c.contactName,
+        phone: c.phone,
+        city: c.city,
+        zone: c.zone,
+        address: c.address,
+      }))
+
+      if (parsed.data.dryRun) {
+        return reply.send({
+          schema,
+          tenant: { id: tenant.id, name: tenant.name },
+          totalRows: records.length,
+          parsedRows: mapped.length,
+          candidateRows: deduped.length,
+          toCreate: toCreate.length,
+          skippedExisting: deduped.length - toCreate.length,
+          errors: errors.slice(0, 50),
+          preview,
+        })
+      }
+
+      const created = await db.customer.createMany({
+        data: toCreate.map((c) => ({
+          tenantId: c.tenantId,
+          name: c.name,
+          businessName: c.businessName,
+          nit: c.nit,
+          contactName: c.contactName,
+          email: c.email,
+          phone: c.phone,
+          address: c.address,
+          city: c.city,
+          zone: c.zone,
+          mapsUrl: c.mapsUrl,
+          isActive: c.isActive,
+          createdBy: c.createdBy,
+        })),
+      })
+
+      await audit.append({
+        tenantId: actor.tenantId,
+        actorUserId: actor.userId,
+        action: 'platform.import.customers',
+        entityType: 'Tenant',
+        entityId: tenant.id,
+        metadata: { totalRows: records.length, createdCount: created.count, skippedExisting: deduped.length - toCreate.length },
+      })
+
+      return reply.send({
+        schema,
+        tenant: { id: tenant.id, name: tenant.name },
+        totalRows: records.length,
+        createdCount: created.count,
+        skippedExisting: deduped.length - toCreate.length,
+        errors: errors.slice(0, 50),
+      })
+    },
+  )
 
   // --- Tenant domain management (future-facing, but ready) ---
   app.get(

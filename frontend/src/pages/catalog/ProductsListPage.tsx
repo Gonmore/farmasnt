@@ -17,12 +17,6 @@ type ProductListItem = {
   isActive: boolean
   version: number
   updatedAt: string
-  hasRecipe: boolean
-  recipeItems?: Array<{
-    ingredientName: string | null
-    quantity: string
-    unit: string
-  }>
   batches?: Array<{
     batchNumber: string
     warehouseName: string
@@ -39,16 +33,6 @@ async function fetchProducts(token: string, take: number, cursor?: string): Prom
   const params = new URLSearchParams({ take: String(take) })
   if (cursor) params.append('cursor', cursor)
   return apiFetch(`/api/v1/products?${params}`, { token })
-}
-
-async function fetchProductRecipe(token: string, productId: string) {
-  try {
-    const response = await apiFetch(`/api/v1/products/${productId}/recipe`, { token }) as any
-    return response
-  } catch (error) {
-    // Recipe not found
-    return null
-  }
 }
 
 async function fetchProductBatches(token: string, productId: string) {
@@ -79,7 +63,6 @@ export function ProductsListPage() {
   const take = 20
 
   // Modal states
-  const [recipeModal, setRecipeModal] = useState<{ isOpen: boolean; product: ProductListItem | null }>({ isOpen: false, product: null })
   const [stockModal, setStockModal] = useState<{ isOpen: boolean; product: ProductListItem | null }>({ isOpen: false, product: null })
 
   const productsQuery = useQuery({
@@ -96,10 +79,7 @@ export function ProductsListPage() {
 
       const enrichments = await Promise.all(
         productsQuery.data.items.map(async (product) => {
-          const [recipe, batches] = await Promise.all([
-            fetchProductRecipe(auth.accessToken!, product.id).catch(() => null),
-            fetchProductBatches(auth.accessToken!, product.id).catch(() => [])
-          ])
+          const batches = await fetchProductBatches(auth.accessToken!, product.id).catch(() => [])
 
           // Process batches to get warehouse totals
           const batchSummaries = batches.map((batch: any) => ({
@@ -113,8 +93,6 @@ export function ProductsListPage() {
 
           return {
             id: product.id,
-            hasRecipe: !!recipe,
-            recipeItems: recipe?.items?.slice(0, 3) || [], // Show first 3 ingredients
             batches: batchSummaries.slice(0, 3) // Show first 3 batches
           }
         })
@@ -134,8 +112,6 @@ export function ProductsListPage() {
         ...productsQuery.data,
         items: productsQuery.data.items.map(product => ({
           ...product,
-          hasRecipe: false,
-          recipeItems: [],
           batches: []
         }))
       }
@@ -199,20 +175,6 @@ export function ProductsListPage() {
                   { header: 'SKU', accessor: (p) => p.sku },
                   { header: 'Nombre', accessor: (p) => getProductDisplayName(p) },
                   {
-                    header: 'Receta',
-                    accessor: (p) => (
-                      <div className="cursor-pointer">
-                        <div
-                          className="text-2xl hover:scale-110 transition-transform"
-                          onClick={() => p.hasRecipe && setRecipeModal({ isOpen: true, product: p })}
-                          title={p.hasRecipe ? "Ver receta completa" : "Sin receta"}
-                        >
-                          {p.hasRecipe ? '🧪' : '➖'}
-                        </div>
-                      </div>
-                    ),
-                  },
-                  {
                     header: 'Stock',
                     accessor: (p) => (
                       <div className="cursor-pointer">
@@ -249,40 +211,6 @@ export function ProductsListPage() {
           )}
         </div>
       </PageContainer>
-
-      {/* Recipe Modal */}
-      <Modal
-        isOpen={recipeModal.isOpen}
-        onClose={() => setRecipeModal({ isOpen: false, product: null })}
-        title={`Receta - ${recipeModal.product ? getProductDisplayName(recipeModal.product) : ''}`}
-        maxWidth="lg"
-      >
-        <div className="space-y-4">
-          {recipeModal.product?.recipeItems && recipeModal.product.recipeItems.length > 0 ? (
-            <div className="grid gap-3">
-              {recipeModal.product.recipeItems.map((item, idx) => (
-                <div key={idx} className="flex items-center justify-between p-4 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg border border-blue-200">
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center">
-                      <span className="text-white text-sm">🧪</span>
-                    </div>
-                    <span className="font-medium text-slate-700">{item.ingredientName || 'Sin nombre'}</span>
-                  </div>
-                  <div className="text-right">
-                    <span className="text-2xl font-bold text-blue-600">{item.quantity}</span>
-                    <span className="text-blue-500 ml-1">{item.unit}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="text-center py-8 text-slate-500">
-              <span className="text-4xl mb-4 block">📝</span>
-              <p className="text-lg">Este producto no tiene receta registrada</p>
-            </div>
-          )}
-        </div>
-      </Modal>
 
       {/* Stock Modal */}
       <Modal

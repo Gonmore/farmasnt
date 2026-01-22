@@ -22,9 +22,9 @@ docker push $USER_DOCKER/frontend-farmasnt:$VERSION
 
 echo "🚀 2. Actualizando servidor remoto..."
 
-ssh $SERVER_USER@$SERVER_IP << EOF
-  cd $SERVER_PATH
+ssh "$SERVER_USER@$SERVER_IP" "SERVER_PATH=$SERVER_PATH VERSION=$VERSION bash -s" << 'EOF'
   set -e
+  cd "$SERVER_PATH"
 
   # NO "source" .env: docker env-files permiten espacios sin quotes (ej: SEED_TENANT_NAME=Demo Pharma)
   # que rompen el parser de shell. Solo leemos RUN_SEED_ON_DEPLOY de forma segura.
@@ -44,14 +44,14 @@ ssh $SERVER_USER@$SERVER_IP << EOF
   docker compose --env-file .env --env-file .env.version pull
 
   echo "🧬 Aplicando migraciones Prisma (si hay nuevas)..."
-  docker compose --env-file .env --env-file .env.version --profile tools run --rm backend-migrate
+  docker compose --env-file .env --env-file .env.version --profile tools run --rm backend-migrate </dev/null
   
   echo "🔄 Reiniciando contenedores..."
   docker compose --env-file .env --env-file .env.version up -d
 
   if [ "${RUN_SEED_ON_DEPLOY:-0}" = "1" ] || [ "${RUN_SEED_ON_DEPLOY:-0}" = "true" ] || [ "${RUN_SEED_ON_DEPLOY:-0}" = "TRUE" ]; then
     echo "🌱 Ejecutando seed (tools profile)..."
-    docker compose --env-file .env --env-file .env.version --profile tools run --rm backend-seed
+    docker compose --env-file .env --env-file .env.version --profile tools run --rm backend-seed </dev/null
   else
     echo "🌱 Seed omitido (set RUN_SEED_ON_DEPLOY=1 para ejecutarlo)"
   fi

@@ -45,6 +45,33 @@ interface PlatformUsersResponse {
   nextCursor: string | null;
 }
 
+interface CustomersImportPreviewRow {
+  name: string;
+  nit: string | null;
+  contactName: string | null;
+  phone: string | null;
+  city: string | null;
+  zone: string | null;
+  address: string | null;
+}
+
+interface CustomersImportPreviewResponse {
+  schema: {
+    entity: 'customers';
+    required: string[];
+    optional: string[];
+    notes: string[];
+  };
+  tenant: { id: string; name: string };
+  totalRows: number;
+  parsedRows: number;
+  candidateRows: number;
+  toCreate: number;
+  skippedExisting: number;
+  errors: Array<{ row: number; message: string }>;
+  preview: CustomersImportPreviewRow[];
+}
+
 interface CreateTenantData {
   name: string;
   branchCount: number;
@@ -282,6 +309,12 @@ export function TenantsPage() {
   const [createAdminFullName, setCreateAdminFullName] = useState('');
   const [tempPassword, setTempPassword] = useState<string | null>(null);
 
+  const [importTenant, setImportTenant] = useState<Tenant | null>(null);
+  const [importFileName, setImportFileName] = useState('');
+  const [importEncoding, setImportEncoding] = useState<'utf-8' | 'iso-8859-1'>('iso-8859-1');
+  const [importCsvText, setImportCsvText] = useState('');
+  const [importPreview, setImportPreview] = useState<CustomersImportPreviewResponse | null>(null);
+
   const { data, isLoading, error } = useQuery<TenantsResponse>({
     queryKey: ['platform', 'tenants'],
     queryFn: async () => {
@@ -384,6 +417,37 @@ export function TenantsPage() {
     },
   });
 
+  const previewCustomersImportMutation = useMutation({
+    mutationFn: async ({ tenantId, csv }: { tenantId: string; csv: string }) => {
+      const response = await api.post<CustomersImportPreviewResponse>(
+        `/api/v1/platform/tenants/${tenantId}/import/customers`,
+        { csv, dryRun: true },
+      );
+      return response.data;
+    },
+    onSuccess: (data) => {
+      setImportPreview(data);
+    },
+  });
+
+  const executeCustomersImportMutation = useMutation({
+    mutationFn: async ({ tenantId, csv }: { tenantId: string; csv: string }) => {
+      const response = await api.post(
+        `/api/v1/platform/tenants/${tenantId}/import/customers`,
+        { csv, dryRun: false },
+      );
+      return response.data as { createdCount: number; skippedExisting: number; totalRows: number };
+    },
+    onSuccess: async (data) => {
+      alert(`Importación completada. Creados: ${data.createdCount}. Omitidos existentes: ${data.skippedExisting}.`);
+      setImportTenant(null);
+      setImportPreview(null);
+      setImportCsvText('');
+      setImportFileName('');
+      await queryClient.invalidateQueries({ queryKey: ['platform', 'tenants'] });
+    },
+  });
+
   const tenantAdmins = usersQuery.data?.items.filter((u) => u.roles.some((r) => r.code === 'TENANT_ADMIN')) ?? [];
 
   return (
@@ -470,6 +534,16 @@ export function TenantsPage() {
                       onClick={() => {
                         setUsersTenant(tenant);
                         setTempPassword(null);
+                      }}
+                    />
+                    <IconButton
+                      label="Importar"
+                      icon={'📥'}
+                      onClick={() => {
+                        setImportTenant(tenant);
+                        setImportPreview(null);
+                        setImportCsvText('');
+                        setImportFileName('');
                       }}
                     />
                     <IconButton
@@ -649,6 +723,179 @@ export function TenantsPage() {
             {tempPassword && (
               <div className="rounded border border-slate-200 bg-slate-50 p-3 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100">
                 Contraseña temporal: <span className="font-mono">{tempPassword}</span>
+              </div>
+            )}
+          </div>
+        </Modal>
+      )}
+
+      {/* Modal Importación masiva */}
+      {importTenant && (
+        <Modal
+          isOpen={!!importTenant}
+          onClose={() => {
+            setImportTenant(null);
+            setImportPreview(null);
+            setImportCsvText('');
+            setImportFileName('');
+          }}
+          title={`Importación: ${importTenant.name}`}
+          maxWidth="xl"
+        >
+          <div className="space-y-4">
+            <div className="rounded border border-slate-200 bg-white p-4 text-sm dark:border-slate-700 dark:bg-slate-800">
+              <div className="font-semibold text-slate-900 dark:text-slate-100">Clientes (CSV)</div>
+              <div className="mt-1 text-slate-700 dark:text-slate-300">
+                Requerido: <span className="font-mono">name</span>. Mapeo: “Nombre” → name, “Nombre de contacto” → contactName (antes de “-”).
+              </div>
+            </div>
+
+            <div className="rounded border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-3 md:items-end">
+                <div className="md:col-span-2">
+                  <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Archivo CSV</label>
+                  <input
+                    type="file"
+                    accept=".csv,text/csv"
+                    className="block w-full text-sm text-slate-700 dark:text-slate-300"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      setImportPreview(null);
+                      if (!file) {
+                        setImportCsvText('');
+                        setImportFileName('');
+                        return;
+                      }
+                      setImportFileName(file.name);
+                      const reader = new FileReader();
+                      reader.onload = () => {
+                        setImportCsvText(String(reader.result ?? ''));
+                      };
+                      reader.readAsText(file, importEncoding);
+                    }}
+                  />
+                  {importFileName && <div className="mt-1 text-xs text-slate-500">{importFileName}</div>}
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Codificación</label>
+                  <select
+                    value={importEncoding}
+                    onChange={(e) => {
+                      setImportEncoding(e.target.value as any);
+                      setImportPreview(null);
+                    }}
+                    className="w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800"
+                  >
+                    <option value="iso-8859-1">ISO-8859-1 (recomendado)</option>
+                    <option value="utf-8">UTF-8</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="mt-3 flex flex-wrap justify-end gap-2">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => {
+                    setImportPreview(null);
+                    setImportCsvText('');
+                    setImportFileName('');
+                  }}
+                  disabled={previewCustomersImportMutation.isPending || executeCustomersImportMutation.isPending}
+                >
+                  Limpiar
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={() => previewCustomersImportMutation.mutate({ tenantId: importTenant.id, csv: importCsvText })}
+                  disabled={previewCustomersImportMutation.isPending || !importCsvText.trim()}
+                >
+                  {previewCustomersImportMutation.isPending ? 'Previsualizando...' : 'Previsualizar'}
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    if (!confirm('¿Importar clientes para este tenant? No se elimina nada: solo se crean clientes nuevos; los existentes (por NIT o nombre) se omiten.')) return;
+                    executeCustomersImportMutation.mutate({ tenantId: importTenant.id, csv: importCsvText });
+                  }}
+                  disabled={executeCustomersImportMutation.isPending || !importCsvText.trim() || !importPreview}
+                >
+                  {executeCustomersImportMutation.isPending ? 'Importando...' : 'Importar'}
+                </Button>
+              </div>
+
+              {previewCustomersImportMutation.error && (
+                <div className="mt-3 rounded-md bg-red-50 p-3 text-sm text-red-600 dark:bg-red-900/20 dark:text-red-400">
+                  Error: {(previewCustomersImportMutation.error as any)?.response?.data?.message || 'No se pudo previsualizar'}
+                </div>
+              )}
+
+              {executeCustomersImportMutation.error && (
+                <div className="mt-3 rounded-md bg-red-50 p-3 text-sm text-red-600 dark:bg-red-900/20 dark:text-red-400">
+                  Error: {(executeCustomersImportMutation.error as any)?.response?.data?.message || 'No se pudo importar'}
+                </div>
+              )}
+            </div>
+
+            {importPreview && (
+              <div className="rounded border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
+                <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
+                  <div>
+                    <div className="text-slate-500">Filas CSV</div>
+                    <div className="text-lg font-semibold text-slate-900 dark:text-slate-100">{importPreview.totalRows}</div>
+                  </div>
+                  <div>
+                    <div className="text-slate-500">A crear</div>
+                    <div className="text-lg font-semibold text-slate-900 dark:text-slate-100">{importPreview.toCreate}</div>
+                  </div>
+                  <div>
+                    <div className="text-slate-500">Omitidos</div>
+                    <div className="text-lg font-semibold text-slate-900 dark:text-slate-100">{importPreview.skippedExisting}</div>
+                  </div>
+                  <div>
+                    <div className="text-slate-500">Errores</div>
+                    <div className="text-lg font-semibold text-slate-900 dark:text-slate-100">{importPreview.errors.length}</div>
+                  </div>
+                </div>
+
+                {importPreview.errors.length > 0 && (
+                  <div className="mt-3 rounded bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-900/20 dark:text-amber-200">
+                    <div className="font-semibold">Ejemplos de errores</div>
+                    <ul className="mt-1 list-disc pl-5">
+                      {importPreview.errors.slice(0, 8).map((e, idx) => (
+                        <li key={idx}>Fila {e.row}: {e.message}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                <div className="mt-4">
+                  <div className="mb-2 text-sm font-semibold text-slate-900 dark:text-slate-100">Preview (primeras 10)</div>
+                  <div className="overflow-auto rounded border border-slate-200 dark:border-slate-700">
+                    <table className="w-full text-left text-sm">
+                      <thead className="bg-slate-50 text-xs uppercase text-slate-500 dark:bg-slate-900/40 dark:text-slate-400">
+                        <tr>
+                          <th className="px-3 py-2">Nombre</th>
+                          <th className="px-3 py-2">NIT</th>
+                          <th className="px-3 py-2">Contacto</th>
+                          <th className="px-3 py-2">Teléfono</th>
+                          <th className="px-3 py-2">Ciudad</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {importPreview.preview.map((r, idx) => (
+                          <tr key={idx} className="border-t border-slate-100 dark:border-slate-700">
+                            <td className="px-3 py-2">{r.name}</td>
+                            <td className="px-3 py-2">{r.nit || '—'}</td>
+                            <td className="px-3 py-2">{r.contactName || '—'}</td>
+                            <td className="px-3 py-2">{r.phone || '—'}</td>
+                            <td className="px-3 py-2">{r.city || '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               </div>
             )}
           </div>

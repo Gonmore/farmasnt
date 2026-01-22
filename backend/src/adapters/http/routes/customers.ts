@@ -1,9 +1,44 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
+import { Prisma } from '../../../generated/prisma/client.js'
 import { prisma } from '../../db/prisma.js'
 import { AuditService } from '../../../application/audit/auditService.js'
 import { requireAuth, requireModuleEnabled, requirePermission } from '../../../application/security/rbac.js'
 import { Permissions } from '../../../application/security/permissions.js'
+
+async function findDuplicateCustomerByNit(db: ReturnType<typeof prisma>, tenantId: string, nit: string, excludeId?: string) {
+  const cleanNit = nit.trim()
+  if (!cleanNit) return null
+
+  type Row = { id: string; nit: string | null }
+  const rows = await db.$queryRaw<Row[]>(Prisma.sql`
+    SELECT c.id, c.nit
+    FROM "Customer" c
+    WHERE c."tenantId" = ${tenantId}
+      AND (${excludeId ? Prisma.sql`c.id <> ${excludeId}` : Prisma.sql`TRUE`})
+      AND lower(regexp_replace(coalesce(c.nit, ''), '[^0-9a-zA-Z]+', '', 'g')) =
+          lower(regexp_replace(${cleanNit}, '[^0-9a-zA-Z]+', '', 'g'))
+    LIMIT 1
+  `)
+  return rows?.[0] ?? null
+}
+
+async function findDuplicateCustomerByName(db: ReturnType<typeof prisma>, tenantId: string, name: string, excludeId?: string) {
+  const cleanName = name.trim()
+  if (!cleanName) return null
+
+  type Row = { id: string; name: string }
+  const rows = await db.$queryRaw<Row[]>(Prisma.sql`
+    SELECT c.id, c.name
+    FROM "Customer" c
+    WHERE c."tenantId" = ${tenantId}
+      AND (${excludeId ? Prisma.sql`c.id <> ${excludeId}` : Prisma.sql`TRUE`})
+      AND lower(regexp_replace(trim(c.name), '\\s+', ' ', 'g')) =
+          lower(regexp_replace(trim(${cleanName}), '\\s+', ' ', 'g'))
+    LIMIT 1
+  `)
+  return rows?.[0] ?? null
+}
 
 const customerCreateSchema = z.object({
   name: z.string().trim().min(1).max(200),
@@ -98,6 +133,14 @@ export async function registerCustomerRoutes(app: FastifyInstance): Promise<void
 
       const tenantId = request.auth!.tenantId
       const userId = request.auth!.userId
+
+      // Prevent duplicates (tenant-scoped)
+      if (parsed.data.nit) {
+        const dupNit = await findDuplicateCustomerByNit(db, tenantId, parsed.data.nit)
+        if (dupNit) return reply.status(409).send({ message: 'Cliente duplicado: ya existe un cliente con el mismo NIT.' })
+      }
+      const dupName = await findDuplicateCustomerByName(db, tenantId, parsed.data.name)
+      if (dupName) return reply.status(409).send({ message: 'Cliente duplicado: ya existe un cliente con el mismo nombre.' })
 
       const created = await db.customer.create({
         data: {
@@ -285,6 +328,16 @@ export async function registerCustomerRoutes(app: FastifyInstance): Promise<void
       })
       if (!before) return reply.status(404).send({ message: 'Not found' })
       if (before.version !== parsed.data.version) return reply.status(409).send({ message: 'Version conflict' })
+
+      // Prevent duplicates when changing identifying fields
+      if (parsed.data.nit !== undefined && parsed.data.nit !== null) {
+        const dupNit = await findDuplicateCustomerByNit(db, tenantId, parsed.data.nit, id)
+        if (dupNit) return reply.status(409).send({ message: 'Cliente duplicado: ya existe otro cliente con el mismo NIT.' })
+      }
+      if (parsed.data.name !== undefined) {
+        const dupName = await findDuplicateCustomerByName(db, tenantId, parsed.data.name, id)
+        if (dupName) return reply.status(409).send({ message: 'Cliente duplicado: ya existe otro cliente con el mismo nombre.' })
+      }
 
       const updateData: any = {
         version: { increment: 1 },

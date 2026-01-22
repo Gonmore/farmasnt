@@ -28,7 +28,14 @@ type BalanceExpandedItem = {
   productId: string
   batchId: string | null
   locationId: string
-  product: { sku: string; name: string; genericName?: string | null }
+  product: {
+    sku: string
+    name: string
+    genericName?: string | null
+    presentationWrapper?: string | null
+    presentationQuantity?: any
+    presentationFormat?: string | null
+  }
   batch: { batchNumber: string; expiresAt: string | null; status: string; version: number } | null
   location: {
     id: string
@@ -67,6 +74,9 @@ type ProductGroup = {
   sku: string
   name: string
   genericName?: string | null
+  presentationWrapper?: string | null
+  presentationQuantity?: any
+  presentationFormat?: string | null
   totalQuantity: number
   totalReservedQuantity: number
   totalAvailableQuantity: number
@@ -209,6 +219,56 @@ function getBatchStatusDisplay(status: string): { text: string; color: string } 
     return { text: 'En cuarentena', color: 'text-orange-600 dark:text-orange-400' }
   }
   return { text: 'Liberado', color: 'text-green-600 dark:text-green-400' }
+}
+
+function formatPresentation(p: {
+  presentationWrapper?: string | null
+  presentationQuantity?: any
+  presentationFormat?: string | null
+}): string | null {
+  const wrapper = (p.presentationWrapper ?? '').trim()
+  const format = (p.presentationFormat ?? '').trim()
+  const qtyRaw = p.presentationQuantity
+  const qtyStr = qtyRaw === null || qtyRaw === undefined ? '' : String(qtyRaw).trim()
+
+  const parts = [wrapper, qtyStr, format].filter((x) => typeof x === 'string' && x.length > 0)
+  return parts.length ? parts.join(' ') : null
+}
+
+function getCoveragePill(withStockCount: number, totalActive: number): { className: string; title: string; label: string } {
+  if (!Number.isFinite(totalActive) || totalActive <= 0) {
+    return {
+      className: 'bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700',
+      title: 'Sin sucursales activas',
+      label: '0 sucursales',
+    }
+  }
+
+  const clampedWith = Math.max(0, Math.min(totalActive, withStockCount))
+  const missing = totalActive - clampedWith
+  const ratio = clampedWith / totalActive
+
+  if (missing === 0) {
+    return {
+      className: 'bg-green-100 text-green-800 border-green-200 dark:bg-green-900/30 dark:text-green-200 dark:border-green-800',
+      title: 'Existencias en todas las sucursales',
+      label: `${totalActive} sucursal${totalActive !== 1 ? 'es' : ''}`,
+    }
+  }
+
+  if (ratio >= 0.5) {
+    return {
+      className: 'bg-yellow-100 text-yellow-900 border-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-200 dark:border-yellow-800',
+      title: `Faltan existencias en ${missing} sucursal${missing !== 1 ? 'es' : ''}`,
+      label: `${clampedWith}/${totalActive} sucursales`,
+    }
+  }
+
+  return {
+    className: 'bg-red-100 text-red-800 border-red-200 dark:bg-red-900/30 dark:text-red-200 dark:border-red-800',
+    title: `Existencias solo en ${clampedWith} sucursal${clampedWith !== 1 ? 'es' : ''}`,
+    label: `${clampedWith}/${totalActive} sucursales`,
+  }
 }
 
 export function InventoryPage() {
@@ -356,6 +416,9 @@ export function InventoryPage() {
           sku: item.product.sku,
           name: item.product.name,
           genericName: item.product.genericName ?? null,
+          presentationWrapper: item.product.presentationWrapper ?? null,
+          presentationQuantity: item.product.presentationQuantity ?? null,
+          presentationFormat: item.product.presentationFormat ?? null,
           totalQuantity: 0,
           totalReservedQuantity: 0,
           totalAvailableQuantity: 0,
@@ -592,10 +655,34 @@ export function InventoryPage() {
                       <span className="text-2xl">{expandedProduct === pg.productId ? '📂' : '📁'}</span>
                       <div>
                         <div className="font-medium text-slate-900 dark:text-slate-100">
-                          {getProductLabel({ sku: pg.sku, name: pg.name, genericName: pg.genericName })}
+                          <span>
+                            {pg.name}
+                            {(() => {
+                              const pres = formatPresentation(pg)
+                              return pres ? ` - ${pres}` : ''
+                            })()}
+                          </span>
+                          <span className="ml-2 text-xs font-mono text-slate-500 dark:text-slate-400">| {pg.sku}</span>
                         </div>
-                        <div className="text-sm text-slate-600 dark:text-slate-400">
-                          {pg.warehouses.length} sucursal{pg.warehouses.length !== 1 ? 'es' : ''}
+                        <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
+                          {(() => {
+                            const activeCount = activeWarehouses.length
+                            const withStock = activeWarehouses.filter((w) =>
+                              pg.warehouses.some((x) => x.warehouseId === w.id && x.availableQuantity > 0),
+                            ).length
+                            const pill = getCoveragePill(withStock, activeCount)
+                            return (
+                              <span
+                                className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${pill.className}`}
+                                title={pill.title}
+                              >
+                                {pill.label}
+                              </span>
+                            )
+                          })()}
+                          {pg.genericName ? (
+                            <span className="text-xs text-slate-500 dark:text-slate-400">Genérico: {pg.genericName}</span>
+                          ) : null}
                         </div>
                       </div>
                     </div>

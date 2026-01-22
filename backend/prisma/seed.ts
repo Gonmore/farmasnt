@@ -41,14 +41,31 @@ async function main() {
   const Permissions = await loadPermissions()
   const db = createDb()
 
+  const isProduction = process.env.NODE_ENV === 'production'
+  const updatePasswords =
+    !isProduction ||
+    process.env.SEED_UPDATE_PASSWORDS === '1' ||
+    process.env.SEED_UPDATE_PASSWORDS === 'true' ||
+    process.env.SEED_UPDATE_PASSWORDS === 'TRUE'
+  const seedDemoData =
+    !isProduction ||
+    process.env.SEED_DEMO_DATA === '1' ||
+    process.env.SEED_DEMO_DATA === 'true' ||
+    process.env.SEED_DEMO_DATA === 'TRUE'
+
   const tenantName = process.env.SEED_TENANT_NAME ?? 'Demo Pharma'
   const adminEmail = process.env.SEED_ADMIN_EMAIL ?? 'admin@demo.local'
-  const adminPassword = process.env.SEED_ADMIN_PASSWORD ?? 'Admin123'
+  const adminPasswordRaw = process.env.SEED_ADMIN_PASSWORD
+  const adminPassword = adminPasswordRaw && adminPasswordRaw.trim() ? adminPasswordRaw : 'Admin123'
   const platformDomain = process.env.SEED_PLATFORM_DOMAIN ?? 'farmacia.supernovatel.com'
   
   // Platform Tenant (Supernovatel)
   const platformTenantId = '00000000-0000-0000-0000-000000000001'
   const isPlatformTenant = true
+
+  if (updatePasswords && adminPassword.trim().length < 6) {
+    throw new Error('SEED_ADMIN_PASSWORD must be at least 6 characters when updating passwords')
+  }
 
   const passwordHash = await bcrypt.hash(adminPassword, 12)
 
@@ -188,7 +205,7 @@ async function main() {
   // Crear usuarios Platform Admin
   const platformAdmin1 = await db.user.upsert({
     where: { tenantId_email: { tenantId: platformTenant.id, email: 'admin@supernovatel.com' } },
-    update: { passwordHash, isActive: true },
+    update: { ...(updatePasswords ? { passwordHash } : {}), isActive: true },
     create: {
       tenantId: platformTenant.id,
       email: 'admin@supernovatel.com',
@@ -207,7 +224,7 @@ async function main() {
 
   const platformAdmin2 = await db.user.upsert({
     where: { tenantId_email: { tenantId: platformTenant.id, email: 'usuario1@supernovatel.com' } },
-    update: { passwordHash, isActive: true },
+    update: { ...(updatePasswords ? { passwordHash } : {}), isActive: true },
     create: {
       tenantId: platformTenant.id,
       email: 'usuario1@supernovatel.com',
@@ -271,7 +288,7 @@ async function main() {
 
   const demoAdminUser = await db.user.upsert({
     where: { tenantId_email: { tenantId: demoTenant.id, email: adminEmail } },
-    update: { passwordHash, isActive: true },
+    update: { ...(updatePasswords ? { passwordHash } : {}), isActive: true },
     create: {
       tenantId: demoTenant.id,
       email: adminEmail,
@@ -289,8 +306,18 @@ async function main() {
   })
 
   // ============= LIMPIEZA DE DATOS ANTERIORES =============
-  console.log('\n🧹 Limpiando datos anteriores...')
-  
+  if (!seedDemoData) {
+    console.log('\n🌱 Seed básico aplicado (sin data demo).')
+    console.log(
+      `   - Passwords: ${updatePasswords ? 'ACTUALIZADOS' : 'NO modificados'} (set SEED_UPDATE_PASSWORDS=1 para forzar)`,
+    )
+    console.log('   - Data demo: OMITIDA (set SEED_DEMO_DATA=1 para crear data demo)')
+    await db.$disconnect()
+    return
+  }
+
+  console.log('\n🧹 Limpiando datos anteriores (demo tenant)...')
+
   // Eliminar en orden inverso de dependencias
   await db.salesOrderLine.deleteMany({ where: { tenantId: demoTenant.id } })
   await db.salesOrder.deleteMany({ where: { tenantId: demoTenant.id } })
@@ -303,7 +330,7 @@ async function main() {
   await db.customer.deleteMany({ where: { tenantId: demoTenant.id } })
   await db.location.deleteMany({ where: { tenantId: demoTenant.id } })
   await db.warehouse.deleteMany({ where: { tenantId: demoTenant.id } })
-  
+
   console.log('   ✅ Datos anteriores limpiados')
 
   // ============= DATA DE PRUEBA (Demo Tenant) =============
