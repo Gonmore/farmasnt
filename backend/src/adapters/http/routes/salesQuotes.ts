@@ -103,6 +103,61 @@ class InsufficientStockCityError extends Error {
   }
 }
 
+async function computeStockShortagesInCity(
+  tx: any,
+  args: { tenantId: string; city: string; lines: Array<{ productId: string; productName: string; quantity: any }> },
+): Promise<InsufficientStockItem[]> {
+  const todayUtc = startOfTodayUtc()
+  const cityRaw = (args.city ?? '').trim()
+  const city = cityRaw ? cityRaw : ''
+  if (!city) return []
+
+  const sameCityLoc = {
+    isActive: true,
+    warehouse: {
+      isActive: true,
+      city: { equals: city, mode: 'insensitive' as const },
+    },
+  }
+
+  const shortages: InsufficientStockItem[] = []
+  for (const line of args.lines) {
+    const required = Math.max(0, toNumber(line.quantity))
+    if (required <= 0) continue
+
+    const balances = await tx.inventoryBalance.findMany({
+      where: {
+        tenantId: args.tenantId,
+        productId: line.productId,
+        quantity: { gt: 0 },
+        location: sameCityLoc,
+        OR: [
+          { batchId: null },
+          { batch: { status: 'RELEASED', OR: [{ expiresAt: null }, { expiresAt: { gte: todayUtc } }] } },
+        ],
+      },
+      select: { quantity: true, reservedQuantity: true },
+    })
+
+    const available = balances.reduce((sum: number, b: any) => {
+      const qty = toNumber(b.quantity)
+      const reserved = toNumber(b.reservedQuantity)
+      return sum + Math.max(0, qty - reserved)
+    }, 0)
+
+    if (available + 1e-9 < required) {
+      shortages.push({
+        productId: line.productId,
+        productName: line.productName,
+        required,
+        available,
+      })
+    }
+  }
+
+  return shortages
+}
+
 async function reserveForOrderInCityOrFail(
   tx: any,
   args: {
@@ -735,6 +790,100 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
       }
 
       return reply.status(201).send(created.order)
+    },
+  )
+
+  // Request stock from other users when a quote cannot be processed due to shortages.
+  // Persists a request record so Warehouse can manage it.
+  app.post(
+    '/api/v1/sales/quotes/:id/request-stock',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'SALES'), requirePermission(Permissions.SalesOrderWrite)],
+    },
+    async (request, reply) => {
+      const rawId = (request.params as any)?.id
+      const idStr = typeof rawId === 'string' ? rawId.trim() : String(rawId ?? '').trim()
+      const idParsed = z.string().uuid().safeParse(idStr)
+      if (!idParsed.success) {
+        return reply.status(400).send({ message: 'Invalid params', issues: idParsed.error.issues })
+      }
+
+      const id = idParsed.data
+      const tenantId = request.auth!.tenantId
+      const userId = request.auth!.userId
+
+      const actor = await db.user.findFirst({
+        where: { id: userId, tenantId, isActive: true },
+        select: { id: true, email: true },
+      })
+
+      const quote = await db.quote.findFirst({
+        where: { id, tenantId },
+        include: {
+          customer: { select: { id: true, city: true } },
+          lines: { include: { product: { select: { name: true } } } },
+        },
+      })
+
+      if (!quote) return reply.status(404).send({ message: 'Quote not found' })
+
+      const city = (quote.customer?.city ?? '').trim()
+      if (!city) return reply.status(400).send({ message: 'Customer city is required to request stock' })
+
+      const created = await db.$transaction(async (tx) => {
+        const shortages = await computeStockShortagesInCity(tx, {
+          tenantId,
+          city,
+          lines: (quote.lines ?? []).map((l: any) => ({
+            productId: String(l.productId),
+            productName: String(l.product?.name ?? ''),
+            quantity: l.quantity,
+          })),
+        })
+
+        const items = shortages
+          .map((s) => {
+            const missing = Math.max(0, Number(s.required) - Number(s.available))
+            return { ...s, missing }
+          })
+          .filter((s) => s.missing > 0)
+
+        if (items.length === 0) return { request: null as any, items }
+
+        const requestRow = await tx.stockMovementRequest.create({
+          data: {
+            tenantId,
+            requestedCity: city,
+            quoteId: quote.id,
+            requestedBy: userId,
+            note: `Solicitud desde cotización ${quote.number ?? ''}`.trim(),
+            items: {
+              create: items.map((it) => ({
+                tenantId,
+                productId: it.productId,
+                requestedQuantity: decimalFromNumber(it.missing),
+                remainingQuantity: decimalFromNumber(it.missing),
+              })),
+            },
+          },
+          select: { id: true, requestedCity: true, status: true, createdAt: true },
+        })
+
+        return { request: requestRow, items }
+      })
+
+      const room = `tenant:${tenantId}`
+      app.io?.to(room).emit('sales.quote.stock_requested', {
+        requestId: created.request?.id ?? null,
+        actorUserId: actor?.id ?? userId,
+        actorEmail: actor?.email ?? null,
+        quoteId: quote.id,
+        quoteNumber: quote.number ?? null,
+        city,
+        items: created.items,
+      })
+
+      return reply.send({ ok: true, requestId: created.request?.id ?? null, city, items: created.items })
     },
   )
 

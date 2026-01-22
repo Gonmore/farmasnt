@@ -28,22 +28,16 @@ export function connectSocket(): Socket | null {
   if (!token) return null
 
   if (!socket) {
-    const isDev = import.meta.env.DEV
     socket = io(getWebSocketUrl(), {
       autoConnect: false,
       auth: { token },
-      ...(isDev
-        ? {
-            // When Vite proxies /socket.io, websocket upgrade can be noisy on Windows.
-            // Polling-only still works and avoids ws proxy ECONNRESET spam.
-            transports: ['polling'],
-            upgrade: false,
-          }
-        : {
-            // In production, use polling to avoid unsafe port issues
-            transports: ['polling'],
-            upgrade: false,
-          }),
+      // Allow websocket upgrade when possible (more reliable behind reverse proxies).
+      // Keep polling as a fallback.
+      transports: ['websocket', 'polling'],
+      upgrade: true,
+      reconnection: true,
+      reconnectionAttempts: 10,
+      reconnectionDelay: 500,
     })
 
     socket.on('connect', () => {

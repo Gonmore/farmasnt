@@ -21,6 +21,7 @@ type NotificationsContextType = {
   dismissToast: () => void
   markAllRead: () => void
   clear: () => void
+  notify: (n: Omit<AppNotification, 'id' | 'createdAt'>) => void
 }
 
 const NotificationsContext = createContext<NotificationsContextType | null>(null)
@@ -35,6 +36,7 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
 
   const toastTimerRef = useRef<number | null>(null)
   const invalidateTimerRef = useRef<number | null>(null)
+  const pushRef = useRef<null | ((n: Omit<AppNotification, 'id' | 'createdAt'>) => void)>(null)
 
   useEffect(() => {
     if (!auth.isAuthenticated) {
@@ -69,6 +71,8 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       // Sound
       playNotificationChime()
     }
+
+    pushRef.current = push
 
     const onOrderCreated = (payload: any) => {
       console.log('Notification: Order created', payload)
@@ -243,6 +247,53 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       }
     }
 
+    const onQuoteStockRequested = (payload: any) => {
+      const actorUserId = payload?.actorUserId ? String(payload.actorUserId) : null
+      const meUserId = perms.user?.id ? String(perms.user.id) : null
+      // The requester already gets a local bell notification from the UI action.
+      // Ignore the socket echo to avoid duplicates.
+      if (actorUserId && meUserId && actorUserId === meUserId) return
+
+      const actorEmail = payload?.actorEmail ? String(payload.actorEmail) : 'Un usuario'
+      const quoteNumber = payload?.quoteNumber ? String(payload.quoteNumber) : null
+      const city = payload?.city ? String(payload.city) : null
+
+      const items = Array.isArray(payload?.items) ? payload.items : []
+      const lines = items
+        .map((i: any) => {
+          const name = i?.productName ? String(i.productName) : null
+          const missing = typeof i?.missing === 'number' ? i.missing : Number(i?.missing)
+          if (!name) return null
+          const miss = Number.isFinite(missing) && missing > 0 ? `: ${missing}` : ''
+          return `• ${name}${miss}`
+        })
+        .filter(Boolean)
+        .slice(0, 8)
+
+      const header = `${actorEmail} intentó procesar la ${quoteNumber ? `COT ${quoteNumber}` : 'cotización'}, pero faltan existencias${city ? ` en el almacén de ${city}` : ''}.`
+      const body = lines.length > 0 ? `${header}\n\nFaltantes:\n${lines.join('\n')}` : header
+
+      push({
+        kind: 'warning',
+        title: '📣 Solicitud de existencias',
+        body,
+        linkTo: '/stock/movements',
+      })
+    }
+
+    const onMovementRequestFulfilled = (payload: any) => {
+      const city = payload?.requestedCity ? String(payload.requestedCity) : null
+      push({
+        kind: 'success',
+        title: '✅ Solicitud de movimiento atendida',
+        body: city ? `Destino: ${city}` : undefined,
+        linkTo: '/stock/movements',
+      })
+
+      // Keep movement-requests list fresh where used.
+      queryClient.invalidateQueries({ queryKey: ['movementRequests'] })
+    }
+
     const onStockBalanceChanged = () => {
       // Debounce invalidations to avoid refetch storms when many balances change.
       if (invalidateTimerRef.current) return
@@ -261,6 +312,8 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
     socket.on('sales.order.payment.due', onPaymentDue)
     socket.on('sales.order.paid', onOrderPaid)
     socket.on('sales.quote.processed', onQuoteProcessed)
+    socket.on('sales.quote.stock_requested', onQuoteStockRequested)
+    socket.on('stock.movement_request.fulfilled', onMovementRequestFulfilled)
     socket.on('stock.balance.changed', onStockBalanceChanged)
 
     return () => {
@@ -271,10 +324,14 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       socket.off('sales.order.payment.due', onPaymentDue)
       socket.off('sales.order.paid', onOrderPaid)
       socket.off('sales.quote.processed', onQuoteProcessed)
+      socket.off('sales.quote.stock_requested', onQuoteStockRequested)
+      socket.off('stock.movement_request.fulfilled', onMovementRequestFulfilled)
       socket.off('stock.balance.changed', onStockBalanceChanged)
 
       if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
       if (invalidateTimerRef.current) window.clearTimeout(invalidateTimerRef.current)
+
+      if (pushRef.current) pushRef.current = null
     }
   }, [auth.isAuthenticated, queryClient, perms.roles])
 
@@ -293,6 +350,9 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
     clear: () => {
       setNotifications([])
       setLastReadAt(new Date().toISOString())
+    },
+    notify: (n) => {
+      pushRef.current?.(n)
     },
   }
 

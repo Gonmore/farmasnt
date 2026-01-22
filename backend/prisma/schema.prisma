@@ -34,6 +34,12 @@ enum StockMovementType {
   ADJUSTMENT
 }
 
+enum StockMovementRequestStatus {
+  OPEN
+  FULFILLED
+  CANCELLED
+}
+
 enum SalesOrderStatus {
   DRAFT
   CONFIRMED
@@ -129,6 +135,8 @@ model User {
   email        String
   passwordHash String
   fullName     String?
+  photoUrl     String?
+  photoKey     String?
   isActive     Boolean  @default(true)
   version      Int      @default(1)
   createdAt    DateTime @default(now())
@@ -289,6 +297,7 @@ model Product {
   stockMovements StockMovement[]
   salesOrderLines SalesOrderLine[]
   quoteLines      QuoteLine[]
+  stockMovementRequestItems StockMovementRequestItem[]
 
   @@unique([tenantId, sku])
   @@index([tenantId])
@@ -477,6 +486,50 @@ model StockMovement {
   @@index([createdAt])
 }
 
+model StockMovementRequest {
+  id            String                    @id @default(uuid())
+  tenantId      String
+  status        StockMovementRequestStatus @default(OPEN)
+  requestedCity String
+  quoteId       String?
+  requestedBy   String
+  fulfilledAt   DateTime?
+  fulfilledBy   String?
+  note          String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  quote Quote? @relation(fields: [quoteId], references: [id], onDelete: SetNull)
+
+  items StockMovementRequestItem[]
+
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([tenantId, requestedCity])
+  @@index([tenantId, requestedCity, status])
+  @@index([quoteId])
+  @@index([requestedBy])
+}
+
+model StockMovementRequestItem {
+  id         String   @id @default(uuid())
+  tenantId   String
+  requestId  String
+  productId  String
+  requestedQuantity Decimal
+  remainingQuantity Decimal
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  request StockMovementRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  product Product              @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId])
+  @@index([requestId])
+  @@index([tenantId, productId])
+  @@index([tenantId, productId, remainingQuantity])
+}
+
 model TenantSequence {
   id           String   @id @default(uuid())
   tenantId     String
@@ -595,6 +648,7 @@ model Quote {
   customer Customer @relation(fields: [customerId], references: [id], onDelete: Restrict)
   lines    QuoteLine[]
   salesOrder SalesOrder?
+  stockMovementRequests StockMovementRequest[]
 
   @@unique([tenantId, number])
   @@index([tenantId])

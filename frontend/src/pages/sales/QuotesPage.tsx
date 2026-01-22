@@ -3,9 +3,10 @@ import { useEffect, useState, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { apiFetch } from '../../lib/api'
 import { useAuth } from '../../providers/AuthProvider'
-import { MainLayout, PageContainer, Button, Table, Loading, ErrorState, EmptyState, PaginationCursor, Input, Badge, Modal } from '../../components'
+import { MainLayout, PageContainer, Button, Table, PaginationCursor, Input, Badge, Modal } from '../../components'
 import { useNavigation } from '../../hooks'
 import { EyeIcon, PencilIcon, ArrowPathIcon, PlusIcon } from '@heroicons/react/24/outline'
+import { useNotifications } from '../../providers/NotificationsProvider'
 
 type QuoteListItem = {
   id: string
@@ -40,11 +41,16 @@ async function processQuote(token: string, quoteId: string): Promise<ProcessQuot
   return apiFetch(`/api/v1/sales/quotes/${encodeURIComponent(quoteId)}/process`, { token, method: 'POST' })
 }
 
+async function requestQuoteStock(token: string, quoteId: string): Promise<{ ok: true; city: string; items: any[] }> {
+  return apiFetch(`/api/v1/sales/quotes/${encodeURIComponent(quoteId)}/request-stock`, { token, method: 'POST' })
+}
+
 export function QuotesPage() {
   const auth = useAuth()
   const navigate = useNavigate()
   const navGroups = useNavigation()
   const queryClient = useQueryClient()
+  const notifications = useNotifications()
   const [searchParams, setSearchParams] = useSearchParams()
   const highlightId = searchParams.get('highlight')
   const [cursor, setCursor] = useState<string | undefined>()
@@ -103,6 +109,10 @@ export function QuotesPage() {
     },
   })
 
+  const requestStockMutation = useMutation({
+    mutationFn: async (quoteId: string) => requestQuoteStock(auth.accessToken!, quoteId),
+  })
+
   const processErrorMsg = String((processMutation.error as any)?.message ?? '')
   const isStockError = processMutation.isError && processErrorMsg.toLowerCase().includes('cantidad de existencias insuficientes')
 
@@ -130,12 +140,27 @@ export function QuotesPage() {
             <div className="flex justify-end gap-3">
               <Button
                 variant="secondary"
-                onClick={() => {
-                  // Placeholder: will implement later.
-                  window.alert('Funcionalidad "solicitar existencias" pendiente')
-                  setStockErrorModalOpen(false)
-                  setStockErrorMessage('')
-                  processMutation.reset()
+                loading={requestStockMutation.isPending}
+                onClick={async () => {
+                  const quoteId = processMutation.variables
+                  if (!quoteId) return
+
+                  try {
+                    const res = await requestStockMutation.mutateAsync(quoteId)
+                    notifications.notify({
+                      kind: 'warning',
+                      title: '📣 Solicitud de existencias enviada',
+                      body: (res as any)?.items?.length
+                        ? `Se generó la solicitud y se notificó a los usuarios.`
+                        : 'No se detectaron faltantes; no se generó solicitud.',
+                      linkTo: '/stock/movements',
+                    })
+                    setStockErrorModalOpen(false)
+                    setStockErrorMessage('')
+                    processMutation.reset()
+                  } catch (e: any) {
+                    notifications.notify({ kind: 'error', title: 'No se pudo enviar la solicitud', body: e?.message ?? 'Error', linkTo: '/stock/movements' })
+                  }
                 }}
               >
                 Solicitar existencias
@@ -162,9 +187,6 @@ export function QuotesPage() {
           />
         </div>
         <div ref={tableRef} className="rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
-          {quotesQuery.isLoading && <Loading />}
-          {quotesQuery.error && <ErrorState message="Error al cargar cotizaciones" retry={quotesQuery.refetch} />}
-          {quotesQuery.data && quotesQuery.data.items.length === 0 && <EmptyState message="No hay cotizaciones" />}
           {quotesQuery.data && quotesQuery.data.items.length > 0 && (
             <>
               <Table<QuoteListItem>

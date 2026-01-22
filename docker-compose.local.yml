@@ -69,6 +69,37 @@ services:
       - red-desarrollo
     profiles: ["tools"]
 
+  backend-migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: backend-farmasnt-migrate
+    restart: "no"
+    environment:
+      DATABASE_URL: "postgresql://postgres:D3v3%2Fop3R@postgres-local:5432/farmasnt?schema=public"
+      NODE_ENV: "development"
+      PRISMA_MIGRATE_RESOLVE_ON_FAIL: "1"
+      PRISMA_MIGRATE_RESOLVE_ACTION: "rolled-back"
+      PRISMA_MIGRATE_RESOLVE_NAMES: "20260116063727_pagos"
+    command: ["sh", "-lc", "npm run prisma:migrate"]
+    networks:
+      - red-desarrollo
+    profiles: ["tools"]
+
+  backend-reset:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: backend-farmasnt-reset
+    restart: "no"
+    environment:
+      DATABASE_URL: "postgresql://postgres:D3v3%2Fop3R@postgres-local:5432/farmasnt?schema=public"
+      NODE_ENV: "development"
+    command: ["sh", "-lc", "npx prisma migrate reset --force"]
+    networks:
+      - red-desarrollo
+    profiles: ["tools"]
+
   frontend-farmasnt:
     build:
       context: ./frontend

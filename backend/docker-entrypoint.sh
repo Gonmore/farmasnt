@@ -1,6 +1,23 @@
 #!/bin/sh
 set -e
 
+ensure_dev_dependencies() {
+  # In docker-compose.local.yml we bind-mount ./backend -> /app and use an anonymous volume for /app/node_modules.
+  # That volume can be empty on first run, so we need to install dependencies (including dev deps for tsx/prisma).
+  if [ "${NODE_ENV:-}" = "development" ] || [ "${APP_START_SCRIPT:-}" = "dev" ]; then
+    if [ ! -d node_modules ] || [ ! -f node_modules/.bin/prisma ] || [ ! -f node_modules/.bin/tsx ]; then
+      echo "[backend] Installing npm dependencies (dev mode)..."
+      npm ci --include=dev
+    fi
+
+    # If code is bind-mounted, generated Prisma client may not exist yet.
+    if [ ! -d src/generated/prisma ]; then
+      echo "[backend] Prisma client missing; generating..."
+      npm run prisma:generate
+    fi
+  fi
+}
+
 resolve_and_retry_migrations() {
   # Opt-in only: never auto-resolve unless explicitly configured.
   # Example:
@@ -38,6 +55,7 @@ resolve_and_retry_migrations() {
 }
 
 echo "[backend] Running prisma migrate deploy..."
+ensure_dev_dependencies
 set +e
 npm run prisma:migrate
 migrate_code=$?

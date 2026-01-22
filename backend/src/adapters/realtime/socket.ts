@@ -12,25 +12,50 @@ declare module 'fastify' {
 export function attachSocketIo(app: FastifyInstance): Server {
   const env = getEnv()
 
+  function getHostname(origin: string): string | null {
+    try {
+      return new URL(origin).hostname
+    } catch {
+      return null
+    }
+  }
+
+  function parseConfiguredOrigins(raw: string | undefined): string[] {
+    const v = (raw ?? '').trim()
+    if (!v) return []
+    return v
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+  }
+
+  function isAllowedOrigin(origin: string): boolean {
+    // Always allow default dev origins
+    if (origin === 'http://localhost:6001' || origin === 'http://127.0.0.1:6001') return true
+
+    const originHost = getHostname(origin)
+    if (!originHost) return false
+
+    const configuredOrigins = parseConfiguredOrigins(env.WEB_ORIGIN)
+    for (const configured of configuredOrigins) {
+      // Allow exact origin match when possible
+      if (configured === origin) return true
+
+      const configuredHost = getHostname(configured)
+      // Allow same hostname even if scheme/port differs (common behind reverse proxies)
+      if (configuredHost && configuredHost === originHost) return true
+    }
+
+    return false
+  }
+
   const io = new Server(app.server, {
     cors: {
       origin: (origin, cb) => {
         // Allow non-browser clients and both localhost/127.0.0.1 for dev
         if (!origin) return cb(null, true)
 
-        const configured = (env.WEB_ORIGIN ?? '').trim()
-        const variants = new Set<string>()
-
-        variants.add('http://localhost:6001')
-        variants.add('http://127.0.0.1:6001')
-
-        if (configured) {
-          variants.add(configured)
-          variants.add(configured.replace('localhost', '127.0.0.1'))
-          variants.add(configured.replace('127.0.0.1', 'localhost'))
-        }
-
-        return cb(null, variants.has(origin))
+        return cb(null, isAllowedOrigin(origin))
       },
       credentials: true,
     },
@@ -47,7 +72,8 @@ export function attachSocketIo(app: FastifyInstance): Server {
       socket.join(`tenant:${claims.tenantId}`)
       console.log(`Socket ${socket.id} joined room tenant:${claims.tenantId}`)
       return next()
-    } catch {
+    } catch (e: any) {
+      console.warn('Socket auth failed:', e?.message ?? e)
       return next(new Error('Unauthorized'))
     }
   })

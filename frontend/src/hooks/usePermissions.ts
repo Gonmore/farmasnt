@@ -18,6 +18,9 @@ export interface UserInfo {
   id: string;
   email: string;
   tenantId: string;
+  fullName?: string | null;
+  photoUrl?: string | null;
+  version?: number;
   tenant: {
     id: string;
     name: string;

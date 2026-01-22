@@ -3,7 +3,11 @@ import { useAuth } from '../../providers/AuthProvider'
 import { useNotifications } from '../../providers/NotificationsProvider'
 import { useTenant } from '../../providers/TenantProvider'
 import { useTheme } from '../../providers/ThemeProvider'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { Modal, Button, Input, ImageUpload } from '../../components'
+import { apiFetch } from '../../lib/api'
+import { usePermissions } from '../../hooks/usePermissions'
 
 interface HeaderProps {
   onMenuClick?: () => void
@@ -12,12 +16,127 @@ interface HeaderProps {
 
 export function Header({ onMenuClick, showMenuButton = false }: HeaderProps) {
   const auth = useAuth()
+  const queryClient = useQueryClient()
   const tenant = useTenant()
   const theme = useTheme()
   const notifications = useNotifications()
+  const me = usePermissions()
   const [notificationsOpen, setNotificationsOpen] = useState(false)
+  const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [logoDimensions, setLogoDimensions] = useState<{ width: number; height: number } | null>(null)
-  const dropdownRef = useRef<HTMLDivElement | null>(null)
+  const notificationsDropdownRef = useRef<HTMLDivElement | null>(null)
+  const userDropdownRef = useRef<HTMLDivElement | null>(null)
+
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false)
+  const [uploadPhotoOpen, setUploadPhotoOpen] = useState(false)
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [changePasswordError, setChangePasswordError] = useState<string | null>(null)
+
+  type PresignResponse = { uploadUrl: string; publicUrl: string; key: string; method: 'PUT' | string }
+
+  const initials = useMemo(() => {
+    const fullName = (me.user?.fullName ?? '').trim()
+    const fromName = fullName
+      ? fullName
+          .split(/\s+/)
+          .filter(Boolean)
+          .slice(0, 2)
+          .map((p) => p[0]!.toUpperCase())
+          .join('')
+      : ''
+    if (fromName) return fromName
+
+    const email = (me.user?.email ?? '').trim()
+    if (!email) return 'U'
+    const local = email.split('@')[0] ?? email
+    const parts = local.split(/[._\-\s]+/).filter(Boolean)
+    const letters = parts
+      .slice(0, 2)
+      .map((p) => p[0]!.toUpperCase())
+      .join('')
+    return letters || local.slice(0, 2).toUpperCase() || 'U'
+  }, [me.user?.email, me.user?.fullName])
+
+  async function uploadToPresignedUrl(uploadUrl: string, file: File): Promise<void> {
+    const resp = await fetch(uploadUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': file.type },
+      body: file,
+    })
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '')
+      throw new Error(text || `Upload failed: ${resp.status}`)
+    }
+  }
+
+  const changePasswordMutation = useMutation({
+    mutationFn: async () => {
+      if (!auth.accessToken) throw new Error('No autenticado')
+      const cur = currentPassword
+      const next = newPassword
+      if (!cur || !next) throw new Error('Complete todos los campos')
+      if (next !== confirmPassword) throw new Error('La confirmación no coincide')
+
+      await apiFetch('/api/v1/auth/change-password', {
+        token: auth.accessToken,
+        method: 'POST',
+        body: JSON.stringify({ currentPassword: cur, newPassword: next }),
+      })
+    },
+    onSuccess: () => {
+      setChangePasswordError(null)
+      setCurrentPassword('')
+      setNewPassword('')
+      setConfirmPassword('')
+      setChangePasswordOpen(false)
+    },
+    onError: (e: any) => {
+      setChangePasswordError(e?.message || 'No se pudo cambiar la contraseña')
+    },
+  })
+
+  const uploadPhotoMutation = useMutation({
+    mutationFn: async (file: File) => {
+      if (!auth.accessToken) throw new Error('No autenticado')
+      if (!me.user) throw new Error('Usuario no cargado')
+      if (!me.user.version) throw new Error('Versión de usuario no disponible')
+
+      const presign = await apiFetch<PresignResponse>('/api/v1/auth/me/photo-upload', {
+        token: auth.accessToken,
+        method: 'POST',
+        body: JSON.stringify({ fileName: file.name, contentType: file.type }),
+      })
+      await uploadToPresignedUrl(presign.uploadUrl, file)
+
+      await apiFetch('/api/v1/auth/me', {
+        token: auth.accessToken,
+        method: 'PATCH',
+        body: JSON.stringify({ version: me.user.version, photoUrl: presign.publicUrl, photoKey: presign.key }),
+      })
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['auth', 'me'] })
+      setUploadPhotoOpen(false)
+    },
+  })
+
+  const removePhotoMutation = useMutation({
+    mutationFn: async () => {
+      if (!auth.accessToken) throw new Error('No autenticado')
+      if (!me.user) throw new Error('Usuario no cargado')
+      if (!me.user.version) throw new Error('Versión de usuario no disponible')
+      await apiFetch('/api/v1/auth/me', {
+        token: auth.accessToken,
+        method: 'PATCH',
+        body: JSON.stringify({ version: me.user.version, photoUrl: null, photoKey: null }),
+      })
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['auth', 'me'] })
+    },
+  })
 
   useEffect(() => {
     if (tenant.branding?.logoUrl) {
@@ -46,15 +165,17 @@ export function Header({ onMenuClick, showMenuButton = false }: HeaderProps) {
 
   useEffect(() => {
     const onDocClick = (e: MouseEvent) => {
-      if (!notificationsOpen) return
       const target = e.target as Node | null
-      if (dropdownRef.current && target && !dropdownRef.current.contains(target)) {
+      if (notificationsOpen && notificationsDropdownRef.current && target && !notificationsDropdownRef.current.contains(target)) {
         setNotificationsOpen(false)
+      }
+      if (userMenuOpen && userDropdownRef.current && target && !userDropdownRef.current.contains(target)) {
+        setUserMenuOpen(false)
       }
     }
     document.addEventListener('mousedown', onDocClick)
     return () => document.removeEventListener('mousedown', onDocClick)
-  }, [notificationsOpen])
+  }, [notificationsOpen, userMenuOpen])
 
   return (
     <header className="sticky top-0 z-50 border-b border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
@@ -117,7 +238,7 @@ export function Header({ onMenuClick, showMenuButton = false }: HeaderProps) {
                 )}
               </button>
 
-              <div className="relative" ref={dropdownRef}>
+              <div className="relative" ref={notificationsDropdownRef}>
                 <button
                   onClick={() => {
                     const next = !notificationsOpen
@@ -219,16 +340,158 @@ export function Header({ onMenuClick, showMenuButton = false }: HeaderProps) {
                 )}
               </div>
 
-              <button
-                onClick={auth.logout}
-                className="rounded bg-slate-200 px-4 py-2 text-sm font-medium text-slate-900 hover:bg-slate-300 dark:bg-slate-700 dark:text-slate-100 dark:hover:bg-slate-600"
-              >
-                Salir
-              </button>
+              <div className="relative" ref={userDropdownRef}>
+                <button
+                  onClick={() => setUserMenuOpen((v) => !v)}
+                  className="flex items-center gap-2 rounded-full p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800"
+                  title={me.user?.email ?? 'Usuario'}
+                >
+                  {me.user?.photoUrl ? (
+                    <img
+                      src={me.user.photoUrl}
+                      alt="Avatar"
+                      className="h-9 w-9 rounded-full object-cover border border-slate-200 dark:border-slate-700"
+                    />
+                  ) : (
+                    <div className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-200 text-sm font-semibold text-slate-800 dark:bg-slate-700 dark:text-slate-100">
+                      {initials}
+                    </div>
+                  )}
+                  <svg className="h-4 w-4 text-slate-500 dark:text-slate-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                    <path
+                      fillRule="evenodd"
+                      d="M5.23 7.21a.75.75 0 011.06.02L10 10.94l3.71-3.71a.75.75 0 111.06 1.06l-4.24 4.25a.75.75 0 01-1.06 0L5.21 8.29a.75.75 0 01.02-1.08z"
+                      clipRule="evenodd"
+                    />
+                  </svg>
+                </button>
+
+                {userMenuOpen && (
+                  <div className="absolute right-0 mt-2 w-56 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg dark:border-slate-700 dark:bg-slate-900">
+                    <div className="border-b border-slate-200 px-3 py-2 text-xs text-slate-600 dark:border-slate-700 dark:text-slate-400">
+                      {me.user?.fullName ? <div className="font-semibold text-slate-900 dark:text-slate-100">{me.user.fullName}</div> : null}
+                      <div className="truncate">{me.user?.email ?? ''}</div>
+                    </div>
+                    <button
+                      className="w-full px-3 py-2 text-left text-sm hover:bg-slate-50 dark:hover:bg-slate-800"
+                      onClick={() => {
+                        setUserMenuOpen(false)
+                        setChangePasswordError(null)
+                        setChangePasswordOpen(true)
+                      }}
+                    >
+                      Cambiar contraseña
+                    </button>
+                    <button
+                      className="w-full px-3 py-2 text-left text-sm hover:bg-slate-50 dark:hover:bg-slate-800"
+                      onClick={() => {
+                        setUserMenuOpen(false)
+                        setUploadPhotoOpen(true)
+                      }}
+                    >
+                      Subir foto
+                    </button>
+                    <div className="border-t border-slate-200 dark:border-slate-700" />
+                    <button
+                      className="w-full px-3 py-2 text-left text-sm text-red-700 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-900/20"
+                      onClick={auth.logout}
+                    >
+                      Salir
+                    </button>
+                  </div>
+                )}
+              </div>
             </>
           )}
         </div>
       </div>
+
+      <Modal
+        isOpen={changePasswordOpen}
+        onClose={() => {
+          if (changePasswordMutation.isPending) return
+          setChangePasswordOpen(false)
+        }}
+        title="Cambiar contraseña"
+      >
+        <div className="space-y-3">
+          <Input
+            label="Contraseña actual"
+            type="password"
+            value={currentPassword}
+            onChange={(e) => setCurrentPassword(e.target.value)}
+            autoComplete="current-password"
+          />
+          <Input
+            label="Nueva contraseña"
+            type="password"
+            value={newPassword}
+            onChange={(e) => setNewPassword(e.target.value)}
+            autoComplete="new-password"
+          />
+          <Input
+            label="Confirmar nueva contraseña"
+            type="password"
+            value={confirmPassword}
+            onChange={(e) => setConfirmPassword(e.target.value)}
+            autoComplete="new-password"
+          />
+          {changePasswordError ? (
+            <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-200">
+              {changePasswordError}
+            </div>
+          ) : null}
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="secondary"
+              onClick={() => setChangePasswordOpen(false)}
+              disabled={changePasswordMutation.isPending}
+            >
+              Cancelar
+            </Button>
+            <Button onClick={() => changePasswordMutation.mutate()} loading={changePasswordMutation.isPending}>
+              Guardar
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={uploadPhotoOpen}
+        onClose={() => {
+          if (uploadPhotoMutation.isPending || removePhotoMutation.isPending) return
+          setUploadPhotoOpen(false)
+        }}
+        title="Subir foto"
+      >
+        <div className="space-y-4">
+          <ImageUpload
+            currentImageUrl={me.user?.photoUrl ?? null}
+            mode="select"
+            loading={uploadPhotoMutation.isPending || removePhotoMutation.isPending}
+            onImageSelect={(file) => uploadPhotoMutation.mutate(file)}
+            onImageRemove={() => removePhotoMutation.mutate()}
+          />
+          {(uploadPhotoMutation.error || removePhotoMutation.error) && (
+            <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-200">
+              {uploadPhotoMutation.error instanceof Error
+                ? uploadPhotoMutation.error.message
+                : removePhotoMutation.error instanceof Error
+                  ? removePhotoMutation.error.message
+                  : 'Error actualizando la foto'}
+            </div>
+          )}
+          <div className="flex justify-end">
+            <Button
+              variant="secondary"
+              onClick={() => setUploadPhotoOpen(false)}
+              disabled={uploadPhotoMutation.isPending || removePhotoMutation.isPending}
+            >
+              Cerrar
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </header>
   )
 }

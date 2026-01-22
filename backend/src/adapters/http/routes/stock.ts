@@ -33,6 +33,12 @@ const fefoSuggestionsQuerySchema = z.object({
   take: z.coerce.number().int().min(1).max(50).default(10),
 })
 
+const movementRequestsListQuerySchema = z.object({
+  take: z.coerce.number().int().min(1).max(100).default(50),
+  status: z.enum(['OPEN', 'FULFILLED', 'CANCELLED']).optional(),
+  city: z.string().trim().max(80).optional(),
+})
+
 function startOfTodayUtc(): Date {
   const now = new Date()
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0))
@@ -57,6 +63,68 @@ function semaphoreStatusForDays(d: number): 'EXPIRED' | 'RED' | 'YELLOW' | 'GREE
 export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
   const db = prisma()
   const audit = new AuditService(db)
+
+  app.get(
+    '/api/v1/stock/movement-requests',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.StockRead)],
+    },
+    async (request, reply) => {
+      const tenantId = request.auth!.tenantId
+      const parsed = movementRequestsListQuerySchema.safeParse(request.query)
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
+
+      const where: any = {
+        tenantId,
+        ...(parsed.data.status ? { status: parsed.data.status } : {}),
+        ...(parsed.data.city
+          ? { requestedCity: { equals: parsed.data.city, mode: 'insensitive' as const } }
+          : {}),
+      }
+
+      const rows = await db.stockMovementRequest.findMany({
+        where,
+        take: parsed.data.take,
+        orderBy: [{ status: 'asc' }, { createdAt: 'desc' }],
+        include: {
+          items: {
+            include: { product: { select: { id: true, sku: true, name: true, genericName: true } } },
+            orderBy: [{ remainingQuantity: 'desc' }],
+          },
+        },
+      })
+
+      const userIds = [...new Set(rows.map((r) => r.requestedBy).filter(Boolean))]
+      const users = userIds.length
+        ? await db.user.findMany({ where: { tenantId, id: { in: userIds } }, select: { id: true, email: true, fullName: true } })
+        : []
+      const userMap = new Map(users.map((u) => [u.id, u.fullName || u.email || u.id]))
+
+      return reply.send({
+        items: rows.map((r) => ({
+          id: r.id,
+          status: r.status,
+          requestedCity: r.requestedCity,
+          quoteId: r.quoteId,
+          note: r.note,
+          requestedBy: r.requestedBy,
+          requestedByName: userMap.get(r.requestedBy) || null,
+          fulfilledAt: r.fulfilledAt ? r.fulfilledAt.toISOString() : null,
+          fulfilledBy: r.fulfilledBy,
+          createdAt: r.createdAt.toISOString(),
+          items: r.items.map((it) => ({
+            id: it.id,
+            productId: it.productId,
+            productSku: it.product?.sku ?? null,
+            productName: it.product?.name ?? null,
+            genericName: it.product?.genericName ?? null,
+            requestedQuantity: Number(it.requestedQuantity),
+            remainingQuantity: Number(it.remainingQuantity),
+          })),
+        })),
+      })
+    },
+  )
 
   // Expiry dashboard (read-side)
   app.get(
@@ -383,6 +451,67 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
             note: input.note ?? null,
           })
         })
+
+        // Auto-fulfill movement requests when a transfer ships stock into the requested city.
+        if (input.type === 'TRANSFER' && result.createdMovement?.toLocationId) {
+          const movementQty = Number(result.createdMovement.quantity)
+          if (Number.isFinite(movementQty) && movementQty > 0) {
+            const toLoc = await db.location.findFirst({
+              where: { id: result.createdMovement.toLocationId, tenantId },
+              select: { id: true, warehouse: { select: { id: true, city: true } } },
+            })
+
+            const city = (toLoc?.warehouse?.city ?? '').trim()
+            if (city) {
+              let remainingToApply = movementQty
+              const openItems = await db.stockMovementRequestItem.findMany({
+                where: {
+                  tenantId,
+                  productId: result.createdMovement.productId,
+                  remainingQuantity: { gt: 0 },
+                  request: {
+                    status: 'OPEN',
+                    requestedCity: { equals: city, mode: 'insensitive' as const },
+                  },
+                },
+                orderBy: [{ request: { createdAt: 'asc' } }, { createdAt: 'asc' }],
+                select: { id: true, requestId: true, remainingQuantity: true },
+              })
+
+              const touchedRequestIds = new Set<string>()
+              for (const it of openItems) {
+                if (remainingToApply <= 0) break
+                const rem = Number(it.remainingQuantity)
+                if (!Number.isFinite(rem) || rem <= 0) continue
+                const apply = Math.min(rem, remainingToApply)
+                remainingToApply -= apply
+                touchedRequestIds.add(it.requestId)
+                await db.stockMovementRequestItem.update({
+                  where: { id: it.id },
+                  data: { remainingQuantity: { decrement: apply } },
+                })
+              }
+
+              // Mark requests fulfilled if all items are now satisfied.
+              const room = `tenant:${tenantId}`
+              for (const requestId of touchedRequestIds) {
+                const agg = await db.stockMovementRequestItem.aggregate({
+                  where: { tenantId, requestId },
+                  _sum: { remainingQuantity: true },
+                })
+                const sumRemaining = Number((agg as any)?._sum?.remainingQuantity ?? 0)
+                if (sumRemaining <= 1e-9) {
+                  const updatedReq = await db.stockMovementRequest.update({
+                    where: { id: requestId },
+                    data: { status: 'FULFILLED', fulfilledAt: new Date(), fulfilledBy: userId },
+                    select: { id: true, requestedCity: true, quoteId: true, requestedBy: true },
+                  })
+                  app.io?.to(room).emit('stock.movement_request.fulfilled', updatedReq)
+                }
+              }
+            }
+          }
+        }
 
         await audit.append({
           tenantId,
