@@ -115,6 +115,9 @@ type WarehouseGroup = {
     sku: string
     name: string
     genericName?: string | null
+    presentationWrapper?: string | null
+    presentationQuantity?: any
+    presentationFormat?: string | null
     quantity: number
     reservedQuantity: number
     availableQuantity: number
@@ -233,6 +236,17 @@ function formatPresentation(p: {
 
   const parts = [wrapper, qtyStr, format].filter((x) => typeof x === 'string' && x.length > 0)
   return parts.length ? parts.join(' ') : null
+}
+
+function formatProductTitle(p: {
+  name: string
+  sku: string
+  presentationWrapper?: string | null
+  presentationQuantity?: any
+  presentationFormat?: string | null
+}): string {
+  const pres = formatPresentation(p)
+  return `${p.name}${pres ? ` - ${pres}` : ''} | ${p.sku}`
 }
 
 function getCoveragePill(withStockCount: number, totalActive: number): { className: string; title: string; label: string } {
@@ -503,6 +517,9 @@ export function InventoryPage() {
           sku: item.product.sku,
           name: item.product.name,
           genericName: item.product.genericName ?? null,
+          presentationWrapper: item.product.presentationWrapper ?? null,
+          presentationQuantity: item.product.presentationQuantity ?? null,
+          presentationFormat: item.product.presentationFormat ?? null,
           quantity: 0,
           reservedQuantity: 0,
           availableQuantity: 0,
@@ -703,7 +720,7 @@ export function InventoryPage() {
                         >
                           <div className="mb-2 flex items-center justify-between">
                             <div className="font-medium text-slate-900 dark:text-slate-100">
-                              🏢 {wh.warehouseCode} - {wh.warehouseName}
+                                🏢 {wh.warehouseName}
                             </div>
                             <div className="text-right">
                               <div className="text-lg font-semibold text-slate-700 dark:text-slate-300">{wh.availableQuantity}</div>
@@ -774,7 +791,7 @@ export function InventoryPage() {
                                       onClick={() =>
                                         setMovingItem({
                                           productId: pg.productId,
-                                          productName: getProductLabel({ sku: pg.sku, name: pg.name, genericName: pg.genericName }),
+                                          productName: formatProductTitle(pg),
                                           batchId: b.batchId,
                                           batchNumber: b.batchNumber,
                                           fromLocationId: b.locationId,
@@ -793,7 +810,7 @@ export function InventoryPage() {
                                       onClick={() => {
                                         setStatusChangeItem({
                                           productId: pg.productId,
-                                          productName: getProductLabel({ sku: pg.sku, name: pg.name, genericName: pg.genericName }),
+                                          productName: formatProductTitle(pg),
                                           batchId: b.batchId!,
                                           batchNumber: b.batchNumber,
                                           currentStatus: b.status,
@@ -866,8 +883,18 @@ export function InventoryPage() {
                         >
                           <div className="mb-2 flex items-center justify-between">
                             <div className="font-medium text-slate-900 dark:text-slate-100">
-                              📦 {getProductLabel({ sku: prod.sku, name: prod.name, genericName: prod.genericName })}
+                                <span>
+                                  📦 {prod.name}
+                                  {(() => {
+                                    const pres = formatPresentation(prod)
+                                    return pres ? ` - ${pres}` : ''
+                                  })()}
+                                </span>
+                                <span className="ml-2 text-xs font-mono text-slate-500 dark:text-slate-400">| {prod.sku}</span>
                             </div>
+                            {prod.genericName ? (
+                              <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">Genérico: {prod.genericName}</div>
+                            ) : null}
                             <div className="text-right">
                               <div className="text-lg font-semibold text-slate-700 dark:text-slate-300">{prod.availableQuantity}</div>
                               <div className="text-xs text-slate-500 dark:text-slate-400">
@@ -937,7 +964,7 @@ export function InventoryPage() {
                                       onClick={() =>
                                         setMovingItem({
                                           productId: prod.productId,
-                                          productName: getProductLabel({ sku: prod.sku, name: prod.name, genericName: prod.genericName }),
+                                          productName: formatProductTitle(prod),
                                           batchId: b.batchId,
                                           batchNumber: b.batchNumber,
                                           fromLocationId: b.locationId,
@@ -956,7 +983,7 @@ export function InventoryPage() {
                                       onClick={() => {
                                         setStatusChangeItem({
                                           productId: prod.productId,
-                                          productName: getProductLabel({ sku: prod.sku, name: prod.name, genericName: prod.genericName }),
+                                          productName: formatProductTitle(prod),
                                           batchId: b.batchId!,
                                           batchNumber: b.batchNumber,
                                           currentStatus: b.status,
