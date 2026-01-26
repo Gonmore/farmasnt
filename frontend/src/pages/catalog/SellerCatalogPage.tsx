@@ -649,7 +649,7 @@ export function SellerCatalogPage() {
             {activeProducts.length === 0 && !productsQuery.isLoading && <EmptyState message={searchResults ? "No se encontraron productos" : "No hay productos"} />}
 
             {activeProducts.length > 0 && (
-              <div className="grid grid-cols-[repeat(auto-fit,minmax(140px,1fr))] gap-3">
+              <div className="grid grid-cols-[repeat(auto-fit,minmax(140px,200px))] gap-3 justify-center">
                 {activeProducts.map((p) => {
                   const stock = stockByProduct.get(p.id)
                   const totalStock = stock?.total ?? 0
