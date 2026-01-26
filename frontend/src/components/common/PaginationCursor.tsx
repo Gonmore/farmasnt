@@ -6,6 +6,8 @@ export interface PaginationCursorProps {
   onLoadMore: () => void
   loading?: boolean
   currentCount?: number
+  currentPage?: number
+  take?: number
   onGoToStart?: () => void
   canGoBack?: boolean
   onGoBack?: () => void
@@ -16,6 +18,8 @@ export function PaginationCursor({
   onLoadMore,
   loading,
   currentCount,
+  currentPage = 1,
+  take = 20,
   onGoToStart,
   canGoBack,
   onGoBack
@@ -24,12 +28,16 @@ export function PaginationCursor({
 
   if (!hasNavigation) return null
 
+  // Calcular el rango correcto
+  const startRange = ((currentPage - 1) * take) + 1
+  const endRange = currentCount ? startRange + currentCount - 1 : startRange + take - 1
+
   return (
     <div className="mt-4 flex items-center justify-between">
       <div className="flex items-center gap-2">
         {currentCount !== undefined && currentCount > 0 && (
           <span className="text-sm text-slate-600 dark:text-slate-400">
-            Mostrando del 1 al {currentCount}
+            Mostrando del {startRange} al {endRange}
           </span>
         )}
       </div>

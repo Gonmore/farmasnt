@@ -234,7 +234,7 @@ export function SellerCatalogPage() {
   const [cursor, setCursor] = useState<string | undefined>()
   const [cursorHistory, setCursorHistory] = useState<string[]>([])
   const [searchResults, setSearchResults] = useState<any[] | null>(null)
-  const [totalLoadedCount, setTotalLoadedCount] = useState(0)
+  const [currentPage, setCurrentPage] = useState(1)
   const take = 20
 
   const [customerId, setCustomerId] = useState('')
@@ -364,14 +364,14 @@ export function SellerCatalogPage() {
       const previousCursor = cursorHistory[cursorHistory.length - 1]
       setCursorHistory(prev => prev.slice(0, -1))
       setCursor(previousCursor || undefined)
-      setTotalLoadedCount(prev => Math.max(0, prev - take))
+      setCurrentPage(prev => Math.max(1, prev - 1))
     }
   }
 
   const handleGoToStart = () => {
     setCursor(undefined)
     setCursorHistory([])
-    setTotalLoadedCount(0)
+    setCurrentPage(1)
   }
 
   useEffect(() => {
@@ -747,10 +747,12 @@ export function SellerCatalogPage() {
                 onLoadMore={() => {
                   setCursorHistory(prev => [...prev, cursor || ''])
                   setCursor(productsQuery.data!.nextCursor!)
-                  setTotalLoadedCount(prev => prev + (productsQuery.data?.items.length || 0))
+                  setCurrentPage(prev => prev + 1)
                 }}
                 loading={productsQuery.isFetching}
-                currentCount={totalLoadedCount + (productsQuery.data?.items.length || 0)}
+                currentCount={productsQuery.data?.items.length || 0}
+                currentPage={currentPage}
+                take={take}
                 onGoToStart={cursorHistory.length > 0 ? handleGoToStart : undefined}
                 canGoBack={cursorHistory.length > 0}
                 onGoBack={cursorHistory.length > 0 ? handleGoBack : undefined}

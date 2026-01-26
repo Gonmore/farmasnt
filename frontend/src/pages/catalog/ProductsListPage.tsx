@@ -62,7 +62,7 @@ export function ProductsListPage() {
   const [cursor, setCursor] = useState<string | undefined>()
   const [cursorHistory, setCursorHistory] = useState<string[]>([])
   const [searchResults, setSearchResults] = useState<any[] | null>(null)
-  const [totalLoadedCount, setTotalLoadedCount] = useState(0)
+  const [currentPage, setCurrentPage] = useState(1)
   const take = 20
 
   // Modal states
@@ -194,7 +194,7 @@ export function ProductsListPage() {
     if (combinedData?.nextCursor) {
       setCursorHistory(prev => [...prev, cursor || ''])
       setCursor(combinedData.nextCursor)
-      setTotalLoadedCount(prev => prev + combinedData.items.length)
+      setCurrentPage(prev => prev + 1)
     }
   }
 
@@ -203,14 +203,14 @@ export function ProductsListPage() {
       const previousCursor = cursorHistory[cursorHistory.length - 1]
       setCursorHistory(prev => prev.slice(0, -1))
       setCursor(previousCursor || undefined)
-      setTotalLoadedCount(prev => Math.max(0, prev - take))
+      setCurrentPage(prev => Math.max(1, prev - 1))
     }
   }
 
   const handleGoToStart = () => {
     setCursor(undefined)
     setCursorHistory([])
-    setTotalLoadedCount(0)
+    setCurrentPage(1)
   }
 
   return (
@@ -301,7 +301,9 @@ export function ProductsListPage() {
                   hasMore={!!combinedData.nextCursor}
                   onLoadMore={handleLoadMore}
                   loading={productsQuery.isFetching || enrichmentQuery.isFetching || searchEnrichmentQuery.isFetching}
-                  currentCount={totalLoadedCount + combinedData.items.length}
+                  currentCount={combinedData.items.length}
+                  currentPage={currentPage}
+                  take={take}
                   onGoToStart={cursorHistory.length > 0 ? handleGoToStart : undefined}
                   canGoBack={cursorHistory.length > 0}
                   onGoBack={cursorHistory.length > 0 ? handleGoBack : undefined}
