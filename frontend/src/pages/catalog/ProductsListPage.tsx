@@ -104,6 +104,60 @@ export function ProductsListPage() {
     enabled: !!productsQuery.data?.items && !!auth.accessToken,
   })
 
+  // Query for enrichment data of search results
+  const searchEnrichmentQuery = useQuery({
+    queryKey: ['search-enrichment', searchResults?.map(p => p.id)],
+    queryFn: async () => {
+      if (!searchResults || !auth.accessToken) return null
+
+      const enrichments = await Promise.all(
+        searchResults.map(async (product) => {
+          const batches = await fetchProductBatches(auth.accessToken!, product.id).catch(() => [])
+
+          // Process batches to get warehouse totals
+          const batchSummaries = batches.map((batch: any) => ({
+            batchNumber: batch.batchNumber,
+            warehouseName: batch.locations?.[0]?.warehouseName || 'Sin ubicación',
+            totalQuantity: batch.totalQuantity || '0',
+            totalReservedQuantity: batch.totalReservedQuantity || '0',
+            totalAvailableQuantity: batch.totalAvailableQuantity || String(Math.max(0, Number(batch.totalQuantity || '0') - Number(batch.totalReservedQuantity || '0'))),
+            expiresAt: batch.expiresAt
+          }))
+
+          return {
+            id: product.id,
+            batches: batchSummaries.slice(0, 3) // Show first 3 batches
+          }
+        })
+      )
+
+      return enrichments
+    },
+    enabled: !!auth.accessToken && !!searchResults,
+  })
+
+  // Combine search results with enrichment data
+  const combinedSearchData = useMemo(() => {
+    if (!searchResults) return null
+    if (!searchEnrichmentQuery.data) {
+      // Return search results with default enrichment values
+      return searchResults.map(product => ({
+        ...product,
+        batches: []
+      }))
+    }
+
+    const enrichmentMap = new Map(searchEnrichmentQuery.data.map(e => [e.id, e]))
+
+    return searchResults.map(product => {
+      const enrichment = enrichmentMap.get(product.id)
+      return enrichment ? { ...product, ...enrichment } : {
+        ...product,
+        batches: []
+      }
+    })
+  }, [searchResults, searchEnrichmentQuery.data])
+
   // Combine the data
   const combinedData = useMemo(() => {
     if (!productsQuery.data) return null
@@ -159,7 +213,16 @@ export function ProductsListPage() {
               retry={productsQuery.refetch}
             />
           )}
-          {searchResults && searchResults.length === 0 && (
+          {searchResults && searchEnrichmentQuery.isLoading && (
+            <Loading />
+          )}
+          {searchResults && searchEnrichmentQuery.error && (
+            <ErrorState
+              message={searchEnrichmentQuery.error instanceof Error ? searchEnrichmentQuery.error.message : 'Error al cargar información de stock'}
+              retry={searchEnrichmentQuery.refetch}
+            />
+          )}
+          {searchResults && !searchEnrichmentQuery.isLoading && searchResults.length === 0 && (
             <EmptyState message="No se encontraron productos" />
           )}
           {!searchResults && combinedData && combinedData.items.length === 0 && (
@@ -172,7 +235,7 @@ export function ProductsListPage() {
               }
             />
           )}
-          {((searchResults && searchResults.length > 0) || (combinedData && combinedData.items.length > 0 && !searchResults)) && (
+          {((combinedSearchData && combinedSearchData.length > 0) || (combinedData && combinedData.items.length > 0 && !searchResults)) && (
             <>
               <Table
                 columns={[
@@ -181,17 +244,20 @@ export function ProductsListPage() {
                   {
                     header: 'Stock',
                     accessor: (p) => {
-                      // Si es resultado de búsqueda, no mostrar stock
-                      if (searchResults) return '-'
+                      // Determinar si usar datos de búsqueda o datos normales
+                      const isSearchResult = !!searchResults
+                      const productData = isSearchResult ? combinedSearchData?.find(sp => sp.id === p.id) : p
+                      
+                      if (!productData) return '-'
                       
                       return (
                         <div className="cursor-pointer">
                           <div
                             className="text-2xl hover:scale-110 transition-transform font-bold text-green-600"
-                            onClick={() => p.batches.length > 0 && setStockModal({ isOpen: true, product: p })}
-                            title={p.batches.length > 0 ? "Ver stock completo" : "Sin stock"}
+                            onClick={() => productData.batches.length > 0 && setStockModal({ isOpen: true, product: productData })}
+                            title={productData.batches.length > 0 ? "Ver stock completo" : "Sin stock"}
                           >
-                            {p.batches.length > 0 ? p.batches.reduce((total: number, batch: any) => total + parseInt(batch.totalAvailableQuantity || batch.totalQuantity), 0) : '➖'}
+                            {productData.batches.length > 0 ? productData.batches.reduce((total: number, batch: any) => total + parseInt(batch.totalAvailableQuantity || batch.totalQuantity), 0) : '➖'}
                           </div>
                         </div>
                       )
@@ -207,7 +273,7 @@ export function ProductsListPage() {
                     ),
                   },
                 ]}
-                data={searchResults || combinedData?.items || []}
+                data={combinedSearchData || combinedData?.items || []}
                 keyExtractor={(p) => p.id}
                 rowClassName={(p) => searchResults ? '' : (p.isActive ? '' : 'bg-red-50')}
               />
@@ -215,7 +281,7 @@ export function ProductsListPage() {
                 <PaginationCursor
                   hasMore={!!combinedData.nextCursor}
                   onLoadMore={handleLoadMore}
-                  loading={productsQuery.isFetching || enrichmentQuery.isFetching}
+                  loading={productsQuery.isFetching || enrichmentQuery.isFetching || searchEnrichmentQuery.isFetching}
                 />
               )}
             </>
