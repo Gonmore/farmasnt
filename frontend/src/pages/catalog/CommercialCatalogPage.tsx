@@ -75,6 +75,7 @@ export function CommercialCatalogPage() {
   const [cursor, setCursor] = useState<string | undefined>()
   const [cursorHistory, setCursorHistory] = useState<string[]>([])
   const [searchResults, setSearchResults] = useState<any[] | null>(null)
+  const [totalLoadedCount, setTotalLoadedCount] = useState(0)
   const [detailModal, setDetailModal] = useState<{ isOpen: boolean; productId: string | null }>({
     isOpen: false,
     productId: null
@@ -97,6 +98,7 @@ export function CommercialCatalogPage() {
     if (productsQuery.data?.nextCursor) {
       setCursorHistory(prev => [...prev, cursor || ''])
       setCursor(productsQuery.data.nextCursor)
+      setTotalLoadedCount(prev => prev + (productsQuery.data?.items.length || 0))
     }
   }
 
@@ -105,12 +107,14 @@ export function CommercialCatalogPage() {
       const previousCursor = cursorHistory[cursorHistory.length - 1]
       setCursorHistory(prev => prev.slice(0, -1))
       setCursor(previousCursor || undefined)
+      setTotalLoadedCount(prev => Math.max(0, prev - take))
     }
   }
 
   const handleGoToStart = () => {
     setCursor(undefined)
     setCursorHistory([])
+    setTotalLoadedCount(0)
   }
 
   const handleViewDetail = (productId: string) => {
@@ -213,7 +217,7 @@ export function CommercialCatalogPage() {
                   hasMore={!!productsQuery.data?.nextCursor}
                   onLoadMore={handleLoadMore}
                   loading={productsQuery.isFetching}
-                  currentCount={productsQuery.data?.items.length || 0}
+                  currentCount={totalLoadedCount + (productsQuery.data?.items.length || 0)}
                   onGoToStart={cursorHistory.length > 0 ? handleGoToStart : undefined}
                   canGoBack={cursorHistory.length > 0}
                   onGoBack={cursorHistory.length > 0 ? handleGoBack : undefined}

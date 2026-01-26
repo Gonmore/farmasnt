@@ -6,7 +6,6 @@ export interface PaginationCursorProps {
   onLoadMore: () => void
   loading?: boolean
   currentCount?: number
-  totalCount?: number
   onGoToStart?: () => void
   canGoBack?: boolean
   onGoBack?: () => void
@@ -17,12 +16,10 @@ export function PaginationCursor({
   onLoadMore,
   loading,
   currentCount,
-  totalCount,
   onGoToStart,
   canGoBack,
   onGoBack
 }: PaginationCursorProps) {
-  const showCount = currentCount !== undefined && totalCount !== undefined
   const hasNavigation = onGoToStart || (canGoBack && onGoBack) || hasMore
 
   if (!hasNavigation) return null
@@ -30,9 +27,9 @@ export function PaginationCursor({
   return (
     <div className="mt-4 flex items-center justify-between">
       <div className="flex items-center gap-2">
-        {showCount && (
+        {currentCount !== undefined && currentCount > 0 && (
           <span className="text-sm text-slate-600 dark:text-slate-400">
-            {currentCount} / {totalCount}
+            Mostrando del 1 al {currentCount}
           </span>
         )}
       </div>
@@ -64,7 +61,7 @@ export function PaginationCursor({
           <Button
             onClick={onLoadMore}
             loading={loading}
-            variant="secondary"
+            variant="outline"
             size="sm"
             icon={<ChevronRightIcon className="w-4 h-4" />}
           >
