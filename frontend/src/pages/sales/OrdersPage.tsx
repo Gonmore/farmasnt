@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { apiFetch } from '../../lib/api'
 import { useAuth } from '../../providers/AuthProvider'
-import { MainLayout, PageContainer, Button, Table, Loading, ErrorState, EmptyState, Badge, PaginationCursor } from '../../components'
+import { MainLayout, PageContainer, Button, Table, Loading, ErrorState, EmptyState, Badge, PaginationCursor, Input } from '../../components'
 import { useNavigation } from '../../hooks'
 import { EyeIcon } from '@heroicons/react/24/outline'
 
@@ -11,6 +11,7 @@ type OrderListItem = {
   id: string
   number: string
   customerId: string
+  customerName: string
   status: 'DRAFT' | 'CONFIRMED' | 'FULFILLED' | 'CANCELLED'
   updatedAt: string
 }
@@ -25,9 +26,10 @@ function orderStatusLabel(status: OrderListItem['status']): string {
   return status
 }
 
-async function fetchOrders(token: string, take: number, cursor?: string): Promise<ListResponse> {
+async function fetchOrders(token: string, take: number, cursor?: string, customerSearch?: string): Promise<ListResponse> {
   const params = new URLSearchParams({ take: String(take) })
   if (cursor) params.append('cursor', cursor)
+  if (customerSearch) params.append('customerSearch', customerSearch)
   return apiFetch(`/api/v1/sales/orders?${params}`, { token })
 }
 
@@ -38,10 +40,11 @@ export function OrdersPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const highlightId = searchParams.get('highlight')
   const [cursor, setCursor] = useState<string | undefined>()
+  const [customerSearch, setCustomerSearch] = useState('')
 
   const ordersQuery = useQuery({
-    queryKey: ['orders', cursor],
-    queryFn: () => fetchOrders(auth.accessToken!, 20, cursor),
+    queryKey: ['orders', cursor, customerSearch],
+    queryFn: () => fetchOrders(auth.accessToken!, 20, cursor, customerSearch || undefined),
     enabled: !!auth.accessToken,
   })
 
@@ -58,6 +61,14 @@ export function OrdersPage() {
   return (
     <MainLayout navGroups={navGroups}>
       <PageContainer title="Órdenes de Venta" actions={<Button onClick={() => navigate('/sales/quotes')}>Ir a cotizaciones</Button>}>
+        <div className="mb-4">
+          <Input
+            placeholder="Buscar por cliente..."
+            value={customerSearch}
+            onChange={(e) => setCustomerSearch(e.target.value)}
+            className="max-w-sm"
+          />
+        </div>
         <div className="rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
           {ordersQuery.isLoading && <Loading />}
           {ordersQuery.error && <ErrorState message="Error al cargar órdenes" retry={ordersQuery.refetch} />}
@@ -67,6 +78,7 @@ export function OrdersPage() {
               <Table
                 columns={[
                   { header: 'Número', width: '130px', accessor: (o) => o.number },
+                  { header: 'Cliente', width: '200px', accessor: (o) => o.customerName },
                   {
                     header: 'Estado',
                     width: '140px',

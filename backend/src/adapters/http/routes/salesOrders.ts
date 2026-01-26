@@ -10,6 +10,7 @@ const listQuerySchema = z.object({
   take: z.coerce.number().int().min(1).max(50).default(20),
   cursor: z.string().uuid().optional(),
   status: z.enum(['DRAFT', 'CONFIRMED', 'FULFILLED', 'CANCELLED']).optional(),
+  customerSearch: z.string().optional(),
 })
 
 const deliveriesQuerySchema = z.object({
@@ -646,8 +647,15 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
 
       const tenantId = request.auth!.tenantId
 
+      const where: any = { tenantId, ...(parsed.data.status ? { status: parsed.data.status } : {}) }
+      if (parsed.data.customerSearch) {
+        where.customer = {
+          name: { contains: parsed.data.customerSearch, mode: 'insensitive' },
+        }
+      }
+
       const items = await db.salesOrder.findMany({
-        where: { tenantId, ...(parsed.data.status ? { status: parsed.data.status } : {}) },
+        where,
         take: parsed.data.take,
         ...(parsed.data.cursor
           ? {
@@ -655,7 +663,7 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
               cursor: { id: parsed.data.cursor },
             }
           : {}),
-        orderBy: { id: 'asc' },
+        orderBy: { createdAt: 'desc' },
         select: {
           id: true,
           number: true,
