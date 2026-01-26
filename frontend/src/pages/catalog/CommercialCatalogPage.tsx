@@ -270,11 +270,11 @@ export function CommercialCatalogPage() {
                 <div className="grid md:grid-cols-2 gap-6">
                   {/* Imagen con mejor styling */}
                   <div className="space-y-4">
-                    <div className="aspect-square bg-gradient-to-br from-slate-100 via-slate-200 to-slate-300 dark:from-slate-700 dark:via-slate-600 dark:to-slate-500 rounded-xl flex items-center justify-center shadow-lg overflow-hidden">
+                    <div className="max-h-96 bg-gradient-to-br from-slate-100 via-slate-200 to-slate-300 dark:from-slate-700 dark:via-slate-600 dark:to-slate-500 rounded-xl flex items-center justify-center shadow-lg overflow-hidden">
                       <ProductPhoto
                         url={productDetailQuery.data.photoUrl}
                         alt={productDetailQuery.data.name}
-                        className="w-full h-full object-cover"
+                        className="max-h-96 w-auto object-contain"
                         placeholder={<div className="text-8xl text-slate-400 drop-shadow-lg">📦</div>}
                       />
                     </div>

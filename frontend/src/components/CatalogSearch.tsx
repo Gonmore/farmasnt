@@ -5,7 +5,7 @@ import { useAuth } from '../providers/AuthProvider'
 import { Input, Button } from './common'
 import { MagnifyingGlassIcon, XMarkIcon } from '@heroicons/react/24/outline'
 
-type CatalogSearchItem = { id: string; sku: string; name: string; genericName?: string | null }
+type CatalogSearchItem = { id: string; sku: string; name: string; genericName?: string | null; photoUrl?: string | null }
 
 async function searchCatalog(token: string, query: string, take: number): Promise<{ items: CatalogSearchItem[] }> {
   const params = new URLSearchParams({ q: query, take: String(take) })

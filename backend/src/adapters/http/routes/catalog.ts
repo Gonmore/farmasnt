@@ -40,7 +40,7 @@ export async function registerCatalogRoutes(app: FastifyInstance): Promise<void>
         },
         take,
         orderBy: [{ name: 'asc' }],
-        select: { id: true, sku: true, name: true, genericName: true },
+        select: { id: true, sku: true, name: true, genericName: true, photoUrl: true },
       })
 
       return { items }
