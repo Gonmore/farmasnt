@@ -118,7 +118,7 @@ export function CommercialCatalogPage() {
   }
 
   // Determine which products to display
-  const displayProducts = searchResults || activeProducts
+  const displayProducts = searchResults || productsQuery.data?.items.filter(p => p.isActive) || []
 
   return (
     <MainLayout navGroups={navGroups}>
@@ -138,7 +138,7 @@ export function CommercialCatalogPage() {
           {displayProducts.length > 0 && (
             <>
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-                {displayProducts.map((product) => (
+                {displayProducts.map((product: any) => (
                   <div
                     key={product.id}
                     className="border border-slate-200/60 dark:border-slate-600/60 rounded-xl overflow-hidden bg-white/80 dark:bg-slate-800/80 shadow-md hover:shadow-xl hover:scale-[1.02] transition-all duration-300 backdrop-blur-sm"

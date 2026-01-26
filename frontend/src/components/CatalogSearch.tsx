@@ -1,7 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { apiFetch } from '../lib/api'
-import { getProductDisplayName } from '../lib/productName'
 import { useAuth } from '../providers/AuthProvider'
 import { Input, Button } from './common'
 import { MagnifyingGlassIcon, XMarkIcon } from '@heroicons/react/24/outline'
@@ -25,7 +24,7 @@ export function CatalogSearch({ onSearchResults, className = '' }: CatalogSearch
 
   const searchQuery = useQuery({
     queryKey: ['catalog-search', searchTerm],
-    queryFn: () => searchCatalog(auth.accessToken!, searchTerm, 100), // Aumentar límite para búsqueda
+    queryFn: () => searchCatalog(auth.accessToken!, searchTerm, 50), // Máximo permitido por el backend
     enabled: !!auth.accessToken && searchTerm.length > 0,
   })
 
@@ -43,13 +42,13 @@ export function CatalogSearch({ onSearchResults, className = '' }: CatalogSearch
   }
 
   // Notificar resultados de búsqueda a la página padre
-  React.useEffect(() => {
+  useEffect(() => {
     if (searchQuery.data) {
       onSearchResults?.(searchQuery.data.items)
-    } else if (!searchTerm) {
+    } else if (!searchTerm || searchQuery.error) {
       onSearchResults?.(null)
     }
-  }, [searchQuery.data, searchTerm, onSearchResults])
+  }, [searchQuery.data, searchTerm, searchQuery.error, onSearchResults])
 
   return (
     <div className={className}>
@@ -79,7 +78,11 @@ export function CatalogSearch({ onSearchResults, className = '' }: CatalogSearch
       {searchTerm && (
         <div className="mt-2 text-sm text-slate-600 dark:text-slate-400">
           {searchQuery.isLoading && 'Buscando...'}
-          {searchQuery.error && 'Error en la búsqueda'}
+          {searchQuery.error && (
+            <span className="text-red-600 dark:text-red-400">
+              Error en la búsqueda: {searchQuery.error instanceof Error ? searchQuery.error.message : 'Error desconocido'}
+            </span>
+          )}
           {searchQuery.data && `Encontrados ${searchQuery.data.items.length} productos`}
         </div>
       )}
