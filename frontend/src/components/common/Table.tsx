@@ -17,7 +17,7 @@ export interface TableProps<T> {
 
 export function Table<T>({ columns, data, keyExtractor, rowClassName, onRowClick }: TableProps<T>) {
   return (
-    <div className="w-full overflow-x-auto">
+    <div className="w-full overflow-x-auto scrollbar-thin scrollbar-thumb-slate-300 scrollbar-track-slate-100 dark:scrollbar-thumb-slate-600 dark:scrollbar-track-slate-800">
       <table className="w-full min-w-max" style={{ tableLayout: 'fixed' }}>
         <thead className="bg-slate-50 dark:bg-slate-800">
           <tr className="border-b-2 border-slate-200 dark:border-slate-700">

@@ -138,33 +138,25 @@ export function ExpiryPage() {
             <>
               <Table
                 columns={[
-                  { header: 'SKU', accessor: (item) => item.sku },
-                  { header: 'Producto', accessor: (item) => item.name },
-                  { header: 'Lote', accessor: (item) => item.batchNumber },
+                  { header: 'Producto', accessor: (item) => item.name, width: '200px' },
+                  { header: 'Lote', accessor: (item) => item.batchNumber, width: '120px' },
                   {
                     header: 'Vence',
                     accessor: (item) => new Date(item.expiresAt).toLocaleDateString(),
+                    width: '100px'
                   },
                   {
                     header: 'Días',
                     accessor: (item) => item.daysToExpire,
+                    width: '80px'
                   },
                   {
                     header: 'Estado',
                     accessor: (item) => <ExpiryBadge status={item.status} />,
+                    width: '100px'
                   },
-                  { header: 'Total', accessor: (item) => item.quantity },
-                  { header: 'Reservado', accessor: (item) => item.reservedQuantity ?? '0' },
-                  {
-                    header: 'Disponible',
-                    accessor: (item) => {
-                      if (typeof item.availableQuantity === 'string') return item.availableQuantity
-                      const total = Number(item.quantity || '0')
-                      const reserved = Number(item.reservedQuantity ?? '0')
-                      return String(Math.max(0, total - reserved))
-                    },
-                  },
-                  { header: 'Almacén', accessor: (item) => `${item.warehouseCode} - ${item.locationCode}` },
+                  { header: 'Total', accessor: (item) => item.quantity, width: '80px' },
+                  { header: 'Almacén', accessor: (item) => item.warehouseName, width: '150px' },
                 ]}
                 data={expiryQuery.data.items}
                 keyExtractor={(item) => item.balanceId}
