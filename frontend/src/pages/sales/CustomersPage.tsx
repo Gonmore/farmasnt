@@ -114,18 +114,20 @@ export function CustomersPage() {
                 columns={[
                   { 
                     header: 'Nombre', 
+                    width: '250px',
                     accessor: (c) => (
                       <div className="inline-flex items-center px-3 py-1 rounded-full bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 border border-blue-200 dark:border-blue-800">
                         <span className="text-sm font-medium text-blue-900 dark:text-blue-100">{c.name}</span>
                       </div>
                     )
                   },
-                  { header: 'Ciudad', accessor: (c) => c.city ? c.city.toUpperCase() : '-' },
-                  { header: 'Email', accessor: (c) => c.email || '-' },
-                  { header: 'Teléfono', accessor: (c) => c.phone || '-' },
+                  { header: 'Ciudad', width: '130px', accessor: (c) => c.city ? c.city.toUpperCase() : '-' },
+                  { header: 'Email', width: '200px', accessor: (c) => c.email || '-' },
+                  { header: 'Teléfono', width: '140px', accessor: (c) => c.phone || '-' },
                   {
                     header: 'Acciones',
-                    className: 'text-center w-auto',
+                    className: 'text-center',
+                    width: '120px',
                     accessor: (c) => (
                       <div className="flex items-center justify-center gap-1">
                         <Button variant="ghost" size="sm" icon={<EyeIcon className="w-4 h-4" />} onClick={() => navigate(`/sales/customers/${c.id}`)}>Ver</Button>

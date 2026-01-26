@@ -73,6 +73,7 @@ export function WarehousesPage() {
   const [editingWarehouse, setEditingWarehouse] = useState<WarehouseListItem | null>(null)
   const [editName, setEditName] = useState('')
   const [editCity, setEditCity] = useState('')
+  const [editIsActive, setEditIsActive] = useState(true)
   const [showCreate, setShowCreate] = useState(false)
   const [createCode, setCreateCode] = useState('')
   const [createName, setCreateName] = useState('')
@@ -112,11 +113,11 @@ export function WarehousesPage() {
   )
 
   const updateWarehouseMutation = useMutation({
-    mutationFn: async ({ id, name, city }: { id: string; name: string; city: string }) => {
+    mutationFn: async ({ id, name, city, isActive }: { id: string; name: string; city: string; isActive: boolean }) => {
       return apiFetch(`/api/v1/warehouses/${id}`, {
         token: auth.accessToken!,
         method: 'PATCH',
-        body: JSON.stringify({ name, city }),
+        body: JSON.stringify({ name, city, isActive }),
       })
     },
     onSuccess: () => {
@@ -124,6 +125,7 @@ export function WarehousesPage() {
       setEditingWarehouse(null)
       setEditName('')
       setEditCity('')
+      setEditIsActive(true)
     },
   })
 
@@ -185,11 +187,12 @@ export function WarehousesPage() {
     setEditingWarehouse(warehouse)
     setEditName(warehouse.name)
     setEditCity((warehouse.city ?? '').toString())
+    setEditIsActive(warehouse.isActive)
   }
 
   const handleSaveEdit = () => {
     if (editingWarehouse && editName.trim() && editCity.trim()) {
-      updateWarehouseMutation.mutate({ id: editingWarehouse.id, name: editName.trim(), city: editCity.trim() })
+      updateWarehouseMutation.mutate({ id: editingWarehouse.id, name: editName.trim(), city: editCity.trim(), isActive: editIsActive })
     }
   }
 
@@ -197,6 +200,7 @@ export function WarehousesPage() {
     setEditingWarehouse(null)
     setEditName('')
     setEditCity('')
+    setEditIsActive(true)
   }
 
   const handleLoadMore = () => {
@@ -373,6 +377,20 @@ export function WarehousesPage() {
               onChange={setEditCity}
               disabled={updateWarehouseMutation.isPending}
             />
+          </div>
+
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="edit-is-active"
+              checked={editIsActive}
+              onChange={(e) => setEditIsActive(e.target.checked)}
+              disabled={updateWarehouseMutation.isPending}
+              className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-700"
+            />
+            <label htmlFor="edit-is-active" className="text-sm font-medium text-slate-700 dark:text-slate-300">
+              Sucursal activa
+            </label>
           </div>
 
           {updateWarehouseMutation.error && (

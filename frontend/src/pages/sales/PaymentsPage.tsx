@@ -6,7 +6,7 @@ import { apiFetch } from '../../lib/api'
 import { useNavigation } from '../../hooks'
 import { useAuth } from '../../providers/AuthProvider'
 import { useTenant } from '../../providers/TenantProvider'
-import { EyeIcon } from '@heroicons/react/24/outline'
+import { EyeIcon, CheckCircleIcon } from '@heroicons/react/24/outline'
 
 type PaymentStatus = 'DUE' | 'PAID' | 'ALL'
 
@@ -127,22 +127,26 @@ export function PaymentsPage() {
           {paymentsQuery.data && items.length > 0 && (
             <Table
               columns={[
-                { header: 'Orden', accessor: (p) => p.number },
+                { header: 'Orden', width: '120px', accessor: (p) => <span className="truncate block" title={p.number}>{p.number}</span> },
                 {
                   header: 'Cliente',
+                  width: '250px',
+                  className: 'wrap',
                   accessor: (p) => (
                     <button
-                      className="text-left text-slate-900 underline-offset-2 hover:underline dark:text-slate-100"
+                      className="text-left text-slate-900 underline-offset-2 hover:underline dark:text-slate-100 truncate"
                       onClick={() => navigate(`/sales/customers/${encodeURIComponent(p.customerId)}`)}
                       type="button"
+                      title={p.customerName}
                     >
                       {p.customerName}
                     </button>
                   ),
                 },
-                { header: 'Pago', accessor: (p) => paymentModeLabel(p.paymentMode) },
+                { header: 'Pago', width: '120px', accessor: (p) => <span className="truncate block" title={paymentModeLabel(p.paymentMode)}>{paymentModeLabel(p.paymentMode)}</span> },
                 {
                   header: 'Entrega',
+                  width: '120px',
                   accessor: (p) => {
                     const d = p.deliveredAt ?? p.deliveryDate
                     return d ? new Date(d).toLocaleDateString() : '-'
@@ -150,9 +154,10 @@ export function PaymentsPage() {
                 },
                 {
                   header: 'Cobro',
+                  width: '200px',
                   accessor: (p) => {
                     const d = daysUntil(p.dueAt)
-                    const label = d <= 0 ? 'Hoy' : `En ${d}d`
+                    const label = d < 0 ? `Hace ${Math.abs(d)}d` : d === 0 ? 'Hoy' : `En ${d}d`
                     return (
                       <div className="flex items-center gap-2">
                         <span>{new Date(p.dueAt).toLocaleDateString()}</span>
@@ -161,16 +166,18 @@ export function PaymentsPage() {
                     )
                   },
                 },
-                { header: `Total (${currency})`, accessor: (p) => money(p.total) },
+                { header: `Total (${currency})`, width: '130px', accessor: (p) => money(p.total) },
                 {
                   header: 'Estado',
+                  width: '130px',
                   accessor: (p) => (
-                    <Badge variant={p.paidAt ? 'success' : 'warning'}>{p.paidAt ? 'COBRADA' : 'PENDIENTE'}</Badge>
+                    <Badge variant={p.paidAt ? 'success' : 'warning'}>{p.paidAt ? 'COBRADA' : 'POR COBRAR'}</Badge>
                   ),
                 },
                 {
                   header: 'Acciones',
-                  className: 'text-center w-auto',
+                  className: 'text-center',
+                  width: '280px',
                   accessor: (p) => (
                     <div className="flex items-center justify-center gap-1">
                       <Button
@@ -184,15 +191,17 @@ export function PaymentsPage() {
                       {!p.paidAt && (
                         <Button
                           size="sm"
-                          variant="primary"
+                          variant="secondary"
+                          icon={<CheckCircleIcon className="w-4 h-4" />}
                           disabled={payMutation.isPending}
                           onClick={() => {
                             const ok = window.confirm(`¿Marcar como pagada la orden ${p.number}?`)
                             if (!ok) return
                             payMutation.mutate({ id: p.id, version: p.version })
                           }}
+                          className="!border-green-600 !text-green-700 hover:!bg-green-50 dark:!border-green-500 dark:!text-green-400 dark:hover:!bg-green-900/20"
                         >
-                          Pagado
+                          Confirmar Pago
                         </Button>
                       )}
                     </div>

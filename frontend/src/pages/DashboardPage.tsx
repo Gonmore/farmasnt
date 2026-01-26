@@ -4,9 +4,11 @@ import { getApiBaseUrl, api } from '../lib/api';
 import { connectSocket, disconnectSocket } from '../lib/socket';
 import { useAuth } from '../providers/AuthProvider';
 import { MainLayout } from '../components/layout';
-import { PageContainer, Loading, ErrorState, Badge, Button } from '../components';
+import { PageContainer, Loading, ErrorState, Badge, Button, Modal } from '../components';
 import { useNavigation, usePermissions } from '../hooks';
 import { Navigate } from 'react-router-dom';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import { CubeIcon, UsersIcon, DocumentTextIcon, ShoppingCartIcon } from '@heroicons/react/24/outline';
 
 type HealthResponse = {
   status: 'ok';
@@ -31,6 +33,31 @@ interface ExtensionRequest {
   branchLimit: number;
   subscriptionMonths: number;
 }
+
+interface ExecutiveSummary {
+  products: {
+    withStock: number;
+    total: number;
+    byCity: Array<{ city: string; count: number }>;
+  };
+  customers: {
+    total: number;
+    byCity: Array<{ city: string; count: number }>;
+  };
+  quotes: {
+    thisMonth: number;
+    byCity: Array<{ city: string; count: number }>;
+  };
+  orders: {
+    thisMonth: number;
+    pending: number;
+    fulfilled: number;
+    paid: number;
+    byCity: Array<{ city: string; pending: number; fulfilled: number; paid: number }>;
+  };
+}
+
+const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16'];
 
 async function fetchHealth(): Promise<HealthResponse> {
   const response = await fetch(`${getApiBaseUrl()}/api/v1/health`);
@@ -170,6 +197,180 @@ function ExtensionModal({
         )}
       </div>
     </div>
+  );
+}
+
+function ExecutiveSummaryBlock() {
+  const { isPlatformAdmin } = usePermissions();
+  const [chartModal, setChartModal] = useState<'products' | 'customers' | 'quotes' | 'orders' | null>(null);
+
+  const summaryQuery = useQuery<ExecutiveSummary>({
+    queryKey: ['dashboard', 'executive-summary'],
+    queryFn: async () => {
+      const response = await api.get<ExecutiveSummary>('/api/v1/dashboards/executive-summary');
+      return response.data;
+    },
+    enabled: !isPlatformAdmin,
+  });
+
+  if (isPlatformAdmin) return null;
+  if (summaryQuery.isLoading) return <Loading />;
+  if (summaryQuery.error || !summaryQuery.data) return null;
+
+  const data = summaryQuery.data;
+  const currentMonth = new Date().toLocaleDateString('es-BO', { month: 'long' });
+
+  return (
+    <>
+      <div className="mb-6 rounded-lg border border-slate-200 bg-white p-6 dark:border-slate-700 dark:bg-slate-900">
+        <h3 className="mb-4 flex items-center gap-2 text-lg font-semibold text-slate-900 dark:text-slate-100">
+          <ShoppingCartIcon className="h-6 w-6" />
+          Resumen Ejecutivo
+        </h3>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {/* Productos */}
+          <div
+            onClick={() => setChartModal('products')}
+            className="cursor-pointer rounded-lg border border-blue-200 bg-blue-50 p-4 transition-all hover:border-blue-400 hover:shadow-md dark:border-blue-800 dark:bg-blue-900/20"
+          >
+            <div className="mb-2 flex items-center gap-2">
+              <CubeIcon className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+              <p className="text-sm text-slate-600 dark:text-slate-400">Productos con stock</p>
+            </div>
+            <p className="text-3xl font-bold text-blue-600 dark:text-blue-400">
+              {data.products.withStock}/{data.products.total}
+            </p>
+          </div>
+
+          {/* Clientes */}
+          <div
+            onClick={() => setChartModal('customers')}
+            className="cursor-pointer rounded-lg border border-green-200 bg-green-50 p-4 transition-all hover:border-green-400 hover:shadow-md dark:border-green-800 dark:bg-green-900/20"
+          >
+            <div className="mb-2 flex items-center gap-2">
+              <UsersIcon className="h-5 w-5 text-green-600 dark:text-green-400" />
+              <p className="text-sm text-slate-600 dark:text-slate-400">Clientes</p>
+            </div>
+            <p className="text-3xl font-bold text-green-600 dark:text-green-400">
+              {data.customers.total}
+            </p>
+          </div>
+
+          {/* Cotizaciones */}
+          <div
+            onClick={() => setChartModal('quotes')}
+            className="cursor-pointer rounded-lg border border-orange-200 bg-orange-50 p-4 transition-all hover:border-orange-400 hover:shadow-md dark:border-orange-800 dark:bg-orange-900/20"
+          >
+            <div className="mb-2 flex items-center gap-2">
+              <DocumentTextIcon className="h-5 w-5 text-orange-600 dark:text-orange-400" />
+              <p className="text-sm text-slate-600 dark:text-slate-400">
+                Cotizaciones {currentMonth}
+              </p>
+            </div>
+            <p className="text-3xl font-bold text-orange-600 dark:text-orange-400">
+              {data.quotes.thisMonth}
+            </p>
+          </div>
+
+          {/* Ventas */}
+          <div
+            onClick={() => setChartModal('orders')}
+            className="cursor-pointer rounded-lg border border-purple-200 bg-purple-50 p-4 transition-all hover:border-purple-400 hover:shadow-md dark:border-purple-800 dark:bg-purple-900/20"
+          >
+            <div className="mb-2 flex items-center gap-2">
+              <ShoppingCartIcon className="h-5 w-5 text-purple-600 dark:text-purple-400" />
+              <p className="text-sm text-slate-600 dark:text-slate-400">
+                Órdenes {currentMonth}
+              </p>
+            </div>
+            <p className="text-3xl font-bold text-purple-600 dark:text-purple-400">
+              {data.orders.thisMonth}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Modales de gráficos */}
+      {chartModal === 'products' && data.products.byCity.length > 0 && (
+        <Modal isOpen onClose={() => setChartModal(null)} title="Productos con Stock por Ciudad">
+          <ResponsiveContainer width="100%" height={400}>
+            <BarChart data={data.products.byCity}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="city" />
+              <YAxis />
+              <Tooltip />
+              <Legend />
+              <Bar dataKey="count" fill="#3b82f6" name="Productos con Stock" />
+            </BarChart>
+          </ResponsiveContainer>
+        </Modal>
+      )}
+
+      {chartModal === 'customers' && data.customers.byCity.length > 0 && (
+        <Modal isOpen onClose={() => setChartModal(null)} title="Clientes por Ciudad">
+          <ResponsiveContainer width="100%" height={400}>
+            <PieChart>
+              <Pie
+                data={data.customers.byCity}
+                dataKey="count"
+                nameKey="city"
+                cx="50%"
+                cy="50%"
+                outerRadius={120}
+                label
+              >
+                {data.customers.byCity.map((_, index) => (
+                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                ))}
+              </Pie>
+              <Tooltip />
+              <Legend />
+            </PieChart>
+          </ResponsiveContainer>
+        </Modal>
+      )}
+
+      {chartModal === 'quotes' && data.quotes.byCity.length > 0 && (
+        <Modal isOpen onClose={() => setChartModal(null)} title={`Cotizaciones de ${currentMonth} por Ciudad`}>
+          <ResponsiveContainer width="100%" height={400}>
+            <PieChart>
+              <Pie
+                data={data.quotes.byCity}
+                dataKey="count"
+                nameKey="city"
+                cx="50%"
+                cy="50%"
+                outerRadius={120}
+                label
+              >
+                {data.quotes.byCity.map((_, index) => (
+                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                ))}
+              </Pie>
+              <Tooltip />
+              <Legend />
+            </PieChart>
+          </ResponsiveContainer>
+        </Modal>
+      )}
+
+      {chartModal === 'orders' && data.orders.byCity.length > 0 && (
+        <Modal isOpen onClose={() => setChartModal(null)} title={`Órdenes de Venta de ${currentMonth} por Ciudad`}>
+          <ResponsiveContainer width="100%" height={400}>
+            <BarChart data={data.orders.byCity}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="city" />
+              <YAxis />
+              <Tooltip />
+              <Legend />
+              <Bar dataKey="pending" fill="#f59e0b" name="Pendientes de Entrega" />
+              <Bar dataKey="fulfilled" fill="#10b981" name="Entregadas" />
+              <Bar dataKey="paid" fill="#3b82f6" name="Cobradas" />
+            </BarChart>
+          </ResponsiveContainer>
+        </Modal>
+      )}
+    </>
   );
 }
 
@@ -319,6 +520,9 @@ export function DashboardPage() {
             </div>
           </div>
         )}
+
+        {/* Executive Summary - Solo para Tenant Admin/Users */}
+        <ExecutiveSummaryBlock />
 
         <div className="grid gap-6 md:grid-cols-2">
           {/* Health Status */}

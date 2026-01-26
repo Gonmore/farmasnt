@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { apiFetch } from '../../lib/api'
 import { useAuth } from '../../providers/AuthProvider'
@@ -57,23 +57,6 @@ export function QuotesPage() {
   const [customerSearch, setCustomerSearch] = useState('')
   const [stockErrorModalOpen, setStockErrorModalOpen] = useState(false)
   const [stockErrorMessage, setStockErrorMessage] = useState<string>('')
-
-  const tableRef = useRef<HTMLDivElement>(null)
-  const [showExtraColumns, setShowExtraColumns] = useState(true)
-
-  useEffect(() => {
-    const element = tableRef.current
-    if (!element) return
-    const observer = new ResizeObserver(() => {
-      const table = element.querySelector('table')
-      if (table) {
-        const hasOverflow = table.scrollWidth > element.clientWidth
-        setShowExtraColumns(!hasOverflow)
-      }
-    })
-    observer.observe(element)
-    return () => observer.disconnect()
-  }, [])
 
   const quotesQuery = useQuery({
     queryKey: ['quotes', cursor, customerSearch],
@@ -186,31 +169,34 @@ export function QuotesPage() {
             className="max-w-sm"
           />
         </div>
-        <div ref={tableRef} className="rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
+        <div className="rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
           {quotesQuery.data && quotesQuery.data.items.length > 0 && (
             <>
               <Table<QuoteListItem>
                 columns={[
-                  { header: 'Número', accessor: (q) => q.number },
-                  { header: 'Cliente', accessor: (q) => q.customerName },
+                  { header: 'Número', width: '110px', accessor: (q) => q.number },
+                  { header: 'Cliente', width: '200px', accessor: (q) => q.customerName },
                   {
                     header: 'Estado',
+                    width: '120px',
                     accessor: (q) => (
                       <Badge variant={q.status === 'PROCESSED' ? 'success' : 'default'}>
                         {q.status === 'PROCESSED' ? 'PROCESADA' : 'CREADA'}
                       </Badge>
                     ),
                   },
-                  { header: 'Cotizado por', accessor: (q) => q.quotedBy ?? '-', className: showExtraColumns ? '' : 'hidden' },
-                  { header: 'Productos', accessor: (q) => `${q.itemsCount} productos`, className: showExtraColumns ? '' : 'hidden' },
+                  { header: 'Cotizado por', width: '160px', accessor: (q) => q.quotedBy ?? '-' },
+                  { header: 'Productos', width: '130px', accessor: (q) => `${q.itemsCount} productos` },
+                  { header: 'Fecha', width: '120px', accessor: (q) => new Date(q.createdAt).toLocaleDateString() },
                   {
                     header: 'Total',
+                    width: '130px',
                     accessor: (q) => `Bs. ${q.total.toLocaleString('es-BO', { minimumFractionDigits: 2 })}`
                   },
-                  { header: 'Fecha', accessor: (q) => new Date(q.createdAt).toLocaleDateString(), className: showExtraColumns ? '' : 'hidden' },
                   {
                     header: 'Acciones',
-                    className: 'text-center w-auto',
+                    className: 'text-center',
+                    width: '300px',
                     accessor: (q) => (
                       <div className="flex items-center justify-center gap-1">
                         <Button

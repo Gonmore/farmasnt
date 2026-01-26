@@ -27,12 +27,12 @@ export function Header({ onMenuClick, showMenuButton = false }: HeaderProps) {
   const notificationsDropdownRef = useRef<HTMLDivElement | null>(null)
   const userDropdownRef = useRef<HTMLDivElement | null>(null)
 
-  const [changePasswordOpen, setChangePasswordOpen] = useState(false)
-  const [uploadPhotoOpen, setUploadPhotoOpen] = useState(false)
+  const [editProfileOpen, setEditProfileOpen] = useState(false)
+  const [editFullName, setEditFullName] = useState('')
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
-  const [changePasswordError, setChangePasswordError] = useState<string | null>(null)
+  const [profileError, setProfileError] = useState<string | null>(null)
 
   type PresignResponse = { uploadUrl: string; publicUrl: string; key: string; method: 'PUT' | string }
 
@@ -376,20 +376,12 @@ export function Header({ onMenuClick, showMenuButton = false }: HeaderProps) {
                       className="w-full px-3 py-2 text-left text-sm hover:bg-slate-50 dark:hover:bg-slate-800"
                       onClick={() => {
                         setUserMenuOpen(false)
-                        setChangePasswordError(null)
-                        setChangePasswordOpen(true)
+                        setEditProfileOpen(true)
+                        setEditFullName(me.user?.fullName ?? '')
+                        setProfileError(null)
                       }}
                     >
-                      Cambiar contraseña
-                    </button>
-                    <button
-                      className="w-full px-3 py-2 text-left text-sm hover:bg-slate-50 dark:hover:bg-slate-800"
-                      onClick={() => {
-                        setUserMenuOpen(false)
-                        setUploadPhotoOpen(true)
-                      }}
-                    >
-                      Subir foto
+                      Editar perfil
                     </button>
                     <div className="border-t border-slate-200 dark:border-slate-700" />
                     <button
@@ -407,87 +399,128 @@ export function Header({ onMenuClick, showMenuButton = false }: HeaderProps) {
       </div>
 
       <Modal
-        isOpen={changePasswordOpen}
+        isOpen={editProfileOpen}
         onClose={() => {
-          if (changePasswordMutation.isPending) return
-          setChangePasswordOpen(false)
+          if (changePasswordMutation.isPending || uploadPhotoMutation.isPending || removePhotoMutation.isPending) return
+          setEditProfileOpen(false)
         }}
-        title="Cambiar contraseña"
+        title="Editar Perfil"
+        maxWidth="md"
       >
-        <div className="space-y-3">
-          <Input
-            label="Contraseña actual"
-            type="password"
-            value={currentPassword}
-            onChange={(e) => setCurrentPassword(e.target.value)}
-            autoComplete="current-password"
-          />
-          <Input
-            label="Nueva contraseña"
-            type="password"
-            value={newPassword}
-            onChange={(e) => setNewPassword(e.target.value)}
-            autoComplete="new-password"
-          />
-          <Input
-            label="Confirmar nueva contraseña"
-            type="password"
-            value={confirmPassword}
-            onChange={(e) => setConfirmPassword(e.target.value)}
-            autoComplete="new-password"
-          />
-          {changePasswordError ? (
-            <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-200">
-              {changePasswordError}
+        <div className="max-h-[70vh] space-y-6 overflow-y-auto pr-2">
+          {/* Nombre completo y rol en la misma fila */}
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div>
+              <Input
+                label="Nombre completo"
+                value={editFullName}
+                onChange={(e) => setEditFullName(e.target.value)}
+                placeholder="Ej: Juan Pérez"
+              />
             </div>
-          ) : null}
+            <div>
+              <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">Rol</label>
+              <div className="flex h-10 items-center rounded-md border border-slate-200 bg-slate-50 px-3 dark:border-slate-700 dark:bg-slate-800">
+                {me.roles && me.roles.length > 0 ? (
+                  <span className="rounded-md bg-blue-100 px-2 py-1 text-xs font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
+                    {me.roles[0].name}
+                  </span>
+                ) : (
+                  <span className="text-sm text-slate-500">Sin rol asignado</span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Foto de perfil */}
+          <div>
+            <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">Foto de perfil</label>
+            <ImageUpload
+              currentImageUrl={me.user?.photoUrl ?? null}
+              mode="select"
+              loading={uploadPhotoMutation.isPending || removePhotoMutation.isPending}
+              onImageSelect={(file) => uploadPhotoMutation.mutate(file)}
+              onImageRemove={() => removePhotoMutation.mutate()}
+            />
+          </div>
+
+          {/* Cambiar contraseña (opcional) */}
+          <div className="border-t border-slate-200 pt-4 dark:border-slate-700">
+            <div className="mb-3 text-sm font-medium text-slate-700 dark:text-slate-300">Cambiar contraseña (opcional)</div>
+            <div className="space-y-3">
+              <Input
+                label="Contraseña actual"
+                type="password"
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                autoComplete="current-password"
+                placeholder="Dejar en blanco para no cambiar"
+              />
+              {currentPassword && (
+                <>
+                  <Input
+                    label="Nueva contraseña"
+                    type="password"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    autoComplete="new-password"
+                  />
+                  <Input
+                    label="Confirmar nueva contraseña"
+                    type="password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    autoComplete="new-password"
+                  />
+                </>
+              )}
+            </div>
+          </div>
+
+          {profileError && (
+            <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-200">
+              {profileError}
+            </div>
+          )}
+
           <div className="flex justify-end gap-2">
             <Button
               variant="secondary"
-              onClick={() => setChangePasswordOpen(false)}
-              disabled={changePasswordMutation.isPending}
+              onClick={() => setEditProfileOpen(false)}
+              disabled={changePasswordMutation.isPending || uploadPhotoMutation.isPending || removePhotoMutation.isPending}
             >
               Cancelar
             </Button>
-            <Button onClick={() => changePasswordMutation.mutate()} loading={changePasswordMutation.isPending}>
-              Guardar
-            </Button>
-          </div>
-        </div>
-      </Modal>
-
-      <Modal
-        isOpen={uploadPhotoOpen}
-        onClose={() => {
-          if (uploadPhotoMutation.isPending || removePhotoMutation.isPending) return
-          setUploadPhotoOpen(false)
-        }}
-        title="Subir foto"
-      >
-        <div className="space-y-4">
-          <ImageUpload
-            currentImageUrl={me.user?.photoUrl ?? null}
-            mode="select"
-            loading={uploadPhotoMutation.isPending || removePhotoMutation.isPending}
-            onImageSelect={(file) => uploadPhotoMutation.mutate(file)}
-            onImageRemove={() => removePhotoMutation.mutate()}
-          />
-          {(uploadPhotoMutation.error || removePhotoMutation.error) && (
-            <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-200">
-              {uploadPhotoMutation.error instanceof Error
-                ? uploadPhotoMutation.error.message
-                : removePhotoMutation.error instanceof Error
-                  ? removePhotoMutation.error.message
-                  : 'Error actualizando la foto'}
-            </div>
-          )}
-          <div className="flex justify-end">
             <Button
-              variant="secondary"
-              onClick={() => setUploadPhotoOpen(false)}
-              disabled={uploadPhotoMutation.isPending || removePhotoMutation.isPending}
+              onClick={async () => {
+                setProfileError(null)
+                try {
+                  // Cambiar contraseña si se proporcionó
+                  if (currentPassword && newPassword) {
+                    if (newPassword !== confirmPassword) throw new Error('Las contraseñas no coinciden')
+                    await changePasswordMutation.mutateAsync()
+                  }
+                  // Actualizar nombre si cambió
+                  if (editFullName.trim() !== (me.user?.fullName ?? '').trim()) {
+                    if (!me.user?.version) throw new Error('Versión de usuario no disponible')
+                    await apiFetch('/api/v1/auth/me', {
+                      token: auth.accessToken!,
+                      method: 'PATCH',
+                      body: JSON.stringify({ version: me.user.version, fullName: editFullName.trim() || null }),
+                    })
+                    queryClient.invalidateQueries({ queryKey: ['auth', 'me'] })
+                  }
+                  setEditProfileOpen(false)
+                  setCurrentPassword('')
+                  setNewPassword('')
+                  setConfirmPassword('')
+                } catch (e: any) {
+                  setProfileError(e?.message || 'Error al guardar cambios')
+                }
+              }}
+              loading={changePasswordMutation.isPending || uploadPhotoMutation.isPending || removePhotoMutation.isPending}
             >
-              Cerrar
+              Guardar
             </Button>
           </div>
         </div>

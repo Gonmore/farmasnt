@@ -66,9 +66,10 @@ export function OrdersPage() {
             <>
               <Table
                 columns={[
-                  { header: 'Número', accessor: (o) => o.number },
+                  { header: 'Número', width: '130px', accessor: (o) => o.number },
                   {
                     header: 'Estado',
+                    width: '140px',
                     accessor: (o) => (
                       <Badge
                         variant={
@@ -85,10 +86,11 @@ export function OrdersPage() {
                       </Badge>
                     ),
                   },
-                  { header: 'Última actualización', accessor: (o) => new Date(o.updatedAt).toLocaleDateString() },
+                  { header: 'Última actualización', width: '170px', accessor: (o) => new Date(o.updatedAt).toLocaleDateString() },
                   {
                     header: 'Acciones',
-                    className: 'text-center w-auto',
+                    className: 'text-center',
+                    width: '120px',
                     accessor: (o) => (
                       <div className="flex items-center justify-center gap-1">
                         <Button variant="ghost" size="sm" icon={<EyeIcon className="w-4 h-4" />} onClick={() => navigate(`/sales/orders/${o.id}`)}>Ver</Button>

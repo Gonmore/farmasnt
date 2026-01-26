@@ -257,10 +257,11 @@ export function DeliveriesPage() {
             <>
               <Table
                 columns={[
-                  { header: 'OV', accessor: (o) => o.number },
-                  { header: 'Cliente', accessor: (o) => o.customerName },
+                  { header: 'OV', width: '110px', accessor: (o) => o.number },
+                  { header: 'Cliente', width: '200px', accessor: (o) => o.customerName },
                   {
                     header: 'Fecha entrega',
+                    width: '160px',
                     accessor: (o) => (
                       <div className="flex flex-col">
                         <span className="font-medium">{relativeDeliveryLabel(o.deliveryDate)}</span>
@@ -272,6 +273,7 @@ export function DeliveriesPage() {
                   },
                   {
                     header: 'Lugar',
+                    width: '130px',
                     accessor: (o) => (
                       <Button
                         size="sm"
@@ -288,6 +290,7 @@ export function DeliveriesPage() {
                   },
                   {
                     header: 'Estado',
+                    width: '130px',
                     accessor: (o) => (
                       <Badge
                         variant={o.status === 'FULFILLED' ? 'success' : o.status === 'CONFIRMED' ? 'info' : 'default'}
@@ -298,7 +301,8 @@ export function DeliveriesPage() {
                   },
                   {
                     header: 'Acciones',
-                    className: 'text-center w-auto',
+                    className: 'text-center',
+                    width: '280px',
                     accessor: (o) => (
                       <div className="flex items-center justify-center gap-1">
                         <Button variant="ghost" size="sm" icon={<EyeIcon className="w-4 h-4" />} onClick={() => navigate(`/sales/orders/${o.id}`)}>Ver</Button>

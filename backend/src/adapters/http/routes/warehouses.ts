@@ -14,6 +14,7 @@ const createWarehouseSchema = z.object({
 const updateWarehouseSchema = z.object({
   name: z.string().trim().min(1).max(200).optional(),
   city: z.string().trim().min(1).max(120).optional(),
+  isActive: z.boolean().optional(),
 })
 
 const createLocationSchema = z.object({
@@ -159,6 +160,9 @@ export async function registerWarehouseRoutes(app: FastifyInstance): Promise<voi
         data: {
           ...(parsed.data.name !== undefined ? { name: parsed.data.name } : {}),
           ...(parsed.data.city !== undefined ? { city: parsed.data.city.toUpperCase() } : {}),
+          ...(parsed.data.isActive !== undefined ? { isActive: parsed.data.isActive } : {}),
+          version: { increment: 1 },
+          createdBy: userId,
         },
         select: { id: true, code: true, name: true, city: true, isActive: true, version: true, updatedAt: true },
       })
