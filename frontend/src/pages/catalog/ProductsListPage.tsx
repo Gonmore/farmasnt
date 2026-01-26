@@ -60,6 +60,7 @@ export function ProductsListPage() {
   const navigate = useNavigate()
   const navGroups = useNavigation()
   const [cursor, setCursor] = useState<string | undefined>()
+  const [cursorHistory, setCursorHistory] = useState<string[]>([])
   const [searchResults, setSearchResults] = useState<any[] | null>(null)
   const take = 20
 
@@ -190,8 +191,22 @@ export function ProductsListPage() {
 
   const handleLoadMore = () => {
     if (combinedData?.nextCursor) {
+      setCursorHistory(prev => [...prev, cursor || ''])
       setCursor(combinedData.nextCursor)
     }
+  }
+
+  const handleGoBack = () => {
+    if (cursorHistory.length > 0) {
+      const previousCursor = cursorHistory[cursorHistory.length - 1]
+      setCursorHistory(prev => prev.slice(0, -1))
+      setCursor(previousCursor || undefined)
+    }
+  }
+
+  const handleGoToStart = () => {
+    setCursor(undefined)
+    setCursorHistory([])
   }
 
   return (
@@ -282,6 +297,10 @@ export function ProductsListPage() {
                   hasMore={!!combinedData.nextCursor}
                   onLoadMore={handleLoadMore}
                   loading={productsQuery.isFetching || enrichmentQuery.isFetching || searchEnrichmentQuery.isFetching}
+                  currentCount={combinedData.items.length}
+                  onGoToStart={cursorHistory.length > 0 ? handleGoToStart : undefined}
+                  canGoBack={cursorHistory.length > 0}
+                  onGoBack={cursorHistory.length > 0 ? handleGoBack : undefined}
                 />
               )}
             </>

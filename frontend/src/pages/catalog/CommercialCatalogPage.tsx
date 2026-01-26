@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { apiFetch } from '../../lib/api'
 import { getProductDisplayName } from '../../lib/productName'
 import { useAuth, useCart, useTenant } from '../../providers'
-import { MainLayout, PageContainer, Button, Loading, ErrorState, EmptyState, CatalogSearch, ProductPhoto } from '../../components'
+import { MainLayout, PageContainer, Button, Loading, ErrorState, EmptyState, CatalogSearch, ProductPhoto, PaginationCursor } from '../../components'
 import { useNavigation } from '../../hooks'
 import { EyeIcon, ShoppingCartIcon } from '@heroicons/react/24/outline'
 
@@ -73,6 +73,7 @@ export function CommercialCatalogPage() {
   const tenant = useTenant()
   const currency = tenant.branding?.currency || 'BOB'
   const [cursor, setCursor] = useState<string | undefined>()
+  const [cursorHistory, setCursorHistory] = useState<string[]>([])
   const [searchResults, setSearchResults] = useState<any[] | null>(null)
   const [detailModal, setDetailModal] = useState<{ isOpen: boolean; productId: string | null }>({
     isOpen: false,
@@ -94,8 +95,22 @@ export function CommercialCatalogPage() {
 
   const handleLoadMore = () => {
     if (productsQuery.data?.nextCursor) {
+      setCursorHistory(prev => [...prev, cursor || ''])
       setCursor(productsQuery.data.nextCursor)
     }
+  }
+
+  const handleGoBack = () => {
+    if (cursorHistory.length > 0) {
+      const previousCursor = cursorHistory[cursorHistory.length - 1]
+      setCursorHistory(prev => prev.slice(0, -1))
+      setCursor(previousCursor || undefined)
+    }
+  }
+
+  const handleGoToStart = () => {
+    setCursor(undefined)
+    setCursorHistory([])
   }
 
   const handleViewDetail = (productId: string) => {
@@ -193,17 +208,16 @@ export function CommercialCatalogPage() {
                 ))}
               </div>
 
-              {productsQuery.data?.nextCursor && (
-                <div className="mt-8 flex justify-center">
-                  <Button
-                    onClick={handleLoadMore}
-                    loading={productsQuery.isFetching}
-                    variant="secondary"
-                    className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white shadow-lg hover:shadow-xl transition-all duration-300"
-                  >
-                    Cargar más productos
-                  </Button>
-                </div>
+              {!searchResults && (
+                <PaginationCursor
+                  hasMore={!!productsQuery.data?.nextCursor}
+                  onLoadMore={handleLoadMore}
+                  loading={productsQuery.isFetching}
+                  currentCount={productsQuery.data?.items.length || 0}
+                  onGoToStart={cursorHistory.length > 0 ? handleGoToStart : undefined}
+                  canGoBack={cursorHistory.length > 0}
+                  onGoBack={cursorHistory.length > 0 ? handleGoBack : undefined}
+                />
               )}
             </>
           )}

@@ -17,6 +17,7 @@ import {
   Modal,
   Table,
   MapSelector,
+  PaginationCursor,
 } from '../../components'
 import { useNavigation, useMediaQuery } from '../../hooks'
 import { useNavigate, useSearchParams } from 'react-router-dom'
@@ -231,6 +232,7 @@ export function SellerCatalogPage() {
   const isCompactButton = useMediaQuery('(max-width: 480px) or (min-width: 1024px)')
 
   const [cursor, setCursor] = useState<string | undefined>()
+  const [cursorHistory, setCursorHistory] = useState<string[]>([])
   const [searchResults, setSearchResults] = useState<any[] | null>(null)
   const take = 20
 
@@ -355,6 +357,19 @@ export function SellerCatalogPage() {
     queryFn: () => fetchQuoteForEdit(auth.accessToken!, quoteId!),
     enabled: !!auth.accessToken && !!quoteId,
   })
+
+  const handleGoBack = () => {
+    if (cursorHistory.length > 0) {
+      const previousCursor = cursorHistory[cursorHistory.length - 1]
+      setCursorHistory(prev => prev.slice(0, -1))
+      setCursor(previousCursor || undefined)
+    }
+  }
+
+  const handleGoToStart = () => {
+    setCursor(undefined)
+    setCursorHistory([])
+  }
 
   useEffect(() => {
     if (!isEditing) return
@@ -723,12 +738,19 @@ export function SellerCatalogPage() {
               </div>
             )}
 
-            {productsQuery.data?.nextCursor && (
-              <div className="mt-6 flex justify-center">
-                <Button variant="secondary" onClick={() => setCursor(productsQuery.data!.nextCursor!)} loading={productsQuery.isFetching}>
-                  Cargar más
-                </Button>
-              </div>
+            {!searchResults && (
+              <PaginationCursor
+                hasMore={!!productsQuery.data?.nextCursor}
+                onLoadMore={() => {
+                  setCursorHistory(prev => [...prev, cursor || ''])
+                  setCursor(productsQuery.data!.nextCursor!)
+                }}
+                loading={productsQuery.isFetching}
+                currentCount={productsQuery.data?.items.length || 0}
+                onGoToStart={cursorHistory.length > 0 ? handleGoToStart : undefined}
+                canGoBack={cursorHistory.length > 0}
+                onGoBack={cursorHistory.length > 0 ? handleGoBack : undefined}
+              />
             )}
           </div>
 
