@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { apiFetch } from '../../lib/api'
 import { exportToXlsx } from '../../lib/exportXlsx'
 import { useAuth } from '../../providers/AuthProvider'
-import { MainLayout, PageContainer, Table, Loading, ErrorState, EmptyState, ExpiryBadge, Button } from '../../components'
+import { MainLayout, PageContainer, Table, Loading, ErrorState, EmptyState, ExpiryBadge, Button, PaginationCursor } from '../../components'
 import { useNavigation } from '../../hooks'
 import type { ExpiryStatus } from '../../components'
 import { DocumentArrowDownIcon } from '@heroicons/react/24/outline'
@@ -38,6 +38,8 @@ export function ExpiryPage() {
   const auth = useAuth()
   const navGroups = useNavigation()
   const [cursor, setCursor] = useState<string | undefined>()
+  const [cursorHistory, setCursorHistory] = useState<string[]>([])
+  const [currentPage, setCurrentPage] = useState(1)
   const take = 100
 
   const [exporting, setExporting] = useState(false)
@@ -50,8 +52,25 @@ export function ExpiryPage() {
 
   const handleLoadMore = () => {
     if (expiryQuery.data?.nextCursor) {
+      setCursorHistory(prev => [...prev, cursor || ''])
       setCursor(expiryQuery.data.nextCursor)
+      setCurrentPage(prev => prev + 1)
     }
+  }
+
+  const handleGoBack = () => {
+    if (cursorHistory.length > 0) {
+      const previousCursor = cursorHistory[cursorHistory.length - 1]
+      setCursorHistory(prev => prev.slice(0, -1))
+      setCursor(previousCursor || undefined)
+      setCurrentPage(prev => Math.max(1, prev - 1))
+    }
+  }
+
+  const handleGoToStart = () => {
+    setCursor(undefined)
+    setCursorHistory([])
+    setCurrentPage(1)
   }
 
   const handleExportExcel = async () => {
@@ -161,17 +180,17 @@ export function ExpiryPage() {
                 data={expiryQuery.data.items}
                 keyExtractor={(item) => item.balanceId}
               />
-              {expiryQuery.data.nextCursor && (
-                <div className="mt-4 flex justify-center">
-                  <button
-                    onClick={handleLoadMore}
-                    disabled={expiryQuery.isFetching}
-                    className="rounded bg-slate-200 px-4 py-2 text-sm font-medium text-slate-900 hover:bg-slate-300 dark:bg-slate-700 dark:text-slate-100 dark:hover:bg-slate-600"
-                  >
-                    {expiryQuery.isFetching ? 'Cargando...' : 'Cargar más'}
-                  </button>
-                </div>
-              )}
+              <PaginationCursor
+                hasMore={!!expiryQuery.data?.nextCursor}
+                onLoadMore={handleLoadMore}
+                loading={expiryQuery.isFetching}
+                currentCount={expiryQuery.data?.items.length || 0}
+                currentPage={currentPage}
+                take={take}
+                onGoToStart={cursorHistory.length > 0 ? handleGoToStart : undefined}
+                canGoBack={cursorHistory.length > 0}
+                onGoBack={cursorHistory.length > 0 ? handleGoBack : undefined}
+              />
             </>
           )}
         </div>

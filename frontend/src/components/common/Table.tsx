@@ -17,8 +17,9 @@ export interface TableProps<T> {
 
 export function Table<T>({ columns, data, keyExtractor, rowClassName, onRowClick }: TableProps<T>) {
   return (
-    <div className="w-full overflow-x-auto scrollbar-thin scrollbar-thumb-slate-300 scrollbar-track-slate-100 dark:scrollbar-thumb-slate-600 dark:scrollbar-track-slate-800">
-      <table className="w-full min-w-max" style={{ tableLayout: 'fixed' }}>
+    <div className="w-full">
+      <div className="overflow-x-auto scrollbar scrollbar-thumb-slate-400 scrollbar-track-slate-200 dark:scrollbar-thumb-slate-500 dark:scrollbar-track-slate-700">
+        <table className="w-full min-w-max" style={{ tableLayout: 'fixed' }}>
         <thead className="bg-slate-50 dark:bg-slate-800">
           <tr className="border-b-2 border-slate-200 dark:border-slate-700">
             {columns.map((col, idx) => (
@@ -52,6 +53,7 @@ export function Table<T>({ columns, data, keyExtractor, rowClassName, onRowClick
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   )
 }
