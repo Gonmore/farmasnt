@@ -231,6 +231,7 @@ export function SellerCatalogPage() {
   const isCompactButton = useMediaQuery('(max-width: 480px) or (min-width: 1024px)')
 
   const [cursor, setCursor] = useState<string | undefined>()
+  const [searchResults, setSearchResults] = useState<any[] | null>(null)
   const take = 20
 
   const [customerId, setCustomerId] = useState('')
@@ -513,7 +514,7 @@ export function SellerCatalogPage() {
     },
   })
 
-  const activeProducts = productsQuery.data?.items.filter((p) => p.isActive) ?? []
+  const activeProducts = searchResults || productsQuery.data?.items.filter((p) => p.isActive) || []
 
   const stockByProduct = useMemo(() => {
     const map = new Map<string, StockSummary>()
@@ -588,7 +589,7 @@ export function SellerCatalogPage() {
             retry={quoteForEditQuery.refetch}
           />
         )}
-        <CatalogSearch className="mb-4" />
+        <CatalogSearch className="mb-4" onSearchResults={setSearchResults} />
 
         <div className="mb-4 grid gap-3 md:grid-cols-2">
           <Select
@@ -619,15 +620,15 @@ export function SellerCatalogPage() {
 
         <div className="grid gap-4 grid-cols-1 lg:grid-cols-[1fr_280px] xl:grid-cols-[1fr_360px]">
           <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
-            {productsQuery.isLoading && <Loading />}
-            {productsQuery.error && (
+            {productsQuery.isLoading && !searchResults && <Loading />}
+            {productsQuery.error && !searchResults && (
               <ErrorState
                 message={productsQuery.error instanceof Error ? productsQuery.error.message : 'Error al cargar productos'}
                 retry={productsQuery.refetch}
               />
             )}
 
-            {activeProducts.length === 0 && !productsQuery.isLoading && <EmptyState message="No hay productos" />}
+            {activeProducts.length === 0 && !productsQuery.isLoading && <EmptyState message={searchResults ? "No se encontraron productos" : "No hay productos"} />}
 
             {activeProducts.length > 0 && (
               <div className="grid grid-cols-[repeat(auto-fit,minmax(140px,1fr))] gap-3">

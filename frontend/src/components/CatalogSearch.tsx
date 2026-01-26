@@ -1,11 +1,10 @@
 import { useQuery } from '@tanstack/react-query'
-import { useState } from 'react'
+import React, { useState } from 'react'
 import { apiFetch } from '../lib/api'
 import { getProductDisplayName } from '../lib/productName'
 import { useAuth } from '../providers/AuthProvider'
-import { Input, Button, Table, Loading, ErrorState, EmptyState } from './common'
-import { useNavigate } from 'react-router-dom'
-import { MagnifyingGlassIcon } from '@heroicons/react/24/outline'
+import { Input, Button } from './common'
+import { MagnifyingGlassIcon, XMarkIcon } from '@heroicons/react/24/outline'
 
 type CatalogSearchItem = { id: string; sku: string; name: string; genericName?: string | null }
 
@@ -15,79 +14,73 @@ async function searchCatalog(token: string, query: string, take: number): Promis
 }
 
 interface CatalogSearchProps {
+  onSearchResults?: (results: CatalogSearchItem[] | null) => void
   className?: string
 }
 
-export function CatalogSearch({ className = '' }: CatalogSearchProps) {
+export function CatalogSearch({ onSearchResults, className = '' }: CatalogSearchProps) {
   const auth = useAuth()
-  const navigate = useNavigate()
   const [query, setQuery] = useState('')
   const [searchTerm, setSearchTerm] = useState('')
 
   const searchQuery = useQuery({
     queryKey: ['catalog-search', searchTerm],
-    queryFn: () => searchCatalog(auth.accessToken!, searchTerm, 20),
+    queryFn: () => searchCatalog(auth.accessToken!, searchTerm, 100), // Aumentar límite para búsqueda
     enabled: !!auth.accessToken && searchTerm.length > 0,
   })
 
   const handleSearch = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-    setSearchTerm(query)
+    if (query.trim()) {
+      setSearchTerm(query.trim())
+    }
   }
 
-  const handleProductClick = (productId: string) => {
-    navigate(`/catalog/products/${productId}`)
+  const handleClear = () => {
+    setQuery('')
+    setSearchTerm('')
+    onSearchResults?.(null)
   }
+
+  // Notificar resultados de búsqueda a la página padre
+  React.useEffect(() => {
+    if (searchQuery.data) {
+      onSearchResults?.(searchQuery.data.items)
+    } else if (!searchTerm) {
+      onSearchResults?.(null)
+    }
+  }, [searchQuery.data, searchTerm, onSearchResults])
 
   return (
     <div className={className}>
-      <form onSubmit={handleSearch} className="mb-4">
-        <div className="flex gap-2">
+      <form onSubmit={handleSearch} className="flex gap-2">
+        <div className="relative flex-1">
           <Input
             placeholder="Buscar productos por SKU, nombre comercial o genérico..."
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            className="flex-1"
+            className="pr-10"
           />
-          <Button variant="outline" icon={<MagnifyingGlassIcon />} type="submit" disabled={query.length === 0}>
-            Buscar
-          </Button>
+          {query && (
+            <button
+              type="button"
+              onClick={handleClear}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
+            >
+              <XMarkIcon className="w-4 h-4" />
+            </button>
+          )}
         </div>
+        <Button variant="outline" icon={<MagnifyingGlassIcon />} type="submit" disabled={query.length === 0}>
+          Buscar
+        </Button>
       </form>
 
       {searchTerm && (
-        <div className="rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
-          {searchQuery.isLoading && <Loading />}
-          {searchQuery.error && (
-            <ErrorState
-              message={searchQuery.error instanceof Error ? searchQuery.error.message : 'Error en la búsqueda'}
-              retry={searchQuery.refetch}
-            />
-          )}
-          {searchQuery.data && searchQuery.data.items.length === 0 && (
-            <EmptyState message={`No se encontraron productos para "${searchTerm}"`} />
-          )}
-          {searchQuery.data && searchQuery.data.items.length > 0 && (
-            <Table
-              columns={[
-                { header: 'SKU', accessor: (p: CatalogSearchItem) => p.sku },
-                { header: 'Nombre', accessor: (p: CatalogSearchItem) => getProductDisplayName(p) },
-                {
-                  header: 'Acciones',
-                  className: 'text-center w-auto',
-                  accessor: (p: CatalogSearchItem) => (
-                    <div className="flex items-center justify-center gap-1">
-                      <Button size="sm" variant="ghost" onClick={() => handleProductClick(p.id)}>
-                        👁️ Ver
-                      </Button>
-                    </div>
-                  ),
-                },
-              ]}
-              data={searchQuery.data.items}
-              keyExtractor={(p: CatalogSearchItem) => p.id}
-            />
-          )}
+        <div className="mt-2 text-sm text-slate-600 dark:text-slate-400">
+          {searchQuery.isLoading && 'Buscando...'}
+          {searchQuery.error && 'Error en la búsqueda'}
+          {searchQuery.data && `Encontrados ${searchQuery.data.items.length} productos`}
         </div>
       )}
     </div>

@@ -86,14 +86,14 @@ export function Header({ onMenuClick, showMenuButton = false }: HeaderProps) {
       })
     },
     onSuccess: () => {
-      setChangePasswordError(null)
+      setProfileError(null)
       setCurrentPassword('')
       setNewPassword('')
       setConfirmPassword('')
-      setChangePasswordOpen(false)
+      setEditProfileOpen(false)
     },
     onError: (e: any) => {
-      setChangePasswordError(e?.message || 'No se pudo cambiar la contraseña')
+      setProfileError(e?.message || 'No se pudo cambiar la contraseña')
     },
   })
 
@@ -118,7 +118,7 @@ export function Header({ onMenuClick, showMenuButton = false }: HeaderProps) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['auth', 'me'] })
-      setUploadPhotoOpen(false)
+      setEditProfileOpen(false)
     },
   })
 

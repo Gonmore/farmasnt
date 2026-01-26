@@ -60,6 +60,7 @@ export function ProductsListPage() {
   const navigate = useNavigate()
   const navGroups = useNavigation()
   const [cursor, setCursor] = useState<string | undefined>()
+  const [searchResults, setSearchResults] = useState<any[] | null>(null)
   const take = 20
 
   // Modal states
@@ -149,16 +150,19 @@ export function ProductsListPage() {
           </Button>
         }
       >
-        <CatalogSearch className="mb-6" />
+        <CatalogSearch className="mb-6" onSearchResults={setSearchResults} />
         <div className="rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
-          {productsQuery.isLoading && <Loading />}
-          {productsQuery.error && (
+          {productsQuery.isLoading && !searchResults && <Loading />}
+          {productsQuery.error && !searchResults && (
             <ErrorState
               message={productsQuery.error instanceof Error ? productsQuery.error.message : 'Error al cargar productos'}
               retry={productsQuery.refetch}
             />
           )}
-          {combinedData && combinedData.items.length === 0 && (
+          {searchResults && searchResults.length === 0 && (
+            <EmptyState message="No se encontraron productos" />
+          )}
+          {!searchResults && combinedData && combinedData.items.length === 0 && (
             <EmptyState
               message="No hay productos"
               action={
@@ -168,7 +172,7 @@ export function ProductsListPage() {
               }
             />
           )}
-          {combinedData && combinedData.items.length > 0 && (
+          {((searchResults && searchResults.length > 0) || (combinedData && combinedData.items.length > 0 && !searchResults)) && (
             <>
               <Table
                 columns={[
@@ -176,17 +180,22 @@ export function ProductsListPage() {
                   { header: 'Nombre', accessor: (p) => getProductDisplayName(p) },
                   {
                     header: 'Stock',
-                    accessor: (p) => (
-                      <div className="cursor-pointer">
-                        <div
-                          className="text-2xl hover:scale-110 transition-transform font-bold text-green-600"
-                          onClick={() => p.batches.length > 0 && setStockModal({ isOpen: true, product: p })}
-                          title={p.batches.length > 0 ? "Ver stock completo" : "Sin stock"}
-                        >
-                          {p.batches.length > 0 ? p.batches.reduce((total: number, batch: any) => total + parseInt(batch.totalAvailableQuantity || batch.totalQuantity), 0) : '➖'}
+                    accessor: (p) => {
+                      // Si es resultado de búsqueda, no mostrar stock
+                      if (searchResults) return '-'
+                      
+                      return (
+                        <div className="cursor-pointer">
+                          <div
+                            className="text-2xl hover:scale-110 transition-transform font-bold text-green-600"
+                            onClick={() => p.batches.length > 0 && setStockModal({ isOpen: true, product: p })}
+                            title={p.batches.length > 0 ? "Ver stock completo" : "Sin stock"}
+                          >
+                            {p.batches.length > 0 ? p.batches.reduce((total: number, batch: any) => total + parseInt(batch.totalAvailableQuantity || batch.totalQuantity), 0) : '➖'}
+                          </div>
                         </div>
-                      </div>
-                    ),
+                      )
+                    },
                   },
                   {
                     header: 'Acciones',
@@ -198,15 +207,17 @@ export function ProductsListPage() {
                     ),
                   },
                 ]}
-                data={combinedData.items}
+                data={searchResults || combinedData?.items || []}
                 keyExtractor={(p) => p.id}
-                rowClassName={(p) => p.isActive ? '' : 'bg-red-50'}
+                rowClassName={(p) => searchResults ? '' : (p.isActive ? '' : 'bg-red-50')}
               />
-              <PaginationCursor
-                hasMore={!!combinedData.nextCursor}
-                onLoadMore={handleLoadMore}
-                loading={productsQuery.isFetching || enrichmentQuery.isFetching}
-              />
+              {!searchResults && combinedData && (
+                <PaginationCursor
+                  hasMore={!!combinedData.nextCursor}
+                  onLoadMore={handleLoadMore}
+                  loading={productsQuery.isFetching || enrichmentQuery.isFetching}
+                />
+              )}
             </>
           )}
         </div>

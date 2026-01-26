@@ -73,6 +73,7 @@ export function CommercialCatalogPage() {
   const tenant = useTenant()
   const currency = tenant.branding?.currency || 'BOB'
   const [cursor, setCursor] = useState<string | undefined>()
+  const [searchResults, setSearchResults] = useState<any[] | null>(null)
   const [detailModal, setDetailModal] = useState<{ isOpen: boolean; productId: string | null }>({
     isOpen: false,
     productId: null
@@ -116,28 +117,28 @@ export function CommercialCatalogPage() {
     })
   }
 
-  // Filter only active products
-  const activeProducts = productsQuery.data?.items.filter(p => p.isActive) || []
+  // Determine which products to display
+  const displayProducts = searchResults || activeProducts
 
   return (
     <MainLayout navGroups={navGroups}>
       <PageContainer title="🛒 Catálogo Comercial">
-        <CatalogSearch className="mb-6" />
+        <CatalogSearch className="mb-6" onSearchResults={setSearchResults} />
         <div className="rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-gradient-to-br from-slate-50 to-blue-50/30 dark:from-slate-900 dark:to-slate-800/50 p-6 shadow-lg">
-          {productsQuery.isLoading && <Loading />}
-          {productsQuery.error && (
+          {productsQuery.isLoading && !searchResults && <Loading />}
+          {productsQuery.error && !searchResults && (
             <ErrorState
               message={productsQuery.error instanceof Error ? productsQuery.error.message : 'Error al cargar productos'}
               retry={productsQuery.refetch}
             />
           )}
-          {activeProducts.length === 0 && !productsQuery.isLoading && (
-            <EmptyState message="No hay productos disponibles en el catálogo" />
+          {displayProducts.length === 0 && !productsQuery.isLoading && (
+            <EmptyState message={searchResults ? "No se encontraron productos" : "No hay productos disponibles en el catálogo"} />
           )}
-          {activeProducts.length > 0 && (
+          {displayProducts.length > 0 && (
             <>
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-                {activeProducts.map((product) => (
+                {displayProducts.map((product) => (
                   <div
                     key={product.id}
                     className="border border-slate-200/60 dark:border-slate-600/60 rounded-xl overflow-hidden bg-white/80 dark:bg-slate-800/80 shadow-md hover:shadow-xl hover:scale-[1.02] transition-all duration-300 backdrop-blur-sm"
@@ -163,7 +164,7 @@ export function CommercialCatalogPage() {
                       </div>
 
                       <div className="text-xl font-bold text-transparent bg-gradient-to-r from-green-600 to-emerald-600 bg-clip-text drop-shadow-sm">
-                        {parseFloat(product.price || '0').toFixed(2)} {currency}
+                        {product.price ? `${parseFloat(product.price).toFixed(2)} ${currency}` : 'Precio no disponible'}
                       </div>
 
                       {/* Botones de acción */}
