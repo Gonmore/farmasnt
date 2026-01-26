@@ -73,6 +73,9 @@ export function CatalogSearch({ onSearchResults, className = '' }: CatalogSearch
         <Button variant="outline" icon={<MagnifyingGlassIcon />} type="submit" disabled={query.length === 0}>
           Buscar
         </Button>
+        <Button variant="outline" onClick={handleClear} disabled={!searchTerm}>
+          Limpiar
+        </Button>
       </form>
 
       {searchTerm && (
