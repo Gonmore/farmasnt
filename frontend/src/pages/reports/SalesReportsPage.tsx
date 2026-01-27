@@ -1444,7 +1444,7 @@ export function SalesReportsPage() {
         </Modal>
 
         <Modal isOpen={scheduleModalOpen} onClose={() => setScheduleModalOpen(false)} title="Programar envíos" maxWidth="xl">
-          <div className="flex flex-col h-[80vh]">
+          <div className="flex flex-col max-h-[70vh]">
             <div className="flex-shrink-0 space-y-4">
               <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
                 El backend enviará un correo con el enlace del reporte (con filtros y rango). Desde la vista puedes exportar a PDF.
@@ -1579,7 +1579,7 @@ export function SalesReportsPage() {
           title={drillDownTitle} 
           maxWidth="xl"
         >
-          <div className="flex flex-col h-[80vh]">
+          <div className="flex flex-col max-h-[70vh]">
             <div className="flex-shrink-0 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-700 dark:border-blue-700 dark:bg-blue-900/20 dark:text-blue-300">
               📋 Detalle de órdenes para el período {from} - {to}
             </div>
