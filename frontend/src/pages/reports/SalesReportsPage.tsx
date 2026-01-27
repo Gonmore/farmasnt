@@ -1573,8 +1573,8 @@ export function SalesReportsPage() {
           title={drillDownTitle} 
           maxWidth="xl"
         >
-          <div className="space-y-4">
-            <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-700 dark:border-blue-700 dark:bg-blue-900/20 dark:text-blue-300">
+          <div className="flex flex-col max-h-[80vh]">
+            <div className="flex-shrink-0 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-700 dark:border-blue-700 dark:bg-blue-900/20 dark:text-blue-300">
               📋 Detalle de órdenes para el período {from} - {to}
             </div>
 
@@ -1612,9 +1612,9 @@ export function SalesReportsPage() {
               if (items.length === 0) return <EmptyState message="No hay órdenes en este filtro" />
 
               return (
-                <>
+                <div>
                   {/* Resumen */}
-                  <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+                  <div className="grid grid-cols-2 gap-4 md:grid-cols-4 flex-shrink-0">
                     <div className="rounded-lg bg-slate-100 p-3 text-center dark:bg-slate-800">
                       <div className="text-2xl font-bold text-slate-900 dark:text-white">{items.length}</div>
                       <div className="text-xs text-slate-600 dark:text-slate-400">Órdenes</div>
@@ -1640,11 +1640,11 @@ export function SalesReportsPage() {
                   </div>
 
                   {/* Tabla de órdenes */}
-                  <div className="max-h-96 overflow-auto rounded-lg border border-slate-200 dark:border-slate-700">
+                  <div className="flex-1 overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
                     <Table
                       columns={[
-                        { header: '# Orden', accessor: (o) => <span className="font-mono text-xs">{o.number}</span> },
-                        { header: 'Cliente', accessor: (o) => o.customerName },
+                        { header: '# Orden', accessor: (o) => <span className="font-mono text-xs">{o.number}</span>, width: '100px' },
+                        { header: 'Cliente', accessor: (o) => o.customerName, width: '200px' },
                         { 
                           header: 'Estado', 
                           accessor: (o) => {
@@ -1659,7 +1659,8 @@ export function SalesReportsPage() {
                                 {statusLabel(o.status as SalesStatus)}
                               </span>
                             )
-                          }
+                          },
+                          width: '120px'
                         },
                         { 
                           header: `Total (${currency})`, 
@@ -1667,27 +1668,30 @@ export function SalesReportsPage() {
                             <span className="font-semibold text-green-600 dark:text-green-400">
                               {money(o.total || 0)}
                             </span>
-                          )
+                          ),
+                          width: '120px'
                         },
-                        { header: 'Fecha', accessor: (o) => new Date(o.createdAt).toLocaleDateString() },
+                        { header: 'Fecha', accessor: (o) => new Date(o.createdAt).toLocaleDateString(), width: '100px' },
                         { 
                           header: '✓ Entrega', 
-                          accessor: (o) => o.deliveredAt ? '✅' : '⏳'
+                          accessor: (o) => o.deliveredAt ? '✅' : '⏳',
+                          width: '80px'
                         },
                         { 
                           header: '💰 Pago', 
-                          accessor: (o) => o.paidAt ? '✅' : '⏳'
+                          accessor: (o) => o.paidAt ? '✅' : '⏳',
+                          width: '80px'
                         },
                       ]}
                       data={items}
                       keyExtractor={(o) => o.id}
                     />
                   </div>
-                </>
+                </div>
               )
             })()}
 
-            <div className="flex justify-end">
+            <div className="flex justify-end flex-shrink-0">
               <Button variant="ghost" onClick={() => setDrillDownOpen(false)}>
                 Cerrar
               </Button>
