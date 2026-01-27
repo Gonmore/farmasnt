@@ -88,12 +88,7 @@ export async function exportQuoteToPDF(quoteData: QuotePdfData): Promise<void> {
   }
   pdf.text(`Validez: ${sanitizePdfText(quoteData.validityDays)} día(s)`, margin, yPosition)
 
-  // Calculate details area height for logo positioning
-  const detailsEndY = yPosition + 6 // Add some padding
-  const detailsHeight = detailsEndY - detailsStartY
-  const logoY = detailsStartY + (detailsHeight - 35) / 2 // Center 35mm logo in details area
-
-  // Right side: Logo (if available)
+  // Right side: Logo (if available) - positioned at the same level as company name
   if (quoteData.logoUrl) {
     try {
       const img = new Image()
@@ -116,11 +111,18 @@ export async function exportQuoteToPDF(quoteData: QuotePdfData): Promise<void> {
       const aspectRatio = img.naturalWidth / img.naturalHeight
       const logoWidth = logoHeight * aspectRatio
       
-      // Position logo on the right side, centered vertically with details
+      // Position logo on the right side, aligned with company name
       const logoX = pageWidth - margin - logoWidth
-      pdf.addImage(imgData, 'PNG', logoX, logoY, logoWidth, logoHeight)
+      pdf.addImage(imgData, 'PNG', logoX, detailsStartY, logoWidth, logoHeight)
     } catch (error) {
       console.warn('Failed to load logo for PDF:', error)
+      // Fallback: draw a text placeholder for the logo
+      pdf.setFontSize(12)
+      pdf.setFont('helvetica', 'bold')
+      pdf.setTextColor(150, 150, 150) // Gray color
+      const logoX = pageWidth - margin - 40 // Approximate space for logo
+      pdf.text('[LOGO]', logoX, detailsStartY + 10)
+      pdf.setTextColor(0, 0, 0) // Reset to black
     }
   }
 
