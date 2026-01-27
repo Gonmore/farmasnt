@@ -88,6 +88,11 @@ export async function exportQuoteToPDF(quoteData: QuotePdfData): Promise<void> {
   }
   pdf.text(`Validez: ${sanitizePdfText(quoteData.validityDays)} día(s)`, margin, yPosition)
 
+  // Calculate details area height for logo positioning
+  const detailsEndY = yPosition + 6 // Add some padding
+  const detailsHeight = detailsEndY - detailsStartY
+  const logoY = detailsStartY + (detailsHeight - 35) / 2 // Center 35mm logo in details area
+
   // Right side: Logo (if available)
   if (quoteData.logoUrl) {
     try {
@@ -111,9 +116,9 @@ export async function exportQuoteToPDF(quoteData: QuotePdfData): Promise<void> {
       const aspectRatio = img.naturalWidth / img.naturalHeight
       const logoWidth = logoHeight * aspectRatio
       
-      // Position logo on the right side
+      // Position logo on the right side, centered vertically with details
       const logoX = pageWidth - margin - logoWidth
-      pdf.addImage(imgData, 'PNG', logoX, detailsStartY, logoWidth, logoHeight)
+      pdf.addImage(imgData, 'PNG', logoX, logoY, logoWidth, logoHeight)
     } catch (error) {
       console.warn('Failed to load logo for PDF:', error)
     }
