@@ -1588,14 +1588,14 @@ export function SalesReportsPage() {
             {(drillDownType === 'city' && drillDownCityQuery.isLoading) ||
              (drillDownType === 'customer' && drillDownCustomerQuery.isLoading) ||
              (drillDownType === 'product' && drillDownProductQuery.isLoading) ? (
-              <Loading />
+              <div className="flex-shrink-0"><Loading /></div>
             ) : null}
 
             {/* Error states */}
             {(drillDownType === 'city' && drillDownCityQuery.isError) ||
              (drillDownType === 'customer' && drillDownCustomerQuery.isError) ||
              (drillDownType === 'product' && drillDownProductQuery.isError) ? (
-              <ErrorState message="Error cargando órdenes" />
+              <div className="flex-shrink-0"><ErrorState message="Error cargando órdenes" /></div>
             ) : null}
 
             {/* Data display */}
@@ -1615,7 +1615,7 @@ export function SalesReportsPage() {
                   : drillDownProductQuery.isLoading
 
               if (isLoading) return null
-              if (items.length === 0) return <EmptyState message="No hay órdenes en este filtro" />
+              if (items.length === 0) return <div className="flex-shrink-0"><EmptyState message="No hay órdenes en este filtro" /></div>
 
               return (
                 <div>
