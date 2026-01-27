@@ -1573,7 +1573,7 @@ export function SalesReportsPage() {
           title={drillDownTitle} 
           maxWidth="xl"
         >
-          <div className="flex flex-col max-h-[80vh]">
+          <div className="flex flex-col h-[80vh]">
             <div className="flex-shrink-0 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-700 dark:border-blue-700 dark:bg-blue-900/20 dark:text-blue-300">
               📋 Detalle de órdenes para el período {from} - {to}
             </div>
@@ -1640,7 +1640,7 @@ export function SalesReportsPage() {
                   </div>
 
                   {/* Tabla de órdenes */}
-                  <div className="flex-1 overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
+                  <div className="flex-1 overflow-auto rounded-lg border border-slate-200 dark:border-slate-700">
                     <Table
                       columns={[
                         { header: '# Orden', accessor: (o) => <span className="font-mono text-xs">{o.number}</span>, width: '100px' },
