@@ -92,6 +92,16 @@ type TopProductRow = {
   amount: string | null
 }
 
+type TopProductByPresentationRow = {
+  productId: string
+  sku: string
+  name: string
+  presentationId: string | null
+  presentationName: string | null
+  quantity: string | null
+  amount: string | null
+}
+
 type SalesByCustomerRow = {
   customerId: string
   customerName: string
@@ -978,6 +988,59 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
         productId: r.productId,
         sku: r.sku,
         name: r.name,
+        quantity: r.quantity ?? '0',
+        amount: r.amount ?? '0',
+      }))
+
+      return reply.send({ items })
+    },
+  )
+
+  app.get(
+    '/api/v1/reports/sales/top-products-by-presentation',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'SALES'), requirePermission(Permissions.ReportSalesRead)],
+    },
+    async (request, reply) => {
+      const parsed = salesTopProductsQuerySchema.safeParse(request.query)
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
+
+      const tenantId = request.auth!.tenantId
+      const { from, to, take, status } = parsed.data
+
+      const rows = await db.$queryRaw<TopProductByPresentationRow[]>`
+        SELECT
+          p.id as "productId",
+          p.sku as "sku",
+          p.name as "name",
+          pp.id as "presentationId",
+          COALESCE(pp.name, 'Unidad') as "presentationName",
+          sum(COALESCE(sol."presentationQuantity", sol.quantity))::text as "quantity",
+          sum(sol.quantity * sol."unitPrice")::text as "amount"
+        FROM "SalesOrder" so
+        JOIN "SalesOrderLine" sol
+          ON sol."salesOrderId" = so.id
+          AND sol."tenantId" = so."tenantId"
+        JOIN "Product" p
+          ON p.id = sol."productId"
+        LEFT JOIN "ProductPresentation" pp
+          ON pp.id = sol."presentationId"
+          AND pp."tenantId" = sol."tenantId"
+        WHERE so."tenantId" = ${tenantId}
+          AND (${status ?? null}::text IS NULL OR so.status = ${status ?? null}::"SalesOrderStatus")
+          AND (${from ?? null}::timestamptz IS NULL OR so."createdAt" >= ${from ?? null})
+          AND (${to ?? null}::timestamptz IS NULL OR so."createdAt" < ${to ?? null})
+        GROUP BY p.id, p.sku, p.name, pp.id, COALESCE(pp.name, 'Unidad')
+        ORDER BY sum(sol.quantity * sol."unitPrice") DESC NULLS LAST
+        LIMIT ${take}
+      `
+
+      const items = rows.map((r) => ({
+        productId: r.productId,
+        sku: r.sku,
+        name: r.name,
+        presentationId: r.presentationId,
+        presentationName: r.presentationName ?? 'Unidad',
         quantity: r.quantity ?? '0',
         amount: r.amount ?? '0',
       }))

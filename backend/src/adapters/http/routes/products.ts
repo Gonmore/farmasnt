@@ -11,6 +11,45 @@ import { getEnv } from '../../../shared/env.js'
 import { createStockMovementTx } from '../../../application/stock/stockMovementService.js'
 import { currentYearUtc, nextSequence } from '../../../application/shared/sequence.js'
 
+const presentationCreateSchema = z
+  .object({
+    name: z.string().trim().min(1).max(120),
+    unitsPerPresentation: z.coerce.number().int().min(1).max(1_000_000),
+    sortOrder: z.coerce.number().int().min(0).max(1000).default(0),
+    isDefault: z.boolean().optional(),
+    priceOverride: z.coerce.number().min(0).nullable().optional(),
+    isActive: z.boolean().optional(),
+  })
+
+const presentationUpdateSchema = z
+  .object({
+    version: z.number().int().min(1),
+    name: z.string().trim().min(1).max(120).optional(),
+    unitsPerPresentation: z.coerce.number().int().min(1).max(1_000_000).optional(),
+    sortOrder: z.coerce.number().int().min(0).max(1000).optional(),
+    isDefault: z.boolean().optional(),
+    priceOverride: z.coerce.number().min(0).nullable().optional(),
+    isActive: z.boolean().optional(),
+  })
+
+function mapPrismaUniqueToHttp409(e: any): { status: number; message: string } | null {
+  if (!e || typeof e !== 'object') return null
+  if (typeof (e as any).code !== 'string') return null
+  if ((e as any).code !== 'P2002') return null
+
+  const targetRaw = (e as any)?.meta?.target
+  const targetText = Array.isArray(targetRaw) ? targetRaw.join(',') : String(targetRaw ?? '')
+  const t = targetText.toLowerCase()
+
+  if (t.includes('one_default') || t.includes('default')) {
+    return { status: 409, message: 'Solo puede existir una presentación por defecto por producto' }
+  }
+  if (t.includes('tenantid') && t.includes('productid') && t.includes('name')) {
+    return { status: 409, message: 'Ya existe una presentación con ese nombre para este producto' }
+  }
+  return { status: 409, message: 'Conflicto por restricción única' }
+}
+
 const productCreateSchema = z
   .object({
     sku: z.string().trim().min(1).max(64),
@@ -25,11 +64,32 @@ const productCreateSchema = z
   presentationFormat: z.string().trim().min(1).max(64).optional(),
   cost: z.coerce.number().positive().optional(),
   price: z.coerce.number().positive().optional(),
+  // New: allow defining multiple presentations at product creation.
+  presentations: z.array(presentationCreateSchema).optional(),
   })
   .superRefine((v, ctx) => {
     const commercial = (v.commercialName ?? v.name ?? '').trim()
     if (!commercial) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'commercialName (or name) is required', path: ['commercialName'] })
+    }
+
+    const pres = v.presentations ?? []
+    if (pres.length > 0) {
+      const defaults = pres.filter((p) => p.isDefault)
+      if (defaults.length > 1) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Only one presentation can be default', path: ['presentations'] })
+      }
+
+      const seen = new Set<string>()
+      for (const p of pres) {
+        const key = p.name.trim().toLowerCase()
+        if (!key) continue
+        if (seen.has(key)) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Duplicate presentation name: ${p.name}`, path: ['presentations'] })
+          break
+        }
+        seen.add(key)
+      }
     }
   })
 
@@ -54,7 +114,76 @@ const productUpdateSchema = z.object({
 const listQuerySchema = z.object({
   take: z.coerce.number().int().min(1).max(50).default(20),
   cursor: z.string().uuid().optional(),
+  includePresentations: z.coerce.boolean().optional(),
 })
+
+function buildLegacyPresentationName(args: { wrapper?: string | null; qty?: any; format?: string | null }): string | null {
+  const wrapper = String(args.wrapper ?? '').trim()
+  const format = String(args.format ?? '').trim()
+  const qtyNum = Number(args.qty)
+  if (!wrapper || !Number.isFinite(qtyNum) || qtyNum <= 1) return null
+  const qtyText = String(Math.trunc(qtyNum))
+  const fmt = format ? ` ${format}` : ''
+  return `${wrapper} x${qtyText}${fmt}`.trim()
+}
+
+async function ensureCorePresentationsTx(
+  tx: any,
+  args: { tenantId: string; userId: string; product: any },
+): Promise<void> {
+  const existing = await tx.productPresentation.findMany({
+    where: { tenantId: args.tenantId, productId: args.product.id, isActive: true },
+    select: { id: true },
+    take: 1,
+  })
+
+  if (existing.length > 0) return
+
+  // Create default unit presentation
+  await tx.productPresentation.create({
+    data: {
+      tenantId: args.tenantId,
+      productId: args.product.id,
+      name: 'Unidad',
+      unitsPerPresentation: '1',
+      isDefault: true,
+      sortOrder: 0,
+      isActive: true,
+      createdBy: args.userId,
+    },
+    select: { id: true },
+  })
+
+  // If the product has legacy packaging fields, also create it as a presentation.
+  const legacyName = buildLegacyPresentationName({
+    wrapper: args.product.presentationWrapper,
+    qty: args.product.presentationQuantity,
+    format: args.product.presentationFormat,
+  })
+
+  if (legacyName) {
+    const qtyNum = Math.trunc(Number(args.product.presentationQuantity))
+    if (Number.isFinite(qtyNum) && qtyNum > 1) {
+      try {
+        await tx.productPresentation.create({
+          data: {
+            tenantId: args.tenantId,
+            productId: args.product.id,
+            name: legacyName,
+            unitsPerPresentation: String(qtyNum),
+            isDefault: false,
+            sortOrder: 10,
+            isActive: true,
+            createdBy: args.userId,
+          },
+          select: { id: true },
+        })
+      } catch {
+        // Ignore if it already exists due to concurrent requests.
+      }
+    }
+  }
+}
 
 const batchCreateSchema = z.object({
   batchNumber: z.string().trim().min(1).max(80).optional(),
@@ -67,7 +196,11 @@ const batchCreateSchema = z.object({
       warehouseId: z.string().uuid().optional(),
       // Backwards compatible (still accepted): explicit destination location.
       toLocationId: z.string().uuid().optional(),
-      quantity: z.coerce.number().positive(),
+      // Base units (Unidad). Optional when providing presentationId + presentationQuantity.
+      quantity: z.coerce.number().positive().optional(),
+      // New: allow indicating the input in a presentation (e.g. 50 cajas).
+      presentationId: z.string().uuid().optional(),
+      presentationQuantity: z.coerce.number().positive().optional(),
       note: z.string().trim().max(500).optional(),
     })
     .superRefine((v, ctx) => {
@@ -78,6 +211,16 @@ const batchCreateSchema = z.object({
       }
       if (hasWarehouse && hasLocation) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Provide either warehouseId or toLocationId, not both' })
+      }
+
+      const hasBaseQty = v.quantity !== undefined && v.quantity !== null
+      const hasPresId = typeof v.presentationId === 'string' && v.presentationId.length > 0
+      const hasPresQty = v.presentationQuantity !== undefined && v.presentationQuantity !== null
+      if (!hasBaseQty && !hasPresId) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'initialStock requires quantity or presentationId' })
+      }
+      if (hasPresId && !hasPresQty) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'presentationQuantity is required when presentationId is provided' })
       }
     })
     .optional(),
@@ -190,21 +333,87 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
         const cost = parsed.data.cost ?? null
         const price = parsed.data.price ?? null
         const genericName = parsed.data.genericName ?? null
-        const created = await db.product.create({
-          data: {
-            tenantId,
-            sku: parsed.data.sku,
-            name: commercialName,
-            genericName,
-            description,
-            presentationWrapper,
-            presentationQuantity,
-            presentationFormat,
-            cost,
-            price,
-            createdBy: userId,
-          },
-          select: { id: true, sku: true, name: true, genericName: true, presentationWrapper: true, presentationQuantity: true, presentationFormat: true, version: true, createdAt: true },
+        const created = await db.$transaction(async (tx: any) => {
+          const product = await tx.product.create({
+            data: {
+              tenantId,
+              sku: parsed.data.sku,
+              name: commercialName,
+              genericName,
+              description,
+              presentationWrapper,
+              presentationQuantity,
+              presentationFormat,
+              cost,
+              price,
+              createdBy: userId,
+            },
+            select: {
+              id: true,
+              sku: true,
+              name: true,
+              genericName: true,
+              presentationWrapper: true,
+              presentationQuantity: true,
+              presentationFormat: true,
+              version: true,
+              createdAt: true,
+            },
+          })
+
+          const requestedPresentations = (parsed.data.presentations ?? []).slice()
+
+          if (requestedPresentations.length > 0) {
+            // Ensure there's always a base "Unidad" presentation.
+            const hasUnidad = requestedPresentations.some((p) => p.name.trim().toLowerCase() === 'unidad')
+            if (!hasUnidad) {
+              requestedPresentations.unshift({
+                name: 'Unidad',
+                unitsPerPresentation: 1,
+                sortOrder: 0,
+                isDefault: requestedPresentations.some((p) => p.isDefault) ? false : true,
+                priceOverride: null,
+                isActive: true,
+              })
+            }
+
+            // If none marked as default, default to Unidad (if present) or first.
+            const anyDefault = requestedPresentations.some((p) => !!p.isDefault)
+            if (!anyDefault) {
+              const idxUnidad = requestedPresentations.findIndex((p) => p.name.trim().toLowerCase() === 'unidad')
+              if (idxUnidad >= 0) requestedPresentations[idxUnidad] = { ...requestedPresentations[idxUnidad]!, isDefault: true }
+              else requestedPresentations[0] = { ...requestedPresentations[0]!, isDefault: true }
+            }
+
+            // Create presentations; ensure only one default in DB.
+            for (let i = 0; i < requestedPresentations.length; i++) {
+              const p = requestedPresentations[i]!
+              if (p.isDefault) {
+                await tx.productPresentation.updateMany({
+                  where: { tenantId, productId: product.id },
+                  data: { isDefault: false, version: { increment: 1 }, createdBy: userId },
+                })
+              }
+              await tx.productPresentation.create({
+                data: {
+                  tenantId,
+                  productId: product.id,
+                  name: p.name,
+                  unitsPerPresentation: String(p.unitsPerPresentation),
+                  priceOverride: p.priceOverride === undefined ? undefined : p.priceOverride === null ? null : String(p.priceOverride),
+                  isDefault: !!p.isDefault,
+                  sortOrder: p.sortOrder ?? 0,
+                  isActive: p.isActive ?? true,
+                  createdBy: userId,
+                },
+                select: { id: true },
+              })
+            }
+          } else {
+            // Backwards compatible behavior.
+            await ensureCorePresentationsTx(tx, { tenantId, userId, product })
+          }
+          return product
         })
 
         await audit.append({
@@ -238,6 +447,8 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
       if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
 
       const tenantId = request.auth!.tenantId
+      const userId = request.auth!.userId
+      const includePresentations = !!parsed.data.includePresentations
 
       const items = await db.product.findMany({
         where: { tenantId },
@@ -249,11 +460,224 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
             }
           : {}),
         orderBy: { id: 'asc' },
-        select: { id: true, sku: true, name: true, genericName: true, presentationWrapper: true, presentationQuantity: true, presentationFormat: true, photoUrl: true, cost: true, price: true, isActive: true, version: true, updatedAt: true },
+        select: {
+          id: true,
+          sku: true,
+          name: true,
+          genericName: true,
+          presentationWrapper: true,
+          presentationQuantity: true,
+          presentationFormat: true,
+          photoUrl: true,
+          cost: true,
+          price: true,
+          isActive: true,
+          version: true,
+          updatedAt: true,
+          ...(includePresentations
+            ? {
+                presentations: {
+                  where: { isActive: true },
+                  orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+                  select: { id: true, name: true, unitsPerPresentation: true, priceOverride: true, isDefault: true, sortOrder: true },
+                },
+              }
+            : {}),
+        },
       })
+
+      if (includePresentations && items.length > 0) {
+        // Ensure a default unit presentation exists for products that still have none.
+        await db.$transaction(async (tx: any) => {
+          for (const p of items as any[]) {
+            const hasPres = Array.isArray((p as any).presentations) && (p as any).presentations.length > 0
+            if (!hasPres) await ensureCorePresentationsTx(tx, { tenantId, userId, product: p })
+          }
+        })
+
+        // Reload presentations after ensuring.
+        const ids = (items as any[]).map((p) => p.id)
+        const pres = await db.productPresentation.findMany({
+          where: { tenantId, productId: { in: ids }, isActive: true },
+          select: { id: true, productId: true, name: true, unitsPerPresentation: true, priceOverride: true, isDefault: true, sortOrder: true },
+          orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+        })
+        const byProduct = new Map<string, any[]>()
+        for (const row of pres) {
+          const list = byProduct.get(row.productId) ?? []
+          list.push(row)
+          byProduct.set(row.productId, list)
+        }
+        for (const p of items as any[]) {
+          ;(p as any).presentations = byProduct.get(p.id) ?? []
+        }
+      }
 
       const nextCursor = items.length === parsed.data.take ? items[items.length - 1]!.id : null
       return reply.send({ items, nextCursor })
+    },
+  )
+
+  // List presentations for a product
+  app.get(
+    '/api/v1/products/:id/presentations',
+    {
+      preHandler: [requireAuth(), requirePermission(Permissions.CatalogRead)],
+    },
+    async (request, reply) => {
+      const productId = (request.params as any).id as string
+      const tenantId = request.auth!.tenantId
+      const userId = request.auth!.userId
+
+      const product = await db.product.findFirst({
+        where: { id: productId, tenantId },
+        select: { id: true, presentationWrapper: true, presentationQuantity: true, presentationFormat: true },
+      })
+      if (!product) return reply.status(404).send({ message: 'Not found' })
+
+      await db.$transaction(async (tx: any) => {
+        await ensureCorePresentationsTx(tx, { tenantId, userId, product })
+      })
+
+      const presentations = await db.productPresentation.findMany({
+        where: { tenantId, productId, isActive: true },
+        select: { id: true, name: true, unitsPerPresentation: true, priceOverride: true, isDefault: true, sortOrder: true, version: true, updatedAt: true },
+        orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+      })
+
+      return reply.send({ items: presentations })
+    },
+  )
+
+  // Create presentation for a product
+  app.post(
+    '/api/v1/products/:id/presentations',
+    {
+      preHandler: [requireAuth(), requirePermission(Permissions.CatalogWrite)],
+    },
+    async (request, reply) => {
+      const productId = (request.params as any).id as string
+      const parsed = presentationCreateSchema.safeParse(request.body)
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid request', issues: parsed.error.issues })
+
+      const tenantId = request.auth!.tenantId
+      const userId = request.auth!.userId
+
+      const product = await db.product.findFirst({ where: { id: productId, tenantId }, select: { id: true } })
+      if (!product) return reply.status(404).send({ message: 'Product not found' })
+
+      try {
+        const created = await db.$transaction(async (tx: any) => {
+          if (parsed.data.isDefault) {
+            await tx.productPresentation.updateMany({ where: { tenantId, productId }, data: { isDefault: false, version: { increment: 1 }, createdBy: userId } })
+          }
+          return tx.productPresentation.create({
+            data: {
+              tenantId,
+              productId,
+              name: parsed.data.name,
+              unitsPerPresentation: String(parsed.data.unitsPerPresentation),
+              priceOverride: parsed.data.priceOverride === undefined ? undefined : parsed.data.priceOverride === null ? null : String(parsed.data.priceOverride),
+              isDefault: !!parsed.data.isDefault,
+              sortOrder: parsed.data.sortOrder,
+              isActive: parsed.data.isActive ?? true,
+              createdBy: userId,
+            },
+            select: { id: true, name: true, unitsPerPresentation: true, priceOverride: true, isDefault: true, sortOrder: true, version: true, updatedAt: true },
+          })
+        })
+
+        return reply.status(201).send(created)
+      } catch (e: any) {
+        // Prisma P2021: table does not exist (migrations not applied)
+        if (e?.code === 'P2021') {
+          return reply.status(500).send({ message: 'Base de datos no migrada: falta tabla. Ejecuta prisma migrate deploy.' })
+        }
+        const mapped = mapPrismaUniqueToHttp409(e)
+        if (mapped) return reply.status(mapped.status).send({ message: mapped.message })
+        throw e
+      }
+    },
+  )
+
+  // Update a presentation
+  app.patch(
+    '/api/v1/products/presentations/:presentationId',
+    {
+      preHandler: [requireAuth(), requirePermission(Permissions.CatalogWrite)],
+    },
+    async (request, reply) => {
+      const presentationId = (request.params as any).presentationId as string
+      const parsed = presentationUpdateSchema.safeParse(request.body)
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid request', issues: parsed.error.issues })
+
+      const tenantId = request.auth!.tenantId
+      const userId = request.auth!.userId
+
+      const before = await db.productPresentation.findFirst({
+        where: { id: presentationId, tenantId },
+        select: { id: true, productId: true, version: true },
+      })
+      if (!before) return reply.status(404).send({ message: 'Not found' })
+      if (before.version !== parsed.data.version) return reply.status(409).send({ message: 'Version conflict' })
+
+      try {
+        const updated = await db.$transaction(async (tx: any) => {
+          if (parsed.data.isDefault === true) {
+            await tx.productPresentation.updateMany({ where: { tenantId, productId: before.productId }, data: { isDefault: false, version: { increment: 1 }, createdBy: userId } })
+          }
+
+          const data: any = { version: { increment: 1 }, createdBy: userId }
+          if (parsed.data.name !== undefined) data.name = parsed.data.name
+          if (parsed.data.unitsPerPresentation !== undefined) data.unitsPerPresentation = String(parsed.data.unitsPerPresentation)
+          if (parsed.data.sortOrder !== undefined) data.sortOrder = parsed.data.sortOrder
+          if (parsed.data.isDefault !== undefined) data.isDefault = parsed.data.isDefault
+          if (parsed.data.isActive !== undefined) data.isActive = parsed.data.isActive
+          if (Object.prototype.hasOwnProperty.call(parsed.data, 'priceOverride')) {
+            data.priceOverride = parsed.data.priceOverride === null ? null : parsed.data.priceOverride === undefined ? undefined : String(parsed.data.priceOverride)
+          }
+
+          return tx.productPresentation.update({
+            where: { id: presentationId },
+            data,
+            select: { id: true, name: true, unitsPerPresentation: true, priceOverride: true, isDefault: true, sortOrder: true, version: true, updatedAt: true, isActive: true },
+          })
+        })
+
+        return reply.send(updated)
+      } catch (e: any) {
+        // Prisma P2021: table does not exist (migrations not applied)
+        if (e?.code === 'P2021') {
+          return reply.status(500).send({ message: 'Base de datos no migrada: falta tabla. Ejecuta prisma migrate deploy.' })
+        }
+        const mapped = mapPrismaUniqueToHttp409(e)
+        if (mapped) return reply.status(mapped.status).send({ message: mapped.message })
+        throw e
+      }
+    },
+  )
+
+  // Delete (deactivate) a presentation
+  app.delete(
+    '/api/v1/products/presentations/:presentationId',
+    {
+      preHandler: [requireAuth(), requirePermission(Permissions.CatalogWrite)],
+    },
+    async (request, reply) => {
+      const presentationId = (request.params as any).presentationId as string
+      const tenantId = request.auth!.tenantId
+      const userId = request.auth!.userId
+
+      const before = await db.productPresentation.findFirst({ where: { id: presentationId, tenantId }, select: { id: true } })
+      if (!before) return reply.status(404).send({ message: 'Not found' })
+
+      await db.productPresentation.update({
+        where: { id: presentationId },
+        data: { isActive: false, isDefault: false, version: { increment: 1 }, createdBy: userId },
+        select: { id: true },
+      })
+
+      return reply.status(204).send()
     },
   )
 
@@ -315,7 +739,8 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
         },
       })
 
-      if (!recipe) return reply.status(404).send({ message: 'Not found' })
+      // Return 200 with null to avoid noisy 404s in the UI when a product simply has no recipe yet.
+      if (!recipe) return reply.send(null)
       return reply.send(recipe)
     },
   )
@@ -752,6 +1177,8 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
           createdAt: true,
           type: true,
           quantity: true,
+          presentationId: true,
+          presentationQuantity: true,
           fromLocationId: true,
           toLocationId: true,
           referenceType: true,
@@ -759,6 +1186,19 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
           note: true,
         },
       })
+
+      const presentationIds = new Set<string>()
+      for (const m of movements as any[]) {
+        if (m.presentationId) presentationIds.add(m.presentationId)
+      }
+
+      const presentations = presentationIds.size
+        ? await (db as any).productPresentation.findMany({
+            where: { tenantId, id: { in: Array.from(presentationIds) } },
+            select: { id: true, name: true, unitsPerPresentation: true },
+          })
+        : []
+      const presById = new Map(presentations.map((p: any) => [p.id, p] as const))
 
       const locationIds = new Set<string>()
       for (const m of movements) {
@@ -778,8 +1218,10 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
       const items = movements.map((m) => {
         const fromLoc = m.fromLocationId ? locById.get(m.fromLocationId) ?? null : null
         const toLoc = m.toLocationId ? locById.get(m.toLocationId) ?? null : null
+        const pres = (m as any).presentationId ? presById.get((m as any).presentationId) ?? null : null
         return {
           ...m,
+          presentation: pres ? { id: (pres as any).id, name: (pres as any).name, unitsPerPresentation: (pres as any).unitsPerPresentation } : null,
           from: fromLoc
             ? { id: fromLoc.id, code: fromLoc.code, warehouse: fromLoc.warehouse }
             : null,
@@ -850,6 +1292,29 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
               resolvedToLocationId = loc.id
             }
 
+              // Resolve quantity. Prefer presentation inputs when provided.
+              let baseQty = parsed.data.initialStock.quantity !== undefined ? Number(parsed.data.initialStock.quantity) : NaN
+              let presId: string | null = null
+              let presQty: number | null = null
+
+              if (parsed.data.initialStock.presentationId) {
+                presId = parsed.data.initialStock.presentationId
+                presQty = Number(parsed.data.initialStock.presentationQuantity)
+                if (!Number.isFinite(presQty) || presQty <= 0) throw httpError(400, 'Invalid presentationQuantity')
+
+                // Validate presentation belongs to this product and tenant.
+                const pres = await tx.productPresentation.findFirst({
+                  where: { id: presId, tenantId, productId, isActive: true },
+                  select: { id: true, unitsPerPresentation: true },
+                })
+                if (!pres) throw httpError(400, 'Presentation not found')
+                const factor = Number(pres.unitsPerPresentation)
+                if (!Number.isFinite(factor) || factor <= 0) throw httpError(400, 'Invalid unitsPerPresentation')
+                baseQty = presQty * factor
+              }
+
+              if (!Number.isFinite(baseQty) || baseQty <= 0) throw httpError(400, 'Invalid quantity')
+
             await createStockMovementTx(tx, {
               tenantId,
               userId,
@@ -857,11 +1322,64 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
               productId,
               batchId: batch.id,
               toLocationId: resolvedToLocationId,
-              quantity: parsed.data.initialStock.quantity,
+                quantity: baseQty,
+                presentationId: presId,
+                presentationQuantity: presQty,
               referenceType: 'BATCH',
               referenceId: batch.id,
               note: parsed.data.initialStock.note ?? null,
             })
+
+            // Check for pending stock movement requests that can be fulfilled
+            const location = await tx.location.findFirst({
+              where: { id: resolvedToLocationId },
+              select: { warehouse: { select: { city: true } } },
+            })
+            if (location?.warehouse?.city) {
+              const warehouseCity = location.warehouse.city
+              const pendingRequests = await tx.stockMovementRequest.findMany({
+                where: {
+                  tenantId,
+                  status: 'OPEN',
+                  requestedCity: warehouseCity,
+                  items: {
+                    some: {
+                      productId,
+                      remainingQuantity: { gt: 0 },
+                    },
+                  },
+                },
+                select: {
+                  id: true,
+                  items: {
+                    where: { productId, remainingQuantity: { gt: 0 } },
+                    select: { id: true, remainingQuantity: true },
+                  },
+                },
+              })
+
+              for (const req of pendingRequests) {
+                let totalRemaining = req.items.reduce((sum, item) => sum + Number(item.remainingQuantity), 0)
+                if (totalRemaining <= baseQty) {
+                  // Fulfill the request
+                  await tx.stockMovementRequest.update({
+                    where: { id: req.id },
+                    data: {
+                      status: 'FULFILLED',
+                      fulfilledAt: new Date(),
+                      fulfilledBy: userId,
+                    },
+                  })
+                  // Update remaining quantities to 0
+                  for (const item of req.items) {
+                    await tx.stockMovementRequestItem.update({
+                      where: { id: item.id },
+                      data: { remainingQuantity: 0 },
+                    })
+                  }
+                }
+              }
+            }
           }
 
           return batch

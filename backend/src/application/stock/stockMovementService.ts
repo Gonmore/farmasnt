@@ -10,6 +10,8 @@ export type StockMovementCreateInput = {
   fromLocationId?: string | null
   toLocationId?: string | null
   quantity: number
+  presentationId?: string | null
+  presentationQuantity?: number | null
   referenceType?: string | null
   referenceId?: string | null
   note?: string | null
@@ -173,6 +175,8 @@ export async function createStockMovementTx(
       fromLocationId,
       toLocationId,
       quantity: decimalFromNumber(input.quantity),
+      presentationId: input.presentationId ?? null,
+      presentationQuantity: input.presentationQuantity === undefined ? null : input.presentationQuantity === null ? null : decimalFromNumber(input.presentationQuantity),
       referenceType: input.referenceType ?? null,
       referenceId: input.referenceId ?? null,
       note: input.note ?? null,
@@ -188,11 +192,66 @@ export async function createStockMovementTx(
       fromLocationId: true,
       toLocationId: true,
       quantity: true,
+      presentationId: true,
+      presentationQuantity: true,
       createdAt: true,
       referenceType: true,
       referenceId: true,
     },
   })
+
+  // Check for pending stock movement requests that can be fulfilled by IN movements
+  if (input.type === 'IN' && toLocationId) {
+    const location = await tx.location.findFirst({
+      where: { id: toLocationId },
+      select: { warehouse: { select: { city: true } } },
+    })
+    if (location?.warehouse?.city) {
+      const warehouseCity = location.warehouse.city
+      const pendingRequests = await tx.stockMovementRequest.findMany({
+        where: {
+          tenantId,
+          status: 'OPEN',
+          requestedCity: warehouseCity,
+          items: {
+            some: {
+              productId: input.productId,
+              remainingQuantity: { gt: 0 },
+            },
+          },
+        },
+        select: {
+          id: true,
+          items: {
+            where: { productId: input.productId, remainingQuantity: { gt: 0 } },
+            select: { id: true, remainingQuantity: true },
+          },
+        },
+      })
+
+      for (const req of pendingRequests) {
+        let totalRemaining = req.items.reduce((sum, item) => sum + Number(item.remainingQuantity), 0)
+        if (totalRemaining <= input.quantity) {
+          // Fulfill the request
+          await tx.stockMovementRequest.update({
+            where: { id: req.id },
+            data: {
+              status: 'FULFILLED',
+              fulfilledAt: new Date(),
+              fulfilledBy: input.userId,
+            },
+          })
+          // Update remaining quantities to 0
+          for (const item of req.items) {
+            await tx.stockMovementRequestItem.update({
+              where: { id: item.id },
+              data: { remainingQuantity: 0 },
+            })
+          }
+        }
+      }
+    }
+  }
 
   return { createdMovement, fromBalance, toBalance }
 }

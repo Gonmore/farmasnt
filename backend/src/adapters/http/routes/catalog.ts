@@ -7,6 +7,7 @@ import { Permissions } from '../../../application/security/permissions.js'
 const searchQuerySchema = z.object({
   q: z.string().min(1).max(100),
   take: z.coerce.number().int().min(1).max(50).default(20),
+  includePresentations: z.coerce.boolean().optional(),
 })
 
 const checkSkuQuerySchema = z.object({
@@ -26,6 +27,7 @@ export async function registerCatalogRoutes(app: FastifyInstance): Promise<void>
 
       const { q, take } = parsed.data
       const tenantId = request.auth!.tenantId
+      const includePresentations = !!parsed.data.includePresentations
 
       // MVP implementation: ILIKE + indexed columns. We'll upgrade to FTS + trigram in Phase 4.
       const items = await db.product.findMany({
@@ -40,7 +42,23 @@ export async function registerCatalogRoutes(app: FastifyInstance): Promise<void>
         },
         take,
         orderBy: [{ name: 'asc' }],
-        select: { id: true, sku: true, name: true, genericName: true, photoUrl: true },
+        select: {
+          id: true,
+          sku: true,
+          name: true,
+          genericName: true,
+          photoUrl: true,
+          price: true,
+          ...(includePresentations
+            ? {
+                presentations: {
+                  where: { isActive: true },
+                  orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+                  select: { id: true, name: true, unitsPerPresentation: true, priceOverride: true, isDefault: true, sortOrder: true },
+                },
+              }
+            : {}),
+        },
       })
 
       return { items }

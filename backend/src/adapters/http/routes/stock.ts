@@ -12,11 +12,51 @@ const movementCreateSchema = z.object({
   batchId: z.string().uuid().nullable().optional(),
   fromLocationId: z.string().uuid().nullable().optional(),
   toLocationId: z.string().uuid().nullable().optional(),
-  quantity: z.coerce.number().positive(),
+  // Base quantity (units). If presentationId/presentationQuantity is provided, backend derives this.
+  quantity: z.coerce.number().positive().optional(),
+  presentationId: z.string().uuid().optional(),
+  presentationQuantity: z.coerce.number().positive().optional(),
   referenceType: z.string().trim().max(50).optional(),
   referenceId: z.string().trim().max(80).optional(),
   note: z.string().trim().max(500).optional(),
 })
+
+const repackSchema = z.object({
+  productId: z.string().uuid(),
+  batchId: z.string().uuid(),
+  locationId: z.string().uuid(),
+  sourcePresentationId: z.string().uuid(),
+  sourceQuantity: z.coerce.number().positive(),
+  targetPresentationId: z.string().uuid(),
+  targetQuantity: z.coerce.number().positive(),
+  note: z.string().trim().max(500).optional(),
+})
+
+function mustResolveMovementQuantity(input: any): {
+  baseQuantity: number
+  presentationId: string | null
+  presentationQuantity: number | null
+} {
+  const hasPresentation = typeof input.presentationId === 'string' && input.presentationId.length > 0
+
+  if (hasPresentation) {
+    const pq = Number(input.presentationQuantity)
+    if (!Number.isFinite(pq) || pq <= 0) {
+      const err = new Error('presentationQuantity is required when presentationId is provided') as Error & { statusCode?: number }
+      err.statusCode = 400
+      throw err
+    }
+    return { baseQuantity: NaN, presentationId: input.presentationId, presentationQuantity: pq }
+  }
+
+  const q = Number(input.quantity)
+  if (!Number.isFinite(q) || q <= 0) {
+    const err = new Error('quantity is required when presentationId is not provided') as Error & { statusCode?: number }
+    err.statusCode = 400
+    throw err
+  }
+  return { baseQuantity: q, presentationId: null, presentationQuantity: q }
+}
 
 const expirySummaryQuerySchema = z.object({
   take: z.coerce.number().int().min(1).max(200).default(100),
@@ -434,9 +474,65 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
       const userId = request.auth!.userId
 
       const input = parsed.data
+      const resolved = mustResolveMovementQuantity(input)
 
       try {
         const result = await db.$transaction(async (tx) => {
+          let baseQty = resolved.baseQuantity
+          let presentationId: string | null = resolved.presentationId
+          let presentationQuantity: number | null = resolved.presentationQuantity
+
+          if (presentationId) {
+            const pres = await (tx as any).productPresentation.findFirst({
+              where: { tenantId, id: presentationId, isActive: true },
+              select: { id: true, productId: true, unitsPerPresentation: true },
+            })
+            if (!pres || pres.productId !== input.productId) {
+              const err = new Error('Invalid presentationId for this product') as Error & { statusCode?: number }
+              err.statusCode = 400
+              throw err
+            }
+            const factor = Number(pres.unitsPerPresentation)
+            if (!Number.isFinite(factor) || factor <= 0) {
+              const err = new Error('Invalid unitsPerPresentation') as Error & { statusCode?: number }
+              err.statusCode = 400
+              throw err
+            }
+            baseQty = (presentationQuantity ?? 0) * factor
+          } else {
+            // Store unit-presentation metadata for traceability when client sends base units.
+            let unitPres = await (tx as any).productPresentation.findFirst({
+              where: { tenantId, productId: input.productId, isActive: true },
+              orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
+              select: { id: true },
+            })
+            if (!unitPres) {
+              try {
+                unitPres = await (tx as any).productPresentation.create({
+                  data: {
+                    tenantId,
+                    productId: input.productId,
+                    name: 'Unidad',
+                    unitsPerPresentation: '1',
+                    isDefault: true,
+                    sortOrder: 0,
+                    isActive: true,
+                    createdBy: userId,
+                  },
+                  select: { id: true },
+                })
+              } catch {
+                unitPres = await (tx as any).productPresentation.findFirst({
+                  where: { tenantId, productId: input.productId, isActive: true },
+                  orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
+                  select: { id: true },
+                })
+              }
+            }
+            presentationId = unitPres?.id ?? null
+            presentationQuantity = baseQty
+          }
+
           return createStockMovementTx(tx, {
             tenantId,
             userId,
@@ -445,7 +541,9 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
             batchId: input.batchId ?? null,
             fromLocationId: input.fromLocationId ?? null,
             toLocationId: input.toLocationId ?? null,
-            quantity: input.quantity,
+            quantity: baseQty,
+            presentationId,
+            presentationQuantity,
             referenceType: input.referenceType ?? null,
             referenceId: input.referenceId ?? null,
             note: input.note ?? null,
@@ -549,6 +647,184 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
             entityType: 'Batch',
             entityId: e?.meta?.batchId ?? null,
             metadata: { operation: 'stock.movement.create', movementType: input.type, ...e.meta },
+          })
+          return reply.status(409).send({ message: 'Batch expired' })
+        }
+        throw e
+      }
+    },
+  )
+
+  // Repack (armar/desarmar) within same batch + location.
+  // Creates OUT + IN movements (and optional remainder IN) atomically.
+  app.post(
+    '/api/v1/stock/repack',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.StockMove)],
+    },
+    async (request, reply) => {
+      const parsed = repackSchema.safeParse(request.body)
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid request', issues: parsed.error.issues })
+
+      const tenantId = request.auth!.tenantId
+      const userId = request.auth!.userId
+
+      const input = parsed.data
+
+      try {
+        const result = await db.$transaction(async (tx) => {
+          const [sourcePres, targetPres] = await Promise.all([
+            (tx as any).productPresentation.findFirst({
+              where: { tenantId, id: input.sourcePresentationId, isActive: true },
+              select: { id: true, productId: true, unitsPerPresentation: true },
+            }),
+            (tx as any).productPresentation.findFirst({
+              where: { tenantId, id: input.targetPresentationId, isActive: true },
+              select: { id: true, productId: true, unitsPerPresentation: true },
+            }),
+          ])
+
+          if (!sourcePres || sourcePres.productId !== input.productId) {
+            throw Object.assign(new Error('Invalid sourcePresentationId for this product'), { statusCode: 400 })
+          }
+          if (!targetPres || targetPres.productId !== input.productId) {
+            throw Object.assign(new Error('Invalid targetPresentationId for this product'), { statusCode: 400 })
+          }
+
+          const sourceFactor = Number(sourcePres.unitsPerPresentation)
+          const targetFactor = Number(targetPres.unitsPerPresentation)
+          if (!Number.isFinite(sourceFactor) || sourceFactor <= 0) {
+            throw Object.assign(new Error('Invalid source unitsPerPresentation'), { statusCode: 400 })
+          }
+          if (!Number.isFinite(targetFactor) || targetFactor <= 0) {
+            throw Object.assign(new Error('Invalid target unitsPerPresentation'), { statusCode: 400 })
+          }
+
+          const baseSource = input.sourceQuantity * sourceFactor
+          const baseTarget = input.targetQuantity * targetFactor
+          if (!Number.isFinite(baseSource) || baseSource <= 0) {
+            throw Object.assign(new Error('Invalid source quantity'), { statusCode: 400 })
+          }
+          if (!Number.isFinite(baseTarget) || baseTarget <= 0) {
+            throw Object.assign(new Error('Invalid target quantity'), { statusCode: 400 })
+          }
+          if (baseTarget > baseSource + 1e-9) {
+            throw Object.assign(new Error('Target exceeds source'), { statusCode: 400 })
+          }
+
+          const remainder = Math.max(0, baseSource - baseTarget)
+
+          let unitPres = await (tx as any).productPresentation.findFirst({
+            where: { tenantId, productId: input.productId, isActive: true },
+            orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
+            select: { id: true, name: true, unitsPerPresentation: true },
+          })
+          if (!unitPres) {
+            unitPres = await (tx as any).productPresentation.create({
+              data: {
+                tenantId,
+                productId: input.productId,
+                name: 'Unidad',
+                unitsPerPresentation: '1',
+                isDefault: true,
+                sortOrder: 0,
+                isActive: true,
+                createdBy: userId,
+              },
+              select: { id: true, name: true, unitsPerPresentation: true },
+            })
+          }
+          const unitFactor = Number(unitPres.unitsPerPresentation)
+          if (!Number.isFinite(unitFactor) || unitFactor !== 1) {
+            throw Object.assign(new Error('Unit presentation misconfigured'), { statusCode: 500 })
+          }
+
+          const referenceType = 'REPACK'
+          const referenceId = input.batchId
+          const note = input.note ?? null
+
+          const outResult = await createStockMovementTx(tx, {
+            tenantId,
+            userId,
+            type: 'OUT',
+            productId: input.productId,
+            batchId: input.batchId,
+            fromLocationId: input.locationId,
+            toLocationId: null,
+            quantity: baseSource,
+            presentationId: input.sourcePresentationId,
+            presentationQuantity: input.sourceQuantity,
+            referenceType,
+            referenceId,
+            note,
+          })
+
+          const inTargetResult = await createStockMovementTx(tx, {
+            tenantId,
+            userId,
+            type: 'IN',
+            productId: input.productId,
+            batchId: input.batchId,
+            fromLocationId: null,
+            toLocationId: input.locationId,
+            quantity: baseTarget,
+            presentationId: input.targetPresentationId,
+            presentationQuantity: input.targetQuantity,
+            referenceType,
+            referenceId,
+            note,
+          })
+
+          const remainderResult = remainder > 1e-9
+            ? await createStockMovementTx(tx, {
+                tenantId,
+                userId,
+                type: 'IN',
+                productId: input.productId,
+                batchId: input.batchId,
+                fromLocationId: null,
+                toLocationId: input.locationId,
+                quantity: remainder,
+                presentationId: unitPres.id,
+                presentationQuantity: remainder,
+                referenceType,
+                referenceId,
+                note,
+              })
+            : null
+
+          const balances = [outResult.fromBalance, inTargetResult.toBalance, remainderResult?.toBalance].filter(Boolean)
+          const uniqueBalances = Array.from(new Map(balances.map((b: any) => [b.id, b])).values())
+
+          return {
+            createdMovements: [outResult.createdMovement, inTargetResult.createdMovement, remainderResult?.createdMovement].filter(Boolean),
+            balances: uniqueBalances,
+          }
+        })
+
+        await audit.append({
+          tenantId,
+          actorUserId: userId,
+          action: 'stock.repack.create',
+          entityType: 'Batch',
+          entityId: input.batchId,
+          after: result,
+        })
+
+        const room = `tenant:${tenantId}`
+        for (const m of result.createdMovements) app.io?.to(room).emit('stock.movement.created', m)
+        for (const b of result.balances) app.io?.to(room).emit('stock.balance.changed', b)
+
+        return reply.status(201).send(result)
+      } catch (e: any) {
+        if (e?.code === 'BATCH_EXPIRED') {
+          await audit.append({
+            tenantId,
+            actorUserId: userId,
+            action: 'stock.expiry.blocked',
+            entityType: 'Batch',
+            entityId: e?.meta?.batchId ?? null,
+            metadata: { operation: 'stock.repack.create', ...e.meta },
           })
           return reply.status(409).send({ message: 'Batch expired' })
         }

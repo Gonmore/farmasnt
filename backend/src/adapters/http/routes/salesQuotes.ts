@@ -30,13 +30,40 @@ const quoteCreateSchema = z.object({
     .array(
       z.object({
         productId: z.string().uuid(),
-        quantity: z.coerce.number().positive(),
+        // Base quantity (units). If presentationId/presentationQuantity is provided, backend derives this.
+        quantity: z.coerce.number().positive().optional(),
+        presentationId: z.string().uuid().optional(),
+        presentationQuantity: z.coerce.number().positive().optional(),
         unitPrice: z.coerce.number().min(0).optional(),
         discountPct: z.coerce.number().min(0).max(100).default(0),
       }),
     )
     .min(1),
 })
+
+function mustResolveLineQuantity(line: any): { baseQuantity: number; presentationId: string | null; presentationQuantity: number | null } {
+  const hasPresentation = typeof line.presentationId === 'string' && line.presentationId.length > 0
+  const hasPresentationQty = line.presentationQuantity !== undefined && line.presentationQuantity !== null
+  const qty = line.quantity
+
+  if (hasPresentation) {
+    const pq = Number(line.presentationQuantity)
+    if (!Number.isFinite(pq) || pq <= 0) {
+      const err = new Error('presentationQuantity is required when presentationId is provided') as Error & { statusCode?: number }
+      err.statusCode = 400
+      throw err
+    }
+    return { baseQuantity: NaN, presentationId: line.presentationId, presentationQuantity: pq }
+  }
+
+  const q = Number(qty)
+  if (!Number.isFinite(q) || q <= 0) {
+    const err = new Error('quantity is required when presentationId is not provided') as Error & { statusCode?: number }
+    err.statusCode = 400
+    throw err
+  }
+  return { baseQuantity: q, presentationId: null, presentationQuantity: q }
+}
 
 function decimalFromNumber(value: number): string {
   return value.toString()
@@ -459,7 +486,7 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
       }
 
       // Verify all products exist and belong to tenant
-      const productIds = lines.map((line) => line.productId)
+      const productIds = [...new Set(lines.map((line) => line.productId))]
       const products = await db.product.findMany({
         where: { id: { in: productIds }, tenantId },
         select: { id: true, price: true },
@@ -471,9 +498,119 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
       const productMap = new Map(products.map((p: any) => [p.id, p]))
 
       const quote = await db.$transaction(async (tx: any) => {
+        // Ensure each product has at least a default unit presentation.
+        const existingPres = await tx.productPresentation.findMany({
+          where: { tenantId, productId: { in: productIds }, isActive: true },
+          select: { id: true, productId: true, isDefault: true, unitsPerPresentation: true },
+          orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
+        })
+        const byProduct = new Map<string, any[]>()
+        for (const p of existingPres) {
+          const list = byProduct.get(p.productId) ?? []
+          list.push(p)
+          byProduct.set(p.productId, list)
+        }
+        for (const pid of productIds) {
+          if ((byProduct.get(pid) ?? []).length > 0) continue
+          try {
+            await tx.productPresentation.create({
+              data: {
+                tenantId,
+                productId: pid,
+                name: 'Unidad',
+                unitsPerPresentation: '1',
+                isDefault: true,
+                sortOrder: 0,
+                isActive: true,
+                createdBy: userId,
+              },
+              select: { id: true },
+            })
+          } catch {
+            // ignore if concurrent creation
+          }
+        }
+
+        // Load presentations referenced by request (if any) and default unit presentation per product.
+        const requestedPresentationIds = Array.from(
+          new Set(lines.map((l: any) => (typeof (l as any).presentationId === 'string' ? (l as any).presentationId : null)).filter(Boolean)),
+        ) as string[]
+
+        type PresentationRef = { id: string; productId: string; unitsPerPresentation: any; priceOverride: any; isDefault: boolean }
+        const referencedPresentations: PresentationRef[] = requestedPresentationIds.length
+          ? await tx.productPresentation.findMany({
+              where: { tenantId, id: { in: requestedPresentationIds }, isActive: true },
+              select: { id: true, productId: true, unitsPerPresentation: true, priceOverride: true, isDefault: true },
+            })
+          : []
+
+        const presentationById = new Map<string, PresentationRef>(referencedPresentations.map((p) => [p.id, p]))
+        if (requestedPresentationIds.length && referencedPresentations.length !== requestedPresentationIds.length) {
+          const err = new Error('One or more presentations not found') as Error & { statusCode?: number }
+          err.statusCode = 400
+          throw err
+        }
+
+        const defaultUnitByProduct = new Map<string, string | null>()
+        const defaults = await tx.productPresentation.findMany({
+          where: { tenantId, productId: { in: productIds }, isActive: true },
+          select: { id: true, productId: true, isDefault: true, unitsPerPresentation: true },
+          orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
+        })
+        for (const row of defaults) {
+          if (defaultUnitByProduct.has(row.productId)) continue
+          // Prefer isDefault=true; otherwise first.
+          defaultUnitByProduct.set(row.productId, row.id)
+        }
+
         const year = currentYearUtc()
         const seq = await nextSequence(tx, { tenantId, year, key: 'COT' })
         const quoteNumber = seq.number
+
+        const resolvedLines = lines.map((line: any) => {
+          const resolved = mustResolveLineQuantity(line)
+          let baseQty = resolved.baseQuantity
+          let presId: string | null = resolved.presentationId
+          let presQty: number | null = resolved.presentationQuantity
+
+          const productUnitPrice = Number((productMap.get(line.productId) as any)?.price ?? 0)
+          let resolvedUnitPrice = line.unitPrice ?? productUnitPrice
+
+          if (presId) {
+            const pres = presentationById.get(presId)
+            const factor = Number(pres?.unitsPerPresentation)
+            if (!Number.isFinite(factor) || factor <= 0) {
+              const err = new Error('Invalid unitsPerPresentation') as Error & { statusCode?: number }
+              err.statusCode = 400
+              throw err
+            }
+            baseQty = (presQty ?? 0) * factor
+
+            // Pricing rule:
+            // - Product.price is the base unit price.
+            // - If presentation has priceOverride (price per 1 presentation), derive unitPrice = priceOverride / factor.
+            // - If client provided unitPrice explicitly, keep it.
+            if (line.unitPrice === undefined && pres && pres.priceOverride !== null && pres.priceOverride !== undefined) {
+              const presPrice = Number(pres.priceOverride)
+              if (Number.isFinite(presPrice) && presPrice >= 0) {
+                resolvedUnitPrice = factor > 0 ? presPrice / factor : productUnitPrice
+              }
+            }
+          } else {
+            presId = defaultUnitByProduct.get(line.productId) ?? null
+            presQty = baseQty
+          }
+
+          return {
+            productId: line.productId,
+            quantity: baseQty,
+            presentationId: presId,
+            presentationQuantity: presQty,
+            unitPrice: resolvedUnitPrice,
+            discountPct: clampPct(line.discountPct ?? 0),
+          }
+        })
+
         return tx.quote.create({
           data: {
             tenantId,
@@ -492,12 +629,14 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
             note: note || null,
             createdBy: userId,
             lines: {
-              create: lines.map((line) => ({
+              create: resolvedLines.map((line: any) => ({
                 tenantId,
                 productId: line.productId,
                 quantity: decimalFromNumber(line.quantity),
-                unitPrice: decimalFromNumber(line.unitPrice ?? Number((productMap.get(line.productId) as any)?.price ?? 0)),
-                discountPct: decimalFromNumber(clampPct(line.discountPct ?? 0)),
+                presentationId: line.presentationId,
+                presentationQuantity: line.presentationQuantity === null ? null : decimalFromNumber(line.presentationQuantity),
+                unitPrice: decimalFromNumber(line.unitPrice),
+                discountPct: decimalFromNumber(line.discountPct),
                 createdBy: userId,
               })),
             },
@@ -505,7 +644,10 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
           include: {
             customer: { select: { name: true } },
             lines: {
-              include: { product: { select: { name: true, sku: true, genericName: true } } },
+              include: {
+                product: { select: { name: true, sku: true, genericName: true } },
+                presentation: { select: { id: true, name: true, unitsPerPresentation: true } },
+              },
             },
           },
         })
@@ -556,6 +698,10 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
           productName: line.product.name,
           productGenericName: (line.product as any).genericName ?? null,
           productSku: line.product.sku,
+          presentationId: line.presentationId ?? null,
+          presentationName: line.presentation?.name ?? null,
+          unitsPerPresentation: line.presentation?.unitsPerPresentation ? Number(line.presentation.unitsPerPresentation) : null,
+          presentationQuantity: line.presentationQuantity !== null && line.presentationQuantity !== undefined ? Number(line.presentationQuantity) : null,
           quantity: Number(line.quantity),
           unitPrice: Number(line.unitPrice),
           discountPct: Number(line.discountPct ?? 0),
@@ -599,6 +745,8 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
                   id: true,
                   productId: true,
                   quantity: true,
+                  presentationId: true,
+                  presentationQuantity: true,
                   unitPrice: true,
                   discountPct: true,
                   product: { select: { name: true, genericName: true } },
@@ -665,6 +813,8 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
                 productId: l.productId,
                 batchId: null,
                 quantity: decimalFromNumber(Number(l.quantity)),
+                presentationId: (l as any).presentationId ?? null,
+                presentationQuantity: (l as any).presentationQuantity === null || (l as any).presentationQuantity === undefined ? null : decimalFromNumber(Number((l as any).presentationQuantity)),
                 unitPrice: decimalFromNumber(Number.isFinite(finalUnit) ? finalUnit : 0),
                 createdBy: userId,
               },
@@ -908,7 +1058,10 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
         include: {
           customer: { select: { name: true, businessName: true, address: true, phone: true } },
           lines: {
-            include: { product: { select: { name: true, sku: true } } },
+            include: {
+              product: { select: { name: true, sku: true, genericName: true } },
+              presentation: { select: { id: true, name: true, unitsPerPresentation: true } },
+            },
           },
         },
       })
@@ -954,7 +1107,12 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
           id: line.id,
           productId: line.productId,
           productName: line.product.name,
+          productGenericName: (line.product as any).genericName ?? null,
           productSku: line.product.sku,
+          presentationId: line.presentationId ?? null,
+          presentationName: line.presentation?.name ?? null,
+          unitsPerPresentation: line.presentation?.unitsPerPresentation ? Number(line.presentation.unitsPerPresentation) : null,
+          presentationQuantity: line.presentationQuantity !== null && line.presentationQuantity !== undefined ? Number(line.presentationQuantity) : null,
           quantity: Number(line.quantity),
           unitPrice: Number(line.unitPrice),
           discountPct: Number(line.discountPct ?? 0),
@@ -1025,7 +1183,7 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
       }
 
       // Verify all products exist and belong to tenant
-      const productIds = lines.map((line) => line.productId)
+      const productIds = [...new Set(lines.map((line) => line.productId))]
       const products = await db.product.findMany({
         where: { id: { in: productIds }, tenantId },
         select: { id: true, price: true },
@@ -1038,6 +1196,101 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
 
       // Update quote in transaction
       const quote = await db.$transaction(async (tx: any) => {
+        // Ensure each product has at least a default unit presentation.
+        const existingPres = await tx.productPresentation.findMany({
+          where: { tenantId, productId: { in: productIds }, isActive: true },
+          select: { id: true, productId: true, isDefault: true, unitsPerPresentation: true },
+          orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
+        })
+        const byProduct = new Map<string, any[]>()
+        for (const p of existingPres) {
+          const list = byProduct.get(p.productId) ?? []
+          list.push(p)
+          byProduct.set(p.productId, list)
+        }
+        for (const pid of productIds) {
+          if ((byProduct.get(pid) ?? []).length > 0) continue
+          try {
+            await tx.productPresentation.create({
+              data: {
+                tenantId,
+                productId: pid,
+                name: 'Unidad',
+                unitsPerPresentation: '1',
+                isDefault: true,
+                sortOrder: 0,
+                isActive: true,
+                createdBy: userId,
+              },
+              select: { id: true },
+            })
+          } catch {
+            // ignore if concurrent creation
+          }
+        }
+
+        // Load presentations referenced by request (if any) and default unit presentation per product.
+        const requestedPresentationIds = Array.from(
+          new Set(lines.map((l: any) => (typeof (l as any).presentationId === 'string' ? (l as any).presentationId : null)).filter(Boolean)),
+        ) as string[]
+
+        type PresentationRef = { id: string; productId: string; unitsPerPresentation: any; isDefault: boolean }
+        const referencedPresentations: PresentationRef[] = requestedPresentationIds.length
+          ? await tx.productPresentation.findMany({
+              where: { tenantId, id: { in: requestedPresentationIds }, isActive: true },
+              select: { id: true, productId: true, unitsPerPresentation: true, isDefault: true },
+            })
+          : []
+
+        const presentationById = new Map<string, PresentationRef>(referencedPresentations.map((p) => [p.id, p]))
+        if (requestedPresentationIds.length && referencedPresentations.length !== requestedPresentationIds.length) {
+          const err = new Error('One or more presentations not found') as Error & { statusCode?: number }
+          err.statusCode = 400
+          throw err
+        }
+
+        const defaultUnitByProduct = new Map<string, string | null>()
+        const defaults = await tx.productPresentation.findMany({
+          where: { tenantId, productId: { in: productIds }, isActive: true },
+          select: { id: true, productId: true, isDefault: true, unitsPerPresentation: true },
+          orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
+        })
+        for (const row of defaults) {
+          if (defaultUnitByProduct.has(row.productId)) continue
+          // Prefer isDefault=true; otherwise first.
+          defaultUnitByProduct.set(row.productId, row.id)
+        }
+
+        const resolvedLines = lines.map((line: any) => {
+          const resolved = mustResolveLineQuantity(line)
+          let baseQty = resolved.baseQuantity
+          let presId: string | null = resolved.presentationId
+          let presQty: number | null = resolved.presentationQuantity
+
+          if (presId) {
+            const pres = presentationById.get(presId)
+            const factor = Number(pres?.unitsPerPresentation)
+            if (!Number.isFinite(factor) || factor <= 0) {
+              const err = new Error('Invalid unitsPerPresentation') as Error & { statusCode?: number }
+              err.statusCode = 400
+              throw err
+            }
+            baseQty = (presQty ?? 0) * factor
+          } else {
+            presId = defaultUnitByProduct.get(line.productId) ?? null
+            presQty = baseQty
+          }
+
+          return {
+            productId: line.productId,
+            quantity: baseQty,
+            presentationId: presId,
+            presentationQuantity: presQty,
+            unitPrice: line.unitPrice ?? Number((productMap.get(line.productId) as any)?.price ?? 0),
+            discountPct: clampPct(line.discountPct ?? 0),
+          }
+        })
+
         // Delete existing lines
         await tx.quoteLine.deleteMany({ where: { quoteId: id, tenantId } })
 
@@ -1062,20 +1315,25 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
           include: {
             customer: { select: { name: true } },
             lines: {
-              include: { product: { select: { name: true, sku: true } } },
+              include: {
+                product: { select: { name: true, sku: true, genericName: true } },
+                presentation: { select: { id: true, name: true, unitsPerPresentation: true } },
+              },
             },
           },
         })
 
         // Create new lines
         await tx.quoteLine.createMany({
-          data: lines.map((line) => ({
+          data: resolvedLines.map((line: any) => ({
             tenantId,
             quoteId: id,
             productId: line.productId,
             quantity: decimalFromNumber(line.quantity),
-            unitPrice: decimalFromNumber(line.unitPrice ?? Number((productMap.get(line.productId) as any)?.price ?? 0)),
-            discountPct: decimalFromNumber(clampPct(line.discountPct ?? 0)),
+            presentationId: line.presentationId,
+            presentationQuantity: line.presentationQuantity === null ? null : decimalFromNumber(line.presentationQuantity),
+            unitPrice: decimalFromNumber(line.unitPrice),
+            discountPct: decimalFromNumber(line.discountPct),
             createdBy: userId,
           })),
         })
@@ -1083,7 +1341,10 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
         // Fetch updated lines
         const updatedLines = await tx.quoteLine.findMany({
           where: { quoteId: id },
-          include: { product: { select: { name: true, sku: true } } },
+          include: {
+            product: { select: { name: true, sku: true, genericName: true } },
+            presentation: { select: { id: true, name: true, unitsPerPresentation: true } },
+          },
         })
 
         return { ...updatedQuote, lines: updatedLines }
@@ -1134,7 +1395,12 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
           id: line.id,
           productId: line.productId,
           productName: line.product.name,
+          productGenericName: (line.product as any).genericName ?? null,
           productSku: line.product.sku,
+          presentationId: line.presentationId ?? null,
+          presentationName: line.presentation?.name ?? null,
+          unitsPerPresentation: line.presentation?.unitsPerPresentation ? Number(line.presentation.unitsPerPresentation) : null,
+          presentationQuantity: line.presentationQuantity !== null && line.presentationQuantity !== undefined ? Number(line.presentationQuantity) : null,
           quantity: Number(line.quantity),
           unitPrice: Number(line.unitPrice),
           discountPct: Number(line.discountPct ?? 0),

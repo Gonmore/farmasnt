@@ -7,10 +7,15 @@ import { Permissions } from '../../../application/security/permissions.js'
 import { currentYearUtc, nextSequence } from '../../../application/shared/sequence.js'
 
 const listQuerySchema = z.object({
-  take: z.coerce.number().int().min(1).max(50).default(20),
+  take: z.coerce.number().int().min(1).max(100).default(20),
   cursor: z.string().uuid().optional(),
   status: z.enum(['DRAFT', 'CONFIRMED', 'FULFILLED', 'CANCELLED']).optional(),
+  customerId: z.string().trim().min(1).optional(),
   customerSearch: z.string().optional(),
+  productId: z.string().uuid().optional(),
+  deliveryCity: z.string().optional(),
+  from: z.coerce.date().optional(),
+  to: z.coerce.date().optional(),
 })
 
 const deliveriesQuerySchema = z.object({
@@ -528,7 +533,10 @@ async function releaseReservationsForOrder(tx: any, args: { tenantId: string; or
     }
   }
 
-  await tx.salesOrderReservation.deleteMany({ where: { tenantId: args.tenantId, salesOrderId: args.orderId } })
+  await tx.salesOrderReservation.updateMany({
+    where: { tenantId: args.tenantId, salesOrderId: args.orderId, releasedAt: null },
+    data: { releasedAt: new Date() },
+  })
 }
 
 export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<void> {
@@ -648,10 +656,47 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
       const tenantId = request.auth!.tenantId
 
       const where: any = { tenantId, ...(parsed.data.status ? { status: parsed.data.status } : {}) }
+      if (parsed.data.customerId) {
+        where.customerId = parsed.data.customerId
+      }
       if (parsed.data.customerSearch) {
         where.customer = {
           name: { contains: parsed.data.customerSearch, mode: 'insensitive' },
         }
+      }
+      if (parsed.data.deliveryCity) {
+        const city = parsed.data.deliveryCity.trim()
+        if (city.toLowerCase() === 'sin ciudad') {
+          where.OR = [
+            { deliveryCity: null },
+            { deliveryCity: '' },
+            { customer: { city: null } },
+            { customer: { city: '' } },
+          ]
+        } else {
+          // Keep in sync with reports/sales/by-city logic: prefer order.deliveryCity, fallback to customer.city.
+          where.OR = [
+            { deliveryCity: city },
+            {
+              AND: [
+                { OR: [{ deliveryCity: null }, { deliveryCity: '' }] },
+                { customer: { city } },
+              ],
+            },
+          ]
+        }
+      }
+      if (parsed.data.productId) {
+        where.lines = {
+          some: {
+            productId: parsed.data.productId,
+          },
+        }
+      }
+      if (parsed.data.from || parsed.data.to) {
+        where.createdAt = {}
+        if (parsed.data.from) where.createdAt.gte = parsed.data.from
+        if (parsed.data.to) where.createdAt.lt = parsed.data.to
       }
 
       const items = await db.salesOrder.findMany({
@@ -668,8 +713,11 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
           id: true,
           number: true,
           status: true,
+          createdAt: true,
           updatedAt: true,
           createdBy: true,
+          deliveredAt: true,
+          paidAt: true,
           deliveryDate: true,
           deliveryCity: true,
           deliveryZone: true,
@@ -677,6 +725,12 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
           deliveryMapsUrl: true,
           customer: { select: { id: true, name: true } },
           quote: { select: { id: true, number: true } },
+          lines: {
+            select: {
+              quantity: true,
+              unitPrice: true,
+            },
+          },
         },
       })
 
@@ -690,17 +744,21 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
         id: o.id,
         number: o.number,
         status: o.status,
+        createdAt: o.createdAt.toISOString(),
         updatedAt: o.updatedAt.toISOString(),
         customerId: o.customer.id,
         customerName: o.customer.name,
         quoteId: o.quote?.id ?? null,
         quoteNumber: o.quote?.number ?? null,
         processedBy: o.createdBy ? authorMap.get(o.createdBy) ?? null : null,
+        deliveredAt: o.deliveredAt ? o.deliveredAt.toISOString() : null,
+        paidAt: o.paidAt ? o.paidAt.toISOString() : null,
         deliveryDate: o.deliveryDate ? o.deliveryDate.toISOString() : null,
         deliveryCity: o.deliveryCity,
         deliveryZone: o.deliveryZone,
         deliveryAddress: o.deliveryAddress,
         deliveryMapsUrl: o.deliveryMapsUrl,
+        total: o.lines.reduce((sum: number, l: any) => sum + (toNumber(l.quantity) * toNumber(l.unitPrice)), 0),
       }))
 
       const nextCursor = items.length === parsed.data.take ? items[items.length - 1]!.id : null
@@ -743,8 +801,11 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
               productId: true,
               batchId: true,
               quantity: true,
+              presentationId: true,
+              presentationQuantity: true,
               unitPrice: true,
               product: { select: { sku: true, name: true, genericName: true } },
+              presentation: { select: { id: true, name: true, unitsPerPresentation: true } },
             },
           },
         },
@@ -762,10 +823,254 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
       return reply.send({
         ...order,
         processedBy,
+        lines: order.lines.map((l: any) => ({
+          id: l.id,
+          productId: l.productId,
+          batchId: l.batchId ?? null,
+          quantity: l.quantity,
+          presentationId: l.presentationId ?? null,
+          presentationName: l.presentation?.name ?? null,
+          unitsPerPresentation: l.presentation?.unitsPerPresentation ? Number(l.presentation.unitsPerPresentation) : null,
+          presentationQuantity: l.presentationQuantity !== null && l.presentationQuantity !== undefined ? Number(l.presentationQuantity) : null,
+          unitPrice: l.unitPrice,
+          product: l.product,
+        })),
         createdAt: order.createdAt.toISOString(),
         updatedAt: order.updatedAt.toISOString(),
         deliveryDate: order.deliveryDate ? order.deliveryDate.toISOString() : null,
       })
+    },
+  )
+
+  // Read-side: reservations/picking detail for an order.
+  app.get(
+    '/api/v1/sales/orders/:id/reservations',
+    {
+      preHandler: [
+        requireAuth(),
+        requireModuleEnabled(db, 'SALES'),
+        requireModuleEnabled(db, 'WAREHOUSE'),
+        requirePermission(Permissions.SalesOrderRead),
+        requirePermission(Permissions.StockRead),
+      ],
+    },
+    async (request, reply) => {
+      const id = (request.params as any).id as string
+      const tenantId = request.auth!.tenantId
+
+      const order = await db.salesOrder.findFirst({ where: { id, tenantId }, select: { id: true, number: true, createdAt: true, deliveredAt: true, status: true } })
+      if (!order) return reply.status(404).send({ message: 'Not found' })
+
+      try {
+        // Check if order is fulfilled
+        const isFulfilled = order.status === 'FULFILLED'
+
+        const reservations = await db.salesOrderReservation.findMany({
+          where: {
+            tenantId,
+            salesOrderId: order.id,
+            ...(isFulfilled ? {} : { releasedAt: null }),
+          },
+          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+          select: {
+            id: true,
+            inventoryBalanceId: true,
+            quantity: true,
+            createdAt: true,
+            releasedAt: true,
+            line: {
+              select: {
+                presentationId: true,
+                presentationQuantity: true,
+                presentation: { select: { name: true, unitsPerPresentation: true } }
+              }
+            }
+          },
+        })
+
+        if (reservations.length > 0) {
+          // Show reservations
+          const balanceIds = reservations.map(r => r.inventoryBalanceId)
+          const balances = balanceIds.length > 0 ? await db.inventoryBalance.findMany({
+            where: { id: { in: balanceIds } },
+            select: {
+              id: true,
+              productId: true,
+              batchId: true,
+              locationId: true,
+              product: { 
+                select: { 
+                  sku: true, 
+                  name: true, 
+                  genericName: true,
+                  presentations: { 
+                    select: { name: true, unitsPerPresentation: true }, 
+                    where: { isActive: true, isDefault: true }, 
+                    take: 1 
+                  }
+                } 
+              },
+              batch: { select: { batchNumber: true, expiresAt: true } },
+              location: { select: { code: true, warehouse: { select: { id: true, code: true, name: true } } } },
+            },
+          }) : []
+
+          const balanceMap = new Map(balances.map(b => [b.id, b]))
+
+          return reply.send({
+            items: reservations.map((r) => {
+              const balance = balanceMap.get(r.inventoryBalanceId)
+              const presentation = r.line?.presentation
+              return {
+                id: r.id,
+                inventoryBalanceId: r.inventoryBalanceId,
+                quantity: Number(r.quantity ?? 0),
+                createdAt: r.createdAt.toISOString(),
+                releasedAt: r.releasedAt ? r.releasedAt.toISOString() : null,
+                productId: balance?.productId ?? null,
+                productSku: balance?.product?.sku ?? null,
+                productName: balance?.product?.name ?? null,
+                genericName: balance?.product?.genericName ?? null,
+                batchId: balance?.batchId ?? null,
+                batchNumber: balance?.batch?.batchNumber ?? null,
+                expiresAt: balance?.batch?.expiresAt ? balance.batch.expiresAt.toISOString() : null,
+                locationId: balance?.locationId ?? null,
+                locationCode: balance?.location?.code ?? null,
+                warehouseId: balance?.location?.warehouse?.id ?? null,
+                warehouseCode: balance?.location?.warehouse?.code ?? null,
+                warehouseName: balance?.location?.warehouse?.name ?? null,
+                presentationName: presentation?.name ?? null,
+                unitsPerPresentation: presentation ? Number(presentation.unitsPerPresentation) : null,
+                presentationQuantity: r.line?.presentationQuantity ? Number(r.line.presentationQuantity) : null,
+              }
+            }),
+          })
+        } else {
+          // No reservations found.
+          // If the order is already delivered, rebuild the picking view from stock movements (source of truth).
+          if (isFulfilled) {
+            const movements = await db.stockMovement.findMany({
+              where: {
+                tenantId,
+                type: 'OUT',
+                referenceType: 'SALES_ORDER',
+                referenceId: order.number,
+              },
+              orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+              select: {
+                id: true,
+                productId: true,
+                batchId: true,
+                fromLocationId: true,
+                quantity: true,
+                createdAt: true,
+                product: { 
+                  select: { 
+                    sku: true, 
+                    name: true, 
+                    genericName: true,
+                    presentations: { 
+                      select: { name: true, unitsPerPresentation: true }, 
+                      where: { isActive: true, isDefault: true }, 
+                      take: 1 
+                    }
+                  } 
+                },
+                batch: { select: { batchNumber: true, expiresAt: true } },
+              },
+            })
+
+            const locationIds = [...new Set(movements.map((m) => m.fromLocationId).filter((v): v is string => !!v))]
+            const locations = locationIds.length
+              ? await db.location.findMany({
+                  where: { tenantId, id: { in: locationIds } },
+                  select: { id: true, code: true, warehouse: { select: { id: true, code: true, name: true } } },
+                })
+              : []
+            const locationMap = new Map(locations.map((l) => [l.id, l]))
+
+            return reply.send({
+              items: movements.map((m) => {
+                const loc = m.fromLocationId ? locationMap.get(m.fromLocationId) : undefined
+                const presentation = m.product?.presentations?.[0]
+                return {
+                  id: m.id,
+                  inventoryBalanceId: null,
+                  quantity: Number(m.quantity ?? 0),
+                  createdAt: m.createdAt.toISOString(),
+                  releasedAt: order.deliveredAt ? order.deliveredAt.toISOString() : null,
+                  productId: m.productId,
+                  productSku: m.product?.sku ?? null,
+                  productName: m.product?.name ?? null,
+                  genericName: m.product?.genericName ?? null,
+                  batchId: m.batchId ?? null,
+                  batchNumber: m.batch?.batchNumber ?? null,
+                  expiresAt: m.batch?.expiresAt ? m.batch.expiresAt.toISOString() : null,
+                  locationId: m.fromLocationId ?? null,
+                  locationCode: loc?.code ?? null,
+                  warehouseId: loc?.warehouse?.id ?? null,
+                  warehouseCode: loc?.warehouse?.code ?? null,
+                  warehouseName: loc?.warehouse?.name ?? null,
+                  presentationName: presentation?.name ?? null,
+                  unitsPerPresentation: presentation ? Number(presentation.unitsPerPresentation) : null,
+                }
+              }),
+            })
+          }
+
+          // Not delivered and no reservations: show order lines as a fallback summary.
+          const lines = await db.salesOrderLine.findMany({
+            where: { tenantId, salesOrderId: order.id },
+            select: {
+              id: true,
+              productId: true,
+              quantity: true,
+              product: { 
+                select: { 
+                  sku: true, 
+                  name: true, 
+                  genericName: true,
+                  presentations: { 
+                    select: { name: true, unitsPerPresentation: true }, 
+                    where: { isActive: true, isDefault: true }, 
+                    take: 1 
+                  }
+                } 
+              },
+            },
+          })
+
+          return reply.send({
+            items: lines.map((line) => {
+              const presentation = line.product?.presentations?.[0]
+              return {
+                id: line.id,
+                inventoryBalanceId: null,
+                quantity: Number(line.quantity ?? 0),
+                createdAt: order.createdAt.toISOString(),
+                releasedAt: null,
+                productId: line.productId,
+                productSku: line.product?.sku ?? null,
+                productName: line.product?.name ?? null,
+                genericName: line.product?.genericName ?? null,
+                batchId: null,
+                batchNumber: null,
+                expiresAt: null,
+                locationId: null,
+                locationCode: null,
+                warehouseId: null,
+                warehouseCode: null,
+                warehouseName: null,
+                presentationName: presentation?.name ?? null,
+                unitsPerPresentation: presentation ? Number(presentation.unitsPerPresentation) : null,
+              }
+            }),
+          })
+        }
+      } catch (error) {
+        console.error('Error fetching reservations for order', order.id, ':', (error as any).message, (error as any).stack)
+        return reply.status(500).send({ message: 'Error interno del servidor al cargar reservas' })
+      }
     },
   )
 
@@ -1085,7 +1390,11 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
             createdMovements.push(movement)
           }
 
-          await tx.salesOrderReservation.deleteMany({ where: { tenantId, salesOrderId: order.id } })
+          // Preserve picking history: mark reservations as released instead of deleting them.
+          await tx.salesOrderReservation.updateMany({
+            where: { tenantId, salesOrderId: order.id, releasedAt: null },
+            data: { releasedAt: deliveredAt },
+          })
 
           const updatedOrder = await tx.salesOrder.update({
             where: { id: order.id },

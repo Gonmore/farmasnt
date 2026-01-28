@@ -295,6 +295,7 @@ model Product {
   recipeItemsAsIngredient RecipeItem[] @relation("RecipeItemIngredientProduct")
   balances InventoryBalance[]
   stockMovements StockMovement[]
+  presentations ProductPresentation[]
   salesOrderLines SalesOrderLine[]
   quoteLines      QuoteLine[]
   stockMovementRequestItems StockMovementRequestItem[]
@@ -302,6 +303,32 @@ model Product {
   @@unique([tenantId, sku])
   @@index([tenantId])
   @@index([tenantId, name])
+}
+
+model ProductPresentation {
+  id                 String   @id @default(uuid())
+  tenantId           String
+  productId          String
+  name               String
+  unitsPerPresentation Decimal @default(1)
+  priceOverride      Decimal?
+  isDefault          Boolean  @default(false)
+  sortOrder          Int      @default(0)
+  isActive           Boolean  @default(true)
+  version            Int      @default(1)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  createdBy          String?
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  quoteLines QuoteLine[]
+  salesOrderLines SalesOrderLine[]
+  stockMovements StockMovement[]
+
+  @@unique([tenantId, productId, name])
+  @@index([tenantId])
+  @@index([tenantId, productId])
+  @@index([productId])
 }
 
 model Recipe {
@@ -467,6 +494,8 @@ model StockMovement {
   fromLocationId String?
   toLocationId   String?
   quantity       Decimal
+  presentationId String?
+  presentationQuantity Decimal?
   referenceType  String?
   referenceId    String?
   note           String?
@@ -477,6 +506,7 @@ model StockMovement {
 
   product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
   batch   Batch?  @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  presentation ProductPresentation? @relation(fields: [presentationId], references: [id], onDelete: SetNull)
 
   @@unique([tenantId, number])
 
@@ -585,6 +615,8 @@ model SalesOrderLine {
   productId    String
   batchId      String?
   quantity     Decimal
+  presentationId String?
+  presentationQuantity Decimal?
   unitPrice    Decimal  @default(0)
   version      Int      @default(1)
   createdAt    DateTime @default(now())
@@ -594,6 +626,7 @@ model SalesOrderLine {
   salesOrder SalesOrder @relation(fields: [salesOrderId], references: [id], onDelete: Cascade)
   product    Product    @relation(fields: [productId], references: [id], onDelete: Restrict)
   batch      Batch?     @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  presentation ProductPresentation? @relation(fields: [presentationId], references: [id], onDelete: SetNull)
 
   reservations SalesOrderReservation[]
 
@@ -611,6 +644,7 @@ model SalesOrderReservation {
   quantity         Decimal
   createdAt        DateTime @default(now())
   createdBy        String?
+  releasedAt       DateTime?
 
   salesOrder SalesOrder @relation(fields: [salesOrderId], references: [id], onDelete: Cascade)
   line       SalesOrderLine @relation(fields: [salesOrderLineId], references: [id], onDelete: Cascade)
@@ -662,6 +696,8 @@ model QuoteLine {
   quoteId   String
   productId String
   quantity  Decimal
+  presentationId String?
+  presentationQuantity Decimal?
   unitPrice Decimal  @default(0)
   discountPct Decimal @default(0)
   version   Int      @default(1)
@@ -671,6 +707,7 @@ model QuoteLine {
 
   quote   Quote   @relation(fields: [quoteId], references: [id], onDelete: Cascade)
   product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  presentation ProductPresentation? @relation(fields: [presentationId], references: [id], onDelete: SetNull)
 
   @@index([tenantId])
   @@index([quoteId])
