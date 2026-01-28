@@ -6,12 +6,13 @@ import { requireAuth, requireModuleEnabled, requirePermission } from '../../../a
 import { Permissions } from '../../../application/security/permissions.js'
 
 const createWarehouseSchema = z.object({
-  code: z.string().trim().min(1).max(32),
+  code: z.string().trim().min(1).max(32).regex(/^SUC-/, 'Warehouse code must start with SUC-'),
   name: z.string().trim().min(1).max(200),
   city: z.string().trim().min(1).max(120),
 })
 
 const updateWarehouseSchema = z.object({
+  code: z.string().trim().min(1).max(32).regex(/^SUC-/, 'Warehouse code must start with SUC-').optional(),
   name: z.string().trim().min(1).max(200).optional(),
   city: z.string().trim().min(1).max(120).optional(),
   isActive: z.boolean().optional(),
@@ -158,6 +159,7 @@ export async function registerWarehouseRoutes(app: FastifyInstance): Promise<voi
           version: warehouse.version // Optimistic locking
         },
         data: {
+          ...(parsed.data.code !== undefined ? { code: parsed.data.code } : {}),
           ...(parsed.data.name !== undefined ? { name: parsed.data.name } : {}),
           ...(parsed.data.city !== undefined ? { city: parsed.data.city.toUpperCase() } : {}),
           ...(parsed.data.isActive !== undefined ? { isActive: parsed.data.isActive } : {}),
