@@ -13,6 +13,10 @@ type OrderLine = {
   productId: string
   batchId: string | null
   quantity: string | number
+  presentationId?: string | null
+  presentationName?: string | null
+  unitsPerPresentation?: number | null
+  presentationQuantity?: number | null
   unitPrice: string | number
   product: { sku: string; name: string; genericName?: string | null }
 }
@@ -38,6 +42,27 @@ type SalesOrderDetail = {
   lines: OrderLine[]
 }
 
+type OrderReservationRow = {
+  id: string
+  inventoryBalanceId: string
+  quantity: number
+  createdAt: string
+  productId: string | null
+  productSku: string | null
+  productName: string | null
+  genericName: string | null
+  batchId: string | null
+  batchNumber: string | null
+  expiresAt: string | null
+  locationId: string | null
+  locationCode: string | null
+  warehouseId: string | null
+  warehouseCode: string | null
+  warehouseName: string | null
+}
+
+type OrderReservationsResponse = { items: OrderReservationRow[] }
+
 function orderStatusLabel(status: SalesOrderDetail['status']): string {
   if (status === 'DRAFT') return 'Borrador'
   if (status === 'CONFIRMED') return 'Confirmada'
@@ -60,6 +85,10 @@ async function fetchOrder(token: string, id: string): Promise<SalesOrderDetail> 
   return apiFetch(`/api/v1/sales/orders/${id}`, { token })
 }
 
+async function fetchOrderReservations(token: string, id: string): Promise<OrderReservationsResponse> {
+  return apiFetch(`/api/v1/sales/orders/${encodeURIComponent(id)}/reservations`, { token })
+}
+
 export function OrderDetailPage() {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -71,6 +100,12 @@ export function OrderDetailPage() {
   const orderQuery = useQuery({
     queryKey: ['order', id],
     queryFn: () => fetchOrder(auth.accessToken!, id!),
+    enabled: !!auth.accessToken && !!id,
+  })
+
+  const reservationsQuery = useQuery({
+    queryKey: ['order', id, 'reservations'],
+    queryFn: () => fetchOrderReservations(auth.accessToken!, id!),
     enabled: !!auth.accessToken && !!id,
   })
 
@@ -182,13 +217,62 @@ export function OrderDetailPage() {
                 columns={[
                   { header: 'SKU', accessor: (r: any) => r.product.sku },
                   { header: 'Producto', accessor: (r: any) => getProductDisplayName(r.product) },
-                  { header: 'Cant.', accessor: (r: any) => toNumber(r.quantity) },
+                  { header: 'Presentación', accessor: (r: any) => r.presentationName ?? 'Unidad' },
+                  { header: 'Cant.', accessor: (r: any) => (r.presentationQuantity ? `${toNumber(r.presentationQuantity)}` : `${toNumber(r.quantity)}`) },
                   { header: 'P. unit.', accessor: (r: any) => `${money(toNumber(r.unitPrice))} ${currency}` },
                   { header: 'Total', accessor: (r: any) => `${money(toNumber(r.quantity) * toNumber(r.unitPrice))} ${currency}` },
                 ]}
                 data={orderQuery.data.lines}
                 keyExtractor={(r: any) => r.id}
               />
+            </div>
+
+            <div className="rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
+              <div className="flex items-center justify-between gap-2 p-4">
+                <div className="font-semibold text-slate-900 dark:text-slate-100">Reservas / Picking (lotes)</div>
+                {reservationsQuery.isLoading ? <Badge variant="info">Cargando…</Badge> : null}
+              </div>
+
+              {reservationsQuery.error ? (
+                <div className="px-4 pb-4">
+                  <ErrorState message="No se pudo cargar el detalle de reservas" retry={reservationsQuery.refetch} />
+                </div>
+              ) : null}
+
+              {reservationsQuery.data && (reservationsQuery.data.items?.length ?? 0) === 0 ? (
+                <div className="px-4 pb-4 text-sm text-slate-600 dark:text-slate-300">
+                  No hay reservas registradas para esta OV. Al entregar, el sistema pedirá una ubicación origen (flujo FEFO clásico).
+                </div>
+              ) : null}
+
+              {reservationsQuery.data && (reservationsQuery.data.items?.length ?? 0) > 0 ? (
+                <Table
+                  columns={[
+                    { header: 'SKU', accessor: (r: any) => r.productSku ?? '—' },
+                    {
+                      header: 'Producto',
+                      accessor: (r: any) => (r.productName ? getProductDisplayName({ sku: r.productSku, name: r.productName, genericName: r.genericName }) : '—'),
+                    },
+                    { header: 'Lote', accessor: (r: any) => r.batchNumber ?? '—' },
+                    {
+                      header: 'Vence',
+                      accessor: (r: any) => (r.expiresAt ? new Date(r.expiresAt).toLocaleDateString() : '—'),
+                    },
+                    {
+                      header: 'Ubicación',
+                      accessor: (r: any) => {
+                        const wh = r.warehouseCode ? `${r.warehouseCode}` : ''
+                        const loc = r.locationCode ? `${r.locationCode}` : ''
+                        const sep = wh && loc ? ' · ' : ''
+                        return (wh || loc) ? `${wh}${sep}${loc}` : '—'
+                      },
+                    },
+                    { header: 'Reservado', accessor: (r: any) => `${toNumber(r.quantity)}` },
+                  ]}
+                  data={reservationsQuery.data.items}
+                  keyExtractor={(r: any) => r.id}
+                />
+              ) : null}
             </div>
 
             <div className="rounded-lg border border-slate-200 bg-white p-4 text-sm dark:border-slate-700 dark:bg-slate-900">

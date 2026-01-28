@@ -64,6 +64,14 @@ type ProductBatchListItem = {
   }[]
 }
 
+type ProductPresentation = {
+  id: string
+  name: string
+  unitsPerPresentation: string
+  isDefault?: boolean
+  isActive?: boolean
+}
+
 type ClientListItem = {
   id: string
   commercialName: string
@@ -90,6 +98,10 @@ async function listWarehouseLocations(token: string, warehouseId: string): Promi
 
 async function listClients(token: string): Promise<{ items: ClientListItem[] }> {
   return apiFetch(`/api/v1/clients?take=100`, { token })
+}
+
+async function fetchProductPresentations(token: string, productId: string): Promise<{ items: ProductPresentation[] }> {
+  return apiFetch(`/api/v1/products/${productId}/presentations`, { token })
 }
 
 async function createBatch(
@@ -165,6 +177,13 @@ export function MovementsPage() {
   const [adjustedExpirationDate, setAdjustedExpirationDate] = useState('')
   const [adjustmentError, setAdjustmentError] = useState('')
 
+  // Estados para REEMPAQUE (REPACK)
+  const [repackSourcePresentationId, setRepackSourcePresentationId] = useState('')
+  const [repackSourceQty, setRepackSourceQty] = useState('')
+  const [repackTargetPresentationId, setRepackTargetPresentationId] = useState('')
+  const [repackTargetQty, setRepackTargetQty] = useState('')
+  const [repackError, setRepackError] = useState('')
+
   const productsQuery = useQuery({
     queryKey: ['products', 'forMovements'],
     queryFn: () => fetchProducts(auth.accessToken!),
@@ -175,6 +194,12 @@ export function MovementsPage() {
     queryKey: ['productBatches', 'forMovements', productId],
     queryFn: () => listProductBatches(auth.accessToken!, productId),
     enabled: !!auth.accessToken && !!productId,
+  })
+
+  const presentationsQuery = useQuery({
+    queryKey: ['productPresentations', 'forMovements', productId],
+    queryFn: () => fetchProductPresentations(auth.accessToken!, productId),
+    enabled: !!auth.accessToken && !!productId && type === 'REPACK',
   })
 
   const warehousesQuery = useQuery({
@@ -278,12 +303,24 @@ export function MovementsPage() {
     setAdjustedManufacturingDate('')
     setAdjustedExpirationDate('')
     setAdjustmentError('')
+
+    setRepackSourcePresentationId('')
+    setRepackSourceQty('')
+    setRepackTargetPresentationId('')
+    setRepackTargetQty('')
+    setRepackError('')
   }
 
   const handleProductChange = (nextProductId: string) => {
     setProductId(nextProductId)
     setSelectedStockKey('')
     setQuantity('')
+
+    setRepackSourcePresentationId('')
+    setRepackSourceQty('')
+    setRepackTargetPresentationId('')
+    setRepackTargetQty('')
+    setRepackError('')
   }
 
   // Obtener existencias por lote/ubicación para mostrar en tabla
@@ -316,6 +353,132 @@ export function MovementsPage() {
   })()
 
   const selectableStockRows = stockRows.filter((r) => Number(r.availableQuantity || '0') > 0)
+
+  const activePresentations = (presentationsQuery.data?.items ?? []).filter((p) => p.isActive !== false)
+  const sourcePresentation = activePresentations.find((p) => p.id === repackSourcePresentationId) ?? null
+  const targetPresentation = activePresentations.find((p) => p.id === repackTargetPresentationId) ?? null
+
+  const repackDerived = (() => {
+    const row = stockRows.find((r) => r.id === selectedStockKey)
+    const availableUnits = row ? Number(row.availableQuantity || '0') : null
+
+    const srcQty = Number(repackSourceQty)
+    const tgtQty = Number(repackTargetQty)
+
+    const srcFactor = sourcePresentation ? Number(sourcePresentation.unitsPerPresentation) : null
+    const tgtFactor = targetPresentation ? Number(targetPresentation.unitsPerPresentation) : null
+
+    const srcOk = Number.isFinite(srcQty) && srcQty > 0
+    const tgtOk = Number.isFinite(tgtQty) && tgtQty > 0
+    const srcFactorOk = srcFactor !== null && Number.isFinite(srcFactor) && srcFactor > 0
+    const tgtFactorOk = tgtFactor !== null && Number.isFinite(tgtFactor) && tgtFactor > 0
+
+    const baseSource = srcOk && srcFactorOk ? srcQty * srcFactor : null
+    const maxTarget = baseSource !== null && tgtFactorOk ? Math.floor(baseSource / (tgtFactor as number)) : null
+    const baseTarget = tgtOk && tgtFactorOk ? tgtQty * (tgtFactor as number) : null
+    const remainder = baseSource !== null && baseTarget !== null ? baseSource - baseTarget : null
+
+    const exceedsAvailable =
+      baseSource !== null && typeof availableUnits === 'number' && Number.isFinite(availableUnits)
+        ? baseSource > availableUnits + 1e-9
+        : false
+
+    const targetExceedsSource = baseSource !== null && baseTarget !== null ? baseTarget > baseSource + 1e-9 : false
+
+    return {
+      availableUnits: typeof availableUnits === 'number' && Number.isFinite(availableUnits) ? availableUnits : null,
+      baseSource,
+      baseTarget,
+      remainder,
+      maxTarget,
+      exceedsAvailable,
+      targetExceedsSource,
+    }
+  })()
+
+  const repackMutation = useMutation({
+    mutationFn: async () => {
+      setRepackError('')
+      const selectedRow = stockRows.find((r) => r.id === selectedStockKey)
+      if (!selectedRow) throw new Error('Seleccioná un lote/ubicación')
+
+      if (!sourcePresentation) throw new Error('Seleccioná la presentación de origen')
+      if (!targetPresentation) throw new Error('Seleccioná la presentación destino')
+
+      const srcQty = Number(repackSourceQty)
+      const tgtQty = Number(repackTargetQty)
+      if (!Number.isFinite(srcQty) || srcQty <= 0) throw new Error('Ingresá una cantidad válida de origen')
+      if (!Number.isFinite(tgtQty) || tgtQty <= 0) throw new Error('Ingresá una cantidad válida a armar')
+
+      if (repackDerived.baseSource === null) throw new Error('No se pudo calcular la cantidad base de origen')
+      if (repackDerived.baseTarget === null) throw new Error('No se pudo calcular la cantidad base a armar')
+      if (repackDerived.exceedsAvailable) throw new Error('La cantidad de origen supera lo disponible')
+      if (repackDerived.targetExceedsSource) throw new Error('La cantidad a armar supera la cantidad de origen')
+      if (repackDerived.remainder !== null && repackDerived.remainder < -1e-9) throw new Error('Remanente inválido')
+
+      const ok = confirm(
+        `Confirmar reempaque\n\n` +
+          `Lote: ${selectedRow.batchNumber}\n` +
+          `Ubicación: ${selectedRow.warehouse} / ${selectedRow.location}\n\n` +
+          `Sacar: ${repackSourceQty} ${sourcePresentation.name} (${repackDerived.baseSource} u.)\n` +
+          `Armar: ${repackTargetQty} ${targetPresentation.name} (${repackDerived.baseTarget} u.)\n` +
+          `Resto: ${repackDerived.remainder ?? '-'} Unidad\n\n` +
+          `Se registrarán movimientos OUT/IN.`,
+      )
+      if (!ok) return
+
+      return apiFetch(`/api/v1/stock/repack`, {
+        token: auth.accessToken,
+        method: 'POST',
+        body: JSON.stringify({
+          productId,
+          batchId: selectedRow.batchId,
+          locationId: selectedRow.locationId,
+          sourcePresentationId: sourcePresentation.id,
+          sourceQuantity: srcQty,
+          targetPresentationId: targetPresentation.id,
+          targetQuantity: tgtQty,
+          note: `Reempaque: ${repackSourceQty} ${sourcePresentation.name} -> ${repackTargetQty} ${targetPresentation.name}`,
+        }),
+      })
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['productBatches', 'forMovements', productId] })
+      setSelectedStockKey('')
+      setRepackSourceQty('')
+      setRepackTargetQty('')
+      setRepackError('')
+      alert('Reempaque realizado exitosamente')
+    },
+    onError: (err: any) => {
+      const msg = err instanceof Error ? err.message : 'Error al reempaquetar'
+      setRepackError(msg)
+    },
+  })
+
+  const repackCanApply = (() => {
+    if (type !== 'REPACK') return false
+    if (!productId) return false
+    if (!selectedStockKey) return false
+    if (presentationsQuery.isLoading) return false
+
+    if (!repackSourcePresentationId || !repackTargetPresentationId) return false
+    if (!sourcePresentation || !targetPresentation) return false
+
+    const srcQty = Number(repackSourceQty)
+    const tgtQty = Number(repackTargetQty)
+    if (!Number.isFinite(srcQty) || srcQty <= 0) return false
+    if (!Number.isFinite(tgtQty) || tgtQty <= 0) return false
+
+    if (repackDerived.baseSource === null) return false
+    if (repackDerived.baseTarget === null) return false
+    if (repackDerived.remainder === null) return false
+    if (repackDerived.exceedsAvailable) return false
+    if (repackDerived.targetExceedsSource) return false
+    if (repackDerived.remainder < -1e-9) return false
+
+    return true
+  })()
 
   // Calcular el próximo número de lote
   const nextBatchNumber = (() => {
@@ -389,6 +552,7 @@ export function MovementsPage() {
                 { value: '', label: 'Selecciona tipo de movimiento' },
                 { value: 'IN', label: '📥 Entrada (creación de nuevo lote)' },
                 { value: 'TRANSFER', label: '🔄 Transferencia (cambiar ubicación de existencias)' },
+                { value: 'REPACK', label: '📦 Reempaque (armar/desarmar presentación)' },
                 { value: 'OUT', label: '📤 Salida (venta o baja de existencias)' },
                 { value: 'ADJUSTMENT', label: '⚖️ Ajuste (modificar lote)' },
               ]}
@@ -523,6 +687,197 @@ export function MovementsPage() {
                       Crear Lote
                     </Button>
                   </form>
+                )}
+              </div>
+            )}
+
+            {/* REEMPAQUE */}
+            {type === 'REPACK' && (
+              <div className="space-y-4 border-t border-slate-200 pt-6 dark:border-slate-700">
+                <h3 className="font-semibold text-slate-900 dark:text-slate-100">Reempaque (armar/desarmar)</h3>
+
+                <Select
+                  label="Producto"
+                  value={productId}
+                  onChange={(e) => handleProductChange(e.target.value)}
+                  options={[
+                    { value: '', label: 'Selecciona un producto' },
+                    ...(productsQuery.data?.items ?? [])
+                      .filter((p) => p.isActive)
+                      .map((p) => ({ value: p.id, label: getProductLabel(p) })),
+                  ]}
+                  disabled={productsQuery.isLoading}
+                />
+
+                {productId && (
+                  <div className="rounded-md border border-slate-200 p-4 dark:border-slate-700">
+                    <h4 className="mb-3 font-medium text-slate-900 dark:text-slate-100">Seleccionar Lote/Ubicación</h4>
+
+                    {productBatchesQuery.isLoading && <Loading />}
+                    {productBatchesQuery.error && (
+                      <ErrorState message="Error cargando existencias" retry={productBatchesQuery.refetch} />
+                    )}
+
+                    {productBatchesQuery.data?.hasStockRead && selectableStockRows.length > 0 && (
+                      <Table
+                        columns={[
+                          {
+                            header: 'Seleccionar',
+                            accessor: (r) => (
+                              <input
+                                type="radio"
+                                name="stockSelectionRepack"
+                                value={r.id}
+                                checked={selectedStockKey === r.id}
+                                onChange={(e) => setSelectedStockKey(e.target.value)}
+                              />
+                            ),
+                            className: 'w-16',
+                          },
+                          { header: 'Lote', accessor: (r) => r.batchNumber },
+                          { header: 'Elaboración', accessor: (r) => r.manufacturingDate },
+                          { header: 'Vence', accessor: (r) => r.expiresAt },
+                          { header: 'Disponible', accessor: (r) => r.availableQuantity },
+                          { header: 'Ubicación', accessor: (r) => `${r.warehouse} / ${r.location}` },
+                        ]}
+                        data={selectableStockRows}
+                        keyExtractor={(r) => r.id}
+                      />
+                    )}
+
+                    {productBatchesQuery.data?.hasStockRead && selectableStockRows.length === 0 && (
+                      <div className="text-sm text-slate-600 dark:text-slate-400">Sin existencias disponibles</div>
+                    )}
+                  </div>
+                )}
+
+                {selectedStockKey && (
+                  <div className="space-y-4 rounded-md border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/50">
+                    {presentationsQuery.isLoading && <Loading />}
+                    {presentationsQuery.error && (
+                      <ErrorState message="Error cargando presentaciones" retry={presentationsQuery.refetch} />
+                    )}
+
+                    {activePresentations.length > 0 && (
+                      <>
+                        <div className="grid gap-3 md:grid-cols-4">
+                          <Select
+                            label="Desde"
+                            value={repackSourcePresentationId}
+                            onChange={(e) => setRepackSourcePresentationId(e.target.value)}
+                            options={[
+                              { value: '', label: 'Selecciona presentación' },
+                              ...activePresentations.map((p) => ({
+                                value: p.id,
+                                label: `${p.name} · ${p.unitsPerPresentation} u.`,
+                              })),
+                            ]}
+                            disabled={presentationsQuery.isLoading}
+                          />
+                          <Input
+                            label="Cantidad"
+                            type="number"
+                            value={repackSourceQty}
+                            onChange={(e) => setRepackSourceQty(e.target.value)}
+                            placeholder="Ej: 1"
+                          />
+                          <Select
+                            label="A"
+                            value={repackTargetPresentationId}
+                            onChange={(e) => setRepackTargetPresentationId(e.target.value)}
+                            options={[
+                              { value: '', label: 'Selecciona presentación' },
+                              ...activePresentations.map((p) => ({
+                                value: p.id,
+                                label: `${p.name} · ${p.unitsPerPresentation} u.`,
+                              })),
+                            ]}
+                            disabled={presentationsQuery.isLoading}
+                          />
+                          <Input
+                            label="Cantidad a armar"
+                            type="number"
+                            value={repackTargetQty}
+                            onChange={(e) => setRepackTargetQty(e.target.value)}
+                            placeholder={repackDerived.maxTarget !== null ? `Máx: ${repackDerived.maxTarget}` : '—'}
+                          />
+                        </div>
+
+                        <div className="text-xs text-slate-700 dark:text-slate-300">
+                          {repackDerived.baseSource !== null ? (
+                            <div>
+                              Equivale a <span className="font-semibold">{repackDerived.baseSource}</span> unidades base.
+                              {repackDerived.availableUnits !== null ? ` Disponibles: ${repackDerived.availableUnits}.` : ''}
+                              {repackDerived.exceedsAvailable ? <span className="ml-2 text-red-600">Supera lo disponible.</span> : null}
+                            </div>
+                          ) : (
+                            <div>Ingresá cantidad y presentación de origen para ver conversión.</div>
+                          )}
+
+                          {repackDerived.maxTarget !== null && targetPresentation ? (
+                            <div>
+                              Podés armar hasta <span className="font-semibold">{repackDerived.maxTarget}</span> {targetPresentation.name}.
+                            </div>
+                          ) : null}
+
+                          {repackDerived.remainder !== null && targetPresentation ? (
+                            <div>
+                              Remanente: {repackDerived.remainder} Unidad.
+                              {repackDerived.targetExceedsSource ? <span className="ml-2 text-red-600">Supera el origen.</span> : null}
+                            </div>
+                          ) : null}
+                        </div>
+
+                        <div className="flex gap-2">
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            onClick={() => {
+                              if (repackDerived.maxTarget === null) return
+                              setRepackTargetQty(String(Math.max(0, repackDerived.maxTarget)))
+                            }}
+                            disabled={repackDerived.maxTarget === null}
+                          >
+                            Usar máximo
+                          </Button>
+
+                          <Button
+                            type="button"
+                            className="w-full"
+                            onClick={() => repackMutation.mutate()}
+                            loading={repackMutation.isPending}
+                            disabled={repackMutation.isPending || !repackCanApply}
+                          >
+                            Aplicar reempaque
+                          </Button>
+
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            onClick={() => {
+                              setRepackSourceQty('')
+                              setRepackTargetQty('')
+                              setRepackError('')
+                            }}
+                          >
+                            Limpiar
+                          </Button>
+                        </div>
+
+                        {repackError && (
+                          <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-200">
+                            {repackError}
+                          </div>
+                        )}
+                      </>
+                    )}
+
+                    {presentationsQuery.data && activePresentations.length === 0 && (
+                      <div className="text-sm text-slate-600 dark:text-slate-400">
+                        Este producto no tiene presentaciones activas.
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
             )}

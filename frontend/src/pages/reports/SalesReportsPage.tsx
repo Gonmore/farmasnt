@@ -710,7 +710,7 @@ export function SalesReportsPage() {
                   </div>
 
                   {/* Gráfico mejorado con área y gradiente */}
-                  <div className="mx-auto h-[400px] max-w-5xl rounded-lg bg-gradient-to-br from-slate-50 to-white p-4 dark:from-slate-900 dark:to-slate-800">
+                  <div className="mx-auto h-[400px] w-full min-w-0 max-w-5xl rounded-lg bg-gradient-to-br from-slate-50 to-white p-4 dark:from-slate-900 dark:to-slate-800">
                     <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={300}>
                       <AreaChart
                         data={(summaryQuery.data?.items ?? []).map((i) => ({
@@ -800,7 +800,7 @@ export function SalesReportsPage() {
                   </div>
 
                   {/* Gráfico de barras mejorado */}
-                  <div className="mx-auto mb-6 h-[400px] max-w-5xl rounded-lg bg-gradient-to-br from-slate-50 to-white p-4 dark:from-slate-900 dark:to-slate-800">
+                  <div className="mx-auto mb-6 h-[400px] w-full min-w-0 max-w-5xl rounded-lg bg-gradient-to-br from-slate-50 to-white p-4 dark:from-slate-900 dark:to-slate-800">
                     <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={300}>
                       <BarChart
                         data={(byCustomerQuery.data?.items ?? []).slice(0, 15).map((i) => ({
@@ -1579,7 +1579,7 @@ export function SalesReportsPage() {
           title={drillDownTitle} 
           maxWidth="xl"
         >
-          <div className="flex flex-col max-h-[70vh]">
+          <div className="flex flex-col h-[80vh]">
             <div className="flex-shrink-0 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-700 dark:border-blue-700 dark:bg-blue-900/20 dark:text-blue-300">
               📋 Detalle de órdenes para el período {from} - {to}
             </div>
@@ -1618,9 +1618,9 @@ export function SalesReportsPage() {
               if (items.length === 0) return <div className="flex-shrink-0"><EmptyState message="No hay órdenes en este filtro" /></div>
 
               return (
-                <div>
+                <div className="flex flex-col flex-1 min-h-0">
                   {/* Resumen */}
-                  <div className="grid grid-cols-2 gap-4 md:grid-cols-4 flex-shrink-0">
+                  <div className="grid grid-cols-2 gap-4 md:grid-cols-4 flex-shrink-0 mt-4">
                     <div className="rounded-lg bg-slate-100 p-3 text-center dark:bg-slate-800">
                       <div className="text-2xl font-bold text-slate-900 dark:text-white">{items.length}</div>
                       <div className="text-xs text-slate-600 dark:text-slate-400">Órdenes</div>
@@ -1646,7 +1646,7 @@ export function SalesReportsPage() {
                   </div>
 
                   {/* Tabla de órdenes */}
-                  <div className="flex-1 overflow-auto rounded-lg border border-slate-200 dark:border-slate-700">
+                  <div className="flex-1 min-h-0 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-700 mt-4">
                     <Table
                       columns={[
                         { header: '# Orden', accessor: (o) => <span className="font-mono text-xs">{o.number}</span>, width: '100px' },
@@ -1697,7 +1697,7 @@ export function SalesReportsPage() {
               )
             })()}
 
-            <div className="flex justify-end flex-shrink-0">
+            <div className="flex justify-end flex-shrink-0 border-t border-slate-200 pt-3 dark:border-slate-700">
               <Button variant="ghost" onClick={() => setDrillDownOpen(false)}>
                 Cerrar
               </Button>

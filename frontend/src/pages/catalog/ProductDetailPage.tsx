@@ -5,8 +5,9 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { apiFetch, getApiBaseUrl } from '../../lib/api'
 import { getProductDisplayName } from '../../lib/productName'
 import { useAuth } from '../../providers/AuthProvider'
-import { MainLayout, PageContainer, Button, Input, Select, Loading, ErrorState, ImageUpload } from '../../components'
+import { MainLayout, PageContainer, Button, Input, Select, Loading, ErrorState, ImageUpload, Table } from '../../components'
 import { useNavigation } from '../../hooks'
+import { PlusIcon, CheckIcon, ArrowLeftIcon, TrashIcon, PowerIcon } from '@heroicons/react/24/outline'
 
 type Product = {
   id: string
@@ -24,6 +25,27 @@ type Product = {
   version: number
   createdAt: string
   updatedAt: string
+}
+
+type ProductPresentation = {
+  id: string
+  name: string
+  unitsPerPresentation: string
+  priceOverride?: string | null
+  isDefault: boolean
+  sortOrder: number
+  version: number
+  updatedAt: string
+  isActive?: boolean
+}
+
+type PresentationDraft = {
+  localId: string
+  name: string
+  unitsPerPresentation: string
+  isDefault: boolean
+  priceOverride: string
+  discountPct: string
 }
 
 type Batch = {
@@ -68,6 +90,9 @@ type BatchMovementItem = {
   createdAt: string
   type: string
   quantity: string
+  presentationId?: string | null
+  presentationQuantity?: string | null
+  presentation?: { id: string; name: string; unitsPerPresentation: string } | null
   referenceType: string | null
   referenceId: string | null
   note: string | null
@@ -138,11 +163,10 @@ async function createProduct(
     name: string
     genericName?: string
     description?: string
-    presentationWrapper?: string
-    presentationQuantity?: number
     presentationFormat?: string
     cost?: number
     price?: number
+    presentations?: { name: string; unitsPerPresentation: number; isDefault?: boolean; sortOrder?: number; priceOverride?: number | null }[]
   },
 ): Promise<Product> {
   return apiFetch(`/api/v1/products`, {
@@ -175,6 +199,61 @@ async function updateProduct(
   })
 }
 
+async function fetchProductPresentations(token: string, productId: string): Promise<{ items: ProductPresentation[] }> {
+  return apiFetch(`/api/v1/products/${productId}/presentations`, { token })
+}
+
+async function createProductPresentation(
+  token: string,
+  productId: string,
+  data: { name: string; unitsPerPresentation: number; isDefault?: boolean; sortOrder?: number; priceOverride?: number | null },
+): Promise<ProductPresentation> {
+  return apiFetch(`/api/v1/products/${productId}/presentations`, {
+    method: 'POST',
+    token,
+    body: JSON.stringify(data),
+  })
+}
+
+async function updateProductPresentation(
+  token: string,
+  presentationId: string,
+  data: {
+    version: number
+    name?: string
+    unitsPerPresentation?: number
+    isDefault?: boolean
+    sortOrder?: number
+    isActive?: boolean
+    priceOverride?: number | null
+  },
+): Promise<ProductPresentation> {
+  return apiFetch(`/api/v1/products/presentations/${presentationId}`, {
+    method: 'PATCH',
+    token,
+    body: JSON.stringify(data),
+  })
+}
+
+async function deactivateProductPresentation(token: string, presentationId: string): Promise<void> {
+  const url = `/api/v1/products/presentations/${presentationId}`
+  const resp = await fetch(`${getApiBaseUrl()}${url}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  })
+
+  if (resp.status === 404) return
+  if (!resp.ok) {
+    const contentType = resp.headers.get('content-type') ?? ''
+    if (contentType.includes('application/json')) {
+      const data = (await resp.json().catch(() => null)) as any
+      if (data && typeof data.message === 'string') throw new Error(data.message)
+    }
+    const text = await resp.text().catch(() => '')
+    throw new Error(text || `Request failed: ${resp.status}`)
+  }
+}
+
 async function createBatch(
   token: string,
   productId: string,
@@ -183,7 +262,13 @@ async function createBatch(
     expiresAt?: string
     manufacturingDate?: string
     status: string
-    initialStock?: { warehouseId: string; quantity: number; note?: string }
+    initialStock?: {
+      warehouseId: string
+      quantity?: number
+      presentationId?: string
+      presentationQuantity?: number
+      note?: string
+    }
   },
 ): Promise<Batch> {
   return apiFetch(`/api/v1/products/${productId}/batches`, {
@@ -311,46 +396,21 @@ export function ProductDetailPage() {
   const [sku, setSku] = useState('')
   const [skuAuto, setSkuAuto] = useState(true)
   const [name, setName] = useState('')
-  const [presentationWrapper, setPresentationWrapper] = useState(isNew ? 'caja' : '')
-  const [presentationQuantity, setPresentationQuantity] = useState(isNew ? '1' : '')
-  const [presentationFormat, setPresentationFormat] = useState(isNew ? 'comprimidos' : '')
-  const [customWrapper, setCustomWrapper] = useState('')
-  const [customFormat, setCustomFormat] = useState('')
   const [description, setDescription] = useState('')
   const [cost, setCost] = useState('')
   const [price, setPrice] = useState('')
+  const [presentationFormat, setPresentationFormat] = useState('')
   const [isActive, setIsActive] = useState(true)
-
-  const wrapperOptions = ['caja', 'frasco', 'blister', 'botella', 'sobre', 'tubo']
-  const formatOptions = ['comprimidos', 'capsulas', 'vial', 'ampolla', 'ml', 'gotas', 'sobres']
-
-  const finalWrapper =
-    (presentationWrapper === 'otro' ? customWrapper.trim() : presentationWrapper.trim())
-      .toLowerCase()
-      .trim() || ''
-  const finalFormat =
-    (presentationFormat === 'otro' ? customFormat.trim() : presentationFormat.trim())
-      .toLowerCase()
-      .trim() || ''
-  const finalQuantityText = presentationQuantity.trim()
-
-  function capitalizeFirst(s: string): string {
-    if (!s) return s
-    return s.charAt(0).toUpperCase() + s.slice(1)
-  }
-
-  const presentationText =
-    finalWrapper && finalFormat && finalQuantityText ? `${capitalizeFirst(finalWrapper)} de ${finalQuantityText} ${finalFormat}` : ''
 
   // Generate SKU automatically when name or presentation changes
   useEffect(() => {
-    if (isNew && skuAuto && name.trim() && finalWrapper && finalFormat && finalQuantityText) {
-      const generatedSku = generateSku(name, finalWrapper, finalQuantityText, finalFormat)
+    if (isNew && skuAuto && name.trim()) {
+      const generatedSku = generateSku(name)
       setSku(generatedSku)
     }
-  }, [name, finalWrapper, finalQuantityText, finalFormat, isNew, skuAuto])
+  }, [name, isNew, skuAuto])
 
-  function generateSku(productName: string, wrapper: string, quantityText: string, format: string): string {
+  function generateSku(productName: string): string {
     // Clean name: remove special chars, take first 4 letters, uppercase
     const cleanName = productName
       .replace(/[^a-zA-Z0-9\s]/g, '') // Remove special chars
@@ -360,46 +420,7 @@ export function ProductDetailPage() {
       .map(word => word.substring(0, 4).toUpperCase()) // First 4 chars uppercase
       .join('-')
 
-    const wrapCode = getWrapperCode(wrapper)
-    const fmtCode = getFormatCode(format)
-    const qtyCode = normalizeQtyCode(quantityText)
-    return `${cleanName}-${wrapCode}${qtyCode}${fmtCode}`
-  }
-
-  function normalizeQtyCode(qty: string): string {
-    const t = qty.trim()
-    if (!t) return ''
-    // Allow decimals: 2.5 -> 2P5
-    const normalized = t.replace(',', '.').replace(/[^0-9.]/g, '')
-    if (!normalized) return ''
-    return normalized.replace('.', 'P')
-  }
-
-  function getWrapperCode(wrap: string): string {
-    const codes: Record<string, string> = {
-      caja: 'CAJ',
-      frasco: 'FRS',
-      blister: 'BLS',
-      botella: 'BOT',
-      sobre: 'SOB',
-      tubo: 'TUB',
-    }
-    const key = (wrap || '').toLowerCase().trim()
-    return codes[key] || key.substring(0, 3).toUpperCase()
-  }
-
-  function getFormatCode(fmt: string): string {
-    const codes: Record<string, string> = {
-      comprimidos: 'COMP',
-      capsulas: 'CAPS',
-      vial: 'VIAL',
-      ampolla: 'AMP',
-      ml: 'ML',
-      gotas: 'GOT',
-      sobres: 'SBR',
-    }
-    const key = (fmt || '').toLowerCase().trim()
-    return codes[key] || key.substring(0, 4).toUpperCase()
+    return cleanName || 'PROD'
   }
 
   // Batch form state
@@ -412,6 +433,14 @@ export function ProductDetailPage() {
 
   const [selectedBatchId, setSelectedBatchId] = useState<string>('')
 
+  // Reempaque (calculadora por lote)
+  const [repackLocationId, setRepackLocationId] = useState<string>('')
+  const [repackSourcePresentationId, setRepackSourcePresentationId] = useState<string>('')
+  const [repackSourceQty, setRepackSourceQty] = useState<string>('')
+  const [repackTargetPresentationId, setRepackTargetPresentationId] = useState<string>('')
+  const [repackTargetQty, setRepackTargetQty] = useState<string>('')
+  const [repackApplyError, setRepackApplyError] = useState<string>('')
+
   // Product naming
   const [genericName, setGenericName] = useState('')
 
@@ -423,6 +452,7 @@ export function ProductDetailPage() {
   // Initial stock on batch creation (optional)
   const [warehouseIdForInitialStock, setWarehouseIdForInitialStock] = useState<string>('')
   const [initialStockQty, setInitialStockQty] = useState<string>('')
+  const [initialStockPresentationId, setInitialStockPresentationId] = useState<string>('')
   const [initialStockNote, setInitialStockNote] = useState<string>('')
 
   // Recipe state (existing products only)
@@ -432,6 +462,87 @@ export function ProductDetailPage() {
   const [recipeOutputQuantity, setRecipeOutputQuantity] = useState('')
   const [recipeOutputUnit, setRecipeOutputUnit] = useState('')
   const [recipeItems, setRecipeItems] = useState<RecipeItemDraft[]>([])
+
+  // Presentations state (existing products only)
+  const [newPresentationName, setNewPresentationName] = useState('')
+  const [newPresentationUnits, setNewPresentationUnits] = useState('')
+  const [newPresentationDiscountPct, setNewPresentationDiscountPct] = useState('')
+  const [newPresentationIsDefault, setNewPresentationIsDefault] = useState(false)
+
+  // Presentations draft state (product creation)
+  const [draftPresentations, setDraftPresentations] = useState<PresentationDraft[]>(() => {
+    if (!isNew) return []
+    const localId = typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : String(Date.now())
+    return [
+      {
+        localId,
+        name: '',
+        unitsPerPresentation: '',
+        isDefault: true,
+        priceOverride: '',
+        discountPct: '',
+      },
+    ]
+  })
+
+  const baseUnitPrice = (() => {
+    const p = Number(String(price ?? '').trim())
+    return Number.isFinite(p) && p >= 0 ? p : null
+  })()
+
+  const productFormatOptions = [
+    { value: '', label: 'Elegir formato' },
+    { value: 'capsula', label: 'Cápsula' },
+    { value: 'comprimido', label: 'Comprimido' },
+    { value: 'vial', label: 'Vial' },
+    { value: 'tableta', label: 'Tableta' },
+    { value: 'otro', label: 'Otro' },
+  ]
+
+  const presentationFormatOptions = [
+    { value: 'Caja', label: 'Caja' },
+    { value: 'Frasco', label: 'Frasco' },
+    { value: 'Blister', label: 'Blister' },
+    { value: 'Otro', label: 'Otro' },
+  ]
+
+  const knownPresentationFormats = new Set(['Caja', 'Frasco', 'Blister'])
+
+  const toNumberOrNull = (value: string): number | null => {
+    const v = String(value ?? '').trim().replace(',', '.')
+    if (!v) return null
+    const n = Number(v)
+    return Number.isFinite(n) ? n : null
+  }
+
+  const computePresentationPrice = (args: { unitsPerPresentation: number | null; discountPct: number | null }): number | null => {
+    if (baseUnitPrice === null) return null
+    if (args.unitsPerPresentation === null || args.unitsPerPresentation <= 0) return null
+    const base = baseUnitPrice * args.unitsPerPresentation
+    const disc = args.discountPct !== null && args.discountPct > 0 ? args.discountPct : 0
+    const final = Math.max(0, base * (1 - disc / 100))
+    return Number(final.toFixed(2))
+  }
+
+  const upsertDraftPresentation = (localId: string, patch: Partial<PresentationDraft>) => {
+    setDraftPresentations((prev) => prev.map((p) => (p.localId === localId ? { ...p, ...patch } : p)))
+  }
+
+  const removeDraftPresentation = (localId: string) => {
+    setDraftPresentations((prev) => prev.filter((p) => p.localId !== localId))
+  }
+
+  const addDraftPresentation = () => {
+    const localId = typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : String(Date.now())
+    setDraftPresentations((prev) => [
+      ...prev,
+      { localId, name: '', unitsPerPresentation: '', isDefault: false, priceOverride: '', discountPct: '' },
+    ])
+  }
+
+  const setDraftDefault = (localId: string) => {
+    setDraftPresentations((prev) => prev.map((p) => ({ ...p, isDefault: p.localId === localId })))
+  }
 
   const productQuery = useQuery({
     queryKey: ['product', id],
@@ -444,6 +555,27 @@ export function ProductDetailPage() {
     queryFn: () => fetchRecipe(auth.accessToken!, id!),
     enabled: !!auth.accessToken && !isNew && !!id,
   })
+
+  const presentationsQuery = useQuery({
+    queryKey: ['productPresentations', id],
+    queryFn: () => fetchProductPresentations(auth.accessToken!, id!),
+    enabled: !!auth.accessToken && !isNew && !!id,
+  })
+
+  const activePresentations = (presentationsQuery.data?.items ?? []).filter((p) => p.isActive !== false)
+  const unitPresentation = activePresentations.find((p) => p.name.trim().toLowerCase() === 'unidad')
+  const repackTargetOptions = activePresentations.filter((p) => p.name.trim().toLowerCase() !== 'unidad')
+
+  const getBatchAvailableUnits = (b: ProductBatchListItem): number | null => {
+    if (b.totalAvailableQuantity !== null && b.totalAvailableQuantity !== undefined) {
+      const n = Number(b.totalAvailableQuantity)
+      return Number.isFinite(n) ? n : null
+    }
+    const total = Number(b.totalQuantity ?? '0')
+    const reserved = Number(b.totalReservedQuantity ?? '0')
+    const available = total - reserved
+    return Number.isFinite(available) ? Math.max(0, available) : null
+  }
 
   // Check SKU uniqueness for new products
   const skuCheckQuery = useQuery({
@@ -469,33 +601,8 @@ export function ProductDetailPage() {
       setDescription(productQuery.data.description || '')
       setCost(productQuery.data.cost || '')
       setPrice(productQuery.data.price || '')
+      setPresentationFormat(productQuery.data.presentationFormat ?? '')
       setIsActive(productQuery.data.isActive)
-
-      const savedWrap = (productQuery.data.presentationWrapper ?? '').trim().toLowerCase()
-      if (!savedWrap) {
-        setPresentationWrapper('')
-        setCustomWrapper('')
-      } else if (wrapperOptions.includes(savedWrap)) {
-        setPresentationWrapper(savedWrap)
-        setCustomWrapper('')
-      } else {
-        setPresentationWrapper('otro')
-        setCustomWrapper(savedWrap)
-      }
-
-      const savedFmt = (productQuery.data.presentationFormat ?? '').trim().toLowerCase()
-      if (!savedFmt) {
-        setPresentationFormat('')
-        setCustomFormat('')
-      } else if (formatOptions.includes(savedFmt)) {
-        setPresentationFormat(savedFmt)
-        setCustomFormat('')
-      } else {
-        setPresentationFormat('otro')
-        setCustomFormat(savedFmt)
-      }
-
-      setPresentationQuantity(productQuery.data.presentationQuantity ? String(productQuery.data.presentationQuantity) : '')
     }
   }, [productQuery.data])
 
@@ -530,11 +637,10 @@ export function ProductDetailPage() {
       name: string
       genericName?: string
       description?: string
-      presentationWrapper?: string
-      presentationQuantity?: number
       presentationFormat?: string
       cost?: number
       price?: number
+      presentations?: { name: string; unitsPerPresentation: number; isDefault?: boolean; sortOrder?: number; priceOverride?: number | null }[]
     }) => createProduct(auth.accessToken!, data),
   })
 
@@ -558,6 +664,36 @@ export function ProductDetailPage() {
     },
   })
 
+  const createPresentationMutation = useMutation({
+    mutationFn: (data: { name: string; unitsPerPresentation: number; isDefault?: boolean; sortOrder?: number; priceOverride?: number | null }) =>
+      createProductPresentation(auth.accessToken!, id!, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['productPresentations', id] })
+      setNewPresentationName('')
+      setNewPresentationUnits('')
+      setNewPresentationIsDefault(false)
+      setNewPresentationDiscountPct('')
+    },
+  })
+
+  const updatePresentationMutation = useMutation({
+    mutationFn: (args: {
+      presentationId: string
+      data: { version: number; name?: string; unitsPerPresentation?: number; isDefault?: boolean; sortOrder?: number; isActive?: boolean; priceOverride?: number | null }
+    }) =>
+      updateProductPresentation(auth.accessToken!, args.presentationId, args.data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['productPresentations', id] })
+    },
+  })
+
+  const deactivatePresentationMutation = useMutation({
+    mutationFn: (presentationId: string) => deactivateProductPresentation(auth.accessToken!, presentationId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['productPresentations', id] })
+    },
+  })
+
   const toggleActiveMutation = useMutation({
     mutationFn: async (nextIsActive: boolean) => {
       if (!id) throw new Error('Missing product id')
@@ -578,7 +714,13 @@ export function ProductDetailPage() {
       expiresAt?: string
       manufacturingDate?: string
       status: string
-      initialStock?: { warehouseId: string; quantity: number; note?: string }
+      initialStock?: {
+        warehouseId: string
+        quantity?: number
+        presentationId?: string
+        presentationQuantity?: number
+        note?: string
+      }
     }) =>
       createBatch(auth.accessToken!, id!, data),
     onSuccess: () => {
@@ -590,6 +732,7 @@ export function ProductDetailPage() {
       setBatchFormError('')
       setWarehouseIdForInitialStock('')
       setInitialStockQty('')
+      setInitialStockPresentationId('')
       setInitialStockNote('')
       queryClient.invalidateQueries({ queryKey: ['productBatches', id] })
       alert('Lote creado exitosamente')
@@ -608,6 +751,30 @@ export function ProductDetailPage() {
     enabled: !!auth.accessToken && !isNew && !!id && !!selectedBatchId,
   })
 
+  const repackMutation = useMutation({
+    mutationFn: async (args: {
+      productId: string
+      batchId: string
+      locationId: string
+      sourcePresentationId: string
+      sourceQuantity: number
+      targetPresentationId: string
+      targetQuantity: number
+      note?: string
+    }) => {
+      return apiFetch(`/api/v1/stock/repack`, {
+        token: auth.accessToken,
+        method: 'POST',
+        body: JSON.stringify(args),
+      })
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['productBatches', id] })
+      queryClient.invalidateQueries({ queryKey: ['batchMovements', id, selectedBatchId] })
+      setRepackApplyError('')
+    },
+  })
+
   const warehousesQuery = useQuery({
     queryKey: ['warehouses', 'forInitialStock'],
     queryFn: () => listWarehouses(auth.accessToken!),
@@ -624,6 +791,52 @@ export function ProductDetailPage() {
       setWarehouseIdForInitialStock(activeWarehouses[0]!.id)
     }
   }, [showBatchForm, warehouseIdForInitialStock, warehousesQuery.data])
+
+  // Default repack selector values when a batch is opened.
+  useEffect(() => {
+    if (!selectedBatchId) return
+    if (!presentationsQuery.data) return
+
+    const selectedBatch = (productBatchesQuery.data?.items ?? []).find((x) => x.id === selectedBatchId)
+    if (selectedBatch && !repackLocationId) {
+      const pickAvailable = (l: any) => {
+        const avail = l.availableQuantity ?? String(Math.max(0, Number(l.quantity || '0') - Number(l.reservedQuantity ?? '0')))
+        const n = Number(avail)
+        return Number.isFinite(n) ? n : 0
+      }
+      const loc = selectedBatch.locations.find((l) => pickAvailable(l) > 0) ?? selectedBatch.locations[0]
+      if (loc) setRepackLocationId(loc.locationId)
+    }
+
+    if (!repackSourcePresentationId) {
+      if (unitPresentation) setRepackSourcePresentationId(unitPresentation.id)
+      else if (activePresentations[0]) setRepackSourcePresentationId(activePresentations[0]!.id)
+    }
+    if (!repackTargetPresentationId) {
+      if (repackTargetOptions[0]) setRepackTargetPresentationId(repackTargetOptions[0]!.id)
+    }
+  }, [
+    selectedBatchId,
+    presentationsQuery.data,
+    productBatchesQuery.data,
+    repackLocationId,
+    repackSourcePresentationId,
+    repackTargetPresentationId,
+    unitPresentation,
+    activePresentations,
+    repackTargetOptions,
+  ])
+
+  // When opening the batch form, default the initial stock presentation to the product default.
+  useEffect(() => {
+    if (!showBatchForm) return
+    if (initialStockPresentationId) return
+
+    const items = presentationsQuery.data?.items ?? []
+    const active = items.filter((p) => p.isActive !== false)
+    const def = active.find((p) => p.isDefault) ?? active[0]
+    if (def) setInitialStockPresentationId(def.id)
+  }, [showBatchForm, initialStockPresentationId, presentationsQuery.data])
 
   // No destination location selection for lot creation; resolved by backend from the warehouse.
 
@@ -719,20 +932,43 @@ export function ProductDetailPage() {
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
-
-    const qty = finalQuantityText ? Number(finalQuantityText.replace(',', '.')) : NaN
-    const hasPresentation = finalWrapper && finalFormat && Number.isFinite(qty) && qty > 0
     
     if (isNew) {
       const payload: any = { sku, name, description: description || undefined }
       if (genericName.trim()) payload.genericName = genericName.trim()
-      if (hasPresentation) {
-        payload.presentationWrapper = finalWrapper
-        payload.presentationQuantity = qty
-        payload.presentationFormat = finalFormat
-      }
+      if (presentationFormat.trim()) payload.presentationFormat = presentationFormat.trim()
       if (cost) payload.cost = parseFloat(cost)
       if (price) payload.price = parseFloat(price)
+
+      // Build presentations[]
+      const presPayload = draftPresentations
+        .map((p, idx) => {
+          const nm = p.name.trim()
+          const units = Number(String(p.unitsPerPresentation ?? '').trim())
+          if (!nm) return null
+          if (!Number.isFinite(units) || units <= 0) return null
+
+          const discNum = toNumberOrNull(p.discountPct)
+          const computed = computePresentationPrice({
+            unitsPerPresentation: Math.trunc(units),
+            discountPct: discNum,
+          })
+          const shouldSendOverride = discNum !== null && discNum > 0
+
+          return {
+            name: nm,
+            unitsPerPresentation: Math.trunc(units),
+            isDefault: !!p.isDefault,
+            sortOrder: idx,
+            priceOverride: shouldSendOverride ? computed : null,
+          }
+        })
+        .filter(Boolean)
+
+      if ((presPayload as any[]).length > 0) {
+        payload.presentations = presPayload
+      }
+
       try {
         const created = await createMutation.mutateAsync(payload)
 
@@ -763,17 +999,8 @@ export function ProductDetailPage() {
         name,
         genericName: genericName.trim() ? genericName.trim() : null,
         description: description || null,
+        presentationFormat: presentationFormat.trim() ? presentationFormat.trim() : null,
         isActive,
-      }
-      if (hasPresentation) {
-        payload.presentationWrapper = finalWrapper
-        payload.presentationQuantity = qty
-        payload.presentationFormat = finalFormat
-      } else {
-        // allow clearing
-        payload.presentationWrapper = null
-        payload.presentationQuantity = null
-        payload.presentationFormat = null
       }
       if (cost) payload.cost = parseFloat(cost)
       if (price) payload.price = parseFloat(price)
@@ -790,18 +1017,26 @@ export function ProductDetailPage() {
     if (expiresAt) payload.expiresAt = dateOnlyToUtcIso(expiresAt)
     if (manufacturingDate) payload.manufacturingDate = dateOnlyToUtcIso(manufacturingDate)
 
-    const qty = Number(initialStockQty)
     if (!warehouseIdForInitialStock) {
       setBatchFormError('Seleccioná la sucursal/almacén para el ingreso inicial.')
       return
     }
-    if (!Number.isFinite(qty) || qty <= 0) {
+
+    const presQty = Number(initialStockQty)
+    if (!Number.isFinite(presQty) || presQty <= 0) {
       setBatchFormError('Ingresá una cantidad inicial válida (mayor a 0).')
       return
     }
+
+    if (!initialStockPresentationId) {
+      setBatchFormError('Seleccioná una presentación para el ingreso inicial.')
+      return
+    }
+
     payload.initialStock = {
       warehouseId: warehouseIdForInitialStock,
-      quantity: qty,
+      presentationId: initialStockPresentationId,
+      presentationQuantity: presQty,
       ...(initialStockNote.trim() ? { note: initialStockNote.trim() } : {}),
     }
 
@@ -851,7 +1086,7 @@ export function ProductDetailPage() {
       <PageContainer
         title={isNew ? 'Crear Producto' : `Producto: ${getProductDisplayName({ sku, name, genericName })}`}
         actions={
-          <Button variant="secondary" onClick={() => navigate('/catalog/products')}>
+          <Button variant="outline" icon={<ArrowLeftIcon />}>
             Volver
           </Button>
         }
@@ -887,86 +1122,6 @@ export function ProductDetailPage() {
               </div>
               
               <div className="group">
-                <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
-                  Presentación (envoltorio + cantidad + formato)
-                </label>
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                  <div>
-                    <Select
-                      value={presentationWrapper}
-                      onChange={(e) => {
-                        const value = e.target.value
-                        setPresentationWrapper(value)
-                        if (value !== 'otro') setCustomWrapper('')
-                      }}
-                      options={[
-                        ...wrapperOptions.map((w) => ({ value: w, label: capitalizeFirst(w) })),
-                        { value: 'otro', label: 'Otro' },
-                      ]}
-                      disabled={createMutation.isPending || updateMutation.isPending}
-                      required={isNew}
-                      className="transition-all duration-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    />
-                    {presentationWrapper === 'otro' && (
-                      <Input
-                        value={customWrapper}
-                        onChange={(e) => setCustomWrapper(e.target.value)}
-                        placeholder="Ej: caja, frasco..."
-                        className="mt-2 transition-all duration-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                        disabled={createMutation.isPending || updateMutation.isPending}
-                        required
-                      />
-                    )}
-                  </div>
-
-                  <div>
-                    <Input
-                      value={presentationQuantity}
-                      onChange={(e) => setPresentationQuantity(e.target.value)}
-                      placeholder="Ej: 250"
-                      disabled={createMutation.isPending || updateMutation.isPending}
-                      required={isNew}
-                      className="transition-all duration-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    />
-                  </div>
-
-                  <div>
-                    <Select
-                      value={presentationFormat}
-                      onChange={(e) => {
-                        const value = e.target.value
-                        setPresentationFormat(value)
-                        if (value !== 'otro') setCustomFormat('')
-                      }}
-                      options={[
-                        ...formatOptions.map((f) => ({ value: f, label: capitalizeFirst(f) })),
-                        { value: 'otro', label: 'Otro' },
-                      ]}
-                      disabled={createMutation.isPending || updateMutation.isPending}
-                      required={isNew}
-                      className="transition-all duration-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    />
-                    {presentationFormat === 'otro' && (
-                      <Input
-                        value={customFormat}
-                        onChange={(e) => setCustomFormat(e.target.value)}
-                        placeholder="Ej: comprimidos, vial..."
-                        className="mt-2 transition-all duration-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                        disabled={createMutation.isPending || updateMutation.isPending}
-                        required
-                      />
-                    )}
-                  </div>
-                </div>
-
-                {presentationText ? (
-                  <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">Vista previa: {presentationText}</div>
-                ) : (
-                  <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">Ej: Caja de 250 comprimidos</div>
-                )}
-              </div>
-
-              <div className="group">
                 <Input
                   label="SKU"
                   value={sku}
@@ -996,7 +1151,7 @@ export function ProductDetailPage() {
                 />
               </div>
               
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid gap-4 md:grid-cols-3 items-start">
                 <div className="group">
                   <Input
                     label="Costo (opcional)"
@@ -1011,12 +1166,22 @@ export function ProductDetailPage() {
                 </div>
                 <div className="group">
                   <Input
-                    label="Precio (opcional)"
+                    label="Precio unitario"
                     type="number"
                     step="0.01"
                     value={price}
                     onChange={(e) => setPrice(e.target.value)}
                     placeholder="0.00"
+                    disabled={createMutation.isPending || updateMutation.isPending}
+                    className="transition-all duration-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+                <div className="group">
+                  <Select
+                    label="Formato"
+                    value={presentationFormat}
+                    onChange={(e) => setPresentationFormat(e.target.value)}
+                    options={productFormatOptions}
                     disabled={createMutation.isPending || updateMutation.isPending}
                     className="transition-all duration-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   />
@@ -1076,17 +1241,20 @@ export function ProductDetailPage() {
               <div className="flex gap-2">
                 <Button
                   type="submit"
+                  variant="primary"
+                  icon={isNew ? <PlusIcon /> : <CheckIcon />}
                   loading={createMutation.isPending || updateMutation.isPending}
                   disabled={createMutation.isPending || updateMutation.isPending || skuExists}
                   className="w-full bg-gradient-to-r from-blue-500 to-purple-600 py-3 text-lg font-semibold shadow-lg hover:from-blue-600 hover:to-purple-700 hover:shadow-xl"
                 >
-                  {isNew ? '✨ Crear Producto' : '💾 Guardar Cambios'}
+                  {isNew ? 'Crear Producto' : 'Guardar Cambios'}
                 </Button>
 
                 {!isNew && productQuery.data && (
                   <Button
                     type="button"
-                    variant={productQuery.data.isActive ? 'danger' : 'secondary'}
+                    variant={productQuery.data.isActive ? 'danger' : 'success'}
+                    icon={productQuery.data.isActive ? <TrashIcon /> : <PowerIcon />}
                     disabled={updateMutation.isPending}
                     loading={toggleActiveMutation.isPending}
                     className="whitespace-nowrap"
@@ -1105,7 +1273,7 @@ export function ProductDetailPage() {
                       }
                     }}
                   >
-                    {productQuery.data.isActive ? '🗑️ Eliminar' : '✅ Reactivar'}
+                    {productQuery.data.isActive ? 'Eliminar' : 'Reactivar'}
                   </Button>
                 )}
 
@@ -1128,17 +1296,368 @@ export function ProductDetailPage() {
             </form>
           </div>
 
-          {/* Batch Form (only for existing products) */}
-          {!isNew && (
-            <div className="rounded-lg border border-slate-200 bg-white p-6 dark:border-slate-700 dark:bg-slate-900">
-              <div className="mb-4 flex items-center justify-between">
-                <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Lotes</h3>
-                {!showBatchForm && (
-                  <Button size="sm" onClick={() => setShowBatchForm(true)}>
-                    Crear Lote
+          {/* Right column */}
+          {isNew ? (
+            <div className="space-y-6">
+              <div className="rounded-lg border border-slate-200 bg-white p-6 dark:border-slate-700 dark:bg-slate-900">
+                <div className="mb-4 flex items-center justify-between">
+                  <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Presentaciones y precios</h3>
+                  <Button size="sm" variant="primary" icon={<PlusIcon />} onClick={addDraftPresentation}>
+                    Agregar presentación
                   </Button>
+                </div>
+
+                <p className="mb-4 text-sm text-slate-600 dark:text-slate-400">
+                  Lógica: el <span className="font-medium">precio unitario</span> vive en el producto (Unidad). Cada presentación define
+                  cuántas unidades contiene y puede tener un <span className="font-medium">descuento</span>. El precio por presentación se calcula automáticamente.
+                </p>
+
+                <div className="space-y-3">
+                  {draftPresentations.map((p) => {
+                    const units = Number(String(p.unitsPerPresentation ?? '').trim())
+                    const factor = Number.isFinite(units) && units > 0 ? units : null
+                    const discNum = toNumberOrNull(p.discountPct)
+                    const derived = baseUnitPrice !== null && factor !== null ? baseUnitPrice * factor : null
+                    const effective = computePresentationPrice({ unitsPerPresentation: factor, discountPct: discNum })
+
+                    const formatValue = knownPresentationFormats.has(p.name.trim()) ? p.name.trim() : 'Otro'
+
+                    return (
+                      <div key={p.localId} className="rounded-md border border-slate-200 p-3 dark:border-slate-700">
+                        <div className="grid gap-3 md:grid-cols-5 items-start">
+                          <div>
+                            <>
+                              <Select
+                                label="Formato"
+                                value={formatValue}
+                                onChange={(e) => {
+                                  const v = e.target.value
+                                  if (v === 'Otro') {
+                                    upsertDraftPresentation(p.localId, { name: knownPresentationFormats.has(p.name.trim()) ? '' : p.name })
+                                  } else {
+                                    upsertDraftPresentation(p.localId, { name: v })
+                                  }
+                                }}
+                                options={presentationFormatOptions}
+                                disabled={createMutation.isPending}
+                              />
+                              {formatValue === 'Otro' && (
+                                <Input
+                                  label="Otro formato"
+                                  value={p.name}
+                                  onChange={(e) => upsertDraftPresentation(p.localId, { name: e.target.value })}
+                                  placeholder="Ej: Sachet"
+                                  disabled={createMutation.isPending}
+                                />
+                              )}
+                            </>
+                          </div>
+                          <Input
+                            label="Unidades"
+                            type="number"
+                            value={p.unitsPerPresentation}
+                            onChange={(e) => upsertDraftPresentation(p.localId, { unitsPerPresentation: e.target.value })}
+                            placeholder="Ej: 100"
+                            disabled={createMutation.isPending}
+                          />
+                          <Input
+                            label="Descuento %"
+                            type="number"
+                            value={p.discountPct}
+                            onChange={(e) => upsertDraftPresentation(p.localId, { discountPct: e.target.value })}
+                            placeholder="Ej: 5"
+                            disabled={createMutation.isPending}
+                          />
+                          <Input
+                            label="Precio pres."
+                            type="number"
+                            step="0.01"
+                            value={effective !== null ? String(effective.toFixed(2)) : ''}
+                            placeholder={derived !== null ? `Derivado: ${derived.toFixed(2)}` : '—'}
+                            disabled
+                          />
+                          <div>
+                            <Select
+                              label="Predeterminado"
+                              value={p.isDefault ? 'true' : 'false'}
+                              onChange={() => setDraftDefault(p.localId)}
+                              options={[
+                                { value: 'false', label: 'No' },
+                                { value: 'true', label: 'Sí' },
+                              ]}
+                              disabled={createMutation.isPending}
+                            />
+                            <div className="mt-2 flex justify-end">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                disabled={createMutation.isPending || draftPresentations.length <= 1}
+                                onClick={() => removeDraftPresentation(p.localId)}
+                              >
+                                Quitar
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+
+                        {derived !== null && (
+                          <div className="mt-2 text-xs text-slate-600 dark:text-slate-400">
+                            Precio sin descuento: {derived.toFixed(2)}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+
+                {createMutation.error && (
+                  <p className="mt-3 text-sm text-red-600">
+                    {createMutation.error instanceof Error ? createMutation.error.message : 'Error creando producto'}
+                  </p>
                 )}
               </div>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              <div className="rounded-lg border border-slate-200 bg-white p-6 dark:border-slate-700 dark:bg-slate-900">
+                <div className="mb-4 flex items-center justify-between">
+                  <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Presentaciones</h3>
+                </div>
+
+                <p className="mb-4 text-sm text-slate-600 dark:text-slate-400">
+                  Define cómo se vende el producto (p.ej. <span className="font-medium">Caja</span> = 100 unidades).
+                  La <span className="font-medium">Unidad</span> es la base (stock y totales).
+                </p>
+
+                {presentationsQuery.isLoading && <p className="text-sm text-slate-600 dark:text-slate-400">Cargando…</p>}
+                {presentationsQuery.error && (
+                  <p className="text-sm text-red-600">
+                    {presentationsQuery.error instanceof Error
+                      ? presentationsQuery.error.message
+                      : 'Error cargando presentaciones'}
+                  </p>
+                )}
+
+                {presentationsQuery.data && (
+                  <div className="space-y-4">
+                    <Table
+                      columns={[
+                        { header: 'Nombre', accessor: (p: ProductPresentation) => p.name },
+                        {
+                          header: 'Unidades',
+                          accessor: (p: ProductPresentation) => p.unitsPerPresentation,
+                          className: 'w-28',
+                        },
+                        {
+                          header: 'Precio pres.',
+                          accessor: (p: ProductPresentation) => (p.priceOverride ? String(p.priceOverride) : '-'),
+                          className: 'w-28',
+                        },
+                        {
+                          header: 'Default',
+                          accessor: (p: ProductPresentation) => (p.isDefault ? 'Sí' : 'No'),
+                          className: 'w-20',
+                        },
+                        {
+                          header: 'Actualizado',
+                          accessor: (p: ProductPresentation) => new Date(p.updatedAt).toLocaleString(),
+                          className: 'w-44',
+                        },
+                        {
+                          header: 'Acciones',
+                          className: 'text-center w-44',
+                          accessor: (p: ProductPresentation) => (
+                            <div className="flex items-center justify-center gap-1">
+                              {!p.isDefault && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  disabled={updatePresentationMutation.isPending}
+                                  onClick={() =>
+                                    updatePresentationMutation.mutate({
+                                      presentationId: p.id,
+                                      data: { version: p.version, isDefault: true },
+                                    })
+                                  }
+                                >
+                                  Hacer default
+                                </Button>
+                              )}
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                disabled={deactivatePresentationMutation.isPending || p.isDefault}
+                                onClick={() => {
+                                  if (p.isDefault) return
+                                  const ok = confirm(`¿Desactivar presentación "${p.name}"?`)
+                                  if (!ok) return
+                                  deactivatePresentationMutation.mutate(p.id)
+                                }}
+                              >
+                                Desactivar
+                              </Button>
+                            </div>
+                          ),
+                        },
+                      ]}
+                      data={presentationsQuery.data.items}
+                      keyExtractor={(p: ProductPresentation) => p.id}
+                    />
+
+                    <div className="rounded-md border border-slate-200 p-3 dark:border-slate-700">
+                      <div className="grid gap-3 md:grid-cols-3">
+                        <div>
+                          <Select
+                            label="Formato"
+                            value={knownPresentationFormats.has(newPresentationName.trim()) ? newPresentationName.trim() : 'Otro'}
+                            onChange={(e) => {
+                              const v = e.target.value
+                              if (v === 'Otro') {
+                                setNewPresentationName(knownPresentationFormats.has(newPresentationName.trim()) ? '' : newPresentationName)
+                              } else {
+                                setNewPresentationName(v)
+                              }
+                            }}
+                            options={presentationFormatOptions}
+                            disabled={createPresentationMutation.isPending}
+                          />
+                          {!knownPresentationFormats.has(newPresentationName.trim()) && (
+                            <Input
+                              label="Otro formato"
+                              value={newPresentationName}
+                              onChange={(e) => setNewPresentationName(e.target.value)}
+                              placeholder="Ej: Sachet"
+                              disabled={createPresentationMutation.isPending}
+                            />
+                          )}
+                        </div>
+                        <Input
+                          label="Unidades por presentación"
+                          type="number"
+                          value={newPresentationUnits}
+                          onChange={(e) => setNewPresentationUnits(e.target.value)}
+                          placeholder="Ej: 100"
+                          disabled={createPresentationMutation.isPending}
+                        />
+                        <Input
+                          label="Descuento % (opcional)"
+                          type="number"
+                          value={newPresentationDiscountPct}
+                          onChange={(e) => setNewPresentationDiscountPct(e.target.value)}
+                          placeholder="Ej: 5"
+                          disabled={createPresentationMutation.isPending}
+                        />
+                      </div>
+                      <div className="mt-3 grid gap-3 md:grid-cols-3">
+                        <Input
+                          label="Precio pres."
+                          type="number"
+                          step="0.01"
+                          value={(() => {
+                            const units = toNumberOrNull(newPresentationUnits)
+                            const disc = toNumberOrNull(newPresentationDiscountPct)
+                            const val = computePresentationPrice({
+                              unitsPerPresentation: units !== null ? Math.trunc(units) : null,
+                              discountPct: disc,
+                            })
+                            return val !== null ? String(val.toFixed(2)) : ''
+                          })()}
+                          placeholder={(() => {
+                            const units = toNumberOrNull(newPresentationUnits)
+                            if (baseUnitPrice === null || units === null || units <= 0) return '—'
+                            const derived = baseUnitPrice * Math.trunc(units)
+                            return `Sin descuento: ${derived.toFixed(2)}`
+                          })()}
+                          disabled
+                        />
+                        <Select
+                          label="¿Default?"
+                          value={newPresentationIsDefault ? 'true' : 'false'}
+                          onChange={(e) => setNewPresentationIsDefault(e.target.value === 'true')}
+                          options={[
+                            { value: 'false', label: 'No' },
+                            { value: 'true', label: 'Sí' },
+                          ]}
+                          disabled={createPresentationMutation.isPending}
+                        />
+                        <div className="md:col-span-2 text-xs text-slate-500 dark:text-slate-400">
+                          El precio por presentación se calcula desde el precio unitario + unidades + descuento.
+                        </div>
+                      </div>
+                      <div className="mt-3 flex items-center gap-2">
+                        <Button
+                          size="sm"
+                          loading={createPresentationMutation.isPending}
+                          onClick={() => {
+                            const name = newPresentationName.trim()
+                            const units = Number(newPresentationUnits)
+                            if (!name) {
+                              alert('Nombre requerido')
+                              return
+                            }
+                            if (!Number.isFinite(units) || units <= 0) {
+                              alert('Unidades por presentación debe ser > 0')
+                              return
+                            }
+
+                            const existingNames = (presentationsQuery.data?.items ?? []).map((p) => p.name.trim().toLowerCase())
+                            if (existingNames.includes(name.toLowerCase())) {
+                              alert('Ya existe una presentación con ese nombre')
+                              return
+                            }
+                            const discNum = toNumberOrNull(newPresentationDiscountPct)
+                            const computed = computePresentationPrice({
+                              unitsPerPresentation: Math.trunc(units),
+                              discountPct: discNum,
+                            })
+                            const shouldSendOverride = discNum !== null && discNum > 0
+                            if (shouldSendOverride && computed === null) {
+                              alert('Para calcular descuento necesitás definir el precio unitario del producto.')
+                              return
+                            }
+                            createPresentationMutation.mutate({
+                              name,
+                              unitsPerPresentation: Math.trunc(units),
+                              isDefault: newPresentationIsDefault,
+                              priceOverride: shouldSendOverride ? computed : null,
+                            })
+                          }}
+                        >
+                          Agregar
+                        </Button>
+
+                        {createPresentationMutation.error && (
+                          <span className="text-sm text-red-600">
+                            {createPresentationMutation.error instanceof Error
+                              ? createPresentationMutation.error.message
+                              : 'Error creando presentación'}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {(updatePresentationMutation.error || deactivatePresentationMutation.error) && (
+                      <p className="text-sm text-red-600">
+                        {updatePresentationMutation.error instanceof Error
+                          ? updatePresentationMutation.error.message
+                          : deactivatePresentationMutation.error instanceof Error
+                            ? deactivatePresentationMutation.error.message
+                            : 'Error'}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="rounded-lg border border-slate-200 bg-white p-6 dark:border-slate-700 dark:bg-slate-900">
+                <div className="mb-4 flex items-center justify-between">
+                  <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Lotes</h3>
+                  {!showBatchForm && (
+                    <Button size="sm" onClick={() => setShowBatchForm(true)}>
+                      Crear Lote
+                    </Button>
+                  )}
+                </div>
 
               {!showBatchForm && (
                 <div className="space-y-3">
@@ -1235,6 +1754,9 @@ export function ProductDetailPage() {
                                       </div>
                                       <div>
                                         {m.type} · Qty {m.quantity}
+                                        {m.presentation && m.presentationQuantity
+                                          ? ` · ${m.presentationQuantity} ${m.presentation.name}`
+                                          : ''}
                                         {m.from ? ` · Desde ${m.from.warehouse.code}/${m.from.code}` : ''}
                                         {m.to ? ` · Hacia ${m.to.warehouse.code}/${m.to.code}` : ''}
                                       </div>
@@ -1245,6 +1767,237 @@ export function ProductDetailPage() {
                                       )}
                                     </div>
                                   ))}
+                                </div>
+                              )}
+
+                              {productBatchesQuery.data?.hasStockRead && presentationsQuery.data && (
+                                <div className="mt-4 rounded-md border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+                                  <div className="mb-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
+                                    Reempaque (armar/desarmar) — mantiene el mismo lote
+                                  </div>
+                                  <p className="mb-3 text-xs text-slate-600 dark:text-slate-400">
+                                    Calculadora: convertís desde una presentación a unidades base y luego armás otra presentación.
+                                  </p>
+
+                                  {(() => {
+                                    const locAvailUnits = (() => {
+                                      if (!repackLocationId) return null
+                                      const l = b.locations.find((x) => x.locationId === repackLocationId)
+                                      if (!l) return null
+                                      const avail = l.availableQuantity ?? String(Math.max(0, Number(l.quantity || '0') - Number(l.reservedQuantity ?? '0')))
+                                      const n = Number(avail)
+                                      return Number.isFinite(n) ? Math.max(0, n) : null
+                                    })()
+
+                                    const availUnits = locAvailUnits ?? getBatchAvailableUnits(b)
+                                    const sourcePres = activePresentations.find((p) => p.id === repackSourcePresentationId) ?? null
+                                    const targetPres = activePresentations.find((p) => p.id === repackTargetPresentationId) ?? null
+
+                                    const sourceFactor = sourcePres ? Number(sourcePres.unitsPerPresentation) : null
+                                    const targetFactor = targetPres ? Number(targetPres.unitsPerPresentation) : null
+
+                                    const srcQty = Number(repackSourceQty)
+                                    const srcQtyOk = Number.isFinite(srcQty) && srcQty > 0
+                                    const srcFactorOk = sourceFactor !== null && Number.isFinite(sourceFactor) && sourceFactor > 0
+                                    const baseUnits = srcQtyOk && srcFactorOk ? srcQty * sourceFactor : null
+
+                                    const maxTargetQty =
+                                      baseUnits !== null && targetFactor !== null && Number.isFinite(targetFactor) && targetFactor > 0
+                                        ? Math.floor(baseUnits / targetFactor)
+                                        : null
+
+                                    const desiredTargetQty = Number(repackTargetQty)
+                                    const desiredOk = Number.isFinite(desiredTargetQty) && desiredTargetQty > 0
+                                    const usedUnits =
+                                      desiredOk && targetFactor !== null && Number.isFinite(targetFactor) && targetFactor > 0
+                                        ? desiredTargetQty * targetFactor
+                                        : null
+                                    const remainderUnits = baseUnits !== null && usedUnits !== null ? baseUnits - usedUnits : null
+
+                                    const overAvailable =
+                                      availUnits !== null && baseUnits !== null ? baseUnits > availUnits + 1e-9 : false
+
+                                    return (
+                                      <div className="space-y-3">
+                                        <div className="grid gap-3 md:grid-cols-4">
+                                          <Select
+                                            label="Ubicación"
+                                            value={repackLocationId}
+                                            onChange={(e) => {
+                                              setRepackLocationId(e.target.value)
+                                              setRepackApplyError('')
+                                            }}
+                                            options={b.locations.map((l) => {
+                                              const avail = l.availableQuantity ?? String(Math.max(0, Number(l.quantity || '0') - Number(l.reservedQuantity ?? '0')))
+                                              return {
+                                                value: l.locationId,
+                                                label: `${l.warehouseCode} · ${l.locationCode} (disp: ${avail})`,
+                                              }
+                                            })}
+                                          />
+                                          <Select
+                                            label="Desde"
+                                            value={repackSourcePresentationId}
+                                            onChange={(e) => setRepackSourcePresentationId(e.target.value)}
+                                            options={activePresentations.map((p) => ({
+                                              value: p.id,
+                                              label: `${p.name} · ${p.unitsPerPresentation} u.`,
+                                            }))}
+                                          />
+                                          <Input
+                                            label="Cantidad"
+                                            type="number"
+                                            value={repackSourceQty}
+                                            onChange={(e) => setRepackSourceQty(e.target.value)}
+                                            placeholder="Ej: 1"
+                                          />
+                                          <Select
+                                            label="A"
+                                            value={repackTargetPresentationId}
+                                            onChange={(e) => setRepackTargetPresentationId(e.target.value)}
+                                            options={repackTargetOptions.map((p) => ({
+                                              value: p.id,
+                                              label: `${p.name} · ${p.unitsPerPresentation} u.`,
+                                            }))}
+                                          />
+                                          <Input
+                                            label="Cantidad a armar"
+                                            type="number"
+                                            value={repackTargetQty}
+                                            onChange={(e) => setRepackTargetQty(e.target.value)}
+                                            placeholder={maxTargetQty !== null ? `Máx: ${maxTargetQty}` : '—'}
+                                          />
+                                        </div>
+
+                                        <div className="text-xs text-slate-700 dark:text-slate-300">
+                                          {baseUnits !== null ? (
+                                            <div>
+                                              Equivale a <span className="font-semibold">{baseUnits}</span> unidades base.
+                                              {availUnits !== null ? ` Disponibles en lote: ${availUnits}.` : ''}
+                                              {overAvailable ? (
+                                                <span className="ml-2 text-red-600">Supera lo disponible.</span>
+                                              ) : null}
+                                            </div>
+                                          ) : (
+                                            <div>Ingresá una cantidad válida para ver la conversión.</div>
+                                          )}
+
+                                          {maxTargetQty !== null && targetPres ? (
+                                            <div>
+                                              Podés armar hasta <span className="font-semibold">{maxTargetQty}</span> {targetPres.name}.
+                                            </div>
+                                          ) : null}
+
+                                          {remainderUnits !== null && targetPres ? (
+                                            <div>
+                                              Si armás {desiredTargetQty} {targetPres.name}, usás {usedUnits} unidades y te quedan {remainderUnits} unidades.
+                                            </div>
+                                          ) : null}
+                                        </div>
+
+                                        <div className="flex gap-2">
+                                          <Button
+                                            size="sm"
+                                            variant="secondary"
+                                            onClick={() => {
+                                              if (maxTargetQty === null) return
+                                              setRepackTargetQty(String(Math.max(0, maxTargetQty)))
+                                            }}
+                                            disabled={maxTargetQty === null}
+                                          >
+                                            Usar máximo
+                                          </Button>
+                                          <Button
+                                            size="sm"
+                                            loading={repackMutation.isPending}
+                                            disabled={
+                                              repackMutation.isPending ||
+                                              !repackLocationId ||
+                                              !sourcePres ||
+                                              !targetPres ||
+                                              baseUnits === null ||
+                                              usedUnits === null ||
+                                              remainderUnits === null ||
+                                              usedUnits < 0 ||
+                                              remainderUnits < -1e-9 ||
+                                              overAvailable ||
+                                              !unitPresentation
+                                            }
+                                            onClick={() => {
+                                              setRepackApplyError('')
+                                              if (!sourcePres || !targetPres) return
+                                              if (!unitPresentation) {
+                                                setRepackApplyError('No se encontró la presentación Unidad')
+                                                return
+                                              }
+                                              if (!repackLocationId) {
+                                                setRepackApplyError('Elegí una ubicación')
+                                                return
+                                              }
+                                              if (baseUnits === null || usedUnits === null || remainderUnits === null) {
+                                                setRepackApplyError('Completá los datos')
+                                                return
+                                              }
+                                              if (usedUnits > baseUnits + 1e-9) {
+                                                setRepackApplyError('La cantidad a armar supera la cantidad fuente')
+                                                return
+                                              }
+                                              if (overAvailable) {
+                                                setRepackApplyError('La cantidad fuente supera lo disponible en esa ubicación')
+                                                return
+                                              }
+
+                                              const ok = confirm(
+                                                `Confirmar reempaque en lote ${b.batchNumber}\n\n` +
+                                                  `Sacar: ${repackSourceQty} ${sourcePres.name} (${baseUnits} u.)\n` +
+                                                  `Armar: ${repackTargetQty} ${targetPres.name} (${usedUnits} u.)\n` +
+                                                  `Resto: ${remainderUnits} Unidad\n\n` +
+                                                  `Se registrarán movimientos OUT/IN.`,
+                                              )
+                                              if (!ok) return
+
+                                              repackMutation.mutate(
+                                                {
+                                                  productId: id!,
+                                                  batchId: b.id,
+                                                  locationId: repackLocationId,
+                                                  sourcePresentationId: sourcePres.id,
+                                                  sourceQuantity: Number(repackSourceQty),
+                                                  targetPresentationId: targetPres.id,
+                                                  targetQuantity: Number(repackTargetQty),
+                                                  note: `Reempaque: ${repackSourceQty} ${sourcePres.name} -> ${repackTargetQty} ${targetPres.name}`,
+                                                },
+                                                {
+                                                  onError: (e: any) => {
+                                                    setRepackApplyError(e instanceof Error ? e.message : 'Error aplicando reempaque')
+                                                  },
+                                                },
+                                              )
+                                            }}
+                                          >
+                                            Aplicar reempaque
+                                          </Button>
+                                          <Button
+                                            size="sm"
+                                            variant="ghost"
+                                            onClick={() => {
+                                              setRepackSourceQty('')
+                                              setRepackTargetQty('')
+                                              setRepackApplyError('')
+                                            }}
+                                          >
+                                            Limpiar
+                                          </Button>
+                                        </div>
+
+                                        {(repackApplyError || repackMutation.error) && (
+                                          <div className="text-xs text-red-600">
+                                            {repackApplyError || (repackMutation.error instanceof Error ? repackMutation.error.message : 'Error')}
+                                          </div>
+                                        )}
+                                      </div>
+                                    )
+                                  })()}
                                 </div>
                               )}
                             </div>
@@ -1310,8 +2063,20 @@ export function ProductDetailPage() {
                           .map((w) => ({ value: w.id, label: `${w.code} - ${w.name}` }))}
                         disabled={batchMutation.isPending || warehousesQuery.isLoading}
                       />
+                      <Select
+                        label="Presentación (ingreso inicial)"
+                        value={initialStockPresentationId}
+                        onChange={(e) => {
+                          setInitialStockPresentationId(e.target.value)
+                          if (batchFormError) setBatchFormError('')
+                        }}
+                        options={(presentationsQuery.data?.items ?? [])
+                          .filter((p) => p.isActive !== false)
+                          .map((p) => ({ value: p.id, label: `${p.name}${p.isDefault ? ' (default)' : ''} · ${p.unitsPerPresentation} u.` }))}
+                        disabled={batchMutation.isPending || presentationsQuery.isLoading}
+                      />
                       <Input
-                        label="Cantidad inicial"
+                        label="Cantidad inicial (en presentación)"
                         type="number"
                         value={initialStockQty}
                         onChange={(e) => {
@@ -1321,6 +2086,19 @@ export function ProductDetailPage() {
                         disabled={batchMutation.isPending}
                         placeholder="0"
                       />
+                      {(() => {
+                        const pres = (presentationsQuery.data?.items ?? []).find((p) => p.id === initialStockPresentationId)
+                        const qty = Number(initialStockQty)
+                        const factor = pres ? Number(pres.unitsPerPresentation) : null
+                        if (!pres || !Number.isFinite(qty) || qty <= 0) return null
+                        if (factor === null || !Number.isFinite(factor) || factor <= 0) return null
+                        const baseQty = qty * factor
+                        return (
+                          <div className="text-xs text-slate-600 dark:text-slate-400">
+                            Se registrará como {baseQty} unidades base (Unidad) en stock.
+                          </div>
+                        )
+                      })()}
                       <Input
                         label="Nota (opcional)"
                         value={initialStockNote}
@@ -1364,6 +2142,7 @@ export function ProductDetailPage() {
                   Usa el botón "Crear Lote" para registrar una nueva existencia con fecha de vencimiento.
                 </p>
               )}
+              </div>
             </div>
           )}
 

@@ -198,18 +198,18 @@ export function AppRouter() {
           }
         />
         <Route
-          path="/sales/payments"
-          element={
-            <ProtectedRoute requiredPermissions={['sales:order:read']}>
-              <PaymentsPage />
-            </ProtectedRoute>
-          }
-        />
-        <Route
           path="/sales/deliveries"
           element={
             <ProtectedRoute requiredPermissions={['sales:delivery:read']}>
               <DeliveriesPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/sales/payments"
+          element={
+            <ProtectedRoute requiredPermissions={['sales:order:read']}>
+              <PaymentsPage />
             </ProtectedRoute>
           }
         />

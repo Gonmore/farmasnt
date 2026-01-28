@@ -31,9 +31,64 @@ type Product = {
   photoUrl?: string | null
   price?: string | null
   isActive: boolean
+  presentations?: Array<{
+    id: string
+    name: string
+    unitsPerPresentation: string
+    priceOverride?: string | null
+    isDefault: boolean
+    sortOrder: number
+  }>
 }
 
 type ListResponse = { items: Product[]; nextCursor: string | null }
+
+type ProductPresentation = NonNullable<Product['presentations']>[number]
+
+function presentationLabel(pres: ProductPresentation | null | undefined): string {
+  if (!pres) return 'Unidad'
+  const name = String(pres.name ?? '').trim()
+  const unitsRaw = String(pres.unitsPerPresentation ?? '').trim()
+  const units = Number(unitsRaw)
+
+  if (name.toLowerCase() === 'unidad' || !Number.isFinite(units) || units <= 1) return 'Unidad'
+  return `${name} (${Math.trunc(units)}u)`
+}
+
+function pickDefaultPresentation(p: Product): ProductPresentation | null {
+  const list = Array.isArray(p.presentations) ? p.presentations : []
+  if (list.length === 0) return null
+  const def = list.find((x) => x.isDefault)
+  return def ?? list[0] ?? null
+}
+
+function cartLineId(productId: string, presentationId: string | null | undefined): string {
+  return `${productId}:${presentationId ?? 'BASE'}`
+}
+
+function toNumberOrNull(v: unknown): number | null {
+  if (v === null || v === undefined) return null
+  const n = typeof v === 'number' ? v : Number(v)
+  return Number.isFinite(n) ? n : null
+}
+
+function unitPriceFor(product: Product, presentation?: ProductPresentation | null): number | null {
+  const unitsPer = toNumberOrNull(presentation?.unitsPerPresentation) ?? 1
+  const override = toNumberOrNull((presentation as any)?.priceOverride)
+  if (override !== null && unitsPer > 0) return override / unitsPer
+  const base = toNumberOrNull(product.price)
+  return base
+}
+
+function presentationPriceFor(product: Product, presentation?: ProductPresentation | null): number | null {
+  const unitsPer = toNumberOrNull(presentation?.unitsPerPresentation) ?? 1
+  const override = toNumberOrNull((presentation as any)?.priceOverride)
+  if (override !== null) return override
+  const unit = toNumberOrNull(product.price)
+  if (unit === null) return null
+  if (unitsPer <= 0) return unit
+  return unit * unitsPer
+}
 
 type CustomerListItem = {
   id: string
@@ -59,6 +114,7 @@ type BalanceExpandedItem = {
 
 async function fetchProducts(token: string, take: number, cursor?: string): Promise<ListResponse> {
   const params = new URLSearchParams({ take: String(take) })
+  params.append('includePresentations', 'true')
   if (cursor) params.append('cursor', cursor)
   return apiFetch(`/api/v1/products?${params}`, { token })
 }
@@ -98,6 +154,10 @@ type QuoteCreateResponse = {
     productId: string
     productName: string
     productSku: string
+    presentationId?: string | null
+    presentationName?: string | null
+    unitsPerPresentation?: number | null
+    presentationQuantity?: number | null
     quantity: number
     unitPrice: number
     discountPct: number
@@ -130,6 +190,10 @@ type QuoteDetailForEdit = {
     productId: string
     productName: string
     productSku: string
+    presentationId?: string | null
+    presentationName?: string | null
+    unitsPerPresentation?: number | null
+    presentationQuantity?: number | null
     quantity: number
     unitPrice: number
     discountPct: number
@@ -153,7 +217,14 @@ async function createQuote(
     globalDiscountPct: number
     proposalValue?: string
     note?: string
-    lines: Array<{ productId: string; quantity: number; unitPrice: number; discountPct: number }>
+    lines: Array<{
+      productId: string
+      quantity?: number
+      presentationId?: string
+      presentationQuantity?: number
+      unitPrice: number
+      discountPct: number
+    }>
   },
 ): Promise<QuoteCreateResponse> {
   return apiFetch(`/api/v1/sales/quotes`, { token, method: 'POST', body: JSON.stringify(data) })
@@ -174,7 +245,14 @@ async function updateQuote(
     globalDiscountPct: number
     proposalValue?: string
     note?: string
-    lines: Array<{ productId: string; quantity: number; unitPrice: number; discountPct: number }>
+    lines: Array<{
+      productId: string
+      quantity?: number
+      presentationId?: string
+      presentationQuantity?: number
+      unitPrice: number
+      discountPct: number
+    }>
   },
 ): Promise<QuoteCreateResponse> {
   return apiFetch(`/api/v1/sales/quotes/${quoteId}`, { token, method: 'PUT', body: JSON.stringify(data) })
@@ -272,6 +350,7 @@ export function SellerCatalogPage() {
 
   // Estado para cantidades temporales de productos antes de agregar al carrito
   const [productQuantities, setProductQuantities] = useState<Record<string, number>>({})
+  const [presentationByProduct, setPresentationByProduct] = useState<Record<string, string>>({})
 
   // Requirement: entering Seller view must start with empty selection (except edit mode).
   useEffect(() => {
@@ -302,30 +381,41 @@ export function SellerCatalogPage() {
   }, [quoteOpen])
 
   // Funciones para manejar cantidades temporales
-  const updateProductQuantity = (productId: string, quantity: number) => {
+  const updateProductQuantity = (key: string, quantity: number) => {
     setProductQuantities(prev => ({
       ...prev,
-      [productId]: Math.max(0, quantity)
+      [key]: Math.max(0, quantity)
     }))
   }
 
-  const addProductToCart = (product: Product) => {
-    const quantity = productQuantities[product.id] || 0
-    if (quantity <= 0) return
+  const addProductToCart = (product: Product, selectedPresentation?: ProductPresentation | null) => {
+    const pres = selectedPresentation ?? pickDefaultPresentation(product)
+    const presId = pres?.id ?? null
+    const unitsPer = pres?.unitsPerPresentation ? Number(pres.unitsPerPresentation) : 1
+    const key = cartLineId(product.id, presId)
+
+    const unitPrice = unitPriceFor(product, pres)
+    if (unitPrice === null) return
+
+    const presentationQty = productQuantities[key] || 0
+    if (presentationQty <= 0) return
 
     cart.addItem({
-      id: product.id,
+      id: key,
+      productId: product.id,
       sku: product.sku,
       name: getProductDisplayName(product),
-      price: parseFloat(product.price || '0'),
-      quantity: quantity,
+      price: unitPrice,
+      presentationId: presId,
+      presentationName: presentationLabel(pres),
+      unitsPerPresentation: Number.isFinite(unitsPer) && unitsPer > 0 ? unitsPer : 1,
+      presentationQuantity: presentationQty,
       photoUrl: product.photoUrl || null,
     })
 
-    // Limpiar la cantidad después de agregar
     setProductQuantities(prev => ({
       ...prev,
-      [product.id]: 0
+      [key]: 0
     }))
   }
 
@@ -397,12 +487,17 @@ export function SellerCatalogPage() {
 
     cart.clearCart()
     for (const line of q.lines) {
+      const key = cartLineId(line.productId, (line as any).presentationId ?? null)
       cart.addItem({
-        id: line.productId,
+        id: key,
+        productId: line.productId,
         sku: line.productSku,
         name: line.productName,
         price: line.unitPrice,
-        quantity: line.quantity,
+        presentationId: (line as any).presentationId ?? null,
+        presentationName: (line as any).presentationName ?? 'Unidad',
+        unitsPerPresentation: Number((line as any).unitsPerPresentation ?? 1) || 1,
+        presentationQuantity: Number((line as any).presentationQuantity ?? line.quantity) || 1,
         discountPct: line.discountPct,
         photoUrl: null,
       })
@@ -457,8 +552,9 @@ export function SellerCatalogPage() {
       if (quoteInEdit?.status === 'PROCESSED') throw new Error('La cotización ya fue procesada y no se puede editar')
 
       const lines = cart.items.map((i) => ({
-        productId: i.id,
-        quantity: i.quantity,
+        productId: i.productId,
+        presentationId: i.presentationId ?? undefined,
+        presentationQuantity: i.presentationQuantity,
         unitPrice: i.price,
         discountPct: clampPct(i.discountPct ?? 0),
       }))
@@ -506,14 +602,30 @@ export function SellerCatalogPage() {
         proposalValue: created.proposalValue ?? '',
         items: created.lines.map((l) => {
           const disc = clampPct(l.discountPct) / 100
-          const line = l.unitPrice * l.quantity * (1 - disc)
+          const pName = (l as any).presentationName ?? null
+          const pQty = (l as any).presentationQuantity ?? null
+          const unitsPer = Number((l as any).unitsPerPresentation ?? 1) || 1
+
+          const hasPres = !!pName && pQty !== null && pQty !== undefined
+          const isNonUnitPres = hasPres && String(pName).toLowerCase() !== 'unidad' && unitsPer > 1
+
+          const qtyForPricing = hasPres ? Number(pQty) : Number(l.quantity)
+          const unitPriceForDisplay = isNonUnitPres ? l.unitPrice * unitsPer : l.unitPrice
+          const lineTotal = unitPriceForDisplay * qtyForPricing * (1 - disc)
+
+          const qtyLabel = hasPres
+            ? isNonUnitPres
+              ? `${pQty} ${pName} (${Math.trunc(unitsPer)}u)`
+              : `${pQty} ${pName}`
+            : String(l.quantity)
           return {
             sku: l.productSku,
             name: l.productName,
             quantity: l.quantity,
+            quantityLabel: qtyLabel,
             discountPct: clampPct(l.discountPct),
-            unitPrice: l.unitPrice,
-            lineTotal: line,
+            unitPrice: unitPriceForDisplay,
+            lineTotal,
           }
         }),
         subtotal: created.subtotal,
@@ -521,6 +633,7 @@ export function SellerCatalogPage() {
         totalAfterGlobal: created.total,
         currency,
         tenant,
+        logoUrl: tenant.branding?.logoUrl || undefined,
       })
 
       cart.clearCart()
@@ -654,8 +767,21 @@ export function SellerCatalogPage() {
                   const stock = stockByProduct.get(p.id)
                   const totalStock = stock?.total ?? 0
                   const topWarehouses = (stock?.warehouses ?? []).slice(0, 2)
-                  const cartItem = cart.items.find(item => item.id === p.id)
-                  const currentQuantity = productQuantities[p.id] || 0
+                  const defaultPres = pickDefaultPresentation(p)
+                  const selectedPresId = presentationByProduct[p.id] ?? (defaultPres?.id ?? 'BASE')
+                  const selectedPres = (p.presentations ?? []).find((x: ProductPresentation) => x.id === selectedPresId) ?? defaultPres
+                  const unitsPer = selectedPres?.unitsPerPresentation ? Number(selectedPres.unitsPerPresentation) : 1
+                  const draftKey = cartLineId(p.id, selectedPres?.id ?? null)
+                  const effectiveUnitPrice = unitPriceFor(p, selectedPres)
+                  const effectivePresentationPrice = presentationPriceFor(p, selectedPres)
+                  const globalDiscPct = clampPct(Number(globalDiscountPct))
+                  const discountedPresentationPrice =
+                    effectivePresentationPrice !== null ? effectivePresentationPrice * (1 - globalDiscPct / 100) : null
+
+                  const cartLinesForProduct = cart.items.filter((it) => it.productId === p.id)
+                  const cartHasProduct = cartLinesForProduct.length > 0
+                  const cartUnitsTotal = cartLinesForProduct.reduce((sum, it) => sum + (Number.isFinite(it.quantity) ? it.quantity : 0), 0)
+                  const currentQuantity = productQuantities[draftKey] || 0
 
                   return (
                     <div
@@ -663,20 +789,22 @@ export function SellerCatalogPage() {
                       className="rounded-xl border border-slate-200/60 dark:border-slate-700/60 bg-white/80 dark:bg-slate-800/80 overflow-hidden relative"
                     >
                       {/* Círculo con cantidad si está en el carrito */}
-                      {cartItem && (
+                      {cartHasProduct && (
                         <div className="absolute top-2 right-2 z-10 flex flex-col items-center gap-1">
                           <div
                             className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white shadow-lg"
                             style={{ backgroundColor: tenant.branding?.brandPrimary || '#3B82F6' }}
                             title="Cantidad seleccionada"
                           >
-                            {cartItem.quantity}
+                            {cartUnitsTotal}
                           </div>
                           <button
                             type="button"
                             className="w-8 h-8 rounded-full flex items-center justify-center bg-white/90 dark:bg-slate-900/90 border border-slate-200 dark:border-slate-700 shadow"
                             title="🗑️ Quitar selección"
-                            onClick={() => cart.removeItem(p.id)}
+                            onClick={() => {
+                              for (const it of cartLinesForProduct) cart.removeItem(it.id)
+                            }}
                           >
                             🗑️
                           </button>
@@ -697,12 +825,18 @@ export function SellerCatalogPage() {
 
                         <div className="flex items-center justify-between">
                           <div className="text-base font-bold text-slate-900 dark:text-white">
-                            {money(parseFloat(p.price || '0'))} {currency}
+                            {effectivePresentationPrice !== null ? `${money(effectivePresentationPrice)} ${currency}` : 'Precio no disponible'}
                           </div>
                           <div className="text-xs font-semibold text-slate-700 dark:text-slate-200">
                             Stock: {totalStock}
                           </div>
                         </div>
+
+                        {globalDiscPct > 0 && discountedPresentationPrice !== null && (
+                          <div className="text-[11px] text-slate-600 dark:text-slate-300">
+                            Con desc. global ({globalDiscPct}%): {money(discountedPresentationPrice)} {currency}
+                          </div>
+                        )}
 
                         {topWarehouses.length > 0 && (
                           <div className="text-xs text-slate-600 dark:text-slate-300">
@@ -715,24 +849,42 @@ export function SellerCatalogPage() {
                           </div>
                         )}
 
-                        {/* Input de cantidad + Botón agregar */}
-                        <div className="flex gap-2">
+                        {/* Presentación + cantidad + agregar */}
+                        <div className="grid gap-2">
+                          <Select
+                            value={selectedPres?.id ?? 'BASE'}
+                            onChange={(e) => setPresentationByProduct((prev) => ({ ...prev, [p.id]: e.target.value }))}
+                            options={
+                              (p.presentations ?? []).length
+                                ? (p.presentations ?? []).map((pr: ProductPresentation) => ({ value: pr.id, label: presentationLabel(pr) }))
+                                : [{ value: 'BASE', label: 'Unidad' }]
+                            }
+                          />
+
+                          <div className="flex gap-2">
                           <Input
                             type="number"
                             placeholder="Cantidad"
                             value={currentQuantity || ''}
-                            onChange={(e) => updateProductQuantity(p.id, Number(e.target.value))}
+                            onChange={(e) => updateProductQuantity(draftKey, Number(e.target.value))}
                             min={0}
                             className="w-20 flex-shrink-0"
                           />
                           <Button
                             size="sm"
-                            onClick={() => addProductToCart(p)}
-                            disabled={currentQuantity <= 0}
+                            onClick={() => addProductToCart(p, selectedPres)}
+                            disabled={effectiveUnitPrice === null || currentQuantity <= 0}
                             className="px-3"
                           >
                             {isCompactButton ? '+' : '+Agregar'}
                           </Button>
+                          </div>
+
+                          {!!unitsPer && unitsPer > 1 && (
+                            <div className="text-[11px] text-slate-600 dark:text-slate-300">
+                              1 {selectedPres?.name ?? 'Caja'} = {unitsPer} unidades
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -775,17 +927,20 @@ export function SellerCatalogPage() {
                 {cart.items.map((i) => (
                   <div key={i.id} className="rounded-lg border border-slate-200 dark:border-slate-700 p-3">
                     <div className="text-sm font-medium text-slate-900 dark:text-slate-100">{i.name}</div>
+                    <div className="text-xs text-slate-600 dark:text-slate-300">
+                      Presentación: {i.presentationName ?? 'Unidad'}
+                    </div>
                     <div className="mt-2 grid grid-cols-2 gap-2">
                       <Input
-                        label="Cantidad"
+                        label="Cantidad (presentación)"
                         type="number"
-                        value={String(i.quantity)}
+                        value={String(i.presentationQuantity)}
                         onChange={(e) => {
                           const next = Number(e.target.value)
                           if (!Number.isFinite(next) || next <= 0) {
                             cart.removeItem(i.id)
                           } else {
-                            cart.updateQuantity(i.id, next)
+                            cart.updatePresentationQuantity(i.id, next)
                           }
                         }}
                         min={0}
@@ -1073,23 +1228,23 @@ export function SellerCatalogPage() {
               </div>
 
               {/* Tabla de productos */}
-              <div className="border border-slate-300 dark:border-slate-600 rounded overflow-x-auto">
-                <div className="min-w-[600px]">
-                  <Table
+              <div className="border border-slate-300 dark:border-slate-600 rounded overflow-hidden">
+                <Table
                   columns={[
                     { header: 'Producto', accessor: (r: any) => r.name },
+                    { header: 'Presentación', accessor: (r: any) => r.presentationLabel ?? 'Unidad', className: 'w-32' },
                     {
                       header: 'Cantidad',
                       accessor: (r: any) => (
                         <Input
                           type="number"
-                          value={String(r.quantity)}
+                          value={String(r.presentationQuantity)}
                           onChange={(e) => {
                             const next = Number(e.target.value)
                             if (!Number.isFinite(next) || next <= 0) {
-                              cart.removeItem(r.productId)
+                              cart.removeItem(r.cartLineId)
                             } else {
-                              cart.updateQuantity(r.productId, next)
+                              cart.updatePresentationQuantity(r.cartLineId, next)
                             }
                           }}
                           min={0}
@@ -1105,7 +1260,7 @@ export function SellerCatalogPage() {
                         <Input
                           type="number"
                           value={String(r.discountPct)}
-                          onChange={(e) => cart.updateDiscountPct(r.productId, clampPct(Number(e.target.value)))}
+                          onChange={(e) => cart.updateDiscountPct(r.cartLineId, clampPct(Number(e.target.value)))}
                           min={0}
                           max={100}
                           className="[&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none [-moz-appearance:textfield]"
@@ -1119,8 +1274,13 @@ export function SellerCatalogPage() {
                       accessor: (r: any) => (
                         <Input
                           type="number"
-                          value={String(r.unitPrice)}
-                          onChange={(e) => cart.updatePrice(r.productId, Number(e.target.value))}
+                          value={String(r.unitPricePresentation)}
+                          onChange={(e) => {
+                            const next = Number(e.target.value)
+                            const unitsPer = Number(r.unitsPerPresentation ?? 1) || 1
+                            if (!Number.isFinite(next) || next < 0) return
+                            cart.updatePrice(r.cartLineId, unitsPer > 0 ? next / unitsPer : next)
+                          }}
                           min={0}
                           className="[&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none [-moz-appearance:textfield]"
                           disabled={modalReadOnly}
@@ -1130,26 +1290,35 @@ export function SellerCatalogPage() {
                     },
                     {
                       header: 'Total',
-                      accessor: (r: any) => `${money(r.lineTotal)} ${currency}`,
+                      accessor: (r: any) => `${money(r.lineTotalPresentation)} ${currency}`,
                     },
                   ]}
                   data={cart.items.map((i) => {
                     const disc = clampPct(i.discountPct ?? 0) / 100
-                    const unit = i.price
-                    const line = unit * i.quantity * (1 - disc)
+                    const unitsPer = Number((i as any).unitsPerPresentation ?? 1) || 1
+                    const presQty = Number((i as any).presentationQuantity ?? 1) || 1
+
+                    const unitBase = i.price
+                    const unitPresentation = unitBase * unitsPer
+                    const linePresentation = unitPresentation * presQty * (1 - disc)
+
+                    const presName = (i.presentationName ?? 'Unidad').trim()
+                    const presentationLabel = presName === 'Unidad' || unitsPer <= 1 ? presName : `${presName} (${unitsPer}u)`
                     return {
-                      productId: i.id,
+                      cartLineId: i.id,
+                      productId: i.productId,
                       sku: i.sku,
                       name: i.name,
-                      quantity: i.quantity,
+                      presentationLabel,
+                      presentationQuantity: presQty,
+                      unitsPerPresentation: unitsPer,
                       discountPct: clampPct(i.discountPct ?? 0),
-                      unitPrice: unit,
-                      lineTotal: line,
+                      unitPricePresentation: unitPresentation,
+                      lineTotalPresentation: linePresentation,
                     }
                   })}
-                  keyExtractor={(r: any) => r.productId}
+                  keyExtractor={(r: any) => r.cartLineId}
                 />
-                </div>
               </div>
 
               {/* Totales */}

@@ -16,10 +16,12 @@ export interface TableProps<T> {
 }
 
 export function Table<T>({ columns, data, keyExtractor, rowClassName, onRowClick }: TableProps<T>) {
+  const hasExplicitWidths = columns.some((c) => typeof c.width === 'string' && c.width.trim().length > 0)
+
   return (
     <div className="w-full">
       <div className="overflow-x-auto scrollbar scrollbar-thumb-slate-400 scrollbar-track-slate-200 dark:scrollbar-thumb-slate-500 dark:scrollbar-track-slate-700">
-        <table className="w-full min-w-max" style={{ tableLayout: 'fixed' }}>
+        <table className="w-full min-w-max" style={{ tableLayout: hasExplicitWidths ? 'fixed' : 'auto' }}>
         <thead className="bg-slate-50 dark:bg-slate-800">
           <tr className="border-b-2 border-slate-200 dark:border-slate-700">
             {columns.map((col, idx) => (

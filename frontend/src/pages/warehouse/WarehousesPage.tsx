@@ -7,7 +7,7 @@ import { useAuth } from '../../providers/AuthProvider'
 import { useTenant } from '../../providers/TenantProvider'
 import { MainLayout, PageContainer, Table, Loading, ErrorState, EmptyState, PaginationCursor, Button, Modal, Input, Select, CitySelector } from '../../components'
 import { useNavigation } from '../../hooks'
-import { PencilIcon, ArrowPathIcon, MapPinIcon, PlusIcon } from '@heroicons/react/24/outline'
+import { PencilIcon, ArrowPathIcon, MapPinIcon, PlusIcon, EyeIcon } from '@heroicons/react/24/outline'
 
 type WarehouseListItem = { id: string; code: string; name: string; city?: string | null; isActive: boolean; totalQuantity: string }
 type ListResponse = { items: WarehouseListItem[]; nextCursor: string | null }
@@ -73,6 +73,7 @@ export function WarehousesPage() {
   const [editingWarehouse, setEditingWarehouse] = useState<WarehouseListItem | null>(null)
   const [editName, setEditName] = useState('')
   const [editCity, setEditCity] = useState('')
+  const [editCode, setEditCode] = useState('')
   const [editIsActive, setEditIsActive] = useState(true)
   const [showCreate, setShowCreate] = useState(false)
   const [createCode, setCreateCode] = useState('')
@@ -113,11 +114,11 @@ export function WarehousesPage() {
   )
 
   const updateWarehouseMutation = useMutation({
-    mutationFn: async ({ id, name, city, isActive }: { id: string; name: string; city: string; isActive: boolean }) => {
+    mutationFn: async ({ id, code, name, city, isActive }: { id: string; code: string; name: string; city: string; isActive: boolean }) => {
       return apiFetch(`/api/v1/warehouses/${id}`, {
         token: auth.accessToken!,
         method: 'PATCH',
-        body: JSON.stringify({ name, city, isActive }),
+        body: JSON.stringify({ code, name, city, isActive }),
       })
     },
     onSuccess: () => {
@@ -125,6 +126,7 @@ export function WarehousesPage() {
       setEditingWarehouse(null)
       setEditName('')
       setEditCity('')
+      setEditCode('')
       setEditIsActive(true)
     },
   })
@@ -187,12 +189,13 @@ export function WarehousesPage() {
     setEditingWarehouse(warehouse)
     setEditName(warehouse.name)
     setEditCity((warehouse.city ?? '').toString())
+    setEditCode(warehouse.code.replace(/^SUC-/, ''))
     setEditIsActive(warehouse.isActive)
   }
 
   const handleSaveEdit = () => {
-    if (editingWarehouse && editName.trim() && editCity.trim()) {
-      updateWarehouseMutation.mutate({ id: editingWarehouse.id, name: editName.trim(), city: editCity.trim(), isActive: editIsActive })
+    if (editingWarehouse && editCode.trim() && editName.trim() && editCity.trim()) {
+      updateWarehouseMutation.mutate({ id: editingWarehouse.id, code: `SUC-${editCode.trim()}`, name: editName.trim(), city: editCity.trim(), isActive: editIsActive })
     }
   }
 
@@ -200,6 +203,7 @@ export function WarehousesPage() {
     setEditingWarehouse(null)
     setEditName('')
     setEditCity('')
+    setEditCode('')
     setEditIsActive(true)
   }
 
@@ -253,6 +257,7 @@ export function WarehousesPage() {
                         <Button
                           variant="ghost"
                           size="sm"
+                          icon={<EyeIcon className="w-4 h-4" />}
                           onClick={() => {
                             setStockWarehouse(w)
                             setMovingRow(null)
@@ -304,7 +309,7 @@ export function WarehousesPage() {
         maxWidth="md"
       >
         <div className="space-y-4">
-          <Input label="Código" value={createCode} onChange={(e) => setCreateCode(e.target.value)} placeholder="BR-01" />
+          <Input label="Código (SUC- es fijo)" value={`SUC-${createCode}`} onChange={(e) => setCreateCode(e.target.value.replace(/^SUC-/, ''))} placeholder="SCZ" />
           <Input label="Nombre" value={createName} onChange={(e) => setCreateName(e.target.value)} placeholder="Sucursal" />
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
@@ -340,7 +345,7 @@ export function WarehousesPage() {
               Cancelar
             </Button>
             <Button
-              onClick={() => createWarehouseMutation.mutate({ code: createCode.trim(), name: createName.trim(), city: createCity.trim() })}
+              onClick={() => createWarehouseMutation.mutate({ code: `SUC-${createCode.trim()}`, name: createName.trim(), city: createCity.trim() })}
               disabled={!createCode.trim() || !createName.trim() || !createCity.trim()}
               loading={createWarehouseMutation.isPending}
             >
@@ -357,6 +362,18 @@ export function WarehousesPage() {
         maxWidth="sm"
       >
         <div className="space-y-4">
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
+              Código de la Sucursal (SUC- es fijo)
+            </label>
+            <Input
+              value={`SUC-${editCode}`}
+              onChange={(e) => setEditCode(e.target.value.replace(/^SUC-/, ''))}
+              placeholder="SCZ"
+              disabled={updateWarehouseMutation.isPending}
+            />
+          </div>
+
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
               Nombre de la Sucursal
@@ -405,7 +422,7 @@ export function WarehousesPage() {
             </Button>
             <Button 
               onClick={handleSaveEdit} 
-              disabled={updateWarehouseMutation.isPending || !editName.trim() || !editCity.trim()}
+              disabled={updateWarehouseMutation.isPending || !editCode.trim() || !editName.trim() || !editCity.trim()}
             >
               {updateWarehouseMutation.isPending ? 'Guardando...' : 'Guardar'}
             </Button>
@@ -426,7 +443,7 @@ export function WarehousesPage() {
         title={stockWarehouse ? `Stock: ${stockWarehouse.code} - ${stockWarehouse.name}` : 'Stock'}
         maxWidth="xl"
       >
-        <div className="space-y-4">
+        <div className="space-y-4 max-h-96 overflow-y-auto">
           {warehouseStockQuery.isLoading && <Loading />}
           {warehouseStockQuery.error && (
             <ErrorState

@@ -33,6 +33,10 @@ type QuoteDetail = {
     productId: string
     productName: string
     productSku: string
+    presentationId?: string | null
+    presentationName?: string | null
+    unitsPerPresentation?: number | null
+    presentationQuantity?: number | null
     quantity: number
     unitPrice: number
     discountPct: number
@@ -45,6 +49,12 @@ type QuoteDetail = {
 function money(n: number): string {
   if (!Number.isFinite(n)) return '0.00'
   return n.toFixed(2)
+}
+
+function isNonUnitPresentation(name: string | null | undefined, unitsPerPresentation: number | null | undefined): boolean {
+  const n = String(name ?? '').trim().toLowerCase()
+  const u = Number(unitsPerPresentation ?? 1)
+  return !!n && n !== 'unidad' && Number.isFinite(u) && u > 1
 }
 
 function paymentLabel(code: string): string {
@@ -105,14 +115,35 @@ export function QuoteDetailPage() {
                       deliveryAddress: q.deliveryAddress ?? undefined,
                       globalDiscountPct: String(q.globalDiscountPct),
                       proposalValue: q.proposalValue ?? '',
-                      items: q.lines.map((l) => ({
-                        sku: l.productSku,
-                        name: l.productName,
-                        quantity: l.quantity,
-                        discountPct: l.discountPct,
-                        unitPrice: l.unitPrice,
-                        lineTotal: l.total,
-                      })),
+                      items: q.lines.map((l) => {
+                        const disc = Number.isFinite(l.discountPct) ? Math.min(100, Math.max(0, l.discountPct)) / 100 : 0
+                        const pName = l.presentationName ?? null
+                        const pQty = l.presentationQuantity ?? null
+                        const unitsPer = Number(l.unitsPerPresentation ?? 1) || 1
+
+                        const hasPres = !!pName && pQty !== null && pQty !== undefined
+                        const isNonUnitPres = hasPres && String(pName).toLowerCase() !== 'unidad' && unitsPer > 1
+
+                        const qtyForPricing = hasPres ? Number(pQty) : Number(l.quantity)
+                        const unitPriceForDisplay = isNonUnitPres ? l.unitPrice * unitsPer : l.unitPrice
+                        const lineTotal = unitPriceForDisplay * qtyForPricing * (1 - disc)
+
+                        const qtyLabel = hasPres
+                          ? isNonUnitPres
+                            ? `${pQty} ${pName} (${Math.trunc(unitsPer)}u)`
+                            : `${pQty} ${pName}`
+                          : String(l.quantity)
+
+                        return {
+                          sku: l.productSku,
+                          name: l.productName,
+                          quantity: l.quantity,
+                          quantityLabel: qtyLabel,
+                          discountPct: l.discountPct,
+                          unitPrice: unitPriceForDisplay,
+                          lineTotal,
+                        }
+                      }),
                       subtotal: q.subtotal,
                       globalDiscountAmount: q.globalDiscountAmount,
                       totalAfterGlobal: q.total,
@@ -148,14 +179,35 @@ export function QuoteDetailPage() {
                         deliveryAddress: q.deliveryAddress ?? undefined,
                         globalDiscountPct: String(q.globalDiscountPct),
                         proposalValue: q.proposalValue ?? '',
-                        items: q.lines.map((l) => ({
-                          sku: l.productSku,
-                          name: l.productName,
-                          quantity: l.quantity,
-                          discountPct: l.discountPct,
-                          unitPrice: l.unitPrice,
-                          lineTotal: l.total,
-                        })),
+                        items: q.lines.map((l) => {
+                          const disc = Number.isFinite(l.discountPct) ? Math.min(100, Math.max(0, l.discountPct)) / 100 : 0
+                          const pName = l.presentationName ?? null
+                          const pQty = l.presentationQuantity ?? null
+                          const unitsPer = Number(l.unitsPerPresentation ?? 1) || 1
+
+                          const hasPres = !!pName && pQty !== null && pQty !== undefined
+                          const isNonUnitPres = hasPres && String(pName).toLowerCase() !== 'unidad' && unitsPer > 1
+
+                          const qtyForPricing = hasPres ? Number(pQty) : Number(l.quantity)
+                          const unitPriceForDisplay = isNonUnitPres ? l.unitPrice * unitsPer : l.unitPrice
+                          const lineTotal = unitPriceForDisplay * qtyForPricing * (1 - disc)
+
+                          const qtyLabel = hasPres
+                            ? isNonUnitPres
+                              ? `${pQty} ${pName} (${Math.trunc(unitsPer)}u)`
+                              : `${pQty} ${pName}`
+                            : String(l.quantity)
+
+                          return {
+                            sku: l.productSku,
+                            name: l.productName,
+                            quantity: l.quantity,
+                            quantityLabel: qtyLabel,
+                            discountPct: l.discountPct,
+                            unitPrice: unitPriceForDisplay,
+                            lineTotal,
+                          }
+                        }),
                         subtotal: q.subtotal,
                         globalDiscountAmount: q.globalDiscountAmount,
                         totalAfterGlobal: q.total,
@@ -227,9 +279,24 @@ export function QuoteDetailPage() {
                 columns={[
                   { header: 'SKU', accessor: (r: any) => r.productSku },
                   { header: 'Producto', accessor: (r: any) => r.productName },
-                  { header: 'Cant.', accessor: (r: any) => r.quantity },
+                  {
+                    header: 'Presentación',
+                    accessor: (r: any) =>
+                      isNonUnitPresentation(r.presentationName, r.unitsPerPresentation)
+                        ? `${r.presentationName} (${Math.trunc(Number(r.unitsPerPresentation))}u)`
+                        : (r.presentationName ?? 'Unidad'),
+                  },
+                  { header: 'Cant.', accessor: (r: any) => (r.presentationQuantity ? `${r.presentationQuantity}` : `${r.quantity}`) },
                   { header: 'Desc.%', accessor: (r: any) => r.discountPct },
-                  { header: 'P. unit.', accessor: (r: any) => `${money(r.unitPrice)} ${currency}` },
+                  {
+                    header: 'P. unit.',
+                    accessor: (r: any) => {
+                      const unitsPer = Number(r.unitsPerPresentation ?? 1) || 1
+                      const unit = Number(r.unitPrice)
+                      const displayUnit = isNonUnitPresentation(r.presentationName, r.unitsPerPresentation) ? unit * unitsPer : unit
+                      return `${money(displayUnit)} ${currency}`
+                    },
+                  },
                   { header: 'Total', accessor: (r: any) => `${money(r.total)} ${currency}` },
                 ]}
                 data={quoteQuery.data.lines}

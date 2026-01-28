@@ -127,34 +127,18 @@ export function PaymentsPage() {
           {paymentsQuery.data && items.length > 0 && (
             <Table
               columns={[
-                { header: 'Orden', width: '120px', accessor: (p) => <span className="truncate block" title={p.number}>{p.number}</span> },
+                { header: 'Orden', accessor: (p) => p.number.split('-').pop() ?? p.number },
                 {
                   header: 'Cliente',
-                  width: '250px',
-                  className: 'wrap',
-                  accessor: (p) => (
-                    <button
-                      className="text-left text-slate-900 underline-offset-2 hover:underline dark:text-slate-100 truncate"
-                      onClick={() => navigate(`/sales/customers/${encodeURIComponent(p.customerId)}`)}
-                      type="button"
-                      title={p.customerName}
-                    >
-                      {p.customerName}
-                    </button>
-                  ),
+                  accessor: (p) => p.customerName.length > 15 ? `${p.customerName.slice(0, 15)}...` : p.customerName,
                 },
-                { header: 'Pago', width: '120px', accessor: (p) => <span className="truncate block" title={paymentModeLabel(p.paymentMode)}>{paymentModeLabel(p.paymentMode)}</span> },
+                { header: 'Pago', accessor: (p) => <span className="truncate block" title={paymentModeLabel(p.paymentMode)}>{paymentModeLabel(p.paymentMode)}</span> },
                 {
-                  header: 'Entrega',
-                  width: '120px',
-                  accessor: (p) => {
-                    const d = p.deliveredAt ?? p.deliveryDate
-                    return d ? new Date(d).toLocaleDateString() : '-'
-                  },
+                  header: 'Entregado',
+                  accessor: (p) => p.deliveredAt ? 'ENTREGADO' : (p.deliveryDate ? new Date(p.deliveryDate).toLocaleDateString() : '-'),
                 },
                 {
                   header: 'Cobro',
-                  width: '200px',
                   accessor: (p) => {
                     const d = daysUntil(p.dueAt)
                     const label = d < 0 ? `Hace ${Math.abs(d)}d` : d === 0 ? 'Hoy' : `En ${d}d`
@@ -166,10 +150,10 @@ export function PaymentsPage() {
                     )
                   },
                 },
-                { header: `Total (${currency})`, width: '130px', accessor: (p) => money(p.total) },
+                { header: `Total (${currency})`, accessor: (p) => money(p.total) },
                 {
                   header: 'Estado',
-                  width: '130px',
+                  className: 'hidden md:table-cell',
                   accessor: (p) => (
                     <Badge variant={p.paidAt ? 'success' : 'warning'}>{p.paidAt ? 'COBRADA' : 'POR COBRAR'}</Badge>
                   ),
@@ -177,7 +161,6 @@ export function PaymentsPage() {
                 {
                   header: 'Acciones',
                   className: 'text-center',
-                  width: '280px',
                   accessor: (p) => (
                     <div className="flex items-center justify-center gap-1">
                       <Button
@@ -186,7 +169,7 @@ export function PaymentsPage() {
                         icon={<EyeIcon className="w-4 h-4" />}
                         onClick={() => navigate(`/sales/orders/${encodeURIComponent(p.id)}`)}
                       >
-                        Ver
+                        <span className="hidden md:inline">Ver</span>
                       </Button>
                       {!p.paidAt && (
                         <Button
@@ -201,7 +184,7 @@ export function PaymentsPage() {
                           }}
                           className="!border-green-600 !text-green-700 hover:!bg-green-50 dark:!border-green-500 dark:!text-green-400 dark:hover:!bg-green-900/20"
                         >
-                          Confirmar Pago
+                          <span className="hidden md:inline">Confirmar Pago</span>
                         </Button>
                       )}
                     </div>

@@ -96,11 +96,14 @@ export function useNavigation(): NavGroup[] {
         salesItems.push({ to: '/sales/quotes', label: '📝 Cotizaciones' })
       }
       salesItems.push({ to: '/sales/orders', label: '📋 Órdenes' })
-      salesItems.push({ to: '/sales/payments', label: '💳 Pagos' })
     }
 
     if (hasPermission('sales:delivery:read')) {
       salesItems.push({ to: '/sales/deliveries', label: '🚚 Entregas' })
+    }
+
+    if (hasPermission('sales:order:read')) {
+      salesItems.push({ to: '/sales/payments', label: '💳 Pagos' })
     }
 
     groups.push({

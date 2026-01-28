@@ -5,10 +5,26 @@ import { useAuth } from '../providers/AuthProvider'
 import { Input, Button } from './common'
 import { MagnifyingGlassIcon, XMarkIcon } from '@heroicons/react/24/outline'
 
-type CatalogSearchItem = { id: string; sku: string; name: string; genericName?: string | null; photoUrl?: string | null }
+type CatalogSearchItem = {
+  id: string
+  sku: string
+  name: string
+  genericName?: string | null
+  photoUrl?: string | null
+  price?: string | null
+  presentations?: Array<{
+    id: string
+    name: string
+    unitsPerPresentation: string
+    priceOverride?: string | null
+    isDefault: boolean
+    sortOrder: number
+  }>
+}
 
 async function searchCatalog(token: string, query: string, take: number): Promise<{ items: CatalogSearchItem[] }> {
   const params = new URLSearchParams({ q: query, take: String(take) })
+  params.append('includePresentations', 'true')
   return apiFetch(`/api/v1/catalog/search?${params}`, { token })
 }
 

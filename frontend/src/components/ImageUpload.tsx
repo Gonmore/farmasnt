@@ -255,7 +255,7 @@ export function ImageUpload({
             <Button
               type="button"
               size="sm"
-              variant="secondary"
+              variant="outline"
               disabled={disabled || loading}
               onClick={() => fileInputRef.current?.click()}
             >
@@ -265,7 +265,7 @@ export function ImageUpload({
               <Button
                 type="button"
                 size="sm"
-                variant="secondary"
+                variant="outline"
                 disabled={disabled || loading}
                 onClick={handleRemove}
               >

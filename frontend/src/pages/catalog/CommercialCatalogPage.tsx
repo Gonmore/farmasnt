@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { apiFetch } from '../../lib/api'
 import { getProductDisplayName } from '../../lib/productName'
 import { useAuth, useCart, useTenant } from '../../providers'
-import { MainLayout, PageContainer, Button, Loading, ErrorState, EmptyState, CatalogSearch, ProductPhoto, PaginationCursor } from '../../components'
+import { MainLayout, PageContainer, Button, Loading, ErrorState, EmptyState, CatalogSearch, ProductPhoto, PaginationCursor, Select, Input } from '../../components'
 import { useNavigation } from '../../hooks'
 import { EyeIcon, ShoppingCartIcon } from '@heroicons/react/24/outline'
 
@@ -15,6 +15,59 @@ type Product = {
   photoUrl?: string | null
   price?: string | null
   isActive: boolean
+  presentations?: Array<{
+    id: string
+    name: string
+    unitsPerPresentation: string
+    priceOverride?: string | null
+    isDefault: boolean
+    sortOrder: number
+  }>
+}
+
+type ProductPresentation = NonNullable<Product['presentations']>[number]
+
+function pickDefaultPresentation(p: Product): ProductPresentation | null {
+  const list = Array.isArray(p.presentations) ? p.presentations : []
+  if (list.length === 0) return null
+  const def = list.find((x) => x.isDefault)
+  return def ?? list[0] ?? null
+}
+
+function toNumberOrNull(v: unknown): number | null {
+  if (v === null || v === undefined) return null
+  const n = typeof v === 'number' ? v : Number(v)
+  return Number.isFinite(n) ? n : null
+}
+
+function unitPriceFor(product: Product, presentation?: ProductPresentation | null): number | null {
+  const unitsPer = toNumberOrNull(presentation?.unitsPerPresentation) ?? 1
+  const override = toNumberOrNull(presentation?.priceOverride)
+  if (override !== null && unitsPer > 0) return override / unitsPer
+  const base = toNumberOrNull(product.price)
+  return base
+}
+
+function presentationLabel(pres: ProductPresentation | null | undefined): string {
+  if (!pres) return 'Unidad'
+  const name = String(pres.name ?? '').trim()
+  const units = toNumberOrNull(pres.unitsPerPresentation)
+  if (!name || name.toLowerCase() === 'unidad' || !units || units <= 1) return 'Unidad'
+  return `${name} (${Math.trunc(units)}u)`
+}
+
+function presentationPriceFor(product: Product, presentation?: ProductPresentation | null): number | null {
+  const unitsPer = toNumberOrNull(presentation?.unitsPerPresentation) ?? 1
+  const override = toNumberOrNull(presentation?.priceOverride)
+  if (override !== null) return override
+  const unit = toNumberOrNull(product.price)
+  if (unit === null) return null
+  if (unitsPer <= 0) return unit
+  return unit * unitsPer
+}
+
+function cartLineId(productId: string, presentationId: string | null | undefined): string {
+  return `${productId}:${presentationId ?? 'BASE'}`
 }
 
 type ProductDetail = {
@@ -32,6 +85,7 @@ type ListResponse = { items: Product[]; nextCursor: string | null }
 
 async function fetchProducts(token: string, take: number, cursor?: string): Promise<ListResponse> {
   const params = new URLSearchParams({ take: String(take) })
+  params.append('includePresentations', 'true')
   if (cursor) params.append('cursor', cursor)
   return apiFetch(`/api/v1/products?${params}`, { token })
 }
@@ -76,11 +130,51 @@ export function CommercialCatalogPage() {
   const [cursorHistory, setCursorHistory] = useState<string[]>([])
   const [searchResults, setSearchResults] = useState<any[] | null>(null)
   const [currentPage, setCurrentPage] = useState(1)
+  const [presentationByProduct, setPresentationByProduct] = useState<Record<string, string>>({})
+  const [productQuantities, setProductQuantities] = useState<Record<string, number>>({})
   const [detailModal, setDetailModal] = useState<{ isOpen: boolean; productId: string | null }>({
     isOpen: false,
     productId: null
   })
   const take = 20
+
+  const updateProductQuantity = (key: string, quantity: number) => {
+    setProductQuantities(prev => ({
+      ...prev,
+      [key]: Math.max(0, quantity)
+    }))
+  }
+
+  const addProductToCart = (product: Product, selectedPresentation?: ProductPresentation | null) => {
+    const pres = selectedPresentation ?? pickDefaultPresentation(product)
+    const presId = pres?.id ?? null
+    const unitsPer = pres?.unitsPerPresentation ? Number(pres.unitsPerPresentation) : 1
+    const key = cartLineId(product.id, presId)
+
+    const unitPrice = unitPriceFor(product, pres)
+    if (unitPrice === null) return
+
+    const presentationQty = productQuantities[key] ?? 1
+    if (presentationQty <= 0) return
+
+    cart.addItem({
+      id: key,
+      productId: product.id,
+      sku: product.sku,
+      name: getProductDisplayName(product),
+      price: unitPrice,
+      presentationId: presId,
+      presentationName: pres?.name ?? 'Unidad',
+      unitsPerPresentation: Number.isFinite(unitsPer) && unitsPer > 0 ? unitsPer : 1,
+      presentationQuantity: presentationQty,
+      photoUrl: product.photoUrl || null,
+    })
+
+    setProductQuantities(prev => ({
+      ...prev,
+      [key]: 1,
+    }))
+  }
 
   const productsQuery = useQuery({
     queryKey: ['commercial-products', take, cursor],
@@ -125,17 +219,6 @@ export function CommercialCatalogPage() {
     setDetailModal({ isOpen: false, productId: null })
   }
 
-  const handleAddToCart = (product: Product) => {
-    cart.addItem({
-      id: product.id,
-      sku: product.sku,
-      name: getProductDisplayName(product),
-      price: parseFloat(product.price || '0'),
-      quantity: 1,
-      photoUrl: product.photoUrl || null
-    })
-  }
-
   // Determine which products to display
   const displayProducts = searchResults || productsQuery.data?.items.filter(p => p.isActive) || []
 
@@ -158,6 +241,18 @@ export function CommercialCatalogPage() {
             <>
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
                 {displayProducts.map((product: any) => (
+                  (() => {
+                    const p = product as Product
+                    const defaultPres = pickDefaultPresentation(p)
+                    const selectedPresId = presentationByProduct[p.id] ?? (defaultPres?.id ?? 'BASE')
+                    const selectedPres = (p.presentations ?? []).find((x: ProductPresentation) => x.id === selectedPresId) ?? defaultPres
+                    const unitsPer = selectedPres?.unitsPerPresentation ? Number(selectedPres.unitsPerPresentation) : 1
+                    const draftKey = cartLineId(p.id, selectedPres?.id ?? null)
+                    const currentQuantity = productQuantities[draftKey] ?? 1
+                    const effectiveUnitPrice = unitPriceFor(p, selectedPres)
+                    const effectivePresentationPrice = presentationPriceFor(p, selectedPres)
+
+                    return (
                   <div
                     key={product.id}
                     className="border border-slate-200/60 dark:border-slate-600/60 rounded-xl overflow-hidden bg-white/80 dark:bg-slate-800/80 shadow-md hover:shadow-xl hover:scale-[1.02] transition-all duration-300 backdrop-blur-sm"
@@ -183,7 +278,33 @@ export function CommercialCatalogPage() {
                       </div>
 
                       <div className="text-xl font-bold text-transparent bg-gradient-to-r from-green-600 to-emerald-600 bg-clip-text drop-shadow-sm">
-                        {product.price ? `${parseFloat(product.price).toFixed(2)} ${currency}` : 'Precio no disponible'}
+                        {effectivePresentationPrice !== null ? `${effectivePresentationPrice.toFixed(2)} ${currency}` : 'Precio no disponible'}
+                      </div>
+
+                      <div className="space-y-2">
+                        <Select
+                          value={selectedPres?.id ?? 'BASE'}
+                          onChange={(e) => setPresentationByProduct((prev) => ({ ...prev, [p.id]: e.target.value }))}
+                          options={
+                            (p.presentations ?? []).length
+                              ? (p.presentations ?? []).map((pr: ProductPresentation) => ({ value: pr.id, label: presentationLabel(pr) }))
+                              : [{ value: 'BASE', label: 'Unidad' }]
+                          }
+                        />
+
+                        <Input
+                          type="number"
+                          placeholder="Cantidad"
+                          value={String(currentQuantity)}
+                          onChange={(e) => updateProductQuantity(draftKey, Number(e.target.value))}
+                          min={0}
+                        />
+
+                        {!!unitsPer && unitsPer > 1 && (
+                          <div className="text-[11px] text-slate-600 dark:text-slate-300">
+                            1 {selectedPres?.name ?? 'Caja'} = {unitsPer} unidades
+                          </div>
+                        )}
                       </div>
 
                       {/* Botones de acción */}
@@ -201,7 +322,8 @@ export function CommercialCatalogPage() {
                           size="sm"
                           variant="success"
                           icon={<ShoppingCartIcon className="w-4 h-4" />}
-                          onClick={() => handleAddToCart(product)}
+                          onClick={() => addProductToCart(p, selectedPres)}
+                          disabled={effectiveUnitPrice === null || currentQuantity <= 0}
                           className="flex-1 text-xs"
                         >
                           <span className="hidden sm:inline">Agregar</span>
@@ -209,6 +331,8 @@ export function CommercialCatalogPage() {
                       </div>
                     </div>
                   </div>
+                    )
+                  })()
                 ))}
               </div>
 
@@ -322,7 +446,10 @@ export function CommercialCatalogPage() {
                     onClick={() => {
                       const product = productsQuery.data?.items.find(p => p.id === detailModal.productId)
                       if (product) {
-                        handleAddToCart(product)
+                        const defaultPres = pickDefaultPresentation(product)
+                        const selectedPresId = presentationByProduct[product.id] ?? (defaultPres?.id ?? 'BASE')
+                        const selectedPres = (product.presentations ?? []).find((x) => x.id === selectedPresId) ?? defaultPres
+                        addProductToCart(product, selectedPres)
                         handleCloseDetail()
                       }
                     }}

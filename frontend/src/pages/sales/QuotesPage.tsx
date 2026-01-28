@@ -174,29 +174,25 @@ export function QuotesPage() {
             <>
               <Table<QuoteListItem>
                 columns={[
-                  { header: 'Número', width: '110px', accessor: (q) => q.number },
-                  { header: 'Cliente', width: '200px', accessor: (q) => q.customerName },
+                  { header: 'Número', accessor: (q) => q.number.split('-').pop() ?? q.number },
+                  { header: 'Cliente', accessor: (q) => q.customerName.length > 15 ? `${q.customerName.slice(0, 15)}...` : q.customerName },
                   {
                     header: 'Estado',
-                    width: '120px',
                     accessor: (q) => (
                       <Badge variant={q.status === 'PROCESSED' ? 'success' : 'default'}>
                         {q.status === 'PROCESSED' ? 'PROCESADA' : 'CREADA'}
                       </Badge>
                     ),
                   },
-                  { header: 'Cotizado por', width: '160px', accessor: (q) => q.quotedBy ?? '-' },
-                  { header: 'Productos', width: '130px', accessor: (q) => `${q.itemsCount} productos` },
-                  { header: 'Fecha', width: '120px', accessor: (q) => new Date(q.createdAt).toLocaleDateString() },
+                  { header: 'Cotizado por', className: 'hidden md:table-cell', accessor: (q) => q.quotedBy ?? '-' },
+                  { header: 'Fecha', accessor: (q) => new Date(q.createdAt).toLocaleDateString() },
                   {
-                    header: 'Total',
-                    width: '130px',
-                    accessor: (q) => `Bs. ${q.total.toLocaleString('es-BO', { minimumFractionDigits: 2 })}`
+                    header: 'TOTAL(BOB)',
+                    accessor: (q) => q.total.toLocaleString('es-BO', { minimumFractionDigits: 2 })
                   },
                   {
                     header: 'Acciones',
                     className: 'text-center',
-                    width: '300px',
                     accessor: (q) => (
                       <div className="flex items-center justify-center gap-1">
                         <Button
@@ -205,7 +201,7 @@ export function QuotesPage() {
                           icon={<EyeIcon className="w-4 h-4" />}
                           onClick={() => navigate(`/sales/quotes/${q.id}`)}
                         >
-                          Ver
+                          <span className="hidden md:inline">Ver</span>
                         </Button>
                         {q.status !== 'PROCESSED' && (
                           <>
@@ -215,7 +211,7 @@ export function QuotesPage() {
                               icon={<PencilIcon className="w-4 h-4" />}
                               onClick={() => navigate(`/catalog/seller?quoteId=${q.id}`)}
                             >
-                              Editar
+                              <span className="hidden md:inline">Editar</span>
                             </Button>
                             <Button
                               variant="ghost"

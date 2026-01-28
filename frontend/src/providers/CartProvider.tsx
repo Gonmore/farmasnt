@@ -2,10 +2,18 @@ import { createContext, useContext, useState, useEffect, type ReactNode } from '
 
 export type CartItem = {
   id: string
+  productId: string
   sku: string
   name: string
   price: number
+  // Base units quantity (used for totals/math).
   quantity: number
+  // Presentation (for display + payload). When null, treat as units.
+  presentationId: string | null
+  presentationName?: string | null
+  unitsPerPresentation: number
+  // Quantity expressed in the selected presentation (e.g. 2 cajas).
+  presentationQuantity: number
   discountPct?: number
   photoUrl: string | null
 }
@@ -14,17 +22,29 @@ type CartContextType = {
   items: CartItem[]
   itemCount: number
   total: number
-  addItem: (item: Omit<CartItem, 'quantity'> & { quantity?: number }) => void
-  removeItem: (productId: string) => void
-  updateQuantity: (productId: string, quantity: number) => void
-  updatePrice: (productId: string, price: number) => void
-  updateDiscountPct: (productId: string, discountPct: number) => void
+  addItem: (item: Omit<CartItem, 'quantity' | 'presentationQuantity'> & { presentationQuantity?: number }) => void
+  removeItem: (cartLineId: string) => void
+  updatePresentationQuantity: (cartLineId: string, presentationQuantity: number) => void
+  updatePrice: (cartLineId: string, price: number) => void
+  updateDiscountPct: (cartLineId: string, discountPct: number) => void
   clearCart: () => void
 }
 
 const CartContext = createContext<CartContextType | null>(null)
 
 const CART_STORAGE_KEY = 'farmasnt_cart'
+
+function clampPos(n: number): number {
+  if (!Number.isFinite(n)) return 0
+  return Math.max(0, n)
+}
+
+function baseFromPresentation(presentationQuantity: number, unitsPerPresentation: number): number {
+  const pq = clampPos(presentationQuantity)
+  const u = clampPos(unitsPerPresentation)
+  if (pq <= 0 || u <= 0) return 0
+  return pq * u
+}
 
 export function CartProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<CartItem[]>(() => {
@@ -46,16 +66,20 @@ export function CartProvider({ children }: { children: ReactNode }) {
     }
   }, [items])
 
-  const addItem = (item: Omit<CartItem, 'quantity'> & { quantity?: number }) => {
+  const addItem = (item: Omit<CartItem, 'quantity' | 'presentationQuantity'> & { presentationQuantity?: number }) => {
     setItems(prev => {
       const existingIndex = prev.findIndex(i => i.id === item.id)
+
+      const nextPresentationQty = clampPos(item.presentationQuantity ?? 1)
+      const nextBaseQty = baseFromPresentation(nextPresentationQty, clampPos(item.unitsPerPresentation))
       
       if (existingIndex >= 0) {
         // Item exists, update quantity
         const updated = [...prev]
         updated[existingIndex] = {
           ...updated[existingIndex],
-          quantity: updated[existingIndex].quantity + (item.quantity || 1),
+          presentationQuantity: updated[existingIndex].presentationQuantity + nextPresentationQty,
+          quantity: updated[existingIndex].quantity + nextBaseQty,
           // If caller provides a discount, keep it; otherwise preserve existing
           discountPct: item.discountPct ?? updated[existingIndex].discountPct,
         }
@@ -64,40 +88,46 @@ export function CartProvider({ children }: { children: ReactNode }) {
         // New item
         return [...prev, {
           ...item,
-          quantity: item.quantity || 1,
+          presentationQuantity: nextPresentationQty,
+          quantity: nextBaseQty,
           discountPct: item.discountPct ?? 0,
         }]
       }
     })
   }
 
-  const removeItem = (productId: string) => {
-    setItems(prev => prev.filter(item => item.id !== productId))
+  const removeItem = (cartLineId: string) => {
+    setItems(prev => prev.filter(item => item.id !== cartLineId))
   }
 
-  const updateQuantity = (productId: string, quantity: number) => {
-    const nextQty = Number.isFinite(quantity) ? quantity : 0
+  const updatePresentationQuantity = (cartLineId: string, presentationQuantity: number) => {
+    const nextPresentationQty = clampPos(presentationQuantity)
 
-    if (nextQty <= 0) {
-      removeItem(productId)
+    if (nextPresentationQty <= 0) {
+      removeItem(cartLineId)
       return
     }
 
     setItems(prev => {
       const updated = [...prev]
-      const index = updated.findIndex(i => i.id === productId)
+      const index = updated.findIndex(i => i.id === cartLineId)
       if (index >= 0) {
-        updated[index] = { ...updated[index], quantity: nextQty }
+        const unitsPer = clampPos(updated[index].unitsPerPresentation)
+        updated[index] = {
+          ...updated[index],
+          presentationQuantity: nextPresentationQty,
+          quantity: baseFromPresentation(nextPresentationQty, unitsPer),
+        }
       }
       return updated
     })
   }
 
-  const updatePrice = (productId: string, price: number) => {
+  const updatePrice = (cartLineId: string, price: number) => {
     const nextPrice = Number.isFinite(price) ? Math.max(0, price) : 0
     setItems(prev => {
       const updated = [...prev]
-      const index = updated.findIndex(i => i.id === productId)
+      const index = updated.findIndex(i => i.id === cartLineId)
       if (index >= 0) {
         updated[index] = { ...updated[index], price: nextPrice }
       }
@@ -105,11 +135,11 @@ export function CartProvider({ children }: { children: ReactNode }) {
     })
   }
 
-  const updateDiscountPct = (productId: string, discountPct: number) => {
+  const updateDiscountPct = (cartLineId: string, discountPct: number) => {
     const pct = Number.isFinite(discountPct) ? Math.min(100, Math.max(0, discountPct)) : 0
     setItems(prev => {
       const updated = [...prev]
-      const index = updated.findIndex(i => i.id === productId)
+      const index = updated.findIndex(i => i.id === cartLineId)
       if (index >= 0) {
         updated[index] = { ...updated[index], discountPct: pct }
       }
@@ -135,7 +165,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
         total,
         addItem,
         removeItem,
-        updateQuantity,
+        updatePresentationQuantity,
         updatePrice,
         updateDiscountPct,
         clearCart
