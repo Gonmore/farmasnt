@@ -605,3 +605,15 @@ Tenant Admin (Clientes)
   - Ejecutada migración `20260127140000_product_presentations` para crear tabla y agregar campos.
   - Compatibilidad hacia atrás mantenida para datos existentes.
 
+## Mejoras de UI/UX (Enero 2026)
+- **Catálogo de productos**:
+  - Ajustado ancho mínimo de tarjetas de productos de 140px a 180px para mejor legibilidad y consistencia visual.
+- **Gestión de warehouses**:
+  - Enforced validación de códigos en mayúsculas con prefijo "SUC-".
+  - Agregado ícono de ojo al botón de stock para mejor UX.
+  - Validación backend actualizada para asegurar formato consistente.
+- **Creación de productos**:
+  - Corregido botón de regreso faltante en página de detalle de productos.
+- **Creación de lotes**:
+  - Deshabilitada selección automática de sucursal, ahora requiere selección manual con placeholder "Elegir sucursal".
+

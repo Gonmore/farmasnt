@@ -392,10 +392,7 @@ Body
 {
   "sku": "SKU-001",
   "name": "Paracetamol 500mg",
-  "description": "Opcional",
-  "presentationWrapper": "caja",
-  "presentationQuantity": 250,
-  "presentationFormat": "comprimidos"
+  "description": "Opcional"
 }
 ```
 
@@ -405,9 +402,6 @@ Response 201
   "id": "...",
   "sku": "SKU-001",
   "name": "Paracetamol 500mg",
-  "presentationWrapper": "caja",
-  "presentationQuantity": "250",
-  "presentationFormat": "comprimidos",
   "version": 1,
   "createdAt": "2025-01-01T00:00:00.000Z"
 }
@@ -426,7 +420,7 @@ Query
 Response 200
 ```json
 {
-  "items": [{ "id": "...", "sku": "...", "name": "...", "presentationWrapper": "caja", "presentationQuantity": "250", "presentationFormat": "comprimidos", "photoUrl": "https://..." , "isActive": true, "version": 1, "updatedAt": "..." }],
+  "items": [{ "id": "...", "sku": "...", "name": "...", "photoUrl": "https://..." , "isActive": true, "version": 1, "updatedAt": "..." }],
   "nextCursor": "..."
 }
 ```
@@ -441,9 +435,6 @@ Response 200
   "sku": "...",
   "name": "...",
   "description": null,
-  "presentationWrapper": "caja",
-  "presentationQuantity": "250",
-  "presentationFormat": "comprimidos",
   "photoUrl": "https://...",
   "isActive": true,
   "version": 1,
@@ -458,9 +449,6 @@ Body
 - `version` (int, requerido)
 - `name` (opcional)
 - `description` (opcional, puede ser `null`)
-- `presentationWrapper` (opcional, puede ser `null`)
-- `presentationQuantity` (opcional, puede ser `null`)
-- `presentationFormat` (opcional, puede ser `null`)
 - `photoUrl` (opcional, puede ser `null`)
 - `photoKey` (opcional, puede ser `null`)
 - `isActive` (opcional)
@@ -570,6 +558,82 @@ Requiere permiso: `catalog:write`.
 Response
 - `204` si elimina.
 - `404` si no existe.
+
+---
+
+## ProductPresentations
+Requiere permisos `catalog:*`.
+
+### POST /api/v1/products/:productId/presentations
+Requiere permiso: `catalog:write`.
+
+Body
+```json
+{
+  "name": "Caja",
+  "unitsPerPresentation": 200,
+  "priceOverride": 50.00,
+  "isDefault": true,
+  "sortOrder": 1
+}
+```
+
+Response 201
+```json
+{
+  "id": "...",
+  "tenantId": "...",
+  "productId": "...",
+  "name": "Caja",
+  "unitsPerPresentation": 200,
+  "priceOverride": 50.00,
+  "isDefault": true,
+  "sortOrder": 1,
+  "isActive": true,
+  "version": 1,
+  "createdAt": "2026-01-27T00:00:00.000Z",
+  "updatedAt": "2026-01-27T00:00:00.000Z"
+}
+```
+
+### GET /api/v1/products/:productId/presentations
+Requiere permiso: `catalog:read`.
+
+Response 200
+```json
+{
+  "items": [
+    {
+      "id": "...",
+      "name": "Caja",
+      "unitsPerPresentation": 200,
+      "priceOverride": 50.00,
+      "isDefault": true,
+      "sortOrder": 1,
+      "isActive": true,
+      "version": 1,
+      "updatedAt": "..."
+    }
+  ]
+}
+```
+
+### PATCH /api/v1/products/:productId/presentations/:id
+Requiere permiso: `catalog:write`.
+
+Body
+- `version` (int, requerido)
+- `name` (opcional)
+- `unitsPerPresentation` (opcional)
+- `priceOverride` (opcional, puede ser `null`)
+- `isDefault` (opcional)
+- `sortOrder` (opcional)
+- `isActive` (opcional)
+
+### DELETE /api/v1/products/:productId/presentations/:id
+Requiere permiso: `catalog:write`.
+
+Response 204
 
 ---
 
@@ -718,7 +782,7 @@ Query
 Response 200
 ```json
 {
-  "items": [{ "id": "...", "code": "WH-01", "name": "Almacén", "city": "LA PAZ", "isActive": true, "version": 1, "updatedAt": "...", "totalQuantity": "10" }],
+  "items": [{ "id": "...", "code": "SUC-01", "name": "Almacén", "city": "LA PAZ", "isActive": true, "version": 1, "updatedAt": "...", "totalQuantity": "10" }],
   "nextCursor": "..."
 }
 ```
@@ -746,7 +810,7 @@ Requiere permiso: `stock:manage`.
 Body
 ```json
 {
-  "code": "WH-01",
+  "code": "SUC-01",
   "name": "Sucursal Central",
   "city": "LA PAZ"
 }
@@ -756,7 +820,7 @@ Response 201
 ```json
 {
   "id": "...",
-  "code": "WH-01",
+  "code": "SUC-01",
   "name": "Sucursal Central",
   "city": "LA PAZ",
   "isActive": true,
@@ -770,6 +834,7 @@ Notas
 - Crea automáticamente una ubicación por defecto (`BIN-01`, tipo `BIN`) en la sucursal.
 - `409` si el código ya existe (único por tenant).
 - `409` si el tenant no tiene configurado `country` (ver `PATCH /api/v1/tenant/branding`).
+- El código debe comenzar con "SUC-" y contener solo letras mayúsculas y números después del prefijo.
 
 ### PATCH /api/v1/warehouses/:id
 Requiere permiso: `stock:manage`.
@@ -786,7 +851,7 @@ Response 200
 ```json
 {
   "id": "...",
-  "code": "WH-01",
+  "code": "SUC-01",
   "name": "Sucursal Central",
   "city": "LA PAZ",
   "isActive": true,
