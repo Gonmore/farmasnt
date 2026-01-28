@@ -189,7 +189,7 @@ export function WarehousesPage() {
     setEditingWarehouse(warehouse)
     setEditName(warehouse.name)
     setEditCity((warehouse.city ?? '').toString())
-    setEditCode(warehouse.code.replace(/^SUC-/, ''))
+    setEditCode(warehouse.code.replace(/^SUC-/, '').toUpperCase())
     setEditIsActive(warehouse.isActive)
   }
 
@@ -309,7 +309,7 @@ export function WarehousesPage() {
         maxWidth="md"
       >
         <div className="space-y-4">
-          <Input label="Código (SUC- es fijo)" value={`SUC-${createCode}`} onChange={(e) => setCreateCode(e.target.value.replace(/^SUC-/, ''))} placeholder="SCZ" />
+          <Input label="Código (SUC- es fijo)" value={`SUC-${createCode}`} onChange={(e) => setCreateCode(e.target.value.replace(/^SUC-/, '').toUpperCase())} placeholder="SCZ" />
           <Input label="Nombre" value={createName} onChange={(e) => setCreateName(e.target.value)} placeholder="Sucursal" />
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
@@ -368,7 +368,7 @@ export function WarehousesPage() {
             </label>
             <Input
               value={`SUC-${editCode}`}
-              onChange={(e) => setEditCode(e.target.value.replace(/^SUC-/, ''))}
+              onChange={(e) => setEditCode(e.target.value.replace(/^SUC-/, '').toUpperCase())}
               placeholder="SCZ"
               disabled={updateWarehouseMutation.isPending}
             />
