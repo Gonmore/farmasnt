@@ -6,13 +6,13 @@ import { requireAuth, requireModuleEnabled, requirePermission } from '../../../a
 import { Permissions } from '../../../application/security/permissions.js'
 
 const createWarehouseSchema = z.object({
-  code: z.string().trim().min(1).max(32).regex(/^SUC-/, 'Warehouse code must start with SUC-'),
+  code: z.string().trim().min(1).max(32).regex(/^SUC-[A-Z0-9]+$/, 'Warehouse code must start with SUC- followed by uppercase letters and numbers'),
   name: z.string().trim().min(1).max(200),
   city: z.string().trim().min(1).max(120),
 })
 
 const updateWarehouseSchema = z.object({
-  code: z.string().trim().min(1).max(32).regex(/^SUC-/, 'Warehouse code must start with SUC-').optional(),
+  code: z.string().trim().min(1).max(32).regex(/^SUC-[A-Z0-9]+$/, 'Warehouse code must start with SUC- followed by uppercase letters and numbers').optional(),
   name: z.string().trim().min(1).max(200).optional(),
   city: z.string().trim().min(1).max(120).optional(),
   isActive: z.boolean().optional(),
