@@ -1,3 +1,4 @@
+import { exportDeliveryNoteToPDF } from '../../lib/quotePdf'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -18,7 +19,8 @@ import { useNavigation } from '../../hooks'
 import { usePermissions } from '../../hooks/usePermissions'
 import { apiFetch } from '../../lib/api'
 import { useAuth } from '../../providers/AuthProvider'
-import { EyeIcon, CheckCircleIcon } from '@heroicons/react/24/outline'
+import { useTenant } from '../../providers/TenantProvider'
+import { EyeIcon, CheckCircleIcon, DocumentTextIcon } from '@heroicons/react/24/outline'
 
 type DeliveryListItem = {
   id: string
@@ -42,6 +44,29 @@ type WarehouseListItem = { id: string; code: string; name: string; isActive: boo
 type LocationListItem = { id: string; warehouseId: string; code: string; isActive: boolean }
 
 type DeliverStatusFilter = 'PENDING' | 'DELIVERED' | 'ALL'
+
+type ReservationRow = {
+  id: string
+  inventoryBalanceId: string
+  quantity: number
+  createdAt: string
+  productId: string | null
+  productSku: string | null
+  productName: string | null
+  genericName: string | null
+  batchId: string | null
+  batchNumber: string | null
+  expiresAt: string | null
+  locationId: string | null
+  locationCode: string | null
+  warehouseId: string | null
+  warehouseCode: string | null
+  warehouseName: string | null
+  presentationName: string | null
+  unitsPerPresentation: number | null
+}
+
+type ReservationsResponse = { items: ReservationRow[] }
 
 function startOfDayLocal(d: Date) {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate())
@@ -94,6 +119,10 @@ async function deliverOrder(
   })
 }
 
+async function fetchOrderReservations(token: string, orderId: string): Promise<ReservationsResponse> {
+  return apiFetch(`/api/v1/sales/orders/${encodeURIComponent(orderId)}/reservations`, { token })
+}
+
 function isMissingReservationsError(message: string): boolean {
   const m = (message ?? '').toLowerCase()
   return m.includes('no reservations') || (m.includes('fromlocationid') && m.includes('no reservations'))
@@ -105,6 +134,7 @@ export function DeliveriesPage() {
   const navigate = useNavigate()
   const navGroups = useNavigation()
   const queryClient = useQueryClient()
+  const tenant = useTenant()
 
   const [status, setStatus] = useState<DeliverStatusFilter>('PENDING')
   const [cursor, setCursor] = useState<string | undefined>()
@@ -117,6 +147,8 @@ export function DeliveriesPage() {
 
   const [locationModalOpen, setLocationModalOpen] = useState(false)
   const [locationModalItem, setLocationModalItem] = useState<DeliveryListItem | null>(null)
+
+  const [exportingDeliveryNote, setExportingDeliveryNote] = useState(false)
 
   const deliveriesQuery = useQuery({
     queryKey: ['deliveries', status, cursor, selectedCities],
@@ -257,11 +289,10 @@ export function DeliveriesPage() {
             <>
               <Table
                 columns={[
-                  { header: 'OV', width: '110px', accessor: (o) => o.number },
-                  { header: 'Cliente', width: '200px', accessor: (o) => o.customerName },
+                  { header: 'OV', accessor: (o) => o.number.split('-').pop() ?? o.number },
+                  { header: 'Cliente', accessor: (o) => o.customerName.length > 15 ? `${o.customerName.slice(0, 15)}...` : o.customerName },
                   {
                     header: 'Fecha entrega',
-                    width: '160px',
                     accessor: (o) => (
                       <div className="flex flex-col">
                         <span className="font-medium">{relativeDeliveryLabel(o.deliveryDate)}</span>
@@ -273,7 +304,6 @@ export function DeliveriesPage() {
                   },
                   {
                     header: 'Lugar',
-                    width: '130px',
                     accessor: (o) => (
                       <Button
                         size="sm"
@@ -290,7 +320,6 @@ export function DeliveriesPage() {
                   },
                   {
                     header: 'Estado',
-                    width: '130px',
                     accessor: (o) => (
                       <Badge
                         variant={o.status === 'FULFILLED' ? 'success' : o.status === 'CONFIRMED' ? 'info' : 'default'}
@@ -302,10 +331,51 @@ export function DeliveriesPage() {
                   {
                     header: 'Acciones',
                     className: 'text-center',
-                    width: '280px',
                     accessor: (o) => (
                       <div className="flex items-center justify-center gap-1">
-                        <Button variant="ghost" size="sm" icon={<EyeIcon className="w-4 h-4" />} onClick={() => navigate(`/sales/orders/${o.id}`)}>Ver</Button>
+                        <Button variant="ghost" size="sm" icon={<EyeIcon className="w-4 h-4" />} onClick={() => navigate(`/sales/orders/${o.id}`)}>
+                          <span className="hidden md:inline">Ver</span>
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          icon={<DocumentTextIcon className="w-4 h-4" />}
+                          loading={exportingDeliveryNote}
+                          onClick={async () => {
+                            setExportingDeliveryNote(true)
+                            try {
+                              const res = await fetchOrderReservations(auth.accessToken!, o.id)
+                              const reservations = res.items ?? []
+                              const items = reservations.map((r: any) => ({
+                                productName: r.productName ?? '—',
+                                batchNumber: r.batchNumber ?? '—',
+                                expiresAt: r.expiresAt ? new Date(r.expiresAt).toLocaleDateString() : '—',
+                                quantity: r.presentationQuantity ?? r.quantity ?? 0,
+                                presentationName: r.presentationName ?? undefined,
+                                presentationQuantity: r.presentationQuantity ?? undefined,
+                                unitsPerPresentation: r.unitsPerPresentation ?? undefined,
+                              }))
+                              await exportDeliveryNoteToPDF({
+                                orderNumber: o.number,
+                                customerName: o.customerName,
+                                deliveryDate: o.deliveryDate ? new Date(o.deliveryDate).toLocaleDateString() : '—',
+                                deliveryCity: o.deliveryCity ?? undefined,
+                                deliveryZone: o.deliveryZone ?? undefined,
+                                deliveryAddress: o.deliveryAddress ?? undefined,
+                                items,
+                                tenant,
+                                logoUrl: tenant.branding?.logoUrl || undefined,
+                              })
+                            } catch (error) {
+                              console.error('Error exporting delivery note:', error)
+                              alert('Error al exportar nota de entrega')
+                            } finally {
+                              setExportingDeliveryNote(false)
+                            }
+                          }}
+                        >
+                          <span className="hidden md:inline">Nota</span>
+                        </Button>
                         {o.status !== 'FULFILLED' && perms.hasPermission('sales:delivery:write') ? (
                           <Button
                             size="sm"
@@ -313,7 +383,20 @@ export function DeliveriesPage() {
                             icon={<CheckCircleIcon className="w-4 h-4" />}
                             disabled={deliverMutation.isPending}
                             onClick={async () => {
-                              const ok = window.confirm(`¿Marcar la OV ${o.number} como entregada? Esto descontará stock.`)
+                              let confirmMsg = `¿Marcar la OV ${o.number} como entregada? Esto descontará stock.`
+                              try {
+                                const res = await fetchOrderReservations(auth.accessToken!, o.id)
+                                const rows = res?.items ?? []
+                                if (rows.length > 0) {
+                                  const lotes = new Set(rows.map((r: any) => r.batchId ?? r.batchNumber ?? 'SIN_LOTE'))
+                                  const ubic = new Set(rows.map((r: any) => r.locationId ?? r.locationCode ?? 'SIN_UBICACION'))
+                                  confirmMsg += `\n\nSe descontará específicamente de las reservas (picking): ${rows.length} líneas, ${lotes.size} lotes, ${ubic.size} ubicaciones.`
+                                }
+                              } catch {
+                                // ignore: keep default confirm text
+                              }
+
+                              const ok = window.confirm(confirmMsg)
                               if (!ok) return
                               setDeliverTarget({ orderId: o.id, version: o.version, number: o.number })
                               try {
@@ -328,7 +411,7 @@ export function DeliveriesPage() {
                               }
                             }}
                           >
-                            Marcar entregado
+                            <span className="hidden md:inline">Marcar entregado</span>
                           </Button>
                         ) : null}
                       </div>
