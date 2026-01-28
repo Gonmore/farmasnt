@@ -11,6 +11,7 @@ import {
   ErrorState,
   EmptyState,
   CatalogSearch,
+  CustomerSelector,
   ProductPhoto,
   Select,
   Input,
@@ -94,6 +95,7 @@ type CustomerListItem = {
   id: string
   name: string
   isActive: boolean
+  city?: string | null
   creditDays7Enabled?: boolean
   creditDays14Enabled?: boolean
 }
@@ -119,8 +121,11 @@ async function fetchProducts(token: string, take: number, cursor?: string): Prom
   return apiFetch(`/api/v1/products?${params}`, { token })
 }
 
-async function fetchCustomers(token: string): Promise<CustomerListResponse> {
+async function fetchCustomers(token: string, search?: string): Promise<CustomerListResponse> {
   const params = new URLSearchParams({ take: '50' })
+  if (search?.trim()) {
+    params.append('q', search.trim())
+  }
   return apiFetch(`/api/v1/customers?${params}`, { token })
 }
 
@@ -723,16 +728,10 @@ export function SellerCatalogPage() {
         <CatalogSearch className="mb-4" onSearchResults={setSearchResults} />
 
         <div className="mb-4 grid gap-3 md:grid-cols-2">
-          <Select
-            label="👥 Cliente final"
+          <CustomerSelector
             value={customerId}
-            onChange={(e) => setCustomerId(e.target.value)}
-            options={[
-              { value: '', label: 'Seleccioná...' },
-              ...(customersQuery.data?.items ?? [])
-                .filter((c) => c.isActive)
-                .map((c) => ({ value: c.id, label: c.name })),
-            ]}
+            onChange={setCustomerId}
+            placeholder="Buscar cliente..."
             disabled={customersQuery.isLoading}
           />
 
