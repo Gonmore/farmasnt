@@ -782,15 +782,15 @@ export function ProductDetailPage() {
   })
 
   // If there is only one active warehouse, auto-select it.
-  useEffect(() => {
-    if (!showBatchForm) return
-    if (warehouseIdForInitialStock) return
+  // useEffect(() => {
+  //   if (!showBatchForm) return
+  //   if (warehouseIdForInitialStock) return
 
-    const activeWarehouses = (warehousesQuery.data?.items ?? []).filter((w) => w.isActive)
-    if (activeWarehouses.length === 1) {
-      setWarehouseIdForInitialStock(activeWarehouses[0]!.id)
-    }
-  }, [showBatchForm, warehouseIdForInitialStock, warehousesQuery.data])
+  //   const activeWarehouses = (warehousesQuery.data?.items ?? []).filter((w) => w.isActive)
+  //   if (activeWarehouses.length === 1) {
+  //     setWarehouseIdForInitialStock(activeWarehouses[0]!.id)
+  //   }
+  // }, [showBatchForm, warehouseIdForInitialStock, warehousesQuery.data])
 
   // Default repack selector values when a batch is opened.
   useEffect(() => {
@@ -2058,9 +2058,12 @@ export function ProductDetailPage() {
                           setWarehouseIdForInitialStock(e.target.value)
                           if (batchFormError) setBatchFormError('')
                         }}
-                        options={(warehousesQuery.data?.items ?? [])
-                          .filter((w) => w.isActive)
-                          .map((w) => ({ value: w.id, label: `${w.code} - ${w.name}` }))}
+                        options={[
+                          { value: '', label: 'Elegir sucursal' },
+                          ...(warehousesQuery.data?.items ?? [])
+                            .filter((w) => w.isActive)
+                            .map((w) => ({ value: w.id, label: `${w.code} - ${w.name}` }))
+                        ]}
                         disabled={batchMutation.isPending || warehousesQuery.isLoading}
                       />
                       <Select
