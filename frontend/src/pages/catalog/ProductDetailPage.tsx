@@ -1086,7 +1086,7 @@ export function ProductDetailPage() {
       <PageContainer
         title={isNew ? 'Crear Producto' : `Producto: ${getProductDisplayName({ sku, name, genericName })}`}
         actions={
-          <Button variant="outline" icon={<ArrowLeftIcon />}>
+          <Button variant="outline" icon={<ArrowLeftIcon />} onClick={() => navigate('/catalog/products')}>
             Volver
           </Button>
         }
