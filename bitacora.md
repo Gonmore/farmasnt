@@ -587,3 +587,21 @@ Tenant Admin (Clientes)
   - Agregada sección "Database Seeding" en `API_REFERENCE.md` con comandos e instrucciones Docker
   - Actualizada bitácora con detalles de correcciones realizadas
 
+### 6) Presentaciones de Productos
+- **Nueva tabla `ProductPresentation`**:
+  - Permite definir múltiples presentaciones por producto (ej. "Caja de 200 unidades", "Frasco de 100 ml").
+  - Campos: `name`, `unitsPerPresentation`, `priceOverride`, `isDefault`, `sortOrder`.
+  - Relación con `Product` por `productId` y `tenantId`.
+- **Migración de campos**:
+  - Movidos `presentationWrapper`, `presentationQuantity`, `presentationFormat` de `Product` a la nueva tabla.
+  - Agregados `presentationId` y `presentationQuantity` a `QuoteLine`, `SalesOrderLine`, `StockMovement`.
+- **Actualizaciones en backend**:
+  - Endpoint `/api/v1/sales/orders/:id/reservations` incluye datos de presentación desde líneas de orden.
+  - Validaciones actualizadas para permitir múltiples presentaciones del mismo producto en cotizaciones y órdenes.
+- **Mejoras en frontend**:
+  - PDF de nota de entrega muestra cantidades y presentaciones correctas (ej. "1 caja de 200u", "30 Unidades").
+  - Tabla de entregas optimizada para presentaciones.
+- **Migración de base de datos**:
+  - Ejecutada migración `20260127140000_product_presentations` para crear tabla y agregar campos.
+  - Compatibilidad hacia atrás mantenida para datos existentes.
+
