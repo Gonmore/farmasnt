@@ -22,33 +22,61 @@ resolve_and_retry_migrations() {
   # Opt-in only: never auto-resolve unless explicitly configured.
   # Example:
   #   PRISMA_MIGRATE_RESOLVE_ON_FAIL=1
+  #   PRISMA_MIGRATE_RESOLVE_ROLLED_BACK_NAMES=20260116063727_pagos
+  #   PRISMA_MIGRATE_RESOLVE_APPLIED_NAMES=20260127140000_product_presentations
+  # Legacy (single action for all names):
   #   PRISMA_MIGRATE_RESOLVE_ACTION=rolled-back   # or: applied
   #   PRISMA_MIGRATE_RESOLVE_NAMES=20260116063727_pagos
   if [ "${PRISMA_MIGRATE_RESOLVE_ON_FAIL:-}" != "1" ] && [ "${PRISMA_MIGRATE_RESOLVE_ON_FAIL:-}" != "true" ] && [ "${PRISMA_MIGRATE_RESOLVE_ON_FAIL:-}" != "TRUE" ]; then
     return 1
   fi
 
-  if [ -z "${PRISMA_MIGRATE_RESOLVE_NAMES:-}" ]; then
-    echo "[backend] PRISMA_MIGRATE_RESOLVE_ON_FAIL está habilitado pero PRISMA_MIGRATE_RESOLVE_NAMES está vacío."
+  applied_names="${PRISMA_MIGRATE_RESOLVE_APPLIED_NAMES:-}"
+  rolled_back_names="${PRISMA_MIGRATE_RESOLVE_ROLLED_BACK_NAMES:-}"
+
+  # Legacy fallback
+  legacy_names="${PRISMA_MIGRATE_RESOLVE_NAMES:-}"
+  legacy_action="${PRISMA_MIGRATE_RESOLVE_ACTION:-rolled-back}"
+
+  if [ -z "$applied_names" ] && [ -z "$rolled_back_names" ] && [ -z "$legacy_names" ]; then
+    echo "[backend] PRISMA_MIGRATE_RESOLVE_ON_FAIL está habilitado pero no hay nombres configurados."
+    echo "[backend] Usa PRISMA_MIGRATE_RESOLVE_APPLIED_NAMES y/o PRISMA_MIGRATE_RESOLVE_ROLLED_BACK_NAMES (o el legacy PRISMA_MIGRATE_RESOLVE_NAMES)."
     return 1
   fi
 
-  action="${PRISMA_MIGRATE_RESOLVE_ACTION:-rolled-back}"
-  if [ "$action" != "rolled-back" ] && [ "$action" != "applied" ]; then
-    echo "[backend] PRISMA_MIGRATE_RESOLVE_ACTION inválido: '$action' (usa 'rolled-back' o 'applied')."
-    return 1
+  # Resolve applied list
+  if [ -n "$applied_names" ]; then
+    echo "[backend] Intentando resolver migraciones fallidas (action=applied): ${applied_names}"
+    for name in $(echo "$applied_names" | tr ',' ' '); do
+      [ -z "$name" ] && continue
+      echo "[backend] prisma migrate resolve --applied $name"
+      npx prisma migrate resolve --schema=prisma/schema.prisma --applied "$name"
+    done
   fi
 
-  echo "[backend] Intentando resolver migraciones fallidas (action=$action): ${PRISMA_MIGRATE_RESOLVE_NAMES}"
+  # Resolve rolled-back list
+  if [ -n "$rolled_back_names" ]; then
+    echo "[backend] Intentando resolver migraciones fallidas (action=rolled-back): ${rolled_back_names}"
+    for name in $(echo "$rolled_back_names" | tr ',' ' '); do
+      [ -z "$name" ] && continue
+      echo "[backend] prisma migrate resolve --rolled-back $name"
+      npx prisma migrate resolve --schema=prisma/schema.prisma --rolled-back "$name"
+    done
+  fi
 
-  # Split by comma or whitespace
-  for name in $(echo "${PRISMA_MIGRATE_RESOLVE_NAMES}" | tr ',' ' '); do
-    if [ -z "$name" ]; then
-      continue
+  # Legacy single-action list
+  if [ -n "$legacy_names" ]; then
+    if [ "$legacy_action" != "rolled-back" ] && [ "$legacy_action" != "applied" ]; then
+      echo "[backend] PRISMA_MIGRATE_RESOLVE_ACTION inválido: '$legacy_action' (usa 'rolled-back' o 'applied')."
+      return 1
     fi
-    echo "[backend] prisma migrate resolve --$action $name"
-    npx prisma migrate resolve --schema=prisma/schema.prisma --$action "$name"
-  done
+    echo "[backend] Intentando resolver migraciones fallidas (legacy action=$legacy_action): ${legacy_names}"
+    for name in $(echo "$legacy_names" | tr ',' ' '); do
+      [ -z "$name" ] && continue
+      echo "[backend] prisma migrate resolve --$legacy_action $name"
+      npx prisma migrate resolve --schema=prisma/schema.prisma --$legacy_action "$name"
+    done
+  fi
 
   echo "[backend] Reintentando prisma migrate deploy..."
   npm run prisma:migrate
@@ -69,14 +97,19 @@ if [ "$migrate_code" -ne 0 ]; then
   echo "[backend]   docker compose restart backend-farmasnt"
   echo "[backend] Opción B (automático, bajo tu responsabilidad):"
   echo "[backend]   set PRISMA_MIGRATE_RESOLVE_ON_FAIL=1"
-  echo "[backend]   set PRISMA_MIGRATE_RESOLVE_NAMES=20260116063727_pagos"
-  echo "[backend]   set PRISMA_MIGRATE_RESOLVE_ACTION=rolled-back"
+  echo "[backend]   set PRISMA_MIGRATE_RESOLVE_ROLLED_BACK_NAMES=20260116063727_pagos"
+  echo "[backend]   set PRISMA_MIGRATE_RESOLVE_APPLIED_NAMES=20260127140000_product_presentations"
 
   if resolve_and_retry_migrations; then
     migrate_code=0
   else
     exit "$migrate_code"
   fi
+fi
+
+if [ "${MIGRATE_ONLY:-}" = "1" ] || [ "${MIGRATE_ONLY:-}" = "true" ] || [ "${MIGRATE_ONLY:-}" = "TRUE" ]; then
+  echo "[backend] MIGRATE_ONLY=1: exiting after migrations."
+  exit 0
 fi
 
 if [ "${RUN_SEED:-}" = "1" ] || [ "${RUN_SEED:-}" = "true" ] || [ "${RUN_SEED:-}" = "TRUE" ]; then
