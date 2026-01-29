@@ -544,6 +544,7 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
   const audit = new AuditService(db)
 
   function branchCityOf(request: any): string | null {
+    if (request.auth?.isTenantAdmin) return null
     const scoped = !!request.auth?.permissions?.has(Permissions.ScopeBranch)
     if (!scoped) return null
     const city = String(request.auth?.warehouseCity ?? '').trim()

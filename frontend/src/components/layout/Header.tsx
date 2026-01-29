@@ -61,7 +61,14 @@ export function Header({ onMenuClick, showMenuButton = false }: HeaderProps) {
   }, [me.user?.email, me.user?.fullName])
 
   const isBranchScoped = me.hasPermission('scope:branch')
-  const mustSelectWarehouse = !!auth.isAuthenticated && isBranchScoped && !!me.user && !me.user.warehouseId
+  // Tenant/Platform admins have global access and should not be forced to pick a branch.
+  const mustSelectWarehouse =
+    !!auth.isAuthenticated &&
+    isBranchScoped &&
+    !me.isTenantAdmin &&
+    !me.isPlatformAdmin &&
+    !!me.user &&
+    !me.user.warehouseId
 
   // Force warehouse selection for branch-scoped users (otherwise most endpoints return 409).
   useEffect(() => {

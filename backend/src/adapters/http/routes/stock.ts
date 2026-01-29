@@ -307,6 +307,7 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
   const env = getEnv()
 
   function branchCityOf(request: any): string | null {
+    if (request.auth?.isTenantAdmin) return null
     const scoped = !!request.auth?.permissions?.has(Permissions.ScopeBranch)
     if (!scoped) return null
     const city = String(request.auth?.warehouseCity ?? '').trim()

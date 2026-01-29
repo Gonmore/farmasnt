@@ -120,12 +120,18 @@ export async function createHttpServer() {
     if (!user) return
 
     const permissions = await loadUserPermissions(db, user.id)
+
+    const isTenantAdmin = !!(await db.userRole.findFirst({
+      where: { userId: user.id, role: { code: 'TENANT_ADMIN' } },
+      select: { id: true },
+    }))
     request.auth = {
       userId: user.id,
       tenantId: user.tenantId,
       permissions,
       warehouseId: (user as any).warehouseId ?? null,
       warehouseCity: (user as any).warehouse?.city ?? null,
+      isTenantAdmin,
     }
   })
 

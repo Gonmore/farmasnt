@@ -408,6 +408,7 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
   const db = prisma()
 
   function branchCityOf(request: any): string | null {
+    if (request.auth?.isTenantAdmin) return null
     const scoped = !!request.auth?.permissions?.has(Permissions.ScopeBranch)
     if (!scoped) return null
     const city = String(request.auth?.warehouseCity ?? '').trim()
