@@ -71,6 +71,18 @@ services:
       - red-interna
     profiles: ["tools"]
 
+  backend-migrate-status:
+    image: gonmore14/backend-farmasnt:${APP_VERSION:-latest}
+    container_name: backend-farmasnt-migrate-status
+    restart: "no"
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
+      NODE_ENV: production
+    command: ["sh", "-lc", "npx prisma migrate status"]
+    networks:
+      - red-interna
+    profiles: ["tools"]
+
   frontend-farmasnt:
     # Sustituimos 'build' por la imagen de tu registro
     image: gonmore14/frontend-farmasnt:${APP_VERSION:-latest}
