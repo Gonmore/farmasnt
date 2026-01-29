@@ -414,7 +414,7 @@ Notas
 Requiere permiso: `catalog:read`.
 
 Query
-- `take` (1..50, default 20)
+- `take` (1..200, default 20)
 - `cursor` (uuid, opcional)
 
 Response 200
@@ -1161,7 +1161,8 @@ Body
 ```
 
 Notas
-- En modo `scope:branch`: `409` si el usuario no seleccionó sucursal; `403` si `toLocationId` no pertenece a la ciudad de su sucursal.
+- En modo `scope:branch` (usuarios branch-scoped): `409` si el usuario no seleccionó sucursal; `403` si `toLocationId` no pertenece a la ciudad de su sucursal.
+- `TENANT_ADMIN` (y platform admin) no requiere seleccionar sucursal y no queda sujeto al filtro por ciudad.
 
 Response 201
 ```json

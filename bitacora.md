@@ -640,3 +640,21 @@ Tenant Admin (Clientes)
   - Se corrigió validación Prisma agregando los campos inversos de relaciones para `StockReturn*`.
   - Con eso `docker compose -f docker-compose.local.yml build` y `up -d` vuelven a quedar OK.
 
+### **[29 Ene 2026]** — Estabilización de vistas + Hub de Movimientos + RBAC por sucursal (sin afectar Tenant Admin)
+
+- **Fix de errores masivos en UI**:
+  - Se mitigaron `409 Conflict` por usuarios con `scope:branch` sin sucursal seleccionada.
+  - En frontend se fuerza selección de sucursal **solo** para branch-scoped que no sean `TENANT_ADMIN`/platform admin.
+  - En backend se agregó `isTenantAdmin` al contexto auth para que el guard por ciudad (scope branch) no se aplique a tenant admins.
+
+- **UX: Movimientos como hub**:
+  - Menú tipo grilla de accesos rápidos (Movimientos, Transferencia masiva, Atender solicitudes, Devoluciones).
+  - La lista de **Solicitudes de movimiento** se muestra inmediatamente debajo del menú.
+  - Se removieron accesos redundantes del menú lateral para simplificar navegación.
+
+- **Fix validación de productos**:
+  - Se alineó el límite de `take` en `GET /api/v1/products` para soportar selects/listados del frontend y evitar `400`.
+
+- **Docker build**:
+  - Se corrigió un error de build del backend en Docker por un `select` inválido sobre `UserRole` (tabla con clave compuesta).
+
