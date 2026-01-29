@@ -116,7 +116,7 @@ function deriveOrderNumberFromQuoteNumber(quoteNumber: string): string {
   return `OV-${n}`
 }
 
-type InsufficientStockItem = { productId: string; productName: string; required: number; available: number }
+type InsufficientStockItem = { productId: string; productName: string; required: number; available: number; presentationId?: string; presentationQuantity?: number }
 
 class InsufficientStockCityError extends Error {
   statusCode = 409
@@ -132,7 +132,7 @@ class InsufficientStockCityError extends Error {
 
 async function computeStockShortagesInCity(
   tx: any,
-  args: { tenantId: string; city: string; lines: Array<{ productId: string; productName: string; quantity: any }> },
+  args: { tenantId: string; city: string; lines: Array<{ productId: string; productName: string; quantity: any; presentationId?: string; presentationQuantity?: number }> },
 ): Promise<InsufficientStockItem[]> {
   const todayUtc = startOfTodayUtc()
   const cityRaw = (args.city ?? '').trim()
@@ -149,7 +149,29 @@ async function computeStockShortagesInCity(
 
   const shortages: InsufficientStockItem[] = []
   for (const line of args.lines) {
-    const required = Math.max(0, toNumber(line.quantity))
+    let required = 0
+    let presentationId: string | undefined
+    let presentationQuantity: number | undefined
+
+    if (line.presentationId && line.presentationQuantity) {
+      // Get units per presentation
+      const presentation = await tx.productPresentation.findFirst({
+        where: { id: line.presentationId, tenantId: args.tenantId },
+        select: { unitsPerPresentation: true },
+      })
+      if (presentation) {
+        const unitsPer = toNumber(presentation.unitsPerPresentation)
+        required = Math.max(0, toNumber(line.presentationQuantity) * unitsPer)
+        presentationId = line.presentationId
+        presentationQuantity = toNumber(line.presentationQuantity)
+      } else {
+        // Fallback to total quantity
+        required = Math.max(0, toNumber(line.quantity))
+      }
+    } else {
+      required = Math.max(0, toNumber(line.quantity))
+    }
+
     if (required <= 0) continue
 
     const balances = await tx.inventoryBalance.findMany({
@@ -173,12 +195,19 @@ async function computeStockShortagesInCity(
     }, 0)
 
     if (available + 1e-9 < required) {
-      shortages.push({
+      const shortage: InsufficientStockItem = {
         productId: line.productId,
         productName: line.productName,
         required,
         available,
-      })
+      }
+      if (presentationId) {
+        shortage.presentationId = presentationId
+        if (presentationQuantity !== undefined) {
+          shortage.presentationQuantity = presentationQuantity
+        }
+      }
+      shortages.push(shortage)
     }
   }
 
@@ -988,6 +1017,8 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
             productId: String(l.productId),
             productName: String(l.product?.name ?? ''),
             quantity: l.quantity,
+            presentationId: l.presentationId,
+            presentationQuantity: l.presentationQuantity,
           })),
         })
 
@@ -1008,11 +1039,28 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
             requestedBy: userId,
             note: `Solicitud desde cotización ${quote.number ?? ''}`.trim(),
             items: {
-              create: items.map((it) => ({
-                tenantId,
-                productId: it.productId,
-                requestedQuantity: decimalFromNumber(it.missing),
-                remainingQuantity: decimalFromNumber(it.missing),
+              create: await Promise.all(items.map(async (it) => {
+                let presQty: string | undefined
+                if (it.presentationId) {
+                  const pres = await tx.productPresentation.findFirst({
+                    where: { id: it.presentationId, tenantId },
+                    select: { unitsPerPresentation: true },
+                  })
+                  if (pres) {
+                    presQty = decimalFromNumber(it.missing / toNumber(pres.unitsPerPresentation))
+                  }
+                }
+                const itemData: any = {
+                  tenantId,
+                  requestedQuantity: decimalFromNumber(it.missing),
+                  remainingQuantity: decimalFromNumber(it.missing),
+                  product: { connect: { id: it.productId } },
+                  presentationQuantity: presQty,
+                }
+                if (it.presentationId) {
+                  itemData.presentation = { connect: { id: it.presentationId } }
+                }
+                return itemData
               })),
             },
           },

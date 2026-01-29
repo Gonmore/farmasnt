@@ -128,7 +128,10 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
         orderBy: [{ status: 'asc' }, { createdAt: 'desc' }],
         include: {
           items: {
-            include: { product: { select: { id: true, sku: true, name: true, genericName: true } } },
+            include: { 
+              product: { select: { id: true, sku: true, name: true, genericName: true } },
+              presentation: { select: { id: true, name: true, unitsPerPresentation: true } },
+            },
             orderBy: [{ remainingQuantity: 'desc' }],
           },
         },
@@ -160,6 +163,10 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
             genericName: it.product?.genericName ?? null,
             requestedQuantity: Number(it.requestedQuantity),
             remainingQuantity: Number(it.remainingQuantity),
+            presentationId: it.presentationId,
+            presentationQuantity: it.presentationQuantity ? Number(it.presentationQuantity) : null,
+            presentationName: it.presentation?.name ?? null,
+            unitsPerPresentation: it.presentation?.unitsPerPresentation ?? null,
           })),
         })),
       })
@@ -210,7 +217,15 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
           quantity: true,
           reservedQuantity: true,
           product: { select: { id: true, sku: true, name: true, genericName: true } },
-          batch: { select: { id: true, batchNumber: true, expiresAt: true } },
+          batch: {
+            select: {
+              id: true,
+              batchNumber: true,
+              expiresAt: true,
+              presentationId: true,
+              presentation: { select: { id: true, name: true, unitsPerPresentation: true } },
+            },
+          },
           location: { select: { id: true, code: true, warehouse: { select: { id: true, code: true, name: true } } } },
         },
       })
@@ -243,6 +258,9 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
             quantity: String(r.quantity),
             reservedQuantity: String((r as any).reservedQuantity ?? '0'),
             availableQuantity: String(available),
+            presentationId: (batch as any).presentationId ?? null,
+            presentationName: (batch as any).presentation?.name ?? null,
+            unitsPerPresentation: (batch as any).presentation?.unitsPerPresentation ?? null,
             warehouseId: r.location.warehouse.id,
             warehouseCode: r.location.warehouse.code,
             warehouseName: r.location.warehouse.name,

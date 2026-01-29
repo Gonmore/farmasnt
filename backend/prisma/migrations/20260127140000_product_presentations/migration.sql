@@ -49,3 +49,10 @@ ALTER TABLE "StockMovement" ADD COLUMN IF NOT EXISTS "presentationQuantity" DECI
 
 CREATE INDEX IF NOT EXISTS "StockMovement_presentationId_idx" ON "StockMovement"("presentationId");
 ALTER TABLE "StockMovement" ADD CONSTRAINT "StockMovement_presentationId_fkey" FOREIGN KEY ("presentationId") REFERENCES "ProductPresentation"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- Extend StockMovementRequestItem
+ALTER TABLE "StockMovementRequestItem" ADD COLUMN IF NOT EXISTS "presentationId" TEXT;
+ALTER TABLE "StockMovementRequestItem" ADD COLUMN IF NOT EXISTS "presentationQuantity" DECIMAL(65,30);
+
+CREATE INDEX IF NOT EXISTS "StockMovementRequestItem_presentationId_idx" ON "StockMovementRequestItem"("presentationId");
+ALTER TABLE "StockMovementRequestItem" ADD CONSTRAINT "StockMovementRequestItem_presentationId_fkey" FOREIGN KEY ("presentationId") REFERENCES "ProductPresentation"("id") ON DELETE SET NULL ON UPDATE CASCADE;

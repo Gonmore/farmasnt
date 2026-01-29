@@ -1085,8 +1085,18 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
           productId: true,
           batchId: true,
           locationId: true,
-          product: { select: { sku: true, name: true, genericName: true, presentationWrapper: true, presentationQuantity: true, presentationFormat: true } },
-          batch: { select: { batchNumber: true, expiresAt: true, status: true, version: true } },
+          product: { select: { sku: true, name: true, genericName: true, presentationWrapper: true, presentationQuantity: true, presentationFormat: true, presentations: { select: { id: true, name: true, unitsPerPresentation: true, isDefault: true } } } },
+          batch: {
+            select: {
+              id: true,
+              batchNumber: true,
+              expiresAt: true,
+              status: true,
+              version: true,
+              presentationId: true,
+              presentation: { select: { id: true, name: true, unitsPerPresentation: true } },
+            },
+          },
           location: {
             select: {
               id: true,

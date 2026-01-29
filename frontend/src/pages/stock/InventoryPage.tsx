@@ -35,13 +35,36 @@ type BalanceExpandedItem = {
     presentationWrapper?: string | null
     presentationQuantity?: any
     presentationFormat?: string | null
+    presentations: Array<{
+      id: string
+      name: string
+      unitsPerPresentation: number
+      isDefault: boolean
+    }>
   }
-  batch: { batchNumber: string; expiresAt: string | null; status: string; version: number } | null
+  batch:
+    | {
+        id?: string
+        batchNumber: string
+        expiresAt: string | null
+        status: string
+        version: number
+        presentationId?: string | null
+        presentation?: { id: string; name: string; unitsPerPresentation: number } | null
+      }
+    | null
   location: {
     id: string
     code: string
     warehouse: { id: string; code: string; name: string }
   }
+}
+
+type PresentationLite = {
+  id: string
+  name: string
+  unitsPerPresentation: number
+  isDefault: boolean
 }
 
 type WarehouseListItem = {
@@ -77,6 +100,7 @@ type ProductGroup = {
   presentationWrapper?: string | null
   presentationQuantity?: any
   presentationFormat?: string | null
+  presentations: PresentationLite[]
   totalQuantity: number
   totalReservedQuantity: number
   totalAvailableQuantity: number
@@ -94,6 +118,8 @@ type ProductGroup = {
       expiresAt: string | null
       status: string
       version: number
+      presentationName?: string | null
+      unitsPerPresentation?: number | null
       quantity: number
       reservedQuantity: number
       availableQuantity: number
@@ -118,6 +144,7 @@ type WarehouseGroup = {
     presentationWrapper?: string | null
     presentationQuantity?: any
     presentationFormat?: string | null
+    presentations: PresentationLite[]
     quantity: number
     reservedQuantity: number
     availableQuantity: number
@@ -128,6 +155,8 @@ type WarehouseGroup = {
       expiresAt: string | null
       status: string
       version: number
+      presentationName?: string | null
+      unitsPerPresentation?: number | null
       quantity: number
       reservedQuantity: number
       availableQuantity: number
@@ -135,6 +164,88 @@ type WarehouseGroup = {
       locationCode: string
     }>
   }>
+}
+
+function formatQtyByPresentations(qty: number, presentations: PresentationLite[] | undefined | null): string {
+  const qtyNum = Number(qty)
+  if (!Number.isFinite(qtyNum) || qtyNum <= 0) return '0'
+
+  const pres = (presentations ?? [])
+    .filter((p) => Number(p.unitsPerPresentation) > 1)
+    .map((p) => ({ ...p, unitsPerPresentation: Number(p.unitsPerPresentation) }))
+    .filter((p) => Number.isFinite(p.unitsPerPresentation) && p.unitsPerPresentation > 1)
+    .sort((a, b) => b.unitsPerPresentation - a.unitsPerPresentation)
+
+  if (pres.length === 0) return `${qtyNum} unidades`
+
+  let remaining = qtyNum
+  const parts: string[] = []
+
+  for (const p of pres) {
+    const count = Math.floor(remaining / p.unitsPerPresentation)
+    if (count > 0) {
+      parts.push(`${count} ${p.name}`)
+      remaining -= count * p.unitsPerPresentation
+    }
+  }
+
+  if (remaining > 0) parts.push(`${remaining} unidades`)
+  return parts.join(' + ')
+}
+
+function formatQtyByBatchPresentation(qtyUnits: number, batch: { presentationName?: string | null; unitsPerPresentation?: number | null } | null | undefined): string {
+  const qtyNum = Number(qtyUnits)
+  if (!Number.isFinite(qtyNum) || qtyNum <= 0) return '0'
+
+  const unitsPer = Number(batch?.unitsPerPresentation ?? 0)
+  const presName = (batch?.presentationName ?? '').trim()
+  if (Number.isFinite(unitsPer) && unitsPer > 1 && presName) {
+    const count = qtyNum / unitsPer
+    const countStr = Number.isFinite(count) && Math.abs(count - Math.round(count)) < 1e-9 ? String(Math.round(count)) : count.toFixed(2)
+    return `${countStr} ${presName} (${unitsPer.toFixed(0)}u)`
+  }
+
+  return `${qtyNum} unidades`
+}
+
+function formatTotalsFromBatches(
+  batches: Array<{ quantity: number; reservedQuantity: number; availableQuantity: number; presentationName?: string | null; unitsPerPresentation?: number | null }>,
+  field: 'quantity' | 'reservedQuantity' | 'availableQuantity',
+): string {
+  const acc = new Map<string, { name: string; unitsPer: number; count: number }>()
+  let looseUnits = 0
+
+  for (const b of batches) {
+    const qtyUnits = Number(b[field])
+    if (!Number.isFinite(qtyUnits) || qtyUnits <= 0) continue
+
+    const unitsPer = Number(b.unitsPerPresentation ?? 0)
+    const presName = (b.presentationName ?? '').trim()
+    if (Number.isFinite(unitsPer) && unitsPer > 1 && presName) {
+      const count = qtyUnits / unitsPer
+      const key = `${presName}|${unitsPer}`
+      const prev = acc.get(key)
+      if (prev) prev.count += count
+      else acc.set(key, { name: presName, unitsPer, count })
+    } else {
+      looseUnits += qtyUnits
+    }
+  }
+
+  const parts = Array.from(acc.values())
+    .sort((a, b) => b.unitsPer - a.unitsPer)
+    .map((x) => {
+      const rounded = Math.abs(x.count - Math.round(x.count)) < 1e-9 ? Math.round(x.count) : Number(x.count.toFixed(2))
+      return `${rounded} ${x.name} (${x.unitsPer.toFixed(0)}u)`
+    })
+
+  if (looseUnits > 0) parts.push(`${looseUnits} unidades`)
+  return parts.length ? parts.join(' + ') : '0'
+}
+
+function formatInventoryQuantity(b: BalanceExpandedItem): string {
+  const qty = Number(b.quantity)
+  return formatQtyByPresentations(qty, b.product.presentations)
 }
 
 async function fetchBalances(token: string): Promise<{ items: BalanceExpandedItem[] }> {
@@ -520,6 +631,7 @@ export function InventoryPage() {
           presentationWrapper: item.product.presentationWrapper ?? null,
           presentationQuantity: item.product.presentationQuantity ?? null,
           presentationFormat: item.product.presentationFormat ?? null,
+          presentations: item.product.presentations ?? [],
           quantity: 0,
           reservedQuantity: 0,
           availableQuantity: 0,
@@ -538,6 +650,8 @@ export function InventoryPage() {
         expiresAt: item.batch?.expiresAt ?? null,
         status: item.batch?.status ?? 'RELEASED',
         version: item.batch?.version ?? 1,
+        presentationName: item.batch?.presentation?.name ?? null,
+        unitsPerPresentation: item.batch?.presentation?.unitsPerPresentation ?? null,
         quantity: qty,
         reservedQuantity: reserved,
         availableQuantity: available,
@@ -562,6 +676,11 @@ export function InventoryPage() {
         const reserved = Number(item.reservedQuantity ?? '0')
         const available = Math.max(0, total - reserved)
 
+        const batchPresentationName = item.batch?.presentation?.name ?? null
+        const batchUnitsPerPresentation =
+          item.batch?.presentation?.unitsPerPresentation != null ? Number(item.batch.presentation.unitsPerPresentation) : null
+        const batchPres = { presentationName: batchPresentationName, unitsPerPresentation: batchUnitsPerPresentation }
+
         return {
           SKU: item.product.sku,
           Producto: getProductLabel(item.product),
@@ -571,9 +690,12 @@ export function InventoryPage() {
           'Sucursal (código)': item.location.warehouse.code,
           'Sucursal (nombre)': item.location.warehouse.name,
           Ubicación: item.location.code,
-          Total: total,
-          Reservado: reserved,
-          Disponible: available,
+          Total: formatQtyByBatchPresentation(total, batchPres),
+          Reservado: formatQtyByBatchPresentation(reserved, batchPres),
+          Disponible: formatQtyByBatchPresentation(available, batchPres),
+          'Total (u)': total,
+          'Reservado (u)': reserved,
+          'Disponible (u)': available,
           'Actualizado': new Date(item.updatedAt).toLocaleString(),
         }
       })
@@ -704,9 +826,12 @@ export function InventoryPage() {
                       </div>
                     </div>
                     <div className="text-right">
-                      <div className="text-2xl font-bold text-[var(--pf-primary)]">{pg.totalAvailableQuantity}</div>
+                      <div className="text-2xl font-bold text-[var(--pf-primary)]">
+                        {formatTotalsFromBatches(pg.warehouses.flatMap((w) => w.batches), 'availableQuantity')}
+                      </div>
                       <div className="text-xs text-slate-600 dark:text-slate-400">
-                        disp. · {pg.totalReservedQuantity} res. · {pg.totalQuantity} total
+                        disp. · {formatTotalsFromBatches(pg.warehouses.flatMap((w) => w.batches), 'reservedQuantity')} res. ·{' '}
+                        {formatTotalsFromBatches(pg.warehouses.flatMap((w) => w.batches), 'quantity')} total
                       </div>
                     </div>
                   </button>
@@ -723,9 +848,11 @@ export function InventoryPage() {
                                 🏢 {wh.warehouseName}
                             </div>
                             <div className="text-right">
-                              <div className="text-lg font-semibold text-slate-700 dark:text-slate-300">{wh.availableQuantity}</div>
+                              <div className="text-lg font-semibold text-slate-700 dark:text-slate-300">
+                                {formatTotalsFromBatches(wh.batches, 'availableQuantity')}
+                              </div>
                               <div className="text-xs text-slate-500 dark:text-slate-400">
-                                {wh.reservedQuantity} res. · {wh.quantity} total
+                                {formatTotalsFromBatches(wh.batches, 'reservedQuantity')} res. · {formatTotalsFromBatches(wh.batches, 'quantity')} total
                               </div>
                             </div>
                           </div>
@@ -758,7 +885,7 @@ export function InventoryPage() {
                                 },
                               },
                               { header: '📍 Ubicación', accessor: (b) => b.locationCode },
-                              { header: '📊 Total', accessor: (b) => b.quantity },
+                              { header: '📊 Total', accessor: (b) => formatQtyByBatchPresentation(Number(b.quantity), b) },
                               {
                                 header: '🧷 Reservado',
                                 accessor: (b) => {
@@ -771,14 +898,14 @@ export function InventoryPage() {
                                         onClick={() => openReservationsModal(b.id)}
                                         loading={loadingReservations}
                                       >
-                                        {b.reservedQuantity}
+                                        {formatQtyByBatchPresentation(reserved, b)}
                                       </Button>
                                     )
                                   }
-                                  return b.reservedQuantity ?? '0'
+                                  return formatQtyByBatchPresentation(reserved, b)
                                 },
                               },
-                              { header: '✅ Disponible', accessor: (b) => b.availableQuantity },
+                              { header: '✅ Disponible', accessor: (b) => formatQtyByBatchPresentation(Number(b.availableQuantity), b) },
                               {
                                 header: 'Acción',
                                 className: 'text-center',
@@ -797,7 +924,7 @@ export function InventoryPage() {
                                           fromLocationId: b.locationId,
                                           fromWarehouseCode: wh.warehouseCode,
                                           fromLocationCode: b.locationCode,
-                                          availableQty: String(b.availableQuantity),
+                                          availableQty: formatQtyByBatchPresentation(Number(b.availableQuantity), b),
                                         })
                                       }
                                     >
@@ -867,9 +994,12 @@ export function InventoryPage() {
                       </div>
                     </div>
                     <div className="text-right">
-                      <div className="text-2xl font-bold text-[var(--pf-primary)]">{wg.totalAvailableQuantity}</div>
+                      <div className="text-2xl font-bold text-[var(--pf-primary)]">
+                        {formatTotalsFromBatches(wg.products.flatMap((p) => p.batches), 'availableQuantity')}
+                      </div>
                       <div className="text-xs text-slate-600 dark:text-slate-400">
-                        disp. · {wg.totalReservedQuantity} res. · {wg.totalQuantity} total
+                        disp. · {formatTotalsFromBatches(wg.products.flatMap((p) => p.batches), 'reservedQuantity')} res. ·{' '}
+                        {formatTotalsFromBatches(wg.products.flatMap((p) => p.batches), 'quantity')} total
                       </div>
                     </div>
                   </button>
@@ -896,9 +1026,11 @@ export function InventoryPage() {
                               <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">Genérico: {prod.genericName}</div>
                             ) : null}
                             <div className="text-right">
-                              <div className="text-lg font-semibold text-slate-700 dark:text-slate-300">{prod.availableQuantity}</div>
+                              <div className="text-lg font-semibold text-slate-700 dark:text-slate-300">
+                                {formatTotalsFromBatches(prod.batches, 'availableQuantity')}
+                              </div>
                               <div className="text-xs text-slate-500 dark:text-slate-400">
-                                {prod.reservedQuantity} res. · {prod.quantity} total
+                                {formatTotalsFromBatches(prod.batches, 'reservedQuantity')} res. · {formatTotalsFromBatches(prod.batches, 'quantity')} total
                               </div>
                             </div>
                           </div>
@@ -931,7 +1063,7 @@ export function InventoryPage() {
                                 },
                               },
                               { header: '📍 Ubicación', accessor: (b) => b.locationCode },
-                              { header: '📊 Total', accessor: (b) => b.quantity },
+                              { header: '📊 Total', accessor: (b) => formatQtyByBatchPresentation(Number(b.quantity), b) },
                               {
                                 header: '🧷 Reservado',
                                 accessor: (b) => {
@@ -944,14 +1076,14 @@ export function InventoryPage() {
                                         onClick={() => openReservationsModal(b.id)}
                                         loading={loadingReservations}
                                       >
-                                        {b.reservedQuantity}
+                                        {formatQtyByBatchPresentation(reserved, b)}
                                       </Button>
                                     )
                                   }
-                                  return b.reservedQuantity ?? '0'
+                                  return formatQtyByBatchPresentation(reserved, b)
                                 },
                               },
-                              { header: '✅ Disponible', accessor: (b) => b.availableQuantity },
+                              { header: '✅ Disponible', accessor: (b) => formatQtyByBatchPresentation(Number(b.availableQuantity), b) },
                               {
                                 header: 'Acción',
                                 className: 'text-center',
@@ -970,7 +1102,7 @@ export function InventoryPage() {
                                           fromLocationId: b.locationId,
                                           fromWarehouseCode: wg.warehouseCode,
                                           fromLocationCode: b.locationCode,
-                                          availableQty: String(b.availableQuantity),
+                                          availableQty: formatQtyByBatchPresentation(Number(b.availableQuantity), b),
                                         })
                                       }
                                     >
@@ -1040,7 +1172,7 @@ export function InventoryPage() {
                   <strong>Ubicación:</strong> {movingItem.fromWarehouseCode} / {movingItem.fromLocationCode}
                 </div>
                 <div>
-                  <strong>Disponible:</strong> {movingItem.availableQty} unidades
+                  <strong>Disponible:</strong> {movingItem.availableQty}
                 </div>
               </div>
             </div>

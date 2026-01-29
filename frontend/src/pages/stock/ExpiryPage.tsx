@@ -21,9 +21,26 @@ type ExpirySummaryItem = {
   quantity: string
   reservedQuantity?: string
   availableQuantity?: string
+  presentationId?: string | null
+  presentationName?: string | null
+  unitsPerPresentation?: number | null
   warehouseCode: string
   warehouseName: string
   locationCode: string
+}
+
+function formatQtyByBatchPresentation(qtyUnits: number, item: { presentationName?: string | null; unitsPerPresentation?: number | null } | null | undefined): string {
+  const qtyNum = Number(qtyUnits)
+  if (!Number.isFinite(qtyNum) || qtyNum <= 0) return '0'
+
+  const unitsPer = Number(item?.unitsPerPresentation ?? 0)
+  const presName = (item?.presentationName ?? '').trim()
+  if (Number.isFinite(unitsPer) && unitsPer > 1 && presName) {
+    const count = qtyNum / unitsPer
+    const countStr = Number.isFinite(count) && Math.abs(count - Math.round(count)) < 1e-9 ? String(Math.round(count)) : count.toFixed(2)
+    return `${countStr} ${presName} (${unitsPer.toFixed(0)}u)`
+  }
+  return `${qtyNum} unidades`
 }
 
 type ListResponse = { items: ExpirySummaryItem[]; nextCursor: string | null; generatedAt: string }
@@ -91,12 +108,16 @@ export function ExpiryPage() {
       }
 
       const rows = all.map((item) => {
-        const total = Number(item.quantity || '0')
-        const reserved = Number(item.reservedQuantity ?? '0')
-        const available =
+        const totalUnits = Number(item.quantity || '0')
+        const reservedUnits = Number(item.reservedQuantity ?? '0')
+        const availableUnits =
           typeof item.availableQuantity === 'string'
             ? Number(item.availableQuantity || '0')
-            : Math.max(0, total - reserved)
+            : Math.max(0, totalUnits - reservedUnits)
+
+        const total = formatQtyByBatchPresentation(totalUnits, item)
+        const reserved = formatQtyByBatchPresentation(reservedUnits, item)
+        const available = formatQtyByBatchPresentation(availableUnits, item)
 
         return {
           SKU: item.sku,
@@ -109,8 +130,11 @@ export function ExpiryPage() {
           'Almacén (nombre)': item.warehouseName,
           Ubicación: item.locationCode,
           Total: total,
+          'Total (u)': totalUnits,
           Reservado: reserved,
+          'Reservado (u)': reservedUnits,
           Disponible: available,
+          'Disponible (u)': availableUnits,
         }
       })
 
@@ -174,7 +198,18 @@ export function ExpiryPage() {
                     accessor: (item) => <ExpiryBadge status={item.status} />,
                     width: '100px'
                   },
-                  { header: 'Total', accessor: (item) => item.quantity, width: '80px' },
+                  { header: 'Total', accessor: (item) => formatQtyByBatchPresentation(Number(item.quantity), item), width: '160px' },
+                  { header: 'Reservado', accessor: (item) => formatQtyByBatchPresentation(Number(item.reservedQuantity ?? 0), item), width: '160px' },
+                  {
+                    header: 'Disponible',
+                    accessor: (item) => {
+                      const total = Number(item.quantity || '0')
+                      const reserved = Number(item.reservedQuantity ?? '0')
+                      const available = typeof item.availableQuantity === 'string' ? Number(item.availableQuantity || '0') : Math.max(0, total - reserved)
+                      return formatQtyByBatchPresentation(available, item)
+                    },
+                    width: '160px'
+                  },
                   { header: 'Almacén', accessor: (item) => item.warehouseName, width: '150px' },
                 ]}
                 data={expiryQuery.data.items}

@@ -324,6 +324,8 @@ model ProductPresentation {
   quoteLines QuoteLine[]
   salesOrderLines SalesOrderLine[]
   stockMovements StockMovement[]
+  stockMovementRequestItems StockMovementRequestItem[]
+  batches Batch[]
 
   @@unique([tenantId, productId, name])
   @@index([tenantId])
@@ -380,6 +382,7 @@ model Batch {
   batchNumber      String
   manufacturingDate DateTime?
   expiresAt        DateTime?
+  presentationId   String?
   status           String   @default("RELEASED")
   version          Int      @default(1)
   createdAt        DateTime @default(now())
@@ -387,6 +390,7 @@ model Batch {
   createdBy        String?
 
   product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  presentation ProductPresentation? @relation(fields: [presentationId], references: [id], onDelete: SetNull)
 
   balances InventoryBalance[]
   stockMovements StockMovement[]
@@ -396,6 +400,7 @@ model Batch {
   @@index([tenantId])
   @@index([tenantId, productId])
   @@index([expiresAt])
+  @@index([presentationId])
 }
 
 model Warehouse {
@@ -548,11 +553,14 @@ model StockMovementRequestItem {
   productId  String
   requestedQuantity Decimal
   remainingQuantity Decimal
+  presentationId String?
+  presentationQuantity Decimal?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
   request StockMovementRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
   product Product              @relation(fields: [productId], references: [id], onDelete: Restrict)
+  presentation ProductPresentation? @relation(fields: [presentationId], references: [id], onDelete: SetNull)
 
   @@index([tenantId])
   @@index([requestId])

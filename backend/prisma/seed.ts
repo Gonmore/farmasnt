@@ -37,6 +37,13 @@ function addDaysUtc(date: Date, days: number): Date {
   return new Date(date.getTime() + days * 86400000)
 }
 
+function roundDownToMultiple(value: number, multiple: number): number {
+  const v = Number(value)
+  const m = Number(multiple)
+  if (!Number.isFinite(v) || !Number.isFinite(m) || m <= 0) return 0
+  return Math.floor(v / m) * m
+}
+
 async function main() {
   const Permissions = await loadPermissions()
   const db = createDb()
@@ -323,6 +330,8 @@ async function main() {
   await db.salesOrder.deleteMany({ where: { tenantId: demoTenant.id } })
   await db.quoteLine.deleteMany({ where: { tenantId: demoTenant.id } })
   await db.quote.deleteMany({ where: { tenantId: demoTenant.id } })
+  await db.stockMovementRequestItem.deleteMany({ where: { tenantId: demoTenant.id } })
+  await db.stockMovementRequest.deleteMany({ where: { tenantId: demoTenant.id } })
   await db.stockMovement.deleteMany({ where: { tenantId: demoTenant.id } })
   await db.inventoryBalance.deleteMany({ where: { tenantId: demoTenant.id } })
   await db.batch.deleteMany({ where: { tenantId: demoTenant.id } })
@@ -695,27 +704,51 @@ async function main() {
   // })
 
   // Batches y stock para los nuevos productos en diferentes ciudades
+  const ibuprofenoPresentation =
+    (await db.productPresentation.findFirst({
+      where: { tenantId: demoTenant.id, productId: productIbuprofeno.id, name: 'Caja de 10', isActive: true },
+      select: { id: true, unitsPerPresentation: true },
+    })) ??
+    (await db.productPresentation.findFirst({
+      where: { tenantId: demoTenant.id, productId: productIbuprofeno.id, isDefault: true, isActive: true },
+      select: { id: true, unitsPerPresentation: true },
+    }))
+  const ibuprofenoUnitsPerPresentation = ibuprofenoPresentation ? Number(ibuprofenoPresentation.unitsPerPresentation.toString()) : 1
+
   const ibuprofenoBatch = await db.batch.upsert({
     where: { tenantId_productId_batchNumber: { tenantId: demoTenant.id, productId: productIbuprofeno.id, batchNumber: 'IBU-2024-01' } },
-    update: { expiresAt: addDaysUtc(todayUtc, 365) },
+    update: { expiresAt: addDaysUtc(todayUtc, 365), presentationId: ibuprofenoPresentation?.id ?? null },
     create: {
       tenantId: demoTenant.id,
       productId: productIbuprofeno.id,
       batchNumber: 'IBU-2024-01',
       expiresAt: addDaysUtc(todayUtc, 365),
+      presentationId: ibuprofenoPresentation?.id ?? null,
       createdBy: demoAdminUser.id,
     },
     select: { id: true },
   })
 
+  const amoxicilinaPresentation =
+    (await db.productPresentation.findFirst({
+      where: { tenantId: demoTenant.id, productId: productAmoxicilina.id, name: 'Caja de 10', isActive: true },
+      select: { id: true, unitsPerPresentation: true },
+    })) ??
+    (await db.productPresentation.findFirst({
+      where: { tenantId: demoTenant.id, productId: productAmoxicilina.id, isDefault: true, isActive: true },
+      select: { id: true, unitsPerPresentation: true },
+    }))
+  const amoxicilinaUnitsPerPresentation = amoxicilinaPresentation ? Number(amoxicilinaPresentation.unitsPerPresentation.toString()) : 1
+
   const amoxicilinaBatch = await db.batch.upsert({
     where: { tenantId_productId_batchNumber: { tenantId: demoTenant.id, productId: productAmoxicilina.id, batchNumber: 'AMOX-2024-01' } },
-    update: { expiresAt: addDaysUtc(todayUtc, 400) },
+    update: { expiresAt: addDaysUtc(todayUtc, 400), presentationId: amoxicilinaPresentation?.id ?? null },
     create: {
       tenantId: demoTenant.id,
       productId: productAmoxicilina.id,
       batchNumber: 'AMOX-2024-01',
       expiresAt: addDaysUtc(todayUtc, 400),
+      presentationId: amoxicilinaPresentation?.id ?? null,
       createdBy: demoAdminUser.id,
     },
     select: { id: true },
@@ -723,6 +756,13 @@ async function main() {
 
   // Stock distribuido en diferentes ciudades
   // Ibuprofeno: La Paz (20), Cochabamba (15), Santa Cruz (10)
+  const ibuprofenoLaPaz =
+    ibuprofenoUnitsPerPresentation > 1 ? roundDownToMultiple(20, ibuprofenoUnitsPerPresentation) : 20
+  const ibuprofenoCbba =
+    ibuprofenoUnitsPerPresentation > 1 ? roundDownToMultiple(15, ibuprofenoUnitsPerPresentation) : 15
+  const ibuprofenoScz =
+    ibuprofenoUnitsPerPresentation > 1 ? roundDownToMultiple(10, ibuprofenoUnitsPerPresentation) : 10
+
   await db.inventoryBalance.upsert({
     where: {
       tenantId_locationId_productId_batchId: {
@@ -732,13 +772,13 @@ async function main() {
         batchId: ibuprofenoBatch.id,
       },
     },
-    update: { quantity: '20' },
+    update: { quantity: ibuprofenoLaPaz.toString() },
     create: {
       tenantId: demoTenant.id,
       locationId: loc.id,
       productId: productIbuprofeno.id,
       batchId: ibuprofenoBatch.id,
-      quantity: '20',
+      quantity: ibuprofenoLaPaz.toString(),
       createdBy: demoAdminUser.id,
     },
   })
@@ -752,13 +792,13 @@ async function main() {
         batchId: ibuprofenoBatch.id,
       },
     },
-    update: { quantity: '15' },
+    update: { quantity: ibuprofenoCbba.toString() },
     create: {
       tenantId: demoTenant.id,
       locationId: locCochabamba.id,
       productId: productIbuprofeno.id,
       batchId: ibuprofenoBatch.id,
-      quantity: '15',
+      quantity: ibuprofenoCbba.toString(),
       createdBy: demoAdminUser.id,
     },
   })
@@ -772,18 +812,25 @@ async function main() {
         batchId: ibuprofenoBatch.id,
       },
     },
-    update: { quantity: '10' },
+    update: { quantity: ibuprofenoScz.toString() },
     create: {
       tenantId: demoTenant.id,
       locationId: locSantaCruz.id,
       productId: productIbuprofeno.id,
       batchId: ibuprofenoBatch.id,
-      quantity: '10',
+      quantity: ibuprofenoScz.toString(),
       createdBy: demoAdminUser.id,
     },
   })
 
   // Amoxicilina: La Paz (12), Cochabamba (8), Santa Cruz (18)
+  const amoxicilinaLaPaz =
+    amoxicilinaUnitsPerPresentation > 1 ? roundDownToMultiple(12, amoxicilinaUnitsPerPresentation) : 12
+  const amoxicilinaCbba =
+    amoxicilinaUnitsPerPresentation > 1 ? roundDownToMultiple(8, amoxicilinaUnitsPerPresentation) : 8
+  const amoxicilinaScz =
+    amoxicilinaUnitsPerPresentation > 1 ? roundDownToMultiple(18, amoxicilinaUnitsPerPresentation) : 18
+
   await db.inventoryBalance.upsert({
     where: {
       tenantId_locationId_productId_batchId: {
@@ -793,13 +840,13 @@ async function main() {
         batchId: amoxicilinaBatch.id,
       },
     },
-    update: { quantity: '12' },
+    update: { quantity: amoxicilinaLaPaz.toString() },
     create: {
       tenantId: demoTenant.id,
       locationId: loc.id,
       productId: productAmoxicilina.id,
       batchId: amoxicilinaBatch.id,
-      quantity: '12',
+      quantity: amoxicilinaLaPaz.toString(),
       createdBy: demoAdminUser.id,
     },
   })
@@ -813,13 +860,13 @@ async function main() {
         batchId: amoxicilinaBatch.id,
       },
     },
-    update: { quantity: '8' },
+    update: { quantity: amoxicilinaCbba.toString() },
     create: {
       tenantId: demoTenant.id,
       locationId: locCochabamba.id,
       productId: productAmoxicilina.id,
       batchId: amoxicilinaBatch.id,
-      quantity: '8',
+      quantity: amoxicilinaCbba.toString(),
       createdBy: demoAdminUser.id,
     },
   })
@@ -833,13 +880,13 @@ async function main() {
         batchId: amoxicilinaBatch.id,
       },
     },
-    update: { quantity: '18' },
+    update: { quantity: amoxicilinaScz.toString() },
     create: {
       tenantId: demoTenant.id,
       locationId: locSantaCruz.id,
       productId: productAmoxicilina.id,
       batchId: amoxicilinaBatch.id,
-      quantity: '18',
+      quantity: amoxicilinaScz.toString(),
       createdBy: demoAdminUser.id,
     },
   })
@@ -903,28 +950,82 @@ async function main() {
   }
   console.log(`   ✅ ${createdProducts.length} productos creados con precios y costos`)
 
+  // Crear presentaciones para productos
+  const productsWithPresentations = createdProducts // Todos los productos
+  for (const p of productsWithPresentations) {
+    const presentations = [
+      { name: 'Unidad', unitsPerPresentation: 1, isDefault: true },
+      { name: 'Caja de 10', unitsPerPresentation: 10, isDefault: false },
+      { name: 'Caja de 20', unitsPerPresentation: 20, isDefault: false },
+      { name: 'Caja de 50', unitsPerPresentation: 50, isDefault: false },
+      { name: 'Caja de 100', unitsPerPresentation: 100, isDefault: false },
+    ]
+    for (const pres of presentations) {
+      await db.productPresentation.upsert({
+        where: { tenantId_productId_name: { tenantId: demoTenant.id, productId: p.id, name: pres.name } },
+        update: {},
+        create: {
+          tenantId: demoTenant.id,
+          productId: p.id,
+          name: pres.name,
+          unitsPerPresentation: pres.unitsPerPresentation.toString(),
+          isDefault: pres.isDefault,
+          sortOrder: pres.unitsPerPresentation,
+          createdBy: demoAdminUser.id,
+        },
+      })
+    }
+  }
+  console.log(`   ✅ Presentaciones creadas para ${productsWithPresentations.length} productos`)
+
   // Crear batches y stock para los nuevos productos
   for (const p of createdProducts) {
     const stockData = farmaciaProducts.find(fp => fp.sku === p.sku)!
+
+    const batchPresentation =
+      (await db.productPresentation.findFirst({
+        where: { tenantId: demoTenant.id, productId: p.id, name: 'Caja de 10', isActive: true },
+        select: { id: true, unitsPerPresentation: true },
+      })) ??
+      (await db.productPresentation.findFirst({
+        where: { tenantId: demoTenant.id, productId: p.id, isDefault: true, isActive: true },
+        select: { id: true, unitsPerPresentation: true },
+      })) ??
+      (await db.productPresentation.findFirst({
+        where: { tenantId: demoTenant.id, productId: p.id, isActive: true },
+        select: { id: true, unitsPerPresentation: true },
+      }))
+
+    const unitsPerPresentation = batchPresentation ? Number(batchPresentation.unitsPerPresentation.toString()) : 1
+    const totalStockUnits =
+      unitsPerPresentation > 1
+        ? Math.max(unitsPerPresentation, roundDownToMultiple(stockData.stock, unitsPerPresentation))
+        : stockData.stock
     
     // Crear batch
     const batch = await db.batch.upsert({
       where: { tenantId_productId_batchNumber: { tenantId: demoTenant.id, productId: p.id, batchNumber: `${p.sku}-2025-01` } },
-      update: { expiresAt: addDaysUtc(todayUtc, 365 + Math.floor(Math.random() * 365)) },
+      update: {
+        expiresAt: addDaysUtc(todayUtc, 365 + Math.floor(Math.random() * 365)),
+        presentationId: batchPresentation?.id ?? null,
+      },
       create: {
         tenantId: demoTenant.id,
         productId: p.id,
         batchNumber: `${p.sku}-2025-01`,
         expiresAt: addDaysUtc(todayUtc, 365 + Math.floor(Math.random() * 365)),
+        presentationId: batchPresentation?.id ?? null,
         createdBy: demoAdminUser.id,
       },
       select: { id: true },
     })
 
     // Distribuir stock en las 3 ubicaciones
-    const stockLaPaz = Math.ceil(stockData.stock * 0.5)
-    const stockCbba = Math.ceil(stockData.stock * 0.3)
-    const stockScz = stockData.stock - stockLaPaz - stockCbba
+    const stockLaPaz =
+      unitsPerPresentation > 1 ? roundDownToMultiple(totalStockUnits * 0.5, unitsPerPresentation) : Math.ceil(totalStockUnits * 0.5)
+    const stockCbba =
+      unitsPerPresentation > 1 ? roundDownToMultiple(totalStockUnits * 0.3, unitsPerPresentation) : Math.ceil(totalStockUnits * 0.3)
+    const stockScz = Math.max(0, totalStockUnits - stockLaPaz - stockCbba)
 
     await db.inventoryBalance.upsert({
       where: {
@@ -1017,14 +1118,51 @@ async function main() {
       select: { id: true },
     })
 
+    // Presentaciones mínimas para dataset de vencimientos
+    await db.productPresentation.upsert({
+      where: { tenantId_productId_name: { tenantId: demoTenant.id, productId: prod.id, name: 'Unidad' } },
+      update: {},
+      create: {
+        tenantId: demoTenant.id,
+        productId: prod.id,
+        name: 'Unidad',
+        unitsPerPresentation: '1',
+        isDefault: true,
+        sortOrder: 1,
+        createdBy: demoAdminUser.id,
+      },
+    })
+    await db.productPresentation.upsert({
+      where: { tenantId_productId_name: { tenantId: demoTenant.id, productId: prod.id, name: 'Caja de 10' } },
+      update: {},
+      create: {
+        tenantId: demoTenant.id,
+        productId: prod.id,
+        name: 'Caja de 10',
+        unitsPerPresentation: '10',
+        isDefault: false,
+        sortOrder: 10,
+        createdBy: demoAdminUser.id,
+      },
+    })
+
+    const caja10 = await db.productPresentation.findFirst({
+      where: { tenantId: demoTenant.id, productId: prod.id, name: 'Caja de 10', isActive: true },
+      select: { id: true },
+    })
+    const useCaja10 = !!caja10 && ep.qty >= 10
+    const presentationId = useCaja10 ? caja10!.id : null
+    const qtyUnits = useCaja10 ? Math.max(10, roundDownToMultiple(ep.qty, 10)) : ep.qty
+
     const batch = await db.batch.upsert({
       where: { tenantId_productId_batchNumber: { tenantId: demoTenant.id, productId: prod.id, batchNumber: `${ep.sku}-EXP` } },
-      update: { expiresAt: addDaysUtc(todayUtc, ep.expiryDays) },
+      update: { expiresAt: addDaysUtc(todayUtc, ep.expiryDays), presentationId },
       create: {
         tenantId: demoTenant.id,
         productId: prod.id,
         batchNumber: `${ep.sku}-EXP`,
         expiresAt: addDaysUtc(todayUtc, ep.expiryDays),
+        presentationId,
         createdBy: demoAdminUser.id,
       },
       select: { id: true },
@@ -1039,13 +1177,13 @@ async function main() {
           batchId: batch.id,
         },
       },
-      update: { quantity: ep.qty.toString() },
+      update: { quantity: qtyUnits.toString() },
       create: {
         tenantId: demoTenant.id,
         locationId: loc.id,
         productId: prod.id,
         batchId: batch.id,
-        quantity: ep.qty.toString(),
+        quantity: qtyUnits.toString(),
         createdBy: demoAdminUser.id,
       },
     })
@@ -1066,12 +1204,14 @@ async function main() {
   let totalOrders = 0
   let totalSalesValue = 0
 
-  for (let monthOffset = 11; monthOffset >= 0; monthOffset--) {
+  const orderStatuses = ['DRAFT', 'CONFIRMED', 'FULFILLED', 'CANCELLED'] as const
+
+  for (let monthOffset = 11; monthOffset >= -2; monthOffset--) { // Incluir 2 meses futuros
     const monthDate = new Date(todayUtc)
     monthDate.setMonth(monthDate.getMonth() - monthOffset)
     
-    const multiplier = monthlyMultipliers[monthDate.getMonth()]
-    const ordersThisMonth = Math.floor(15 + Math.random() * 20 * multiplier) // 15-35+ órdenes por mes
+    const multiplier = monthOffset >= 0 ? monthlyMultipliers[monthDate.getMonth()] : 0.5 // Menos órdenes futuras
+    const ordersThisMonth = Math.floor(10 + Math.random() * 20 * multiplier) // 10-30+ órdenes por mes
     
     for (let o = 0; o < ordersThisMonth; o++) {
       const customer = customers[Math.floor(Math.random() * customers.length)]
@@ -1082,6 +1222,9 @@ async function main() {
       const orderDate = new Date(monthDate.getFullYear(), monthDate.getMonth(), orderDay, 
         8 + Math.floor(Math.random() * 10), Math.floor(Math.random() * 60))
       
+      // Estado aleatorio
+      const status = orderStatuses[Math.floor(Math.random() * orderStatuses.length)]
+      
       // Seleccionar 1-5 productos aleatorios
       const numProducts = 1 + Math.floor(Math.random() * 5)
       const selectedProducts = [...createdProducts]
@@ -1089,66 +1232,113 @@ async function main() {
         .slice(0, numProducts)
       
       let orderTotal = 0
-      const lineItems = selectedProducts.map(sp => {
+      const lineItems: any[] = []
+      for (const sp of selectedProducts) {
         const qty = 1 + Math.floor(Math.random() * 5)
         const unitPrice = sp.price
         const lineTotal = qty * unitPrice
         orderTotal += lineTotal
+
+        // Elegir presentación aleatoria si existe
+        let presentationId: string | undefined
+        let presentationQuantity: number | undefined
+        let totalQty = qty
+        if (productsWithPresentations.some(pwp => pwp.id === sp.id)) {
+          const presentations = [
+            { name: 'Unidad', units: 1 },
+            { name: 'Caja de 10', units: 10 },
+            { name: 'Caja de 20', units: 20 },
+          ]
+          const pres = presentations[Math.floor(Math.random() * presentations.length)]
+          presentationQuantity = 1 + Math.floor(Math.random() * 5)
+          totalQty = presentationQuantity * pres.units
+          // Buscar la presentación
+          const presRecord = await db.productPresentation.findFirst({
+            where: { tenantId: demoTenant.id, productId: sp.id, name: pres.name },
+            select: { id: true },
+          })
+          if (presRecord) {
+            presentationId = presRecord.id
+          }
+        }
         
-        return {
+        lineItems.push({
           productId: sp.id,
-          quantity: qty.toString(),
+          quantity: totalQty.toString(),
+          presentationId,
+          presentationQuantity: presentationId ? presentationQuantity!.toString() : null,
           unitPrice: unitPrice.toString(),
           createdBy: demoAdminUser.id,
-        }
-      })
+        })
+      }
 
       // Crear la orden
-      const order = await db.salesOrder.create({
-        data: {
-          tenantId: demoTenant.id,
-          number: `ORD-${monthDate.getFullYear()}${String(monthDate.getMonth() + 1).padStart(2, '0')}-${String(totalOrders + 1).padStart(4, '0')}`,
-          customerId: customer.id,
-          status: 'FULFILLED',
-          note: `Orden generada para demo - ${monthDate.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })}`,
-          createdAt: orderDate,
-          updatedAt: orderDate,
-          createdBy: demoAdminUser.id,
-          lines: {
-            create: lineItems.map(li => ({
-              tenantId: demoTenant.id,
-              ...li,
-            })),
-          },
+      const orderData: any = {
+        tenantId: demoTenant.id,
+        number: `ORD-${monthDate.getFullYear()}${String(monthDate.getMonth() + 1).padStart(2, '0')}-${String(totalOrders + 1).padStart(4, '0')}`,
+        customerId: customer.id,
+        status,
+        note: `Orden generada para demo - ${monthDate.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })}`,
+        createdAt: orderDate,
+        updatedAt: orderDate,
+        createdBy: demoAdminUser.id,
+        lines: {
+          create: lineItems.map(li => ({
+            tenantId: demoTenant.id,
+            ...li,
+          })),
         },
+      }
+
+      if (status === 'FULFILLED') {
+        // Agregar fechas de entrega y pago aleatorias
+        const deliveryDays = 1 + Math.floor(Math.random() * 7)
+        const deliveredAt = new Date(orderDate.getTime() + deliveryDays * 86400000)
+        orderData.deliveredAt = deliveredAt
+        orderData.deliveryCity = customer.city
+        orderData.deliveryZone = 'Centro'
+        orderData.deliveryAddress = 'Dirección de entrega'
+
+        // 80% de las órdenes entregadas están pagadas
+        if (Math.random() < 0.8) {
+          const paymentDays = Math.floor(Math.random() * 3)
+          orderData.paidAt = new Date(deliveredAt.getTime() + paymentDays * 86400000)
+          orderData.paidBy = demoAdminUser.id
+        }
+      }
+
+      const order = await db.salesOrder.create({
+        data: orderData,
       })
 
-      // Crear movimientos de stock para cada línea
-      for (const li of lineItems) {
-        // Buscar un batch existente para el producto
-        const existingBatch = await db.batch.findFirst({
-          where: { tenantId: demoTenant.id, productId: li.productId },
-          select: { id: true },
-        })
-        
-        if (existingBatch) {
-          await db.stockMovement.create({
-            data: {
-              tenantId: demoTenant.id,
-              number: `SM-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-              numberYear: new Date().getFullYear(),
-              productId: li.productId,
-              batchId: existingBatch.id,
-              fromLocationId: warehouseData.location.id,
-              type: 'OUT',
-              quantity: -li.quantity,
-              note: `Venta ${order.id}`,
-              referenceType: 'SALES_ORDER',
-              referenceId: order.id,
-              createdAt: orderDate,
-              createdBy: demoAdminUser.id,
-            },
+      // Crear movimientos de stock para cada línea (solo para órdenes cumplidas)
+      if (status === 'FULFILLED') {
+        for (const li of lineItems) {
+          // Buscar un batch existente para el producto
+          const existingBatch = await db.batch.findFirst({
+            where: { tenantId: demoTenant.id, productId: li.productId },
+            select: { id: true },
           })
+          
+          if (existingBatch) {
+            await db.stockMovement.create({
+              data: {
+                tenantId: demoTenant.id,
+                number: `SM-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                numberYear: new Date().getFullYear(),
+                productId: li.productId,
+                batchId: existingBatch.id,
+                fromLocationId: warehouseData.location.id,
+                type: 'OUT',
+                quantity: -li.quantity,
+                note: `Venta ${order.id}`,
+                referenceType: 'SALES_ORDER',
+                referenceId: order.id,
+                createdAt: orderDate,
+                createdBy: demoAdminUser.id,
+              },
+            })
+          }
         }
       }
 
@@ -1157,6 +1347,214 @@ async function main() {
     }
   }
   console.log(`   ✅ ${totalOrders} órdenes de venta creadas (valor total: Bs ${totalSalesValue.toLocaleString()})`)
+
+  // ============= COTIZACIONES =============
+  let totalQuotes = 0
+  const quoteStatuses = ['CREATED', 'PROCESSED'] as const
+
+  for (let monthOffset = 11; monthOffset >= -1; monthOffset--) { // Incluir 1 mes futuro
+    const monthDate = new Date(todayUtc)
+    monthDate.setMonth(monthDate.getMonth() - monthOffset)
+    
+    const quotesThisMonth = Math.floor(5 + Math.random() * 15)
+    
+    for (let q = 0; q < quotesThisMonth; q++) {
+      const customer = customers[Math.floor(Math.random() * customers.length)]
+      
+      const quoteDay = Math.floor(1 + Math.random() * 28)
+      const quoteDate = new Date(monthDate.getFullYear(), monthDate.getMonth(), quoteDay, 
+        8 + Math.floor(Math.random() * 10), Math.floor(Math.random() * 60))
+      
+      const status = quoteStatuses[Math.floor(Math.random() * quoteStatuses.length)]
+      
+      const numProducts = 1 + Math.floor(Math.random() * 4)
+      const selectedProducts = [...createdProducts]
+        .sort(() => Math.random() - 0.5)
+        .slice(0, numProducts)
+      
+      let quoteTotal = 0
+      const quoteLines: any[] = []
+      for (const sp of selectedProducts) {
+        const qty = 1 + Math.floor(Math.random() * 10)
+        const unitPrice = sp.price
+        const lineTotal = qty * unitPrice
+        quoteTotal += lineTotal
+
+        // Elegir presentación aleatoria si existe
+        let presentationId: string | undefined
+        let presentationQuantity: number | undefined
+        let totalQty = qty
+        if (productsWithPresentations.some(pwp => pwp.id === sp.id)) {
+          const presentations = [
+            { name: 'Unidad', units: 1 },
+            { name: 'Caja de 10', units: 10 },
+            { name: 'Caja de 20', units: 20 },
+          ]
+          const pres = presentations[Math.floor(Math.random() * presentations.length)]
+          presentationQuantity = 1 + Math.floor(Math.random() * 5)
+          totalQty = presentationQuantity * pres.units
+          // Buscar la presentación
+          const presRecord = await db.productPresentation.findFirst({
+            where: { tenantId: demoTenant.id, productId: sp.id, name: pres.name },
+            select: { id: true },
+          })
+          if (presRecord) {
+            presentationId = presRecord.id
+          }
+        }
+
+        quoteLines.push({
+          tenantId: demoTenant.id,
+          productId: sp.id,
+          quantity: totalQty.toString(),
+          presentationId,
+          presentationQuantity: presentationId ? presentationQuantity!.toString() : null,
+          unitPrice: unitPrice.toString(),
+          discountPct: '0',
+          createdBy: demoAdminUser.id,
+        })
+      }
+
+      const quoteData: any = {
+        tenantId: demoTenant.id,
+        number: `QT-${monthDate.getFullYear()}${String(monthDate.getMonth() + 1).padStart(2, '0')}-${String(totalQuotes + 1).padStart(4, '0')}`,
+        customerId: customer.id,
+        status,
+        validityDays: 7,
+        paymentMode: 'CASH',
+        deliveryDays: 1,
+        deliveryCity: customer.city,
+        globalDiscountPct: '0',
+        createdAt: quoteDate,
+        updatedAt: quoteDate,
+        createdBy: demoAdminUser.id,
+        lines: {
+          create: quoteLines,
+        },
+      }
+
+      if (status === 'PROCESSED') {
+        quoteData.processedAt = new Date(quoteDate.getTime() + (1 + Math.random() * 7) * 86400000)
+      }
+
+      const quote = await db.quote.create({
+        data: quoteData,
+      })
+
+      if (status === 'PROCESSED') {
+        // Crear orden desde la cotización
+        const orderFromQuote = await db.salesOrder.create({
+          data: {
+            tenantId: demoTenant.id,
+            number: `ORD-${monthDate.getFullYear()}${String(monthDate.getMonth() + 1).padStart(2, '0')}-${String(totalOrders + 1).padStart(4, '0')}`,
+            customerId: customer.id,
+            quoteId: quote.id,
+            status: 'FULFILLED',
+            note: `Orden desde cotización ${quote.number}`,
+            createdAt: quoteData.processedAt,
+            updatedAt: quoteData.processedAt,
+            createdBy: demoAdminUser.id,
+            lines: {
+              create: quoteLines.map(ql => ({
+                tenantId: demoTenant.id,
+                productId: ql.productId,
+                quantity: ql.quantity,
+                presentationId: ql.presentationId,
+                presentationQuantity: ql.presentationQuantity,
+                unitPrice: ql.unitPrice,
+                createdBy: demoAdminUser.id,
+              })),
+            },
+          },
+        })
+        totalOrders++
+      }
+
+      totalQuotes++
+    }
+  }
+  console.log(`   ✅ ${totalQuotes} cotizaciones creadas (${quoteStatuses.map(s => `${s}: ${Math.floor(totalQuotes / quoteStatuses.length)}`).join(', ')})`)
+
+  // ============= SOLICITUDES DE MOVIMIENTOS =============
+  let totalRequests = 0
+  const requestStatuses = ['OPEN', 'FULFILLED', 'CANCELLED'] as const
+
+  for (let r = 0; r < 20; r++) {
+    const cities = ['La Paz', 'Cochabamba', 'Santa Cruz']
+    const requestedCity = cities[Math.floor(Math.random() * cities.length)]
+    const status = requestStatuses[Math.floor(Math.random() * requestStatuses.length)]
+    
+    const daysAgo = Math.floor(Math.random() * 60)
+    const requestDate = addDaysUtc(todayUtc, -daysAgo)
+    
+    const numItems = 1 + Math.floor(Math.random() * 3)
+    const selectedProducts = [...createdProducts]
+      .sort(() => Math.random() - 0.5)
+      .slice(0, numItems)
+    
+    const requestItems: any[] = []
+    for (const sp of selectedProducts) {
+      // Elegir presentación aleatoria si existe
+      let presentationId: string | undefined
+      let presentationQuantity: number | undefined
+      let totalQty = 0
+      if (productsWithPresentations.some(pwp => pwp.id === sp.id)) {
+        const presentations = [
+          { name: 'Unidad', units: 1 },
+          { name: 'Caja de 10', units: 10 },
+          { name: 'Caja de 20', units: 20 },
+        ]
+        const pres = presentations[Math.floor(Math.random() * presentations.length)]
+        presentationQuantity = 1 + Math.floor(Math.random() * 5)
+        totalQty = presentationQuantity
+        // Buscar la presentación
+        const presRecord = await db.productPresentation.findFirst({
+          where: { tenantId: demoTenant.id, productId: sp.id, name: pres.name },
+          select: { id: true },
+        })
+        if (presRecord) {
+          presentationId = presRecord.id
+        }
+      } else {
+        // Si no hay presentaciones, usar unidades
+        totalQty = 10 + Math.floor(Math.random() * 50)
+      }
+      
+      requestItems.push({
+        tenantId: demoTenant.id,
+        productId: sp.id,
+        requestedQuantity: totalQty.toString(),
+        remainingQuantity: status === 'OPEN' ? totalQty.toString() : '0',
+        presentationId,
+        presentationQuantity: presentationId ? presentationQuantity!.toString() : null,
+      })
+    }
+
+    const requestData: any = {
+      tenantId: demoTenant.id,
+      status,
+      requestedCity,
+      requestedBy: demoAdminUser.id,
+      note: `Solicitud de stock para ${requestedCity}`,
+      createdAt: requestDate,
+      updatedAt: requestDate,
+      items: {
+        create: requestItems,
+      },
+    }
+
+    if (status === 'FULFILLED') {
+      requestData.fulfilledAt = new Date(requestDate.getTime() + (1 + Math.random() * 7) * 86400000)
+      requestData.fulfilledBy = demoAdminUser.id
+    }
+
+    await db.stockMovementRequest.create({
+      data: requestData,
+    })
+
+    totalRequests++
+  }
+  console.log(`   ✅ ${totalRequests} solicitudes de movimientos creadas (${requestStatuses.map(s => `${s}: ${Math.floor(totalRequests / requestStatuses.length)}`).join(', ')})`)
 
   // ============= MOVIMIENTOS DE STOCK ADICIONALES (ENTRADAS) =============
   // Crear movimientos de entrada para simular reposiciones

@@ -14,6 +14,10 @@ type MovementRequestItem = {
   genericName: string | null
   requestedQuantity: number
   remainingQuantity: number
+  presentationId: string | null
+  presentationName: string | null
+  presentationQuantity: number | null
+  unitsPerPresentation: number | null
 }
 
 type MovementRequest = {
@@ -141,7 +145,20 @@ async function createTransferMovement(
 }
 
 async function listMovementRequests(token: string): Promise<{ items: MovementRequest[] }> {
-  return apiFetch('/api/v1/stock/movement-requests?take=50', { token })
+  const response = await apiFetch('/api/v1/stock/movement-requests?take=50', { token })
+  return {
+    items: response.items.map((req: any) => ({
+      ...req,
+      items: req.items.map((item: any) => ({
+        ...item,
+        // Backend puede enviar presentación como campos planos o anidada (item.presentation)
+        // No pisar valores válidos con null.
+        presentationId: item.presentationId ?? item.presentation?.id ?? null,
+        presentationName: item.presentationName ?? item.presentation?.name ?? null,
+        unitsPerPresentation: item.unitsPerPresentation ?? item.presentation?.unitsPerPresentation ?? null,
+      })),
+    })),
+  }
 }
 
 function dateOnlyToUtcIso(dateString: string): string {
@@ -1361,8 +1378,21 @@ export function MovementsPage() {
                         const name = it.productName ?? it.productSku ?? it.productId
                         const remaining = Number(it.remainingQuantity)
                         const requested = Number(it.requestedQuantity)
-                        const suffix = r.status === 'OPEN' ? `Pendiente: ${remaining} / ${requested}` : `Solicitado: ${requested}`
-                        return `${name} — ${suffix}`
+                        let display = ''
+                        if (it.presentationQuantity && it.presentationName) {
+                          const presQty = Number(it.presentationQuantity)
+                          const unitsPer = Number(it.unitsPerPresentation || 1)
+                          if (r.status === 'OPEN') {
+                            // Mostrar tal cual fue solicitado: cantidad + presentación + (unidades por presentación)
+                            display = `${presQty.toFixed(0)} ${it.presentationName} (${unitsPer.toFixed(0)}u) de ${name}`
+                          } else {
+                            display = `${presQty.toFixed(0)} ${it.presentationName} (${unitsPer.toFixed(0)}u) de ${name}`
+                          }
+                        } else {
+                          const suffix = r.status === 'OPEN' ? `Pendiente: ${remaining} / ${requested}` : `Solicitado: ${requested}`
+                          display = `${name} — ${suffix} unidades`
+                        }
+                        return display
                       })
 
                     return lines.length ? (
