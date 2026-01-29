@@ -7,16 +7,24 @@ import { useAuth } from '../../providers/AuthProvider'
 import { MainLayout, PageContainer, Select, Input, Button, Table, Loading, ErrorState, Modal } from '../../components'
 import { useNavigation } from '../../hooks'
 
-function QuickActionCard(props: { to: string; title: string; subtitle: string; icon: string }) {
+function QuickActionCard(props: { to: string; title: string; subtitle: string; icon: string; isActive?: boolean }) {
   return (
     <Link
       to={props.to}
-      className="group rounded-lg border border-slate-200 bg-white p-4 transition hover:border-blue-300 hover:bg-blue-50 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-blue-600 dark:hover:bg-slate-800"
+      className={`group rounded-lg border p-4 transition ${
+        props.isActive
+          ? 'border-blue-500 bg-blue-50 dark:border-blue-400 dark:bg-blue-900/20'
+          : 'border-slate-200 bg-white hover:border-blue-300 hover:bg-blue-50 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-blue-600 dark:hover:bg-slate-800'
+      }`}
     >
       <div className="flex items-start gap-3">
         <div className="text-2xl">{props.icon}</div>
         <div className="min-w-0">
-          <div className="font-semibold text-slate-900 group-hover:text-blue-900 dark:text-slate-100 dark:group-hover:text-blue-200">
+          <div className={`font-semibold transition ${
+            props.isActive
+              ? 'text-blue-900 dark:text-blue-200'
+              : 'text-slate-900 group-hover:text-blue-900 dark:text-slate-100 dark:group-hover:text-blue-200'
+          }`}>
             {props.title}
           </div>
           <div className="mt-0.5 text-sm text-slate-600 dark:text-slate-400">{props.subtitle}</div>
@@ -687,6 +695,7 @@ export function MovementsPage() {
               icon="🚚"
               title="Movimientos"
               subtitle="Entradas, transferencias, bajas, ajustes"
+              isActive={true}
             />
             <QuickActionCard
               to="/stock/bulk-transfer"
@@ -709,94 +718,25 @@ export function MovementsPage() {
           </div>
         </div>
 
-        {/* Solicitudes de movimiento */}
+        {/* Selector de tipo de movimiento */}
         <div className="mb-6 rounded-lg border border-slate-200 bg-white p-6 dark:border-slate-700 dark:bg-slate-900">
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <h3 className="font-semibold text-slate-900 dark:text-slate-100">📨 Solicitudes de movimientos</h3>
-            <div className="flex gap-2">
-              <Button variant="primary" size="sm" onClick={() => setShowCreateRequestModal(true)}>
-                Crear solicitud
-              </Button>
-              <Button variant="secondary" size="sm" onClick={() => movementRequestsQuery.refetch()} loading={movementRequestsQuery.isFetching}>
-                Actualizar
-              </Button>
-            </div>
-          </div>
-
-          {movementRequestsQuery.isLoading && <Loading />}
-          {movementRequestsQuery.error && <ErrorState message="Error cargando solicitudes" retry={movementRequestsQuery.refetch} />}
-
-          {movementRequestsQuery.data?.items && movementRequestsQuery.data.items.length > 0 && (
-            <Table<MovementRequest>
-              columns={[
-                {
-                  header: 'Estado',
-                  accessor: (r) => (r.status === 'OPEN' ? '🟡 Pendiente' : r.status === 'FULFILLED' ? '✅ Atendida' : '⛔ Cancelada'),
-                },
-                { header: 'Destino', accessor: (r) => r.requestedCity },
-                { header: 'Solicitado por', accessor: (r) => r.requestedByName ?? '-' },
-                { header: 'Fecha', accessor: (r) => new Date(r.createdAt).toLocaleString() },
-                {
-                  header: 'Detalle',
-                  accessor: (r) => {
-                    const lines = (r.items ?? [])
-                      .filter((it) => it.remainingQuantity > 0 || r.status !== 'OPEN')
-                      .slice(0, 4)
-                      .map((it) => {
-                        const name = it.productName ?? it.productSku ?? it.productId
-                        const remaining = Number(it.remainingQuantity)
-                        const requested = Number(it.requestedQuantity)
-                        let display = ''
-                        if (it.presentationQuantity && it.presentationName) {
-                          const presQty = Number(it.presentationQuantity)
-                          const unitsPer = Number(it.unitsPerPresentation || 1)
-                          display = `${presQty.toFixed(0)} ${it.presentationName} (${unitsPer.toFixed(0)}u) de ${name}`
-                        } else {
-                          const suffix = r.status === 'OPEN' ? `Pendiente: ${remaining} / ${requested}` : `Solicitado: ${requested}`
-                          display = `${name} — ${suffix} unidades`
-                        }
-                        return display
-                      })
-
-                    return lines.length ? (
-                      <div className="text-sm text-slate-700 dark:text-slate-200">
-                        {lines.map((l) => (
-                          <div key={l}>{l}</div>
-                        ))}
-                      </div>
-                    ) : (
-                      <span className="text-sm text-slate-500">-</span>
-                    )
-                  },
-                },
-              ]}
-              data={movementRequestsQuery.data.items}
-              keyExtractor={(r) => r.id}
-            />
-          )}
-
-          {movementRequestsQuery.data?.items && movementRequestsQuery.data.items.length === 0 && (
-            <div className="text-sm text-slate-600 dark:text-slate-400">No hay solicitudes.</div>
-          )}
+          <Select
+            label="Tipo de Movimiento"
+            value={type}
+            onChange={(e) => handleTypeChange(e.target.value)}
+            options={[
+              { value: '', label: 'Selecciona tipo de movimiento' },
+              { value: 'IN', label: '📥 Entrada (creación de nuevo lote)' },
+              { value: 'TRANSFER', label: '🔄 Transferencia (cambiar ubicación de existencias)' },
+              { value: 'REPACK', label: '📦 Reempaque (armar/desarmar presentación)' },
+              { value: 'OUT', label: '📤 Salida (venta o baja de existencias)' },
+              { value: 'ADJUSTMENT', label: '⚖️ Ajuste (modificar lote)' },
+            ]}
+          />
         </div>
 
         <div className="rounded-lg border border-slate-200 bg-white p-6 dark:border-slate-700 dark:bg-slate-900">
           <form className="space-y-6">
-            {/* Selector de tipo - Siempre visible */}
-            <Select
-              label="Tipo de Movimiento"
-              value={type}
-              onChange={(e) => handleTypeChange(e.target.value)}
-              options={[
-                { value: '', label: 'Selecciona tipo de movimiento' },
-                { value: 'IN', label: '📥 Entrada (creación de nuevo lote)' },
-                { value: 'TRANSFER', label: '🔄 Transferencia (cambiar ubicación de existencias)' },
-                { value: 'REPACK', label: '📦 Reempaque (armar/desarmar presentación)' },
-                { value: 'OUT', label: '📤 Salida (venta o baja de existencias)' },
-                { value: 'ADJUSTMENT', label: '⚖️ Ajuste (modificar lote)' },
-              ]}
-            />
-
             {/* ENTRADA */}
             {type === 'IN' && (
               <div className="space-y-4 border-t border-slate-200 pt-6 dark:border-slate-700">
@@ -1566,6 +1506,77 @@ export function MovementsPage() {
               </div>
             )}
           </form>
+        </div>
+
+        {/* Solicitudes de movimiento */}
+        <div className="mb-6 rounded-lg border border-slate-200 bg-white p-6 dark:border-slate-700 dark:bg-slate-900">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <h3 className="font-semibold text-slate-900 dark:text-slate-100">📨 Solicitudes de movimientos</h3>
+            <div className="flex gap-2">
+              <Button variant="primary" size="sm" onClick={() => setShowCreateRequestModal(true)}>
+                Crear solicitud
+              </Button>
+              <Button variant="secondary" size="sm" onClick={() => movementRequestsQuery.refetch()} loading={movementRequestsQuery.isFetching}>
+                Actualizar
+              </Button>
+            </div>
+          </div>
+
+          {movementRequestsQuery.isLoading && <Loading />}
+          {movementRequestsQuery.error && <ErrorState message="Error cargando solicitudes" retry={movementRequestsQuery.refetch} />}
+
+          {movementRequestsQuery.data?.items && movementRequestsQuery.data.items.length > 0 && (
+            <Table<MovementRequest>
+              columns={[
+                {
+                  header: 'Estado',
+                  accessor: (r) => (r.status === 'OPEN' ? '🟡 Pendiente' : r.status === 'FULFILLED' ? '✅ Atendida' : '⛔ Cancelada'),
+                },
+                { header: 'Destino', accessor: (r) => r.requestedCity },
+                { header: 'Solicitado por', accessor: (r) => r.requestedByName ?? '-' },
+                { header: 'Fecha', accessor: (r) => new Date(r.createdAt).toLocaleString() },
+                {
+                  header: 'Detalle',
+                  accessor: (r) => {
+                    const lines = (r.items ?? [])
+                      .filter((it) => it.remainingQuantity > 0 || r.status !== 'OPEN')
+                      .slice(0, 4)
+                      .map((it) => {
+                        const name = it.productName ?? it.productSku ?? it.productId
+                        const remaining = Number(it.remainingQuantity)
+                        const requested = Number(it.requestedQuantity)
+                        let display = ''
+                        if (it.presentationQuantity && it.presentationName) {
+                          const presQty = Number(it.presentationQuantity)
+                          const unitsPer = Number(it.unitsPerPresentation || 1)
+                          display = `${presQty.toFixed(0)} ${it.presentationName} (${unitsPer.toFixed(0)}u) de ${name}`
+                        } else {
+                          const suffix = r.status === 'OPEN' ? `Pendiente: ${remaining} / ${requested}` : `Solicitado: ${requested}`
+                          display = `${name} — ${suffix} unidades`
+                        }
+                        return display
+                      })
+
+                    return lines.length ? (
+                      <div className="text-sm text-slate-700 dark:text-slate-200">
+                        {lines.map((l) => (
+                          <div key={l}>{l}</div>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-sm text-slate-500">-</span>
+                    )
+                  },
+                },
+              ]}
+              data={movementRequestsQuery.data.items}
+              keyExtractor={(r) => r.id}
+            />
+          )}
+
+          {movementRequestsQuery.data?.items && movementRequestsQuery.data.items.length === 0 && (
+            <div className="text-sm text-slate-600 dark:text-slate-400">No hay solicitudes.</div>
+          )}
         </div>
 
       </PageContainer>
