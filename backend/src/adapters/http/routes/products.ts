@@ -112,7 +112,8 @@ const productUpdateSchema = z.object({
 })
 
 const listQuerySchema = z.object({
-  take: z.coerce.number().int().min(1).max(50).default(20),
+  // Some UIs need larger lists (selectors). Keep a reasonable cap.
+  take: z.coerce.number().int().min(1).max(200).default(20),
   cursor: z.string().uuid().optional(),
   includePresentations: z.coerce.boolean().optional(),
 })

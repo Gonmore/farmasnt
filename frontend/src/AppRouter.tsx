@@ -165,7 +165,7 @@ export function AppRouter() {
         <Route
           path="/stock/movements"
           element={
-            <ProtectedRoute requiredPermissions={['stock:manage']}>
+            <ProtectedRoute requiredPermissions={['stock:move', 'stock:manage']} requireAll={false}>
               <MovementsPage />
             </ProtectedRoute>
           }

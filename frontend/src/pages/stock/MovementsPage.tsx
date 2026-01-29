@@ -1,10 +1,30 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { apiFetch } from '../../lib/api'
 import { getProductLabel } from '../../lib/productName'
 import { useAuth } from '../../providers/AuthProvider'
 import { MainLayout, PageContainer, Select, Input, Button, Table, Loading, ErrorState, Modal } from '../../components'
 import { useNavigation } from '../../hooks'
+
+function QuickActionCard(props: { to: string; title: string; subtitle: string; icon: string }) {
+  return (
+    <Link
+      to={props.to}
+      className="group rounded-lg border border-slate-200 bg-white p-4 transition hover:border-blue-300 hover:bg-blue-50 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-blue-600 dark:hover:bg-slate-800"
+    >
+      <div className="flex items-start gap-3">
+        <div className="text-2xl">{props.icon}</div>
+        <div className="min-w-0">
+          <div className="font-semibold text-slate-900 group-hover:text-blue-900 dark:text-slate-100 dark:group-hover:text-blue-200">
+            {props.title}
+          </div>
+          <div className="mt-0.5 text-sm text-slate-600 dark:text-slate-400">{props.subtitle}</div>
+        </div>
+      </div>
+    </Link>
+  )
+}
 
 type MovementRequestItem = {
   id: string
@@ -658,7 +678,37 @@ export function MovementsPage() {
 
   return (
     <MainLayout navGroups={navGroups}>
-      <PageContainer title="🚚 Crear Movimiento de Stock">
+      <PageContainer title="🏢 Movimientos">
+        <div className="mb-6">
+          <div className="mb-2 text-sm font-medium text-slate-700 dark:text-slate-300">Accesos rápidos</div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <QuickActionCard
+              to="/stock/movements"
+              icon="🚚"
+              title="Movimientos"
+              subtitle="Entradas, transferencias, bajas, ajustes"
+            />
+            <QuickActionCard
+              to="/stock/bulk-transfer"
+              icon="📦"
+              title="Transferencia masiva"
+              subtitle="Mover múltiples líneas en una operación"
+            />
+            <QuickActionCard
+              to="/stock/fulfill-requests"
+              icon="✅"
+              title="Atender solicitudes"
+              subtitle="Enviar stock a solicitudes OPEN"
+            />
+            <QuickActionCard
+              to="/stock/returns"
+              icon="↩️"
+              title="Devoluciones"
+              subtitle="Registrar devoluciones con evidencia"
+            />
+          </div>
+        </div>
+
         <div className="rounded-lg border border-slate-200 bg-white p-6 dark:border-slate-700 dark:bg-slate-900">
           <form className="space-y-6">
             {/* Selector de tipo - Siempre visible */}

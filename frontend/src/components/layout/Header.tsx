@@ -61,6 +61,19 @@ export function Header({ onMenuClick, showMenuButton = false }: HeaderProps) {
   }, [me.user?.email, me.user?.fullName])
 
   const isBranchScoped = me.hasPermission('scope:branch')
+  const mustSelectWarehouse = !!auth.isAuthenticated && isBranchScoped && !!me.user && !me.user.warehouseId
+
+  // Force warehouse selection for branch-scoped users (otherwise most endpoints return 409).
+  useEffect(() => {
+    if (!mustSelectWarehouse) return
+    // Open once auth/me is loaded.
+    setEditProfileOpen(true)
+    setUserMenuOpen(false)
+    setNotificationsOpen(false)
+    setEditFullName((me.user?.fullName ?? '').toString())
+    setEditWarehouseId((me.user?.warehouseId ?? '').toString())
+    setProfileError(null)
+  }, [mustSelectWarehouse, me.user?.fullName, me.user?.warehouseId])
 
   const warehousesQuery = useQuery<{ items: Array<{ id: string; code: string; name: string; city?: string | null; isActive: boolean }> }>({
     queryKey: ['warehouses', 'forProfile'],
@@ -412,12 +425,19 @@ export function Header({ onMenuClick, showMenuButton = false }: HeaderProps) {
         isOpen={editProfileOpen}
         onClose={() => {
           if (changePasswordMutation.isPending || uploadPhotoMutation.isPending || removePhotoMutation.isPending) return
+          if (mustSelectWarehouse) return
           setEditProfileOpen(false)
         }}
         title="Editar Perfil"
         maxWidth="md"
       >
         <div className="max-h-[70vh] space-y-6 overflow-y-auto pr-2">
+          {mustSelectWarehouse && (
+            <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-200">
+              Debes seleccionar tu sucursal para continuar.
+            </div>
+          )}
+
           {/* Nombre completo y rol en la misma fila */}
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div>
@@ -528,7 +548,7 @@ export function Header({ onMenuClick, showMenuButton = false }: HeaderProps) {
             <Button
               variant="secondary"
               onClick={() => setEditProfileOpen(false)}
-              disabled={changePasswordMutation.isPending || uploadPhotoMutation.isPending || removePhotoMutation.isPending}
+              disabled={mustSelectWarehouse || changePasswordMutation.isPending || uploadPhotoMutation.isPending || removePhotoMutation.isPending}
             >
               Cancelar
             </Button>

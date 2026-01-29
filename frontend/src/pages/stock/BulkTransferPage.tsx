@@ -154,7 +154,7 @@ export function BulkTransferPage() {
 
   return (
     <MainLayout navGroups={navGroups}>
-      <PageContainer title="📦 Movimiento masivo (Transferencia)">
+      <PageContainer title="📦 Transferencia masiva">
         <div className="mb-4 text-sm text-slate-700 dark:text-slate-300">Mueve varios productos/lotes en una sola operación.</div>
 
         <div className="grid gap-4">
