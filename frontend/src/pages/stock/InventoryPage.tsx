@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ReactElement } from 'react'
 import { apiFetch } from '../../lib/api'
 import { exportToXlsx } from '../../lib/exportXlsx'
 import { getProductLabel } from '../../lib/productName'
@@ -166,33 +166,6 @@ type WarehouseGroup = {
   }>
 }
 
-function formatQtyByPresentations(qty: number, presentations: PresentationLite[] | undefined | null): string {
-  const qtyNum = Number(qty)
-  if (!Number.isFinite(qtyNum) || qtyNum <= 0) return '0'
-
-  const pres = (presentations ?? [])
-    .filter((p) => Number(p.unitsPerPresentation) > 1)
-    .map((p) => ({ ...p, unitsPerPresentation: Number(p.unitsPerPresentation) }))
-    .filter((p) => Number.isFinite(p.unitsPerPresentation) && p.unitsPerPresentation > 1)
-    .sort((a, b) => b.unitsPerPresentation - a.unitsPerPresentation)
-
-  if (pres.length === 0) return `${qtyNum} unidades`
-
-  let remaining = qtyNum
-  const parts: string[] = []
-
-  for (const p of pres) {
-    const count = Math.floor(remaining / p.unitsPerPresentation)
-    if (count > 0) {
-      parts.push(`${count} ${p.name}`)
-      remaining -= count * p.unitsPerPresentation
-    }
-  }
-
-  if (remaining > 0) parts.push(`${remaining} unidades`)
-  return parts.join(' + ')
-}
-
 function formatQtyByBatchPresentation(qtyUnits: number, batch: { presentationName?: string | null; unitsPerPresentation?: number | null } | null | undefined): string {
   const qtyNum = Number(qtyUnits)
   if (!Number.isFinite(qtyNum) || qtyNum <= 0) return '0'
@@ -241,11 +214,6 @@ function formatTotalsFromBatches(
 
   if (looseUnits > 0) parts.push(`${looseUnits} unidades`)
   return parts.length ? parts.join(' + ') : '0'
-}
-
-function formatInventoryQuantity(b: BalanceExpandedItem): string {
-  const qty = Number(b.quantity)
-  return formatQtyByPresentations(qty, b.product.presentations)
 }
 
 async function fetchBalances(token: string): Promise<{ items: BalanceExpandedItem[] }> {
@@ -353,7 +321,7 @@ function PillOutlineIcon({ className }: { className?: string }) {
   )
 }
 
-function getPresentationIcon(presentationName: string | null | undefined): JSX.Element {
+function getPresentationIcon(presentationName: string | null | undefined): ReactElement {
   const name = (presentationName ?? '').toLowerCase()
   const cls = 'h-4 w-4 text-slate-600 dark:text-slate-300'
   if (name.includes('caja')) return <ArchiveBoxIcon className={cls} />
@@ -402,42 +370,6 @@ function formatProductTitle(p: {
 }): string {
   const pres = formatPresentation(p)
   return `${p.name}${pres ? ` - ${pres}` : ''} | ${p.sku}`
-}
-
-function getCoveragePill(withStockCount: number, totalActive: number): { className: string; title: string; label: string } {
-  if (!Number.isFinite(totalActive) || totalActive <= 0) {
-    return {
-      className: 'bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700',
-      title: 'Sin sucursales activas',
-      label: '0 sucursales',
-    }
-  }
-
-  const clampedWith = Math.max(0, Math.min(totalActive, withStockCount))
-  const missing = totalActive - clampedWith
-  const ratio = clampedWith / totalActive
-
-  if (missing === 0) {
-    return {
-      className: 'bg-green-100 text-green-800 border-green-200 dark:bg-green-900/30 dark:text-green-200 dark:border-green-800',
-      title: 'Existencias en todas las sucursales',
-      label: `${totalActive} sucursal${totalActive !== 1 ? 'es' : ''}`,
-    }
-  }
-
-  if (ratio >= 0.5) {
-    return {
-      className: 'bg-yellow-100 text-yellow-900 border-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-200 dark:border-yellow-800',
-      title: `Faltan existencias en ${missing} sucursal${missing !== 1 ? 'es' : ''}`,
-      label: `${clampedWith}/${totalActive} sucursales`,
-    }
-  }
-
-  return {
-    className: 'bg-red-100 text-red-800 border-red-200 dark:bg-red-900/30 dark:text-red-200 dark:border-red-800',
-    title: `Existencias solo en ${clampedWith} sucursal${clampedWith !== 1 ? 'es' : ''}`,
-    label: `${clampedWith}/${totalActive} sucursales`,
-  }
 }
 
 export function InventoryPage() {
@@ -588,6 +520,7 @@ export function InventoryPage() {
           presentationWrapper: item.product.presentationWrapper ?? null,
           presentationQuantity: item.product.presentationQuantity ?? null,
           presentationFormat: item.product.presentationFormat ?? null,
+          presentations: item.product.presentations ?? [],
           totalQuantity: 0,
           totalReservedQuantity: 0,
           totalAvailableQuantity: 0,

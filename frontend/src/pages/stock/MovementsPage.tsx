@@ -145,7 +145,7 @@ async function createTransferMovement(
 }
 
 async function listMovementRequests(token: string): Promise<{ items: MovementRequest[] }> {
-  const response = await apiFetch('/api/v1/stock/movement-requests?take=50', { token })
+  const response = await apiFetch<{ items: any[] }>('/api/v1/stock/movement-requests?take=50', { token })
   return {
     items: response.items.map((req: any) => ({
       ...req,
