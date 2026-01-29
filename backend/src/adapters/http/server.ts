@@ -123,7 +123,7 @@ export async function createHttpServer() {
 
     const isTenantAdmin = !!(await db.userRole.findFirst({
       where: { userId: user.id, role: { code: 'TENANT_ADMIN' } },
-      select: { id: true },
+      select: { roleId: true },
     }))
     request.auth = {
       userId: user.id,
