@@ -5,6 +5,7 @@ import { getProductLabel } from '../../lib/productName'
 import { useAuth } from '../../providers/AuthProvider'
 import { useNavigation } from '../../hooks'
 import { MainLayout, PageContainer, Table, Loading, ErrorState, EmptyState, Button, Input, Select } from '../../components'
+import { MovementQuickActions } from '../../components/MovementQuickActions'
 
 type WarehouseListItem = { id: string; code: string; name: string; city?: string | null; isActive: boolean }
 
@@ -155,6 +156,7 @@ export function BulkTransferPage() {
   return (
     <MainLayout navGroups={navGroups}>
       <PageContainer title="📦 Transferencia masiva">
+        <MovementQuickActions currentPath="/stock/bulk-transfer" />
         <div className="mb-4 text-sm text-slate-700 dark:text-slate-300">Mueve varios productos/lotes en una sola operación.</div>
 
         <div className="grid gap-4">

@@ -5,6 +5,7 @@ import { getProductLabel } from '../../lib/productName'
 import { useAuth } from '../../providers/AuthProvider'
 import { useNavigation } from '../../hooks'
 import { MainLayout, PageContainer, Table, Loading, ErrorState, EmptyState, Button, Input, Select } from '../../components'
+import { MovementQuickActions } from '../../components/MovementQuickActions'
 
 type WarehouseListItem = { id: string; code: string; name: string; city?: string | null; isActive: boolean }
 
@@ -237,6 +238,7 @@ export function BulkFulfillRequestsPage() {
   return (
     <MainLayout navGroups={navGroups}>
       <PageContainer title="✅ Atender múltiples solicitudes">
+        <MovementQuickActions currentPath="/stock/fulfill-requests" />
         <div className="mb-4 text-sm text-slate-700 dark:text-slate-300">
           Selecciona solicitudes OPEN de una sucursal y envía stock desde un origen.
         </div>

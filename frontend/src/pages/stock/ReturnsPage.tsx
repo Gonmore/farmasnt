@@ -5,6 +5,7 @@ import { useAuth } from '../../providers/AuthProvider'
 import { MainLayout, PageContainer, Table, Button, Modal, Input, Select, Loading, ErrorState, EmptyState } from '../../components'
 import { useNavigation } from '../../hooks'
 import { getProductLabel } from '../../lib/productName'
+import { MovementQuickActions } from '../../components/MovementQuickActions'
 
 type WarehouseListItem = {
   id: string
@@ -485,6 +486,7 @@ export function ReturnsPage() {
   return (
     <MainLayout navGroups={navGroups}>
       <PageContainer title="↩️ Devoluciones">
+        <MovementQuickActions currentPath="/stock/returns" />
         <div className="mb-3 flex items-center justify-between">
           <div className="text-sm text-slate-600 dark:text-slate-400">Devoluciones con motivo y evidencia (foto).</div>
           <Button onClick={() => setShowCreateModal(true)}>➕ Nueva devolución</Button>
