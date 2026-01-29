@@ -76,6 +76,51 @@ const stockTransfersBetweenWarehousesQuerySchema = dateRangeQuerySchema.extend({
   take: z.coerce.number().int().min(1).max(200).default(50),
 })
 
+const stockMovementRequestsOpsQuerySchema = dateRangeQuerySchema.extend({
+  take: z.coerce.number().int().min(1).max(500).default(200),
+})
+
+const stockReturnsOpsQuerySchema = dateRangeQuerySchema.extend({
+  take: z.coerce.number().int().min(1).max(500).default(200),
+})
+
+type StockMovementRequestsSummaryRow = {
+  total: bigint
+  open: bigint
+  fulfilled: bigint
+  cancelled: bigint
+  pending: bigint
+  accepted: bigint
+  rejected: bigint
+}
+
+type StockMovementRequestsByCityRow = {
+  city: string | null
+  total: bigint
+  open: bigint
+  fulfilled: bigint
+  cancelled: bigint
+  pending: bigint
+  accepted: bigint
+  rejected: bigint
+}
+
+type StockReturnsSummaryRow = {
+  returnsCount: bigint
+  itemsCount: bigint
+  quantity: string | null
+}
+
+type StockReturnsByWarehouseRow = {
+  warehouseId: string
+  warehouseCode: string | null
+  warehouseName: string | null
+  warehouseCity: string | null
+  returnsCount: bigint
+  itemsCount: bigint
+  quantity: string | null
+}
+
 type SalesSummaryRow = {
   day: string
   ordersCount: bigint
@@ -189,6 +234,13 @@ type ExpiryAlertRow = {
 export async function registerReportRoutes(app: FastifyInstance): Promise<void> {
   const db = prisma()
   const mailer = getMailer()
+
+  function branchCityOf(request: any): string | null {
+    const scoped = !!request.auth?.permissions?.has(Permissions.ScopeBranch)
+    if (!scoped) return null
+    const city = String(request.auth?.warehouseCity ?? '').trim()
+    return city ? city.toUpperCase() : '__MISSING__'
+  }
 
   // SALES reports
   app.get(
@@ -1200,6 +1252,194 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
       }))
 
       return reply.send({ items })
+    },
+  )
+
+  // Stock movement requests (ops) reports
+  app.get(
+    '/api/v1/reports/stock/movement-requests/summary',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.ReportStockRead)],
+    },
+    async (request, reply) => {
+      const parsed = dateRangeQuerySchema.safeParse(request.query)
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
+
+      const tenantId = request.auth!.tenantId
+      const branchCity = branchCityOf(request)
+      if (branchCity === '__MISSING__') return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+
+      const { from, to } = parsed.data
+      const rows = await db.$queryRaw<StockMovementRequestsSummaryRow[]>`
+        SELECT
+          count(*) as total,
+          count(*) FILTER (WHERE smr.status = 'OPEN'::"StockMovementRequestStatus") as open,
+          count(*) FILTER (WHERE smr.status = 'FULFILLED'::"StockMovementRequestStatus") as fulfilled,
+          count(*) FILTER (WHERE smr.status = 'CANCELLED'::"StockMovementRequestStatus") as cancelled,
+          count(*) FILTER (WHERE smr."confirmationStatus" = 'PENDING'::"StockMovementRequestConfirmationStatus") as pending,
+          count(*) FILTER (WHERE smr."confirmationStatus" = 'ACCEPTED'::"StockMovementRequestConfirmationStatus") as accepted,
+          count(*) FILTER (WHERE smr."confirmationStatus" = 'REJECTED'::"StockMovementRequestConfirmationStatus") as rejected
+        FROM "StockMovementRequest" smr
+        WHERE smr."tenantId" = ${tenantId}
+          AND (${from ?? null}::timestamptz IS NULL OR smr."createdAt" >= ${from ?? null})
+          AND (${to ?? null}::timestamptz IS NULL OR smr."createdAt" < ${to ?? null})
+          AND (${branchCity ?? null}::text IS NULL OR upper(coalesce(smr."requestedCity", '')) = upper(${branchCity ?? null}))
+      `
+
+      const r = rows[0] ?? {
+        total: BigInt(0),
+        open: BigInt(0),
+        fulfilled: BigInt(0),
+        cancelled: BigInt(0),
+        pending: BigInt(0),
+        accepted: BigInt(0),
+        rejected: BigInt(0),
+      }
+
+      return reply.send({
+        total: Number(r.total),
+        open: Number(r.open),
+        fulfilled: Number(r.fulfilled),
+        cancelled: Number(r.cancelled),
+        pending: Number(r.pending),
+        accepted: Number(r.accepted),
+        rejected: Number(r.rejected),
+      })
+    },
+  )
+
+  app.get(
+    '/api/v1/reports/stock/movement-requests/by-city',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.ReportStockRead)],
+    },
+    async (request, reply) => {
+      const parsed = stockMovementRequestsOpsQuerySchema.safeParse(request.query)
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
+
+      const tenantId = request.auth!.tenantId
+      const branchCity = branchCityOf(request)
+      if (branchCity === '__MISSING__') return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+
+      const { from, to, take } = parsed.data
+      const rows = await db.$queryRaw<StockMovementRequestsByCityRow[]>`
+        SELECT
+          smr."requestedCity" as city,
+          count(*) as total,
+          count(*) FILTER (WHERE smr.status = 'OPEN'::"StockMovementRequestStatus") as open,
+          count(*) FILTER (WHERE smr.status = 'FULFILLED'::"StockMovementRequestStatus") as fulfilled,
+          count(*) FILTER (WHERE smr.status = 'CANCELLED'::"StockMovementRequestStatus") as cancelled,
+          count(*) FILTER (WHERE smr."confirmationStatus" = 'PENDING'::"StockMovementRequestConfirmationStatus") as pending,
+          count(*) FILTER (WHERE smr."confirmationStatus" = 'ACCEPTED'::"StockMovementRequestConfirmationStatus") as accepted,
+          count(*) FILTER (WHERE smr."confirmationStatus" = 'REJECTED'::"StockMovementRequestConfirmationStatus") as rejected
+        FROM "StockMovementRequest" smr
+        WHERE smr."tenantId" = ${tenantId}
+          AND (${from ?? null}::timestamptz IS NULL OR smr."createdAt" >= ${from ?? null})
+          AND (${to ?? null}::timestamptz IS NULL OR smr."createdAt" < ${to ?? null})
+          AND (${branchCity ?? null}::text IS NULL OR upper(coalesce(smr."requestedCity", '')) = upper(${branchCity ?? null}))
+        GROUP BY smr."requestedCity"
+        ORDER BY count(*) DESC NULLS LAST
+        LIMIT ${take}
+      `
+
+      return reply.send({
+        items: rows.map((r) => ({
+          city: r.city,
+          total: Number(r.total),
+          open: Number(r.open),
+          fulfilled: Number(r.fulfilled),
+          cancelled: Number(r.cancelled),
+          pending: Number(r.pending),
+          accepted: Number(r.accepted),
+          rejected: Number(r.rejected),
+        })),
+      })
+    },
+  )
+
+  // Stock returns (ops) reports
+  app.get(
+    '/api/v1/reports/stock/returns/summary',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.ReportStockRead)],
+    },
+    async (request, reply) => {
+      const parsed = dateRangeQuerySchema.safeParse(request.query)
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
+
+      const tenantId = request.auth!.tenantId
+      const branchCity = branchCityOf(request)
+      if (branchCity === '__MISSING__') return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+
+      const { from, to } = parsed.data
+      const rows = await db.$queryRaw<StockReturnsSummaryRow[]>`
+        SELECT
+          count(distinct sr.id) as "returnsCount",
+          count(sri.id) as "itemsCount",
+          sum(sri.quantity)::text as quantity
+        FROM "StockReturn" sr
+        JOIN "Location" l ON l.id = sr."toLocationId"
+        JOIN "Warehouse" w ON w.id = l."warehouseId"
+        LEFT JOIN "StockReturnItem" sri ON sri."returnId" = sr.id AND sri."tenantId" = sr."tenantId"
+        WHERE sr."tenantId" = ${tenantId}
+          AND (${from ?? null}::timestamptz IS NULL OR sr."createdAt" >= ${from ?? null})
+          AND (${to ?? null}::timestamptz IS NULL OR sr."createdAt" < ${to ?? null})
+          AND (${branchCity ?? null}::text IS NULL OR upper(coalesce(w."city", '')) = upper(${branchCity ?? null}))
+      `
+
+      const r = rows[0] ?? { returnsCount: BigInt(0), itemsCount: BigInt(0), quantity: '0' }
+      return reply.send({
+        returnsCount: Number(r.returnsCount),
+        itemsCount: Number(r.itemsCount),
+        quantity: r.quantity ?? '0',
+      })
+    },
+  )
+
+  app.get(
+    '/api/v1/reports/stock/returns/by-warehouse',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.ReportStockRead)],
+    },
+    async (request, reply) => {
+      const parsed = stockReturnsOpsQuerySchema.safeParse(request.query)
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
+
+      const tenantId = request.auth!.tenantId
+      const branchCity = branchCityOf(request)
+      if (branchCity === '__MISSING__') return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+
+      const { from, to, take } = parsed.data
+      const rows = await db.$queryRaw<StockReturnsByWarehouseRow[]>`
+        SELECT
+          w.id as "warehouseId",
+          w.code as "warehouseCode",
+          w.name as "warehouseName",
+          w.city as "warehouseCity",
+          count(distinct sr.id) as "returnsCount",
+          count(sri.id) as "itemsCount",
+          sum(sri.quantity)::text as quantity
+        FROM "StockReturn" sr
+        JOIN "Location" l ON l.id = sr."toLocationId"
+        JOIN "Warehouse" w ON w.id = l."warehouseId"
+        LEFT JOIN "StockReturnItem" sri ON sri."returnId" = sr.id AND sri."tenantId" = sr."tenantId"
+        WHERE sr."tenantId" = ${tenantId}
+          AND (${from ?? null}::timestamptz IS NULL OR sr."createdAt" >= ${from ?? null})
+          AND (${to ?? null}::timestamptz IS NULL OR sr."createdAt" < ${to ?? null})
+          AND (${branchCity ?? null}::text IS NULL OR upper(coalesce(w."city", '')) = upper(${branchCity ?? null}))
+        GROUP BY w.id, w.code, w.name, w.city
+        ORDER BY count(distinct sr.id) DESC NULLS LAST
+        LIMIT ${take}
+      `
+
+      return reply.send({
+        items: rows.map((r) => ({
+          warehouse: { id: r.warehouseId, code: r.warehouseCode, name: r.warehouseName, city: r.warehouseCity },
+          returnsCount: Number(r.returnsCount),
+          itemsCount: Number(r.itemsCount),
+          quantity: r.quantity ?? '0',
+        })),
+      })
     },
   )
 

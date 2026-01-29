@@ -406,6 +406,14 @@ async function resolveUserDisplayName(db: any, tenantId: string, userId?: string
 
 export async function salesQuotesRoutes(app: FastifyInstance) {
   const db = prisma()
+
+  function branchCityOf(request: any): string | null {
+    const scoped = !!request.auth?.permissions?.has(Permissions.ScopeBranch)
+    if (!scoped) return null
+    const city = String(request.auth?.warehouseCity ?? '').trim()
+    return city ? city.toUpperCase() : '__MISSING__'
+  }
+
   app.get(
     '/api/v1/sales/quotes',
     {
@@ -504,6 +512,11 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
       const tenantId = request.auth!.tenantId
       const userId = request.auth!.userId
       const audit = new AuditService(db)
+      const branchCity = branchCityOf(request)
+
+      if (branchCity === '__MISSING__') {
+        return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+      }
 
       // Verify customer exists and belongs to tenant
       const customer = await db.customer.findFirst({
@@ -512,6 +525,13 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
       })
       if (!customer) {
         return reply.code(404).send({ error: 'Customer not found' })
+      }
+
+      if (branchCity) {
+        const custCity = String(customer.city ?? '').trim().toUpperCase()
+        if (!custCity || custCity !== branchCity) {
+          return reply.status(403).send({ message: 'Solo puede crear cotizaciones para clientes de su sucursal' })
+        }
       }
 
       // Verify all products exist and belong to tenant
@@ -761,6 +781,11 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
       const tenantId = request.auth!.tenantId
       const userId = request.auth!.userId
       const audit = new AuditService(db)
+      const branchCity = branchCityOf(request)
+
+      if (branchCity === '__MISSING__') {
+        return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+      }
 
       let created: any
       try {
@@ -788,6 +813,15 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
             const err = new Error('Quote not found') as Error & { statusCode?: number }
             err.statusCode = 404
             throw err
+          }
+
+          if (branchCity) {
+            const custCity = String(quote.customer.city ?? '').trim().toUpperCase()
+            if (!custCity || custCity !== branchCity) {
+              const err = new Error('Solo puede procesar cotizaciones de su sucursal') as Error & { statusCode?: number }
+              err.statusCode = 403
+              throw err
+            }
           }
           if (quote.status === 'PROCESSED') {
             const err = new Error('Quote already processed') as Error & { statusCode?: number }
@@ -990,6 +1024,11 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
       const id = idParsed.data
       const tenantId = request.auth!.tenantId
       const userId = request.auth!.userId
+      const branchCity = branchCityOf(request)
+
+      if (branchCity === '__MISSING__') {
+        return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+      }
 
       const actor = await db.user.findFirst({
         where: { id: userId, tenantId, isActive: true },
@@ -1005,6 +1044,13 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
       })
 
       if (!quote) return reply.status(404).send({ message: 'Quote not found' })
+
+      if (branchCity) {
+        const custCity = String(quote.customer?.city ?? '').trim().toUpperCase()
+        if (!custCity || custCity !== branchCity) {
+          return reply.status(403).send({ message: 'Solo puede solicitar stock para cotizaciones de su sucursal' })
+        }
+      }
 
       const city = (quote.customer?.city ?? '').trim()
       if (!city) return reply.status(400).send({ message: 'Customer city is required to request stock' })

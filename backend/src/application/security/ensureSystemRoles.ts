@@ -4,11 +4,13 @@ import { Permissions } from './permissions.js'
 type PermissionSpec = { code: string; module: 'WAREHOUSE' | 'SALES' }
 
 const SYSTEM_PERMISSION_SPECS: PermissionSpec[] = [
+  { code: Permissions.ScopeBranch, module: 'SALES' },
   { code: Permissions.CatalogRead, module: 'WAREHOUSE' },
   { code: Permissions.CatalogWrite, module: 'WAREHOUSE' },
   { code: Permissions.StockRead, module: 'WAREHOUSE' },
   { code: Permissions.StockManage, module: 'WAREHOUSE' },
   { code: Permissions.StockMove, module: 'WAREHOUSE' },
+  { code: Permissions.StockDeliver, module: 'WAREHOUSE' },
   { code: Permissions.AuditRead, module: 'WAREHOUSE' },
   { code: Permissions.SalesOrderRead, module: 'SALES' },
   { code: Permissions.SalesOrderWrite, module: 'SALES' },
@@ -53,6 +55,13 @@ export async function ensureSystemRoles(db: PrismaClient): Promise<void> {
       select: { id: true },
     })
 
+    const branchAdminRole = await db.role.upsert({
+      where: { tenantId_code: { tenantId: tenant.id, code: 'BRANCH_ADMIN' } },
+      update: { name: 'Administrador de Sucursal' },
+      create: { tenantId: tenant.id, code: 'BRANCH_ADMIN', name: 'Administrador de Sucursal', isSystem: true, createdBy: null },
+      select: { id: true },
+    })
+
     // TENANT_ADMIN: keep in sync with full-permissions set (except platform permission is allowed only for platform tenant).
     const tenantAdminRole = await db.role.findUnique({
       where: { tenantId_code: { tenantId: tenant.id, code: 'TENANT_ADMIN' } },
@@ -71,10 +80,23 @@ export async function ensureSystemRoles(db: PrismaClient): Promise<void> {
     const logisticaPerms: string[] = [
       Permissions.StockRead,
       Permissions.StockMove,
+      Permissions.StockDeliver,
       Permissions.SalesOrderRead,
       Permissions.SalesDeliveryRead,
       Permissions.SalesDeliveryWrite,
       Permissions.ReportStockRead,
+    ]
+
+    const branchAdminPerms: string[] = [
+      Permissions.ScopeBranch,
+      Permissions.CatalogRead,
+      Permissions.StockRead,
+      Permissions.StockDeliver,
+      Permissions.SalesOrderRead,
+      Permissions.SalesOrderWrite,
+      Permissions.SalesDeliveryRead,
+      Permissions.SalesDeliveryWrite,
+      Permissions.ReportSalesRead,
     ]
 
     const tenantAdminPerms: string[] = [
@@ -83,6 +105,7 @@ export async function ensureSystemRoles(db: PrismaClient): Promise<void> {
       Permissions.StockRead,
       Permissions.StockManage,
       Permissions.StockMove,
+      Permissions.StockDeliver,
       Permissions.SalesOrderRead,
       Permissions.SalesOrderWrite,
       Permissions.SalesDeliveryRead,
@@ -111,6 +134,16 @@ export async function ensureSystemRoles(db: PrismaClient): Promise<void> {
         where: { roleId_permissionId: { roleId: logisticaRole.id, permissionId } },
         update: {},
         create: { roleId: logisticaRole.id, permissionId },
+      })
+    }
+
+    for (const code of branchAdminPerms) {
+      const permissionId = permIdByCode.get(code)
+      if (!permissionId) continue
+      await db.rolePermission.upsert({
+        where: { roleId_permissionId: { roleId: branchAdminRole.id, permissionId } },
+        update: {},
+        create: { roleId: branchAdminRole.id, permissionId },
       })
     }
 

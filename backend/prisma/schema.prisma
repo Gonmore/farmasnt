@@ -40,6 +40,12 @@ enum StockMovementRequestStatus {
   CANCELLED
 }
 
+enum StockMovementRequestConfirmationStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+}
+
 enum SalesOrderStatus {
   DRAFT
   CONFIRMED
@@ -137,6 +143,7 @@ model User {
   fullName     String?
   photoUrl     String?
   photoKey     String?
+  warehouseId  String?
   isActive     Boolean  @default(true)
   version      Int      @default(1)
   createdAt    DateTime @default(now())
@@ -144,6 +151,7 @@ model User {
   createdBy    String?
 
   tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  warehouse    Warehouse? @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
   roles        UserRole[]
   refreshTokens RefreshToken[]
   passwordResetTokens PasswordResetToken[]
@@ -152,6 +160,7 @@ model User {
   @@unique([tenantId, email])
   @@index([tenantId])
   @@index([email])
+  @@index([warehouseId])
 }
 
 model PasswordResetToken {
@@ -256,8 +265,12 @@ model Customer {
   zone      String?
   mapsUrl   String?
   isActive  Boolean  @default(true)
+  // Legacy flags (kept for backwards compatibility)
   creditDays7Enabled  Boolean  @default(false)
   creditDays14Enabled Boolean  @default(false)
+  // New flexible credit configuration
+  creditEnabled Boolean @default(false)
+  creditDays    Int?
   version   Int      @default(1)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -299,6 +312,7 @@ model Product {
   salesOrderLines SalesOrderLine[]
   quoteLines      QuoteLine[]
   stockMovementRequestItems StockMovementRequestItem[]
+  stockReturnItems StockReturnItem[] @relation("StockReturnItemProduct")
 
   @@unique([tenantId, sku])
   @@index([tenantId])
@@ -325,6 +339,7 @@ model ProductPresentation {
   salesOrderLines SalesOrderLine[]
   stockMovements StockMovement[]
   stockMovementRequestItems StockMovementRequestItem[]
+  stockReturnItems StockReturnItem[] @relation("StockReturnItemPresentation")
   batches Batch[]
 
   @@unique([tenantId, productId, name])
@@ -395,6 +410,7 @@ model Batch {
   balances InventoryBalance[]
   stockMovements StockMovement[]
   salesOrderLines SalesOrderLine[]
+  stockReturnItems StockReturnItem[] @relation("StockReturnItemBatch")
 
   @@unique([tenantId, productId, batchNumber])
   @@index([tenantId])
@@ -417,6 +433,7 @@ model Warehouse {
 
   locations Location[]
   laboratories Laboratory[]
+  users     User[]
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -457,6 +474,7 @@ model Location {
   warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
   balances  InventoryBalance[]
   laboratoryDefaultFor Laboratory[] @relation("LaboratoryDefaultLocation")
+  stockReturns StockReturn[] @relation("StockReturnToLocation")
 
   @@unique([tenantId, warehouseId, code])
   @@index([tenantId])
@@ -525,11 +543,15 @@ model StockMovementRequest {
   id            String                    @id @default(uuid())
   tenantId      String
   status        StockMovementRequestStatus @default(OPEN)
+  confirmationStatus StockMovementRequestConfirmationStatus @default(PENDING)
   requestedCity String
   quoteId       String?
   requestedBy   String
   fulfilledAt   DateTime?
   fulfilledBy   String?
+  confirmedAt   DateTime?
+  confirmedBy   String?
+  confirmationNote String?
   note          String?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
@@ -540,6 +562,7 @@ model StockMovementRequest {
 
   @@index([tenantId])
   @@index([tenantId, status])
+  @@index([tenantId, confirmationStatus])
   @@index([tenantId, requestedCity])
   @@index([tenantId, requestedCity, status])
   @@index([quoteId])
@@ -566,6 +589,51 @@ model StockMovementRequestItem {
   @@index([requestId])
   @@index([tenantId, productId])
   @@index([tenantId, productId, remainingQuantity])
+}
+
+model StockReturn {
+  id           String   @id @default(uuid())
+  tenantId     String
+  toLocationId String
+  sourceType   String?
+  sourceId     String?
+  reason       String
+  photoKey     String?
+  photoUrl     String?
+  note         String?
+  version      Int      @default(1)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  createdBy    String?
+
+  toLocation Location @relation("StockReturnToLocation", fields: [toLocationId], references: [id], onDelete: Restrict)
+  items      StockReturnItem[]
+
+  @@index([tenantId])
+  @@index([tenantId, createdAt])
+  @@index([tenantId, toLocationId])
+}
+
+model StockReturnItem {
+  id                   String   @id @default(uuid())
+  tenantId             String
+  returnId             String
+  productId            String
+  batchId              String?
+  quantity             Decimal
+  presentationId       String?
+  presentationQuantity Decimal?
+  createdAt            DateTime @default(now())
+  createdBy            String?
+
+  stockReturn StockReturn @relation(fields: [returnId], references: [id], onDelete: Cascade)
+  product     Product     @relation("StockReturnItemProduct", fields: [productId], references: [id], onDelete: Restrict)
+  batch       Batch?      @relation("StockReturnItemBatch", fields: [batchId], references: [id], onDelete: Restrict)
+  presentation ProductPresentation? @relation("StockReturnItemPresentation", fields: [presentationId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([returnId])
+  @@index([tenantId, productId])
 }
 
 model TenantSequence {

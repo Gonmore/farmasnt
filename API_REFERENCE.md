@@ -1031,7 +1031,164 @@ Realtime emit (por tenant room `tenant:<tenantId>`)
 - `stock.balance.changed`
 - `stock.alert.low` (regla simple: balance llega a 0)
 
+### POST /api/v1/stock/bulk-transfers
+Requiere permiso: `stock:move`.
+
+Body
+```json
+{
+  "fromWarehouseId": "...",
+  "fromLocationId": "...",
+  "toWarehouseId": "...",
+  "toLocationId": "...",
+  "note": "Envío semanal",
+  "items": [
+    {
+      "productId": "...",
+      "batchId": "...",
+      "quantity": 10,
+      "note": "opcional"
+    }
+  ]
+}
+```
+
+Notas
+- Crea múltiples movimientos `TRANSFER` con `referenceType: "BULK_TRANSFER"` y el mismo `referenceId`.
+- Reutiliza las reglas de validación de `POST /api/v1/stock/movements` (stock insuficiente, lote vencido, etc).
+
+Response 201
+```json
+{
+  "referenceType": "BULK_TRANSFER",
+  "referenceId": "...",
+  "items": [{ "createdMovement": { "id": "..." }, "fromBalance": {"id":"..."}, "toBalance": {"id":"..."} }]
+}
+```
+
+### POST /api/v1/stock/movement-requests/bulk-fulfill
+Requiere permiso: `stock:move`.
+
+Body
+```json
+{
+  "requestIds": ["..."],
+  "fromLocationId": "...",
+  "toLocationId": "...",
+  "note": "Atención SCZ",
+  "lines": [
+    {
+      "productId": "...",
+      "batchId": "...",
+      "quantity": 10
+    }
+  ]
+}
+```
+
+Notas
+- Solo permite atender solicitudes `OPEN` de la ciudad de la sucursal destino.
+- Crea movimientos `TRANSFER` con `referenceType: "REQUEST_BULK_FULFILL"` y asigna cantidades únicamente a las solicitudes listadas (decrementa `remainingQuantity`).
+- Cuando una solicitud queda con `remainingQuantity` total = 0, se marca `FULFILLED` (y luego la sucursal puede `ACCEPT/REJECT`).
+
+Response 201
+```json
+{
+  "referenceType": "REQUEST_BULK_FULFILL",
+  "referenceId": "...",
+  "destinationCity": "SANTA CRUZ",
+  "createdMovements": [{ "createdMovement": { "id": "..." } }],
+  "fulfilledRequestIds": ["..."]
+}
+```
+
 ---
+
+### POST /api/v1/stock/returns/photo-upload
+Requiere permiso: `stock:move`.
+
+Genera una URL presignada para subir la foto de evidencia (S3/MinIO compatible).
+
+Body
+```json
+{
+  "fileName": "evidencia.jpg",
+  "contentType": "image/jpeg"
+}
+```
+
+Notas
+- `contentType` permitido: `image/png`, `image/jpeg`, `image/webp`.
+- Requiere configuración S3 en backend (S3_* y S3_PUBLIC_BASE_URL).
+
+Response 200
+```json
+{
+  "uploadUrl": "https://...",
+  "publicUrl": "https://...",
+  "key": "tenants/<tenantId>/stock-returns/photo-...jpg",
+  "expiresInSeconds": 300,
+  "method": "PUT"
+}
+```
+
+### POST /api/v1/stock/returns
+Requiere permiso: `stock:move`.
+
+Registra una devolución y crea movimientos `IN` por ítem con `referenceType: "RETURN"` y `referenceId = <returnId>`.
+
+Body
+```json
+{
+  "toLocationId": "...",
+  "reason": "Producto dañado",
+  "note": "Caja golpeada",
+  "photoKey": "tenants/.../stock-returns/photo-...jpg",
+  "photoUrl": "https://.../tenants/.../stock-returns/photo-...jpg",
+  "sourceType": "SALES_ORDER",
+  "sourceId": "...",
+  "items": [
+    {
+      "productId": "...",
+      "batchId": "...",
+      "quantity": 5,
+      "presentationId": null,
+      "presentationQuantity": null,
+      "note": "opcional"
+    }
+  ]
+}
+```
+
+Notas
+- En modo `scope:branch`: `409` si el usuario no seleccionó sucursal; `403` si `toLocationId` no pertenece a la ciudad de su sucursal.
+
+Response 201
+```json
+{ "id": "...", "createdAt": "2026-01-29T00:00:00.000Z" }
+```
+
+### GET /api/v1/stock/returns
+Requiere permiso: `stock:read`.
+
+Query (opcionales)
+- `from` (date-time)
+- `to` (date-time)
+- `warehouseId` (uuid)
+- `take` (1..200, default 50)
+
+Response 200 (estructura)
+```json
+{ "items": [ { "id": "...", "reason": "...", "toLocation": { "id": "...", "code": "BIN-03", "warehouse": { "id": "...", "code": "WH-03", "name": "Sucursal", "city": "Santa Cruz" } }, "items": [ { "id": "...", "productId": "...", "quantity": "5" } ] } ] }
+```
+
+### GET /api/v1/stock/returns/:id
+Requiere permiso: `stock:read`.
+
+Response 200
+```json
+{ "item": { "id": "...", "reason": "...", "toLocationId": "...", "items": [] } }
+```
 
 ## Customers
 Requiere: módulo `SALES`.
@@ -1704,7 +1861,7 @@ Response 200 sin body.
 ### Stock
 
 #### GET /api/v1/reports/stock/balances-expanded
-Requiere: módulo `WAREHOUSE` + permiso `stock:read`.
+Requiere: módulo `WAREHOUSE` + permiso `report:stock:read`.
 
 Query
 - `warehouseId` (uuid, opcional)
@@ -1733,7 +1890,7 @@ Response 200
 ```
 
 #### GET /api/v1/reports/stock/movements-expanded
-Requiere: módulo `WAREHOUSE` + permiso `stock:read`.
+Requiere: módulo `WAREHOUSE` + permiso `report:stock:read`.
 
 Query
 - `from` (date-time, opcional)
@@ -1768,7 +1925,7 @@ Response 200
 ```
 
 #### GET /api/v1/reports/stock/inputs-by-product
-Requiere: módulo `WAREHOUSE` + permiso `stock:read`.
+Requiere: módulo `WAREHOUSE` + permiso `report:stock:read`.
 
 Query
 - `from` (date-time, opcional)
@@ -1785,7 +1942,7 @@ Response 200
 ```
 
 #### GET /api/v1/reports/stock/transfers-between-warehouses
-Requiere: módulo `WAREHOUSE` + permiso `stock:read`.
+Requiere: módulo `WAREHOUSE` + permiso `report:stock:read`.
 
 Query
 - `from` (date-time, opcional)
@@ -1806,15 +1963,75 @@ Response 200
 }
 ```
 
+#### Ops — Solicitudes y devoluciones
+
+#### GET /api/v1/reports/stock/movement-requests/summary
+Requiere: módulo `WAREHOUSE` + permiso `report:stock:read`.
+
+Query
+- `from` (date-time, opcional)
+- `to` (date-time, opcional)
+
+Response 200
+```json
+{ "total": 10, "open": 2, "fulfilled": 6, "cancelled": 2, "pending": 3, "accepted": 2, "rejected": 1 }
+```
+
+#### GET /api/v1/reports/stock/movement-requests/by-city
+Requiere: módulo `WAREHOUSE` + permiso `report:stock:read`.
+
+Query
+- `from` (date-time, opcional)
+- `to` (date-time, opcional)
+- `take` (1..500, default 200)
+
+Response 200
+```json
+{
+  "items": [
+    { "city": "Santa Cruz", "total": 5, "open": 1, "fulfilled": 3, "cancelled": 1, "pending": 2, "accepted": 2, "rejected": 1 }
+  ]
+}
+```
+
+#### GET /api/v1/reports/stock/returns/summary
+Requiere: módulo `WAREHOUSE` + permiso `report:stock:read`.
+
+Query
+- `from` (date-time, opcional)
+- `to` (date-time, opcional)
+
+Response 200
+```json
+{ "returnsCount": 3, "itemsCount": 7, "quantity": "35" }
+```
+
+#### GET /api/v1/reports/stock/returns/by-warehouse
+Requiere: módulo `WAREHOUSE` + permiso `report:stock:read`.
+
+Query
+- `from` (date-time, opcional)
+- `to` (date-time, opcional)
+- `take` (1..500, default 200)
+
+Response 200
+```json
+{
+  "items": [
+    { "warehouse": { "id": "...", "code": "WH-03", "name": "Sucursal Santa Cruz", "city": "Santa Cruz" }, "returnsCount": 2, "itemsCount": 4, "quantity": "20" }
+  ]
+}
+```
+
 #### POST /api/v1/reports/stock/email
-Requiere: módulo `WAREHOUSE` + permiso `stock:read`.
+Requiere: módulo `WAREHOUSE` + permiso `report:stock:read`.
 
 Body (mismo contrato que `POST /api/v1/reports/sales/email`)
 
 Response 200 sin body.
 
 #### Schedules — /api/v1/reports/stock/schedules
-Requiere: módulo `WAREHOUSE` + permiso `stock:read`.
+Requiere: módulo `WAREHOUSE` + permiso `report:stock:read`.
 
 Operaciones:
 - `GET /api/v1/reports/stock/schedules`
@@ -1840,6 +2057,8 @@ npx prisma db seed
 - **Productos**: 43 productos con precios, costos y stock distribuido
 - **Órdenes de venta**: 315 órdenes históricas con valor total de Bs 169,169
 - **Movimientos de stock**: Registros de ventas (OUT) y reposiciones (IN)
+- **Solicitudes de movimientos**: dataset para flujo `OPEN/FULFILLED/CANCELLED` + confirmación `PENDING/ACCEPTED/REJECTED`
+- **Devoluciones**: dataset de `StockReturn/StockReturnItem` para validar evidencia + reportes OPS
 - **Clientes**: 3 clientes de prueba
 - **Almacenes**: 3 almacenes con ubicaciones
 - **Productos con stock bajo**: 5 productos

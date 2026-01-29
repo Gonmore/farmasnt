@@ -37,6 +37,13 @@ export function registerSalesPaymentRoutes(app: FastifyInstance) {
   const db = prisma()
   const audit = new AuditService(db)
 
+  function branchCityOf(request: any): string | null {
+    const scoped = !!request.auth?.permissions?.has(Permissions.ScopeBranch)
+    if (!scoped) return null
+    const city = String(request.auth?.warehouseCity ?? '').trim()
+    return city ? city.toUpperCase() : '__MISSING__'
+  }
+
   // Accounts receivable: delivered orders pending payment.
   app.get(
     '/api/v1/sales/payments',
@@ -48,6 +55,11 @@ export function registerSalesPaymentRoutes(app: FastifyInstance) {
       if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
 
       const tenantId = request.auth!.tenantId
+      const branchCity = branchCityOf(request)
+
+      if (branchCity === '__MISSING__') {
+        return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+      }
 
       const wherePaid =
         parsed.data.status === 'PAID'
@@ -61,6 +73,7 @@ export function registerSalesPaymentRoutes(app: FastifyInstance) {
           tenantId,
           status: 'FULFILLED',
           ...wherePaid,
+          ...(branchCity ? { customer: { city: { equals: branchCity, mode: 'insensitive' as const } } } : {}),
         },
         take: parsed.data.take,
         orderBy: [{ deliveryDate: 'asc' }, { id: 'asc' }],
@@ -114,9 +127,18 @@ export function registerSalesPaymentRoutes(app: FastifyInstance) {
 
       const tenantId = request.auth!.tenantId
       const userId = request.auth!.userId
+      const branchCity = branchCityOf(request)
+
+      if (branchCity === '__MISSING__') {
+        return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+      }
 
       const order = await db.salesOrder.findFirst({
-        where: { id, tenantId },
+        where: {
+          id,
+          tenantId,
+          ...(branchCity ? { customer: { city: { equals: branchCity, mode: 'insensitive' as const } } } : {}),
+        },
         select: { id: true, number: true, status: true, version: true, paidAt: true, customerId: true },
       })
       if (!order) return reply.status(404).send({ message: 'Not found' })

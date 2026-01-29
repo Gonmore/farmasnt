@@ -20,6 +20,14 @@ export interface UserInfo {
   tenantId: string;
   fullName?: string | null;
   photoUrl?: string | null;
+  warehouseId?: string | null;
+  warehouse?: {
+    id: string;
+    code: string;
+    name: string;
+    city: string | null;
+    isActive: boolean;
+  } | null;
   version?: number;
   tenant: {
     id: string;

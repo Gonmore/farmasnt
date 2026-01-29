@@ -543,6 +543,13 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
   const db = prisma()
   const audit = new AuditService(db)
 
+  function branchCityOf(request: any): string | null {
+    const scoped = !!request.auth?.permissions?.has(Permissions.ScopeBranch)
+    if (!scoped) return null
+    const city = String(request.auth?.warehouseCity ?? '').trim()
+    return city ? city.toUpperCase() : '__MISSING__'
+  }
+
   // Deliveries (read-side): orders pending delivery / delivered.
   // Pending maps to DRAFT+CONFIRMED to support older orders created before we set CONFIRMED on quote processing.
   app.get(
@@ -555,14 +562,27 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
       if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
 
       const tenantId = request.auth!.tenantId
+      const branchCity = branchCityOf(request)
+
+      if (branchCity === '__MISSING__') {
+        return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+      }
       const statuses = parsed.data.status === 'DELIVERED' ? (['FULFILLED'] as const) : parsed.data.status === 'ALL' ? (['DRAFT', 'CONFIRMED', 'FULFILLED'] as const) : (['DRAFT', 'CONFIRMED'] as const)
-      const cities = parsed.data.cities ? parsed.data.cities.split(',').map(c => c.toUpperCase().trim()).filter(c => c) : undefined
+      const cities = branchCity ? [branchCity] : parsed.data.cities ? parsed.data.cities.split(',').map(c => c.toUpperCase().trim()).filter(c => c) : undefined
 
       const items = await db.salesOrder.findMany({
         where: {
           tenantId,
           status: { in: statuses as any },
-          ...(cities ? { deliveryCity: { in: cities } } : {}),
+          ...(cities
+            ? {
+                // Keep in sync with reports/sales/by-city logic: prefer order.deliveryCity, fallback to customer.city.
+                OR: [
+                  { deliveryCity: { in: cities } },
+                  { AND: [{ OR: [{ deliveryCity: null }, { deliveryCity: '' }] }, { customer: { city: { in: cities } } }] },
+                ],
+              }
+            : {}),
         },
         take: parsed.data.take,
         ...(parsed.data.cursor
@@ -1200,7 +1220,7 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
         requireModuleEnabled(db, 'SALES'),
         requireModuleEnabled(db, 'WAREHOUSE'),
         requirePermission(Permissions.SalesDeliveryWrite),
-        requirePermission(Permissions.StockMove),
+        requirePermission(Permissions.StockDeliver),
       ],
     },
     async (request, reply) => {
@@ -1210,12 +1230,28 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
 
       const tenantId = request.auth!.tenantId
       const userId = request.auth!.userId
+      const branchCity = branchCityOf(request)
+
+      if (branchCity === '__MISSING__') {
+        return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+      }
 
       try {
         const deliveredAt = new Date()
         const result = await db.$transaction(async (tx) => {
           const order = await tx.salesOrder.findFirst({
-            where: { id, tenantId },
+            where: {
+              id,
+              tenantId,
+              ...(branchCity
+                ? {
+                    OR: [
+                      { deliveryCity: { equals: branchCity, mode: 'insensitive' as const } },
+                      { AND: [{ OR: [{ deliveryCity: null }, { deliveryCity: '' }] }, { customer: { city: { equals: branchCity, mode: 'insensitive' as const } } }] },
+                    ],
+                  }
+                : {}),
+            },
             select: { id: true, number: true, status: true, version: true, paymentMode: true },
           })
           if (!order) {

@@ -8,6 +8,8 @@ export type AuthContext = {
   userId: string
   tenantId: string
   permissions: Set<string>
+  warehouseId?: string | null
+  warehouseCity?: string | null
 }
 
 declare module 'fastify' {

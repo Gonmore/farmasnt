@@ -96,8 +96,8 @@ type CustomerListItem = {
   name: string
   isActive: boolean
   city?: string | null
-  creditDays7Enabled?: boolean
-  creditDays14Enabled?: boolean
+  creditEnabled?: boolean
+  creditDays?: number | null
 }
 
 type CustomerListResponse = { items: CustomerListItem[]; nextCursor: string | null }
@@ -685,15 +685,17 @@ export function SellerCatalogPage() {
   const paymentOptions = useMemo(() => {
     const options = [{ value: 'CASH', label: '💵 Pago al contado' }]
 
-    if (selectedCustomer?.creditDays7Enabled) options.push({ value: 'CREDIT_7', label: '🗓️ Crédito 7 días' })
-    if (selectedCustomer?.creditDays14Enabled) options.push({ value: 'CREDIT_14', label: '🗓️ Crédito 14 días' })
+    const creditDays = typeof selectedCustomer?.creditDays === 'number' ? selectedCustomer.creditDays : Number(selectedCustomer?.creditDays)
+    if (selectedCustomer?.creditEnabled && Number.isFinite(creditDays) && creditDays > 0) {
+      options.push({ value: `CREDIT_${Math.trunc(creditDays)}`, label: `🗓️ Crédito ${Math.trunc(creditDays)} días` })
+    }
 
     if (paymentMode && !options.some((o) => o.value === paymentMode)) {
       options.push({ value: paymentMode, label: paymentMode })
     }
 
     return options
-  }, [selectedCustomer?.creditDays7Enabled, selectedCustomer?.creditDays14Enabled, paymentMode])
+  }, [selectedCustomer?.creditEnabled, selectedCustomer?.creditDays, paymentMode])
 
   const canGenerate = !!customerId && cart.items.length > 0
 

@@ -158,11 +158,13 @@ async function main() {
   }
 
   const permissionSpecs = [
+    { code: Permissions.ScopeBranch, module: 'SALES' },
     { code: Permissions.CatalogRead, module: 'WAREHOUSE' },
     { code: Permissions.CatalogWrite, module: 'WAREHOUSE' },
     { code: Permissions.StockRead, module: 'WAREHOUSE' },
     { code: Permissions.StockManage, module: 'WAREHOUSE' },
     { code: Permissions.StockMove, module: 'WAREHOUSE' },
+    { code: Permissions.StockDeliver, module: 'WAREHOUSE' },
     { code: Permissions.AuditRead, module: 'WAREHOUSE' },
     { code: Permissions.SalesOrderRead, module: 'SALES' },
     { code: Permissions.SalesOrderWrite, module: 'SALES' },
@@ -312,6 +314,91 @@ async function main() {
     create: { userId: demoAdminUser.id, roleId: demoAdminRole.id },
   })
 
+  // ============= ROLES OPERATIVOS (Demo Tenant) =============
+  const ventasRole = await db.role.upsert({
+    where: { tenantId_code: { tenantId: demoTenant.id, code: 'VENTAS' } },
+    update: { name: 'Ventas' },
+    create: { tenantId: demoTenant.id, code: 'VENTAS', name: 'Ventas', isSystem: true, createdBy: null },
+    select: { id: true },
+  })
+
+  const logisticaRole = await db.role.upsert({
+    where: { tenantId_code: { tenantId: demoTenant.id, code: 'LOGISTICA' } },
+    update: { name: 'Logística' },
+    create: { tenantId: demoTenant.id, code: 'LOGISTICA', name: 'Logística', isSystem: true, createdBy: null },
+    select: { id: true },
+  })
+
+  const branchAdminRole = await db.role.upsert({
+    where: { tenantId_code: { tenantId: demoTenant.id, code: 'BRANCH_ADMIN' } },
+    update: { name: 'Administrador de Sucursal' },
+    create: { tenantId: demoTenant.id, code: 'BRANCH_ADMIN', name: 'Administrador de Sucursal', isSystem: true, createdBy: null },
+    select: { id: true },
+  })
+
+  const permIdByCode = new Map(perms.map((p) => [p.code, p.id] as const))
+
+  const ventasPerms: string[] = [
+    Permissions.CatalogRead,
+    Permissions.StockRead,
+    Permissions.SalesOrderRead,
+    Permissions.SalesOrderWrite,
+    Permissions.SalesDeliveryRead,
+    Permissions.ReportSalesRead,
+  ]
+
+  const logisticaPerms: string[] = [
+    Permissions.StockRead,
+    Permissions.StockMove,
+    Permissions.StockDeliver,
+    Permissions.SalesOrderRead,
+    Permissions.SalesDeliveryRead,
+    Permissions.SalesDeliveryWrite,
+    Permissions.ReportStockRead,
+  ]
+
+  const branchAdminPerms: string[] = [
+    Permissions.ScopeBranch,
+    Permissions.CatalogRead,
+    Permissions.StockRead,
+    Permissions.StockDeliver,
+    Permissions.SalesOrderRead,
+    Permissions.SalesOrderWrite,
+    Permissions.SalesDeliveryRead,
+    Permissions.SalesDeliveryWrite,
+    Permissions.ReportSalesRead,
+  ]
+
+  for (const code of ventasPerms) {
+    const permissionId = permIdByCode.get(code)
+    if (!permissionId) continue
+    await db.rolePermission.upsert({
+      where: { roleId_permissionId: { roleId: ventasRole.id, permissionId } },
+      update: {},
+      create: { roleId: ventasRole.id, permissionId },
+    })
+  }
+
+  for (const code of logisticaPerms) {
+    const permissionId = permIdByCode.get(code)
+    if (!permissionId) continue
+    await db.rolePermission.upsert({
+      where: { roleId_permissionId: { roleId: logisticaRole.id, permissionId } },
+      update: {},
+      create: { roleId: logisticaRole.id, permissionId },
+    })
+  }
+
+  for (const code of branchAdminPerms) {
+    const permissionId = permIdByCode.get(code)
+    if (!permissionId) continue
+    await db.rolePermission.upsert({
+      where: { roleId_permissionId: { roleId: branchAdminRole.id, permissionId } },
+      update: {},
+      create: { roleId: branchAdminRole.id, permissionId },
+    })
+  }
+
   // ============= LIMPIEZA DE DATOS ANTERIORES =============
   if (!seedDemoData) {
     console.log('\n🌱 Seed básico aplicado (sin data demo).')
@@ -330,8 +417,18 @@ async function main() {
   await db.salesOrder.deleteMany({ where: { tenantId: demoTenant.id } })
   await db.quoteLine.deleteMany({ where: { tenantId: demoTenant.id } })
   await db.quote.deleteMany({ where: { tenantId: demoTenant.id } })
+  // Safety: delete request items referencing demo products even if they were created under another tenant.
+  // The FK is on productId only, so cross-tenant references would block product cleanup.
+  const demoProductsForCleanup = await db.product.findMany({ where: { tenantId: demoTenant.id }, select: { id: true } })
+  const demoProductIdsForCleanup = demoProductsForCleanup.map((p) => p.id)
+  if (demoProductIdsForCleanup.length > 0) {
+    await db.stockMovementRequestItem.deleteMany({ where: { productId: { in: demoProductIdsForCleanup } } })
+  }
+  await db.stockMovementRequestItem.deleteMany({ where: { product: { tenantId: demoTenant.id } } })
   await db.stockMovementRequestItem.deleteMany({ where: { tenantId: demoTenant.id } })
   await db.stockMovementRequest.deleteMany({ where: { tenantId: demoTenant.id } })
+  await db.stockReturnItem.deleteMany({ where: { tenantId: demoTenant.id } })
+  await db.stockReturn.deleteMany({ where: { tenantId: demoTenant.id } })
   await db.stockMovement.deleteMany({ where: { tenantId: demoTenant.id } })
   await db.inventoryBalance.deleteMany({ where: { tenantId: demoTenant.id } })
   await db.batch.deleteMany({ where: { tenantId: demoTenant.id } })
@@ -527,6 +624,65 @@ async function main() {
     where: { tenantId_warehouseId_code: { tenantId: demoTenant.id, warehouseId: whSantaCruz.id, code: 'BIN-03' } },
     update: {},
     create: { tenantId: demoTenant.id, warehouseId: whSantaCruz.id, code: 'BIN-03', type: 'BIN', createdBy: demoAdminUser.id },
+  })
+
+  // Usuarios demo adicionales
+  const ventasUser = await db.user.upsert({
+    where: { tenantId_email: { tenantId: demoTenant.id, email: 'ventas@demo.local' } },
+    update: { ...(updatePasswords ? { passwordHash } : {}), isActive: true },
+    create: {
+      tenantId: demoTenant.id,
+      email: 'ventas@demo.local',
+      passwordHash,
+      fullName: 'Usuario Ventas',
+      isActive: true,
+      createdBy: demoAdminUser.id,
+    },
+    select: { id: true },
+  })
+  await db.userRole.upsert({
+    where: { userId_roleId: { userId: ventasUser.id, roleId: ventasRole.id } },
+    update: {},
+    create: { userId: ventasUser.id, roleId: ventasRole.id },
+  })
+
+  const logisticaUser = await db.user.upsert({
+    where: { tenantId_email: { tenantId: demoTenant.id, email: 'logistica@demo.local' } },
+    update: { ...(updatePasswords ? { passwordHash } : {}), isActive: true },
+    create: {
+      tenantId: demoTenant.id,
+      email: 'logistica@demo.local',
+      passwordHash,
+      fullName: 'Usuario Logística',
+      isActive: true,
+      createdBy: demoAdminUser.id,
+    },
+    select: { id: true },
+  })
+  await db.userRole.upsert({
+    where: { userId_roleId: { userId: logisticaUser.id, roleId: logisticaRole.id } },
+    update: {},
+    create: { userId: logisticaUser.id, roleId: logisticaRole.id },
+  })
+
+  const branchAdminUser = await db.user.upsert({
+    where: { tenantId_email: { tenantId: demoTenant.id, email: 'branch.scz@demo.local' } },
+    update: { ...(updatePasswords ? { passwordHash } : {}), isActive: true, warehouseId: whSantaCruz.id },
+    create: {
+      tenantId: demoTenant.id,
+      email: 'branch.scz@demo.local',
+      passwordHash,
+      fullName: 'Admin Sucursal (SCZ)',
+      isActive: true,
+      warehouseId: whSantaCruz.id,
+      createdBy: demoAdminUser.id,
+    },
+    select: { id: true },
+  })
+  await db.userRole.upsert({
+    where: { userId_roleId: { userId: branchAdminUser.id, roleId: branchAdminRole.id } },
+    update: {},
+    create: { userId: branchAdminUser.id, roleId: branchAdminRole.id },
   })
 
   // Clientes en diferentes ciudades
@@ -1528,6 +1684,19 @@ async function main() {
     if (status === 'FULFILLED') {
       requestData.fulfilledAt = new Date(requestDate.getTime() + (1 + Math.random() * 7) * 86400000)
       requestData.fulfilledBy = demoAdminUser.id
+
+      // Confirmación: algunas quedan pendientes, otras aceptadas/rechazadas para mostrar el flujo
+      const confirmations = ['PENDING', 'ACCEPTED', 'REJECTED'] as const
+      const confirmationStatus = confirmations[Math.floor(Math.random() * confirmations.length)]
+      requestData.confirmationStatus = confirmationStatus
+      if (confirmationStatus !== 'PENDING') {
+        requestData.confirmedAt = new Date(requestData.fulfilledAt.getTime() + 3600_000)
+        requestData.confirmedBy = demoAdminUser.id
+        requestData.confirmationNote =
+          confirmationStatus === 'ACCEPTED'
+            ? 'Recibido conforme (seed)'
+            : 'Observación: faltó parte del stock (seed)'
+      }
     }
 
     await db.stockMovementRequest.create({
@@ -1537,6 +1706,50 @@ async function main() {
     totalRequests++
   }
   console.log(`   ✅ ${totalRequests} solicitudes de movimientos creadas (${requestStatuses.map(s => `${s}: ${Math.floor(totalRequests / requestStatuses.length)}`).join(', ')})`)
+
+  // ============= DEVOLUCIONES (OPS) =============
+  // Crear algunas devoluciones para alimentar el módulo y reportes OPS.
+  // Nota: aquí no se crean movimientos/balances; los reportes OPS consultan StockReturn/StockReturnItem.
+  const returnDates = [addDaysUtc(todayUtc, -5), addDaysUtc(todayUtc, -15), addDaysUtc(todayUtc, -25)]
+  const returnLocations = [locSantaCruz, locCochabamba, loc]
+  const returnReasons = ['Producto dañado', 'Devolución de cliente', 'Cambio de lote']
+
+  // Crear devoluciones usando productos/batches ya existentes
+  for (let i = 0; i < 3; i++) {
+    const toLocation = returnLocations[i % returnLocations.length]
+    const createdAt = returnDates[i % returnDates.length]
+
+    const p1 = createdProducts[Math.floor(Math.random() * createdProducts.length)]
+    const p2 = createdProducts[Math.floor(Math.random() * createdProducts.length)]
+
+    const b1 = await db.batch.findFirst({ where: { tenantId: demoTenant.id, productId: p1.id }, select: { id: true } })
+    const b2 = await db.batch.findFirst({ where: { tenantId: demoTenant.id, productId: p2.id }, select: { id: true } })
+
+    const sr = await db.stockReturn.create({
+      data: {
+        tenantId: demoTenant.id,
+        toLocationId: toLocation.id,
+        reason: returnReasons[i % returnReasons.length],
+        note: 'Registro demo (seed)',
+        photoKey: null,
+        photoUrl: null,
+        sourceType: null,
+        sourceId: null,
+        createdAt,
+        createdBy: demoAdminUser.id,
+      },
+      select: { id: true },
+    })
+
+    const itemsData: any[] = []
+    if (b1) itemsData.push({ tenantId: demoTenant.id, returnId: sr.id, productId: p1.id, batchId: b1.id, quantity: '3', createdAt, createdBy: demoAdminUser.id })
+    if (b2) itemsData.push({ tenantId: demoTenant.id, returnId: sr.id, productId: p2.id, batchId: b2.id, quantity: '2', createdAt, createdBy: demoAdminUser.id })
+
+    if (itemsData.length > 0) {
+      await db.stockReturnItem.createMany({ data: itemsData })
+    }
+  }
+  console.log('   ✅ 3 devoluciones creadas (seed)')
 
   // ============= MOVIMIENTOS DE STOCK ADICIONALES (ENTRADAS) =============
   // Crear movimientos de entrada para simular reposiciones
@@ -1597,6 +1810,10 @@ async function main() {
   console.log(`   - Domain: demo.localhost`)
   console.log(`   - Admin: ${adminEmail} / ${adminPassword}`)
   console.log(`   - Role: TENANT_ADMIN (all permissions except platform:tenants:manage)`)
+  console.log(`   - Usuarios demo:`)
+  console.log(`     * ventas@demo.local / ${adminPassword} (VENTAS)`)
+  console.log(`     * logistica@demo.local / ${adminPassword} (LOGISTICA)`)
+  console.log(`     * branch.scz@demo.local / ${adminPassword} (BRANCH_ADMIN, preseleccionado en WH-03 Santa Cruz)`)
   console.log(`   - Subscription: ${demoTenant.branchLimit} branches until ${demoTenant.subscriptionExpiresAt}`)
   console.log(`   - Contact: ${demoTenant.contactName} (${demoTenant.contactEmail}, ${demoTenant.contactPhone})`)
 

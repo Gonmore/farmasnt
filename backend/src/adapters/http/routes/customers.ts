@@ -40,6 +40,42 @@ async function findDuplicateCustomerByName(db: ReturnType<typeof prisma>, tenant
   return rows?.[0] ?? null
 }
 
+function resolveCustomerCredit(input: {
+  creditEnabled?: boolean | undefined
+  creditDays?: number | null | undefined
+  creditDays7Enabled?: boolean | undefined
+  creditDays14Enabled?: boolean | undefined
+}): {
+  creditEnabled: boolean
+  creditDays: number | null
+  // legacy
+  creditDays7Enabled: boolean
+  creditDays14Enabled: boolean
+} {
+  const legacyEnabled = !!input.creditDays14Enabled || !!input.creditDays7Enabled
+  const enabled = typeof input.creditEnabled === 'boolean' ? input.creditEnabled : legacyEnabled
+
+  const legacyDays = input.creditDays14Enabled ? 14 : input.creditDays7Enabled ? 7 : null
+  const daysRaw = input.creditDays !== undefined ? input.creditDays : legacyDays
+  const days = daysRaw === null || daysRaw === undefined ? null : Number(daysRaw)
+
+  if (enabled) {
+    if (!Number.isFinite(days) || (days as number) <= 0) {
+      const err = new Error('creditDays es requerido cuando el crédito está habilitado') as Error & { statusCode?: number }
+      err.statusCode = 400
+      throw err
+    }
+    return {
+      creditEnabled: true,
+      creditDays: Math.trunc(days as number),
+      creditDays7Enabled: Math.trunc(days as number) === 7,
+      creditDays14Enabled: Math.trunc(days as number) === 14,
+    }
+  }
+
+  return { creditEnabled: false, creditDays: null, creditDays7Enabled: false, creditDays14Enabled: false }
+}
+
 const customerCreateSchema = z.object({
   name: z.string().trim().min(1).max(200),
   businessName: z.string().trim().max(200).optional(),
@@ -54,8 +90,12 @@ const customerCreateSchema = z.object({
   city: z.string().trim().min(1).max(120).optional(),
   zone: z.string().trim().min(1).max(120).optional(),
   mapsUrl: z.string().trim().url().max(500).optional(),
+  // Legacy flags
   creditDays7Enabled: z.boolean().optional(),
   creditDays14Enabled: z.boolean().optional(),
+  // New flexible credit configuration
+  creditEnabled: z.boolean().optional(),
+  creditDays: z.coerce.number().int().min(1).max(365).optional(),
 })
 
 const customerUpdateSchema = z.object({
@@ -74,8 +114,12 @@ const customerUpdateSchema = z.object({
   city: z.string().trim().min(1).max(120).nullable().optional(),
   zone: z.string().trim().min(1).max(120).nullable().optional(),
   mapsUrl: z.string().trim().url().max(500).nullable().optional(),
+  // Legacy flags
   creditDays7Enabled: z.boolean().optional(),
   creditDays14Enabled: z.boolean().optional(),
+  // New flexible credit configuration
+  creditEnabled: z.boolean().optional(),
+  creditDays: z.coerce.number().int().min(1).max(365).nullable().optional(),
 })
 
 const listQuerySchema = z.object({
@@ -88,6 +132,13 @@ const listQuerySchema = z.object({
 export async function registerCustomerRoutes(app: FastifyInstance): Promise<void> {
   const db = prisma()
   const audit = new AuditService(db)
+
+  function branchCityOf(request: any): string | null {
+    const scoped = !!request.auth?.permissions?.has(Permissions.ScopeBranch)
+    if (!scoped) return null
+    const city = String(request.auth?.warehouseCity ?? '').trim()
+    return city ? city.toUpperCase() : '__MISSING__'
+  }
 
   // Cities that have at least one active branch (warehouse)
   // Used by Sales/Customers UI to restrict customer.city values
@@ -133,6 +184,18 @@ export async function registerCustomerRoutes(app: FastifyInstance): Promise<void
 
       const tenantId = request.auth!.tenantId
       const userId = request.auth!.userId
+      const branchCity = branchCityOf(request)
+
+      if (branchCity === '__MISSING__') {
+        return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+      }
+
+      if (branchCity) {
+        const city = (parsed.data.city ?? '').trim().toUpperCase()
+        if (!city || city !== branchCity) {
+          return reply.status(403).send({ message: 'Solo puede crear clientes para su sucursal' })
+        }
+      }
 
       // Prevent duplicates (tenant-scoped)
       if (parsed.data.nit) {
@@ -141,6 +204,14 @@ export async function registerCustomerRoutes(app: FastifyInstance): Promise<void
       }
       const dupName = await findDuplicateCustomerByName(db, tenantId, parsed.data.name)
       if (dupName) return reply.status(409).send({ message: 'Cliente duplicado: ya existe un cliente con el mismo nombre.' })
+
+      let credit: ReturnType<typeof resolveCustomerCredit>
+      try {
+        credit = resolveCustomerCredit(parsed.data)
+      } catch (e: any) {
+        if (e?.statusCode) return reply.status(e.statusCode).send({ message: e.message })
+        throw e
+      }
 
       const created = await db.customer.create({
         data: {
@@ -158,8 +229,10 @@ export async function registerCustomerRoutes(app: FastifyInstance): Promise<void
           city: parsed.data.city ? parsed.data.city.toUpperCase() : null,
           zone: parsed.data.zone ? parsed.data.zone.toUpperCase() : null,
           mapsUrl: parsed.data.mapsUrl ?? null,
-          creditDays7Enabled: parsed.data.creditDays7Enabled ?? false,
-          creditDays14Enabled: parsed.data.creditDays14Enabled ?? false,
+          creditEnabled: credit.creditEnabled,
+          creditDays: credit.creditDays,
+          creditDays7Enabled: credit.creditDays7Enabled,
+          creditDays14Enabled: credit.creditDays14Enabled,
           createdBy: userId,
         },
         select: {
@@ -178,6 +251,8 @@ export async function registerCustomerRoutes(app: FastifyInstance): Promise<void
           zone: true,
           mapsUrl: true,
           isActive: true,
+          creditEnabled: true,
+          creditDays: true,
           creditDays7Enabled: true,
           creditDays14Enabled: true,
           version: true,
@@ -208,18 +283,27 @@ export async function registerCustomerRoutes(app: FastifyInstance): Promise<void
       if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
 
       const tenantId = request.auth!.tenantId
+      const branchCity = branchCityOf(request)
+
+      if (branchCity === '__MISSING__') {
+        return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+      }
       const q = parsed.data.q
-      const cities = parsed.data.cities ? parsed.data.cities.split(',').map(c => c.trim()).filter(c => c.length > 0) : undefined
+      const cities = parsed.data.cities ? parsed.data.cities.split(',').map((c) => c.trim()).filter((c) => c.length > 0) : undefined
 
       const items = await db.customer.findMany({
         where: {
           tenantId,
           ...(q ? { name: { contains: q, mode: 'insensitive' } } : {}),
-          ...(cities && cities.length > 0 ? { 
-            OR: cities.map(city => ({
-              city: { equals: city.toUpperCase(), mode: 'insensitive' }
-            }))
-          } : {}),
+          ...(branchCity
+            ? { city: { equals: branchCity, mode: 'insensitive' as const } }
+            : cities && cities.length > 0
+              ? {
+                  OR: cities.map((city) => ({
+                    city: { equals: city.toUpperCase(), mode: 'insensitive' as const },
+                  })),
+                }
+              : {}),
         },
         take: parsed.data.take,
         ...(parsed.data.cursor
@@ -239,6 +323,8 @@ export async function registerCustomerRoutes(app: FastifyInstance): Promise<void
           city: true,
           zone: true,
           mapsUrl: true,
+          creditEnabled: true,
+          creditDays: true,
           creditDays7Enabled: true,
           creditDays14Enabled: true,
           version: true,
@@ -259,9 +345,18 @@ export async function registerCustomerRoutes(app: FastifyInstance): Promise<void
     async (request, reply) => {
       const id = (request.params as any).id as string
       const tenantId = request.auth!.tenantId
+      const branchCity = branchCityOf(request)
+
+      if (branchCity === '__MISSING__') {
+        return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+      }
 
       const customer = await db.customer.findFirst({
-        where: { id, tenantId },
+        where: {
+          id,
+          tenantId,
+          ...(branchCity ? { city: { equals: branchCity, mode: 'insensitive' as const } } : {}),
+        },
         select: {
           id: true,
           name: true,
@@ -278,6 +373,8 @@ export async function registerCustomerRoutes(app: FastifyInstance): Promise<void
           zone: true,
           mapsUrl: true,
           isActive: true,
+          creditEnabled: true,
+          creditDays: true,
           creditDays7Enabled: true,
           creditDays14Enabled: true,
           version: true,
@@ -302,9 +399,18 @@ export async function registerCustomerRoutes(app: FastifyInstance): Promise<void
 
       const tenantId = request.auth!.tenantId
       const userId = request.auth!.userId
+      const branchCity = branchCityOf(request)
+
+      if (branchCity === '__MISSING__') {
+        return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+      }
 
       const before = await db.customer.findFirst({
-        where: { id, tenantId },
+        where: {
+          id,
+          tenantId,
+          ...(branchCity ? { city: { equals: branchCity, mode: 'insensitive' as const } } : {}),
+        },
         select: {
           id: true,
           name: true,
@@ -321,6 +427,8 @@ export async function registerCustomerRoutes(app: FastifyInstance): Promise<void
           zone: true,
           mapsUrl: true,
           isActive: true,
+          creditEnabled: true,
+          creditDays: true,
           creditDays7Enabled: true,
           creditDays14Enabled: true,
           version: true,
@@ -328,6 +436,13 @@ export async function registerCustomerRoutes(app: FastifyInstance): Promise<void
       })
       if (!before) return reply.status(404).send({ message: 'Not found' })
       if (before.version !== parsed.data.version) return reply.status(409).send({ message: 'Version conflict' })
+
+      if (branchCity && parsed.data.city !== undefined) {
+        const nextCity = parsed.data.city ? String(parsed.data.city).trim().toUpperCase() : ''
+        if (!nextCity || nextCity !== branchCity) {
+          return reply.status(403).send({ message: 'No puede cambiar el cliente a otra sucursal' })
+        }
+      }
 
       // Prevent duplicates when changing identifying fields
       if (parsed.data.nit !== undefined && parsed.data.nit !== null) {
@@ -357,8 +472,32 @@ export async function registerCustomerRoutes(app: FastifyInstance): Promise<void
       if (parsed.data.city !== undefined) updateData.city = parsed.data.city ? parsed.data.city.toUpperCase() : null
       if (parsed.data.zone !== undefined) updateData.zone = parsed.data.zone ? parsed.data.zone.toUpperCase() : null
       if (parsed.data.mapsUrl !== undefined) updateData.mapsUrl = parsed.data.mapsUrl
-      if (parsed.data.creditDays7Enabled !== undefined) updateData.creditDays7Enabled = parsed.data.creditDays7Enabled
-      if (parsed.data.creditDays14Enabled !== undefined) updateData.creditDays14Enabled = parsed.data.creditDays14Enabled
+
+      const hasAnyCreditField =
+        parsed.data.creditEnabled !== undefined ||
+        parsed.data.creditDays !== undefined ||
+        parsed.data.creditDays7Enabled !== undefined ||
+        parsed.data.creditDays14Enabled !== undefined
+
+      if (hasAnyCreditField) {
+        let credit: ReturnType<typeof resolveCustomerCredit>
+        try {
+          credit = resolveCustomerCredit({
+            creditEnabled: parsed.data.creditEnabled ?? before.creditEnabled,
+            creditDays: parsed.data.creditDays !== undefined ? parsed.data.creditDays : before.creditDays,
+            creditDays7Enabled: parsed.data.creditDays7Enabled ?? before.creditDays7Enabled,
+            creditDays14Enabled: parsed.data.creditDays14Enabled ?? before.creditDays14Enabled,
+          })
+        } catch (e: any) {
+          if (e?.statusCode) return reply.status(e.statusCode).send({ message: e.message })
+          throw e
+        }
+
+        updateData.creditEnabled = credit.creditEnabled
+        updateData.creditDays = credit.creditDays
+        updateData.creditDays7Enabled = credit.creditDays7Enabled
+        updateData.creditDays14Enabled = credit.creditDays14Enabled
+      }
 
       const updated = await db.customer.update({
         where: { id },
@@ -379,6 +518,8 @@ export async function registerCustomerRoutes(app: FastifyInstance): Promise<void
           zone: true,
           mapsUrl: true,
           isActive: true,
+          creditEnabled: true,
+          creditDays: true,
           creditDays7Enabled: true,
           creditDays14Enabled: true,
           version: true,

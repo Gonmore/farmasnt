@@ -7,11 +7,13 @@ export function ProtectedRoute({
   requiredPermissions,
   requireAll = true,
   denyRoleCodes,
+  denyPermissionCodes,
 }: {
   children: React.ReactNode
   requiredPermissions?: string[]
   requireAll?: boolean
   denyRoleCodes?: string[]
+  denyPermissionCodes?: string[]
 }) {
   const auth = useAuth()
   const perms = usePermissions()
@@ -28,6 +30,13 @@ export function ProtectedRoute({
   if (denyRoleCodes && denyRoleCodes.length > 0) {
     const hasDeniedRole = perms.roles.some((r) => denyRoleCodes.includes(r.code))
     if (hasDeniedRole && !perms.isTenantAdmin) {
+      return <Navigate to="/" replace />
+    }
+  }
+
+  if (denyPermissionCodes && denyPermissionCodes.length > 0) {
+    const hasDeniedPermission = perms.hasAnyPermission(denyPermissionCodes)
+    if (hasDeniedPermission && !perms.isTenantAdmin) {
       return <Navigate to="/" replace />
     }
   }

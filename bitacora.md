@@ -617,3 +617,26 @@ Tenant Admin (Clientes)
 - **Creación de lotes**:
   - Deshabilitada selección automática de sucursal, ahora requiere selección manual con placeholder "Elegir sucursal".
 
+---
+
+### **[29 Ene 2026]** — Transferencias (solicitudes + masivo), devoluciones con evidencia y reportes OPS
+
+- **Solicitudes de movimiento con confirmación (Sucursal destino)**:
+  - Flujo `PENDING/ACCEPTED/REJECTED` para que la sucursal destino confirme recepción.
+  - Se incorporó resumen operativo por sucursal/ciudad (totales/abiertas/atendidas/canceladas y estado de confirmación).
+
+- **Traspasos masivos (dos variantes)**:
+  - A) **Movimiento masivo multi-línea** (`bulk transfer`) para crear múltiples `TRANSFER` en un solo envío.
+  - B) **Atender múltiples solicitudes seleccionadas** (`bulk fulfill`) asignando cantidades a requests específicos, evitando doble auto-aplicación.
+
+- **Devoluciones con evidencia (motivo + foto)**:
+  - Modelo `StockReturn/StockReturnItem` + endpoints para presign de foto y creación/listado/detalle.
+  - Al crear una devolución se generan movimientos `IN` por ítem con `referenceType='RETURN'`.
+
+- **Reportes OPS (StockReportsPage)**:
+  - Nueva pestaña OPS con KPIs y tablas: solicitudes por ciudad y devoluciones por sucursal.
+
+- **Infra Docker/Prisma (fix build)**:
+  - Se corrigió validación Prisma agregando los campos inversos de relaciones para `StockReturn*`.
+  - Con eso `docker compose -f docker-compose.local.yml build` y `up -d` vuelven a quedar OK.
+

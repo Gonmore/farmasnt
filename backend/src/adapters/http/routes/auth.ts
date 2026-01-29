@@ -44,6 +44,7 @@ const updateMeSchema = z.object({
   fullName: z.string().trim().min(1).max(200).nullable().optional(),
   photoUrl: z.string().url().nullable().optional(),
   photoKey: z.string().trim().min(1).max(800).nullable().optional(),
+  warehouseId: z.string().uuid().nullable().optional(),
 })
 
 function assertS3Configured(env: ReturnType<typeof getEnv>) {
@@ -374,6 +375,18 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
     if (Object.prototype.hasOwnProperty.call(parsed.data, 'photoUrl')) data.photoUrl = parsed.data.photoUrl
     if (Object.prototype.hasOwnProperty.call(parsed.data, 'photoKey')) data.photoKey = parsed.data.photoKey
 
+    if (Object.prototype.hasOwnProperty.call(parsed.data, 'warehouseId')) {
+      const wid = parsed.data.warehouseId
+      if (wid === null) {
+        data.warehouseId = null
+      } else {
+        if (typeof wid !== 'string' || !wid.trim()) return reply.status(400).send({ message: 'Warehouse inválido' })
+        const wh = await db.warehouse.findFirst({ where: { id: wid, tenantId: actor.tenantId, isActive: true }, select: { id: true } })
+        if (!wh) return reply.status(400).send({ message: 'Warehouse inválido' })
+        data.warehouseId = wid
+      }
+    }
+
     let updated: any
     try {
       updated = await db.user.update({
@@ -550,6 +563,10 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
           tenantId: true,
           fullName: true,
           photoUrl: true,
+          warehouseId: true,
+          warehouse: {
+            select: { id: true, code: true, name: true, city: true, isActive: true },
+          },
           version: true,
           tenant: {
             select: {
@@ -593,6 +610,10 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
           email: true,
           tenantId: true,
           fullName: true,
+          warehouseId: true,
+          warehouse: {
+            select: { id: true, code: true, name: true, city: true, isActive: true },
+          },
           version: true,
           tenant: {
             select: {
@@ -652,6 +673,8 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
         tenantId: user.tenantId,
         fullName: user.fullName,
         photoUrl: user.photoUrl ?? null,
+        warehouseId: user.warehouseId ?? null,
+        warehouse: user.warehouse ?? null,
         version: user.version,
         tenant: user.tenant,
       },

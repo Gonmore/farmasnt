@@ -23,8 +23,8 @@ type Customer = {
   zone?: string | null
   mapsUrl?: string | null
   isActive: boolean
-  creditDays7Enabled?: boolean
-  creditDays14Enabled?: boolean
+  creditEnabled?: boolean
+  creditDays?: number | null
   version: number
   createdAt: string
 }
@@ -37,7 +37,23 @@ async function fetchCustomer(token: string, customerId: string): Promise<Custome
 
 async function createCustomer(
   token: string,
-  data: { name: string; businessName?: string; nit?: string; contactName?: string; contactBirthDay?: number; contactBirthMonth?: number; contactBirthYear?: number; email?: string; phone?: string; address?: string; city?: string; zone?: string; mapsUrl?: string; creditDays7Enabled?: boolean; creditDays14Enabled?: boolean },
+  data: {
+    name: string
+    businessName?: string
+    nit?: string
+    contactName?: string
+    contactBirthDay?: number
+    contactBirthMonth?: number
+    contactBirthYear?: number
+    email?: string
+    phone?: string
+    address?: string
+    city?: string
+    zone?: string
+    mapsUrl?: string
+    creditEnabled?: boolean
+    creditDays?: number
+  },
 ): Promise<Customer> {
   return apiFetch(`/api/v1/customers`, {
     method: 'POST',
@@ -69,8 +85,8 @@ async function updateCustomer(
     city?: string
     zone?: string
     mapsUrl?: string
-    creditDays7Enabled?: boolean
-    creditDays14Enabled?: boolean
+    creditEnabled?: boolean
+    creditDays?: number | null
   },
 ): Promise<Customer> {
   return apiFetch(`/api/v1/customers/${customerId}`, {
@@ -103,8 +119,8 @@ export function CustomerDetailPage() {
   const [zone, setZone] = useState('')
   const [mapsUrl, setMapsUrl] = useState('')
   const [isActive, setIsActive] = useState(true)
-  const [creditDays7Enabled, setCreditDays7Enabled] = useState(false)
-  const [creditDays14Enabled, setCreditDays14Enabled] = useState(false)
+  const [creditEnabled, setCreditEnabled] = useState(false)
+  const [creditDays, setCreditDays] = useState('')
   const [error, setError] = useState('')
 
   const handleMapLocationSelect = useCallback((mapsUrl: string, geocodedAddress?: string) => {
@@ -143,8 +159,14 @@ export function CustomerDetailPage() {
       setZone(customerQuery.data.zone || '')
       setMapsUrl(customerQuery.data.mapsUrl || '')
       setIsActive(customerQuery.data.isActive)
-      setCreditDays7Enabled(!!customerQuery.data.creditDays7Enabled)
-      setCreditDays14Enabled(!!customerQuery.data.creditDays14Enabled)
+      setCreditEnabled(!!customerQuery.data.creditEnabled)
+      setCreditDays(
+        typeof customerQuery.data.creditDays === 'number' && Number.isFinite(customerQuery.data.creditDays)
+          ? String(customerQuery.data.creditDays)
+          : customerQuery.data.creditDays
+            ? String(customerQuery.data.creditDays)
+            : '',
+      )
     }
   }, [customerQuery.data])
 
@@ -164,8 +186,8 @@ export function CustomerDetailPage() {
         ...(city && { city }),
         ...(zone && { zone }),
         ...(mapsUrl && { mapsUrl }),
-        creditDays7Enabled,
-        creditDays14Enabled,
+        creditEnabled,
+        ...(creditEnabled && creditDays.trim() && { creditDays: Number(creditDays) }),
       }),
     onSuccess: (newCustomer) => {
       queryClient.invalidateQueries({ queryKey: ['customers'] })
@@ -196,8 +218,8 @@ export function CustomerDetailPage() {
         ...(zone && { zone }),
         ...(mapsUrl && { mapsUrl }),
         isActive,
-        creditDays7Enabled,
-        creditDays14Enabled,
+        creditEnabled,
+        creditDays: creditEnabled && creditDays.trim() ? Number(creditDays) : null,
       })
     },
     onSuccess: () => {
@@ -486,23 +508,30 @@ export function CustomerDetailPage() {
                 <label className="flex items-center gap-3 text-sm text-slate-700 dark:text-slate-200">
                   <input
                     type="checkbox"
-                    checked={creditDays7Enabled}
-                    onChange={(e) => setCreditDays7Enabled(e.target.checked)}
+                    checked={creditEnabled}
+                    onChange={(e) => {
+                      const enabled = e.target.checked
+                      setCreditEnabled(enabled)
+                      if (!enabled) setCreditDays('')
+                    }}
                     disabled={isSubmitting}
                     className="h-4 w-4"
                   />
-                  Habilitar crédito 7 días
+                  Habilitar créditos
                 </label>
-                <label className="flex items-center gap-3 text-sm text-slate-700 dark:text-slate-200">
-                  <input
-                    type="checkbox"
-                    checked={creditDays14Enabled}
-                    onChange={(e) => setCreditDays14Enabled(e.target.checked)}
+
+                {creditEnabled && (
+                  <Input
+                    label="Días de crédito"
+                    type="number"
+                    min={1}
+                    max={365}
+                    value={creditDays}
+                    onChange={(e) => setCreditDays(e.target.value)}
+                    placeholder="Ej: 7, 14, 30"
                     disabled={isSubmitting}
-                    className="h-4 w-4"
                   />
-                  Habilitar crédito 14 días
-                </label>
+                )}
               </div>
             </div>
 

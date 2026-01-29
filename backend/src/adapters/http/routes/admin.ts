@@ -95,6 +95,7 @@ const userCreateSchema = z.object({
   password: z.string().min(6).max(200),
   fullName: z.string().trim().max(200).optional(),
   roleIds: z.array(z.string().uuid()).optional(),
+  warehouseId: z.string().uuid().nullable().optional(),
 })
 
 const userStatusUpdateSchema = z.object({
@@ -528,6 +529,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
             password: { type: 'string' },
             fullName: { type: 'string' },
             roleIds: { type: 'array', items: { type: 'string' } },
+            warehouseId: { type: 'string', nullable: true },
           },
           required: ['email', 'password'],
           additionalProperties: false,
@@ -558,6 +560,11 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
     const userId = request.auth!.userId
     const email = normalizeEmail(parsed.data.email)
 
+    if (parsed.data.warehouseId) {
+      const wh = await db.warehouse.findFirst({ where: { id: parsed.data.warehouseId, tenantId, isActive: true }, select: { id: true } })
+      if (!wh) return reply.status(400).send({ message: 'Warehouse inválido' })
+    }
+
     // Prevent duplicate emails across the whole system (email is the login identifier).
     // If you ever need same email across tenants, relax this check.
     const anyExisting = await db.user.findFirst({ where: { email }, select: { id: true } })
@@ -573,6 +580,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
             email,
             passwordHash,
             fullName: parsed.data.fullName ?? null,
+            warehouseId: parsed.data.warehouseId ?? null,
             createdBy: userId,
           },
           select: { id: true, email: true, fullName: true, isActive: true, createdAt: true },

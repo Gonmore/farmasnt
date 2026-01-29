@@ -10,7 +10,7 @@ import { blobToBase64, exportElementToPdf, pdfBlobFromElement } from '../../lib/
 import { useAuth } from '../../providers/AuthProvider'
 import { useTenant } from '../../providers/TenantProvider'
 
-type StockTab = 'INPUTS' | 'TRANSFERS' | 'ROTATION' | 'NOMOVEMENT' | 'LOWSTOCK' | 'EXPIRY'
+type StockTab = 'INPUTS' | 'TRANSFERS' | 'ROTATION' | 'NOMOVEMENT' | 'LOWSTOCK' | 'EXPIRY' | 'OPS'
 
 type StockInputsItem = {
   productId: string
@@ -75,6 +75,33 @@ type ExpiryAlertItem = {
   expiryDate: string | null
   quantity: number
   daysUntilExpiry: number | null
+}
+
+type MovementRequestsSummary = {
+  total: number
+  open: number
+  fulfilled: number
+  cancelled: number
+  pending: number
+  accepted: number
+  rejected: number
+}
+
+type MovementRequestsByCityItem = MovementRequestsSummary & {
+  city: string | null
+}
+
+type ReturnsSummary = {
+  returnsCount: number
+  itemsCount: number
+  quantity: string
+}
+
+type ReturnsByWarehouseItem = {
+  warehouse: { id: string; code: string | null; name: string | null; city: string | null }
+  returnsCount: number
+  itemsCount: number
+  quantity: string
 }
 
 function toIsoDate(d: Date): string {
@@ -150,6 +177,42 @@ async function fetchExpiryAlerts(token: string, daysAhead: number, take: number)
   return apiFetch(`/api/v1/reports/stock/expiry-alerts?${params}`, { token })
 }
 
+async function fetchMovementRequestsSummary(token: string, q: { from?: string; to?: string }): Promise<MovementRequestsSummary> {
+  const params = new URLSearchParams()
+  if (q.from) params.set('from', q.from)
+  if (q.to) params.set('to', q.to)
+  const suffix = params.toString() ? `?${params.toString()}` : ''
+  return apiFetch(`/api/v1/reports/stock/movement-requests/summary${suffix}`, { token })
+}
+
+async function fetchMovementRequestsByCity(
+  token: string,
+  q: { from?: string; to?: string; take: number },
+): Promise<{ items: MovementRequestsByCityItem[] }> {
+  const params = new URLSearchParams({ take: String(q.take) })
+  if (q.from) params.set('from', q.from)
+  if (q.to) params.set('to', q.to)
+  return apiFetch(`/api/v1/reports/stock/movement-requests/by-city?${params}`, { token })
+}
+
+async function fetchReturnsSummary(token: string, q: { from?: string; to?: string }): Promise<ReturnsSummary> {
+  const params = new URLSearchParams()
+  if (q.from) params.set('from', q.from)
+  if (q.to) params.set('to', q.to)
+  const suffix = params.toString() ? `?${params.toString()}` : ''
+  return apiFetch(`/api/v1/reports/stock/returns/summary${suffix}`, { token })
+}
+
+async function fetchReturnsByWarehouse(
+  token: string,
+  q: { from?: string; to?: string; take: number },
+): Promise<{ items: ReturnsByWarehouseItem[] }> {
+  const params = new URLSearchParams({ take: String(q.take) })
+  if (q.from) params.set('from', q.from)
+  if (q.to) params.set('to', q.to)
+  return apiFetch(`/api/v1/reports/stock/returns/by-warehouse?${params}`, { token })
+}
+
 async function createStockSchedule(
   token: string,
   input: {
@@ -208,7 +271,7 @@ export function StockReportsPage() {
     const qsFrom = sp.get('from')
     const qsTo = sp.get('to')
 
-    if (qsTab && ['INPUTS', 'TRANSFERS', 'ROTATION', 'NOMOVEMENT', 'LOWSTOCK', 'EXPIRY'].includes(qsTab)) {
+    if (qsTab && ['INPUTS', 'TRANSFERS', 'ROTATION', 'NOMOVEMENT', 'LOWSTOCK', 'EXPIRY', 'OPS'].includes(qsTab)) {
       setTab(qsTab as StockTab)
     }
     if (qsFrom && /^\d{4}-\d{2}-\d{2}$/.test(qsFrom)) setFrom(qsFrom)
@@ -239,6 +302,7 @@ export function StockReportsPage() {
       case 'NOMOVEMENT': return `Productos sin movimiento (${period})`
       case 'LOWSTOCK': return `Stock bajo / Por agotar`
       case 'EXPIRY': return `Productos próximos a vencer`
+      case 'OPS': return `Solicitudes y devoluciones (${period})`
       default: return `Reporte de Stock (${period})`
     }
   }, [from, to, tab])
@@ -276,6 +340,30 @@ export function StockReportsPage() {
     queryKey: ['reports', 'stock', 'expiry'],
     queryFn: () => fetchExpiryAlerts(auth.accessToken!, 60, 50),
     enabled: !!auth.accessToken && tab === 'EXPIRY',
+  })
+
+  const movementRequestsSummaryQuery = useQuery({
+    queryKey: ['reports', 'stock', 'movementRequestsSummary', { from, to }],
+    queryFn: () => fetchMovementRequestsSummary(auth.accessToken!, { from, to }),
+    enabled: !!auth.accessToken && tab === 'OPS',
+  })
+
+  const movementRequestsByCityQuery = useQuery({
+    queryKey: ['reports', 'stock', 'movementRequestsByCity', { from, to }],
+    queryFn: () => fetchMovementRequestsByCity(auth.accessToken!, { from, to, take: 200 }),
+    enabled: !!auth.accessToken && tab === 'OPS',
+  })
+
+  const returnsSummaryQuery = useQuery({
+    queryKey: ['reports', 'stock', 'returnsSummary', { from, to }],
+    queryFn: () => fetchReturnsSummary(auth.accessToken!, { from, to }),
+    enabled: !!auth.accessToken && tab === 'OPS',
+  })
+
+  const returnsByWarehouseQuery = useQuery({
+    queryKey: ['reports', 'stock', 'returnsByWarehouse', { from, to }],
+    queryFn: () => fetchReturnsByWarehouse(auth.accessToken!, { from, to, take: 200 }),
+    enabled: !!auth.accessToken && tab === 'OPS',
   })
 
   const emailMutation = useMutation({
@@ -373,6 +461,9 @@ export function StockReportsPage() {
               </Button>
               <Button size="sm" variant={tab === 'EXPIRY' ? 'primary' : 'outline'} onClick={() => setTab('EXPIRY')}>
                 📅 Por Vencer
+              </Button>
+              <Button size="sm" variant={tab === 'OPS' ? 'primary' : 'outline'} onClick={() => setTab('OPS')}>
+                📨 Ops
               </Button>
             </div>
             
@@ -1103,6 +1194,135 @@ export function StockReportsPage() {
                 )
               })()}
             </ReportSection>
+          )}
+
+          {/* Reporte Ops: Solicitudes + Devoluciones */}
+          {tab === 'OPS' && (
+            <>
+              <ReportSection title="📨 Solicitudes de Movimiento" subtitle="Totales y estado de confirmación" icon="📨">
+                {movementRequestsSummaryQuery.isLoading && <Loading />}
+                {movementRequestsSummaryQuery.isError && (
+                  <ErrorState
+                    message={(movementRequestsSummaryQuery.error as any)?.message ?? 'Error cargando resumen de solicitudes'}
+                  />
+                )}
+
+                {!movementRequestsSummaryQuery.isLoading && !movementRequestsSummaryQuery.isError && (() => {
+                  const s = movementRequestsSummaryQuery.data ?? {
+                    total: 0,
+                    open: 0,
+                    fulfilled: 0,
+                    cancelled: 0,
+                    pending: 0,
+                    accepted: 0,
+                    rejected: 0,
+                  }
+
+                  return (
+                    <>
+                      <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
+                        <KPICard icon="📦" label="Total" value={String(s.total)} color="primary" subtitle="Solicitudes" />
+                        <KPICard icon="🟡" label="Abiertas" value={String(s.open)} color="info" subtitle="OPEN" />
+                        <KPICard icon="✅" label="Atendidas" value={String(s.fulfilled)} color="primary" subtitle="FULFILLED" />
+                        <KPICard icon="❌" label="Canceladas" value={String(s.cancelled)} color="warning" subtitle="CANCELLED" />
+                      </div>
+
+                      <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-3">
+                        <KPICard icon="⏳" label="Pendientes" value={String(s.pending)} color="info" subtitle="PENDING" />
+                        <KPICard icon="👍" label="Aceptadas" value={String(s.accepted)} color="primary" subtitle="ACCEPTED" />
+                        <KPICard icon="👎" label="Rechazadas" value={String(s.rejected)} color="warning" subtitle="REJECTED" />
+                      </div>
+
+                      <div className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+                        <h3 className="mb-2 text-sm font-semibold text-slate-900 dark:text-white">Por ciudad</h3>
+
+                        {movementRequestsByCityQuery.isLoading && <Loading />}
+                        {movementRequestsByCityQuery.isError && (
+                          <ErrorState
+                            message={(movementRequestsByCityQuery.error as any)?.message ?? 'Error cargando solicitudes por ciudad'}
+                          />
+                        )}
+                        {!movementRequestsByCityQuery.isLoading && !movementRequestsByCityQuery.isError && (movementRequestsByCityQuery.data?.items?.length ?? 0) === 0 && (
+                          <EmptyState message="No hay solicitudes en el período." />
+                        )}
+                        {!movementRequestsByCityQuery.isLoading && !movementRequestsByCityQuery.isError && (movementRequestsByCityQuery.data?.items?.length ?? 0) > 0 && (
+                          <Table
+                            columns={[
+                              { header: 'Ciudad', accessor: (r: MovementRequestsByCityItem) => r.city ?? '(sin ciudad)' },
+                              { header: 'Total', accessor: (r: MovementRequestsByCityItem) => r.total },
+                              { header: 'Abiertas', accessor: (r: MovementRequestsByCityItem) => r.open },
+                              { header: 'Atendidas', accessor: (r: MovementRequestsByCityItem) => r.fulfilled },
+                              { header: 'Canceladas', accessor: (r: MovementRequestsByCityItem) => r.cancelled },
+                              { header: 'Pend.', accessor: (r: MovementRequestsByCityItem) => r.pending },
+                              { header: 'Acept.', accessor: (r: MovementRequestsByCityItem) => r.accepted },
+                              { header: 'Rech.', accessor: (r: MovementRequestsByCityItem) => r.rejected },
+                            ]}
+                            data={movementRequestsByCityQuery.data?.items ?? []}
+                            keyExtractor={(r: MovementRequestsByCityItem) => String(r.city ?? 'null')}
+                          />
+                        )}
+                      </div>
+                    </>
+                  )
+                })()}
+              </ReportSection>
+
+              <ReportSection title="↩️ Devoluciones" subtitle="Conteo y volumen devuelto" icon="↩️">
+                {returnsSummaryQuery.isLoading && <Loading />}
+                {returnsSummaryQuery.isError && <ErrorState message={(returnsSummaryQuery.error as any)?.message ?? 'Error cargando resumen de devoluciones'} />}
+
+                {!returnsSummaryQuery.isLoading && !returnsSummaryQuery.isError && (() => {
+                  const s = returnsSummaryQuery.data ?? { returnsCount: 0, itemsCount: 0, quantity: '0' }
+                  const avgItems = s.returnsCount > 0 ? (s.itemsCount / s.returnsCount).toFixed(1) : '0.0'
+                  const qty = toNumber(s.quantity).toFixed(0)
+
+                  return (
+                    <>
+                      <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
+                        <KPICard icon="↩️" label="Devoluciones" value={String(s.returnsCount)} color="primary" subtitle="Cabeceras" />
+                        <KPICard icon="🧾" label="Ítems" value={String(s.itemsCount)} color="info" subtitle="Líneas" />
+                        <KPICard icon="📦" label="Unidades" value={qty} color="primary" subtitle="Sum qty" />
+                        <KPICard icon="📊" label="Promedio" value={avgItems} color="info" subtitle="ítems/devolución" />
+                      </div>
+
+                      <div className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+                        <h3 className="mb-2 text-sm font-semibold text-slate-900 dark:text-white">Por sucursal</h3>
+
+                        {returnsByWarehouseQuery.isLoading && <Loading />}
+                        {returnsByWarehouseQuery.isError && (
+                          <ErrorState
+                            message={(returnsByWarehouseQuery.error as any)?.message ?? 'Error cargando devoluciones por sucursal'}
+                          />
+                        )}
+                        {!returnsByWarehouseQuery.isLoading && !returnsByWarehouseQuery.isError && (returnsByWarehouseQuery.data?.items?.length ?? 0) === 0 && (
+                          <EmptyState message="No hay devoluciones en el período." />
+                        )}
+                        {!returnsByWarehouseQuery.isLoading && !returnsByWarehouseQuery.isError && (returnsByWarehouseQuery.data?.items?.length ?? 0) > 0 && (
+                          <Table
+                            columns={[
+                              {
+                                header: 'Sucursal',
+                                accessor: (r: ReturnsByWarehouseItem) =>
+                                  `${r.warehouse.code ?? ''} ${r.warehouse.name ?? ''}`.trim() || r.warehouse.id,
+                              },
+                              { header: 'Ciudad', accessor: (r: ReturnsByWarehouseItem) => r.warehouse.city ?? '-' },
+                              { header: 'Devol.', accessor: (r: ReturnsByWarehouseItem) => r.returnsCount },
+                              { header: 'Ítems', accessor: (r: ReturnsByWarehouseItem) => r.itemsCount },
+                              {
+                                header: 'Unidades',
+                                accessor: (r: ReturnsByWarehouseItem) => toNumber(r.quantity).toFixed(0),
+                              },
+                            ]}
+                            data={returnsByWarehouseQuery.data?.items ?? []}
+                            keyExtractor={(r: ReturnsByWarehouseItem) => r.warehouse.id}
+                          />
+                        )}
+                      </div>
+                    </>
+                  )
+                })()}
+              </ReportSection>
+            </>
           )}
 
           {/* Reporte de Productos Por Vencer */}

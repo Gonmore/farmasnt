@@ -4,7 +4,7 @@ import { useNotifications } from '../../providers/NotificationsProvider'
 import { useTenant } from '../../providers/TenantProvider'
 import { useTheme } from '../../providers/ThemeProvider'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Modal, Button, Input, ImageUpload } from '../../components'
 import { apiFetch } from '../../lib/api'
 import { usePermissions } from '../../hooks/usePermissions'
@@ -29,6 +29,7 @@ export function Header({ onMenuClick, showMenuButton = false }: HeaderProps) {
 
   const [editProfileOpen, setEditProfileOpen] = useState(false)
   const [editFullName, setEditFullName] = useState('')
+  const [editWarehouseId, setEditWarehouseId] = useState<string>('')
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -58,6 +59,14 @@ export function Header({ onMenuClick, showMenuButton = false }: HeaderProps) {
       .join('')
     return letters || local.slice(0, 2).toUpperCase() || 'U'
   }, [me.user?.email, me.user?.fullName])
+
+  const isBranchScoped = me.hasPermission('scope:branch')
+
+  const warehousesQuery = useQuery<{ items: Array<{ id: string; code: string; name: string; city?: string | null; isActive: boolean }> }>({
+    queryKey: ['warehouses', 'forProfile'],
+    queryFn: () => apiFetch(`/api/v1/warehouses?take=100`, { token: auth.accessToken! }),
+    enabled: !!auth.accessToken && editProfileOpen && isBranchScoped,
+  })
 
   async function uploadToPresignedUrl(uploadUrl: string, file: File): Promise<void> {
     const resp = await fetch(uploadUrl, {
@@ -378,6 +387,7 @@ export function Header({ onMenuClick, showMenuButton = false }: HeaderProps) {
                         setUserMenuOpen(false)
                         setEditProfileOpen(true)
                         setEditFullName(me.user?.fullName ?? '')
+                        setEditWarehouseId(me.user?.warehouseId ?? '')
                         setProfileError(null)
                       }}
                     >
@@ -444,6 +454,37 @@ export function Header({ onMenuClick, showMenuButton = false }: HeaderProps) {
             />
           </div>
 
+          {/* Sucursal (solo usuarios scoped) */}
+          {isBranchScoped && (
+            <div className="border-t border-slate-200 pt-4 dark:border-slate-700">
+              <div className="mb-2 text-sm font-medium text-slate-700 dark:text-slate-300">Sucursal</div>
+              <label className="mb-2 block text-xs text-slate-500 dark:text-slate-400">
+                Esta selección limita clientes/cotizaciones/pagos/entregas por ciudad.
+              </label>
+              <select
+                value={editWarehouseId}
+                onChange={(e) => setEditWarehouseId(e.target.value)}
+                className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-white"
+                disabled={warehousesQuery.isLoading}
+              >
+                <option value="">(Sin sucursal seleccionada)</option>
+                {(warehousesQuery.data?.items ?? [])
+                  .filter((w) => w.isActive)
+                  .map((w) => (
+                    <option key={w.id} value={w.id}>
+                      {w.code} - {w.name}
+                      {w.city ? ` (${String(w.city).toUpperCase()})` : ''}
+                    </option>
+                  ))}
+              </select>
+              {me.user?.warehouseId && me.user?.warehouse && !me.user.warehouse.isActive && (
+                <div className="mt-2 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-200">
+                  La sucursal actual está inactiva. Seleccione otra.
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Cambiar contraseña (opcional) */}
           <div className="border-t border-slate-200 pt-4 dark:border-slate-700">
             <div className="mb-3 text-sm font-medium text-slate-700 dark:text-slate-300">Cambiar contraseña (opcional)</div>
@@ -509,6 +550,21 @@ export function Header({ onMenuClick, showMenuButton = false }: HeaderProps) {
                       body: JSON.stringify({ version: me.user.version, fullName: editFullName.trim() || null }),
                     })
                     queryClient.invalidateQueries({ queryKey: ['auth', 'me'] })
+                  }
+
+                  // Actualizar sucursal si cambió
+                  if (isBranchScoped) {
+                    const current = me.user?.warehouseId ?? ''
+                    const next = editWarehouseId
+                    if (current !== next) {
+                      if (!me.user?.version) throw new Error('Versión de usuario no disponible')
+                      await apiFetch('/api/v1/auth/me', {
+                        token: auth.accessToken!,
+                        method: 'PATCH',
+                        body: JSON.stringify({ version: me.user.version, warehouseId: next ? next : null }),
+                      })
+                      queryClient.invalidateQueries({ queryKey: ['auth', 'me'] })
+                    }
                   }
                   setEditProfileOpen(false)
                   setCurrentPassword('')

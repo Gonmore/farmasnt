@@ -11,7 +11,11 @@ import {
   WarehousesPage,
   LocationsPage,
   BalancesPage,
+  BulkFulfillRequestsPage,
+  BulkTransferPage,
+  MovementRequestsPage,
   MovementsPage,
+  ReturnsPage,
   ExpiryPage,
   InventoryPage,
   CustomersPage,
@@ -120,6 +124,41 @@ export function AppRouter() {
           element={
             <ProtectedRoute requiredPermissions={['stock:read']}>
               <BalancesPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/stock/movement-requests"
+          element={
+            <ProtectedRoute requiredPermissions={['stock:read']}>
+              <MovementRequestsPage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/stock/bulk-transfer"
+          element={
+            <ProtectedRoute requiredPermissions={['stock:move', 'stock:manage']} requireAll={false}>
+              <BulkTransferPage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/stock/fulfill-requests"
+          element={
+            <ProtectedRoute requiredPermissions={['stock:move', 'stock:manage']} requireAll={false}>
+              <BulkFulfillRequestsPage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/stock/returns"
+          element={
+            <ProtectedRoute requiredPermissions={['stock:move', 'stock:manage']} requireAll={false}>
+              <ReturnsPage />
             </ProtectedRoute>
           }
         />
@@ -236,7 +275,7 @@ export function AppRouter() {
         <Route
           path="/audit/events"
           element={
-            <ProtectedRoute requiredPermissions={['audit:read']}>
+            <ProtectedRoute requiredPermissions={['audit:read']} denyPermissionCodes={['scope:branch']}>
               <AuditListPage />
             </ProtectedRoute>
           }
@@ -246,7 +285,7 @@ export function AppRouter() {
         <Route
           path="/admin/users"
           element={
-            <ProtectedRoute requiredPermissions={['admin:users:manage']}>
+            <ProtectedRoute requiredPermissions={['admin:users:manage']} denyPermissionCodes={['scope:branch']}>
               <UsersPage />
             </ProtectedRoute>
           }
@@ -254,7 +293,7 @@ export function AppRouter() {
         <Route
           path="/admin/roles"
           element={
-            <ProtectedRoute requiredPermissions={['admin:users:manage']}>
+            <ProtectedRoute requiredPermissions={['admin:users:manage']} denyPermissionCodes={['scope:branch']}>
               <RolesPage />
             </ProtectedRoute>
           }
@@ -262,7 +301,7 @@ export function AppRouter() {
         <Route
           path="/admin/branding"
           element={
-            <ProtectedRoute requiredPermissions={['admin:users:manage']}>
+            <ProtectedRoute requiredPermissions={['admin:users:manage']} denyPermissionCodes={['scope:branch']}>
               <BrandingPage />
             </ProtectedRoute>
           }

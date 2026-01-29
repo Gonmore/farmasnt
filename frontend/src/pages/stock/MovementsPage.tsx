@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { apiFetch } from '../../lib/api'
 import { getProductLabel } from '../../lib/productName'
 import { useAuth } from '../../providers/AuthProvider'
-import { MainLayout, PageContainer, Select, Input, Button, Table, Loading, ErrorState } from '../../components'
+import { MainLayout, PageContainer, Select, Input, Button, Table, Loading, ErrorState, Modal } from '../../components'
 import { useNavigation } from '../../hooks'
 
 type MovementRequestItem = {
@@ -161,6 +161,23 @@ async function listMovementRequests(token: string): Promise<{ items: MovementReq
   }
 }
 
+async function createMovementRequest(
+  token: string,
+  data: {
+    warehouseId: string
+    requestedByName: string
+    productId: string
+    items: { presentationId: string; quantity: number }[]
+    note?: string
+  },
+): Promise<MovementRequest> {
+  return apiFetch('/api/v1/stock/movement-requests', {
+    method: 'POST',
+    token,
+    body: JSON.stringify(data),
+  })
+}
+
 function dateOnlyToUtcIso(dateString: string): string {
   const [year, month, day] = dateString.split('-')
   return new Date(parseInt(year), parseInt(month) - 1, parseInt(day)).toISOString().split('T')[0]
@@ -200,6 +217,15 @@ export function MovementsPage() {
   const [repackTargetPresentationId, setRepackTargetPresentationId] = useState('')
   const [repackTargetQty, setRepackTargetQty] = useState('')
   const [repackError, setRepackError] = useState('')
+
+  // Estados para CREAR SOLICITUD
+  const [showCreateRequestModal, setShowCreateRequestModal] = useState(false)
+  const [requestWarehouseId, setRequestWarehouseId] = useState('')
+  const [requestRequestedByName, setRequestRequestedByName] = useState('')
+  const [requestProductId, setRequestProductId] = useState('')
+  const [requestItems, setRequestItems] = useState<{ presentationId: string; quantity: number }[]>([])
+  const [requestNote, setRequestNote] = useState('')
+  const [createRequestError, setCreateRequestError] = useState('')
 
   const productsQuery = useQuery({
     queryKey: ['products', 'forMovements'],
@@ -242,6 +268,12 @@ export function MovementsPage() {
     queryFn: () => listMovementRequests(auth.accessToken!),
     enabled: !!auth.accessToken,
     refetchInterval: 10_000,
+  })
+
+  const requestProductPresentationsQuery = useQuery({
+    queryKey: ['productPresentations', requestProductId],
+    queryFn: () => fetchProductPresentations(auth.accessToken!, requestProductId),
+    enabled: !!auth.accessToken && !!requestProductId,
   })
 
   const batchMutation = useMutation({
@@ -338,6 +370,43 @@ export function MovementsPage() {
     setRepackTargetPresentationId('')
     setRepackTargetQty('')
     setRepackError('')
+  }
+
+  const handleRequestProductChange = (nextProductId: string) => {
+    setRequestProductId(nextProductId)
+    setRequestItems([])
+  }
+
+  const handleAddRequestItem = (presentationId: string, quantity: number) => {
+    if (!presentationId || quantity <= 0) return
+    setRequestItems(prev => {
+      const existing = prev.find(item => item.presentationId === presentationId)
+      if (existing) {
+        return prev.map(item =>
+          item.presentationId === presentationId
+            ? { ...item, quantity: item.quantity + quantity }
+            : item
+        )
+      } else {
+        return [...prev, { presentationId, quantity }]
+      }
+    })
+  }
+
+  const handleRemoveRequestItem = (presentationId: string) => {
+    setRequestItems(prev => prev.filter(item => item.presentationId !== presentationId))
+  }
+
+  const handleUpdateRequestItemQuantity = (presentationId: string, quantity: number) => {
+    if (quantity <= 0) {
+      handleRemoveRequestItem(presentationId)
+    } else {
+      setRequestItems(prev => prev.map(item =>
+        item.presentationId === presentationId
+          ? { ...item, quantity }
+          : item
+      ))
+    }
   }
 
   // Obtener existencias por lote/ubicación para mostrar en tabla
@@ -470,6 +539,38 @@ export function MovementsPage() {
     onError: (err: any) => {
       const msg = err instanceof Error ? err.message : 'Error al reempaquetar'
       setRepackError(msg)
+    },
+  })
+
+  const createRequestMutation = useMutation({
+    mutationFn: () => {
+      if (!requestWarehouseId) throw new Error('Seleccioná la sucursal que solicita')
+      if (!requestRequestedByName.trim()) throw new Error('Ingresá el nombre de quien solicita')
+      if (!requestProductId) throw new Error('Seleccioná un producto')
+      if (requestItems.length === 0) throw new Error('Agregá al menos una presentación solicitada')
+
+      return createMovementRequest(auth.accessToken!, {
+        warehouseId: requestWarehouseId,
+        requestedByName: requestRequestedByName.trim(),
+        productId: requestProductId,
+        items: requestItems,
+        note: requestNote.trim() || undefined,
+      })
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['movementRequests'] })
+      setShowCreateRequestModal(false)
+      setRequestWarehouseId('')
+      setRequestRequestedByName('')
+      setRequestProductId('')
+      setRequestItems([])
+      setRequestNote('')
+      setCreateRequestError('')
+      alert('Solicitud creada exitosamente')
+    },
+    onError: (err: any) => {
+      const msg = err instanceof Error ? err.message : 'Error al crear solicitud'
+      setCreateRequestError(msg)
     },
   })
 
@@ -1350,9 +1451,14 @@ export function MovementsPage() {
         <div className="mt-6 rounded-lg border border-slate-200 bg-white p-6 dark:border-slate-700 dark:bg-slate-900">
           <div className="mb-4 flex items-center justify-between gap-3">
             <h3 className="font-semibold text-slate-900 dark:text-slate-100">📨 Solicitudes de movimientos</h3>
-            <Button variant="secondary" size="sm" onClick={() => movementRequestsQuery.refetch()} loading={movementRequestsQuery.isFetching}>
-              Actualizar
-            </Button>
+            <div className="flex gap-2">
+              <Button variant="primary" size="sm" onClick={() => setShowCreateRequestModal(true)}>
+                Crear solicitud
+              </Button>
+              <Button variant="secondary" size="sm" onClick={() => movementRequestsQuery.refetch()} loading={movementRequestsQuery.isFetching}>
+                Actualizar
+              </Button>
+            </div>
           </div>
 
           {movementRequestsQuery.isLoading && <Loading />}
@@ -1417,6 +1523,171 @@ export function MovementsPage() {
           )}
         </div>
       </PageContainer>
+
+      <Modal
+        isOpen={showCreateRequestModal}
+        onClose={() => setShowCreateRequestModal(false)}
+        title="Crear solicitud de movimiento"
+        maxWidth="lg"
+      >
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            createRequestMutation.mutate()
+          }}
+          className="space-y-4"
+        >
+          <Select
+            label="Sucursal que solicita"
+            value={requestWarehouseId}
+            onChange={(e) => setRequestWarehouseId(e.target.value)}
+            options={[
+              { value: '', label: 'Selecciona una sucursal' },
+              ...(warehousesQuery.data?.items ?? [])
+                .filter((w) => w.isActive)
+                .map((w) => ({ value: w.id, label: `${w.code} - ${w.name}` })),
+            ]}
+            disabled={warehousesQuery.isLoading}
+            required
+          />
+
+          <Input
+            label="Solicitado por"
+            type="text"
+            value={requestRequestedByName}
+            onChange={(e) => setRequestRequestedByName(e.target.value)}
+            placeholder="Nombre de la persona que solicita"
+            required
+          />
+
+          <Select
+            label="Producto"
+            value={requestProductId}
+            onChange={(e) => handleRequestProductChange(e.target.value)}
+            options={[
+              { value: '', label: 'Selecciona un producto' },
+              ...(productsQuery.data?.items ?? [])
+                .filter((p) => p.isActive)
+                .map((p) => ({ value: p.id, label: getProductLabel(p) })),
+            ]}
+            disabled={productsQuery.isLoading}
+            required
+          />
+
+          {requestProductId && (
+            <div className="space-y-3">
+              <h4 className="font-medium text-slate-900 dark:text-slate-100">Presentaciones solicitadas</h4>
+
+              <div className="flex gap-2">
+                <Select
+                  value=""
+                  onChange={(e) => {
+                    const presentationId = e.target.value
+                    if (presentationId) {
+                      const presentation = requestProductPresentationsQuery.data?.items.find(p => p.id === presentationId)
+                      if (presentation) {
+                        handleAddRequestItem(presentationId, 1)
+                      }
+                    }
+                  }}
+                  options={[
+                    { value: '', label: 'Selecciona presentación' },
+                    ...(requestProductPresentationsQuery.data?.items ?? [])
+                      .filter((p) => p.isActive)
+                      .map((p) => ({ value: p.id, label: `${p.name} (${p.unitsPerPresentation}u)` })),
+                  ]}
+                  disabled={requestProductPresentationsQuery.isLoading}
+                  className="flex-1"
+                />
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    const firstPresentation = requestProductPresentationsQuery.data?.items.find(p => p.isActive)
+                    if (firstPresentation) {
+                      handleAddRequestItem(firstPresentation.id, 1)
+                    }
+                  }}
+                  disabled={!requestProductPresentationsQuery.data?.items.some(p => p.isActive)}
+                >
+                  + Agregar
+                </Button>
+              </div>
+
+              {requestItems.length > 0 && (
+                <div className="space-y-2">
+                  {requestItems.map((item) => {
+                    const presentation = requestProductPresentationsQuery.data?.items.find(p => p.id === item.presentationId)
+                    return (
+                      <div key={item.presentationId} className="flex items-center gap-2 p-2 bg-slate-50 dark:bg-slate-800 rounded">
+                        <span className="flex-1 text-sm">
+                          {presentation ? `${presentation.name} (${presentation.unitsPerPresentation}u)` : 'Presentación'}
+                        </span>
+                        <Input
+                          type="number"
+                          min="0.01"
+                          step="0.01"
+                          value={item.quantity}
+                          onChange={(e) => handleUpdateRequestItemQuantity(item.presentationId, Number(e.target.value))}
+                          className="w-20"
+                        />
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => handleRemoveRequestItem(item.presentationId)}
+                        >
+                          ✕
+                        </Button>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          <div>
+            <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">
+              Nota (opcional)
+            </label>
+            <textarea
+              value={requestNote}
+              onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setRequestNote(e.target.value)}
+              placeholder="Detalles adicionales de la solicitud"
+              rows={3}
+              maxLength={500}
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-900 dark:text-white dark:placeholder-slate-500"
+            />
+          </div>
+
+          {createRequestError && (
+            <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-200">
+              {createRequestError}
+            </div>
+          )}
+
+          <div className="flex justify-end gap-3 pt-4">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setShowCreateRequestModal(false)}
+              disabled={createRequestMutation.isPending}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="submit"
+              variant="primary"
+              loading={createRequestMutation.isPending}
+              disabled={!requestWarehouseId || !requestRequestedByName.trim() || !requestProductId || requestItems.length === 0}
+            >
+              Crear solicitud
+            </Button>
+          </div>
+        </form>
+      </Modal>
     </MainLayout>
   )
 }

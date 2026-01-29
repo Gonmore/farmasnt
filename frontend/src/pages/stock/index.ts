@@ -1,4 +1,8 @@
 export { BalancesPage } from './BalancesPage'
+export { BulkFulfillRequestsPage } from './BulkFulfillRequestsPage'
+export { BulkTransferPage } from './BulkTransferPage'
+export { MovementRequestsPage } from './MovementRequestsPage'
 export { MovementsPage } from './MovementsPage'
 export { ExpiryPage } from './ExpiryPage'
 export { InventoryPage } from './InventoryPage'
+export { ReturnsPage } from './ReturnsPage'

@@ -66,6 +66,9 @@ export function useNavigation(): NavGroup[] {
   if (hasPermission('stock:read')) {
     const warehouseItems = [{ to: '/stock/inventory', label: '📊 Inventario' }]
 
+    // Solicitudes de movimiento (lectura + creación, con enforcement por sucursal en backend si aplica)
+    warehouseItems.push({ to: '/stock/movement-requests', label: '📨 Solicitudes' })
+
     // Sucursales: Logística + admin
     if (isTenantAdmin || isLogistica) {
       warehouseItems.push({ to: '/warehouse/warehouses', label: '🏬 Sucursales' })
@@ -74,6 +77,13 @@ export function useNavigation(): NavGroup[] {
     // Movimientos: solo admin
     if (isTenantAdmin || hasPermission('stock:manage')) {
       warehouseItems.push({ to: '/stock/movements', label: '🚚 Movimientos' })
+    }
+
+    // Operaciones logísticas (stock:move o stock:manage)
+    if (hasPermission('stock:move') || hasPermission('stock:manage') || isTenantAdmin) {
+      warehouseItems.push({ to: '/stock/bulk-transfer', label: '📦 Movimiento masivo' })
+      warehouseItems.push({ to: '/stock/fulfill-requests', label: '✅ Atender solicitudes' })
+      warehouseItems.push({ to: '/stock/returns', label: '↩️ Devoluciones' })
     }
 
     // Vencimientos: lectura para ambos roles

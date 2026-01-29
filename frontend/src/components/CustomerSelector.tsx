@@ -10,8 +10,8 @@ type CustomerListItem = {
   name: string
   isActive: boolean
   city?: string | null
-  creditDays7Enabled?: boolean
-  creditDays14Enabled?: boolean
+  creditEnabled?: boolean
+  creditDays?: number | null
 }
 
 type CustomerListResponse = { items: CustomerListItem[]; nextCursor: string | null }

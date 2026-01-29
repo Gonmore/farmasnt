@@ -1,9 +1,11 @@
 export const Permissions = {
+  ScopeBranch: 'scope:branch',
   CatalogRead: 'catalog:read',
   CatalogWrite: 'catalog:write',
   StockRead: 'stock:read',
   StockManage: 'stock:manage',
   StockMove: 'stock:move',
+  StockDeliver: 'stock:deliver',
   SalesOrderRead: 'sales:order:read',
   SalesOrderWrite: 'sales:order:write',
   SalesDeliveryRead: 'sales:delivery:read',

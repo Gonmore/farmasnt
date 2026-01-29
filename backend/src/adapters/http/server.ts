@@ -114,13 +114,19 @@ export async function createHttpServer() {
 
     const user = await db.user.findFirst({
       where: { id: claims.sub, tenantId: claims.tenantId, isActive: true, tenant: { isActive: true } },
-      select: { id: true, tenantId: true },
+      select: { id: true, tenantId: true, warehouseId: true, warehouse: { select: { city: true } } },
     })
 
     if (!user) return
 
     const permissions = await loadUserPermissions(db, user.id)
-    request.auth = { userId: user.id, tenantId: user.tenantId, permissions }
+    request.auth = {
+      userId: user.id,
+      tenantId: user.tenantId,
+      permissions,
+      warehouseId: (user as any).warehouseId ?? null,
+      warehouseCity: (user as any).warehouse?.city ?? null,
+    }
   })
 
   app.setErrorHandler((error, _request, reply) => {

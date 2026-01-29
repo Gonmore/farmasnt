@@ -387,6 +387,7 @@ export function DashboardPage() {
     if (isPlatformAdmin) return <Navigate to="/platform/tenants" replace />
     if (!isTenantAdmin) {
       if (roles.some((r) => r.code === 'LOGISTICA')) return <Navigate to="/sales/deliveries" replace />
+      if (roles.some((r) => r.code === 'BRANCH_ADMIN')) return <Navigate to="/sales/deliveries" replace />
       if (roles.some((r) => r.code === 'VENTAS')) return <Navigate to="/catalog/seller" replace />
     }
   }
