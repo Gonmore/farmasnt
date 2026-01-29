@@ -18,7 +18,7 @@ import {
 } from '../../components'
 import { useNavigation } from '../../hooks'
 import type { ExpiryStatus } from '../../components/common/ExpiryBadge'
-import { ArrowPathIcon, DocumentArrowDownIcon } from '@heroicons/react/24/outline'
+import { ArchiveBoxIcon, ArrowPathIcon, BeakerIcon, DocumentArrowDownIcon } from '@heroicons/react/24/outline'
 
 type BalanceExpandedItem = {
   id: string
@@ -335,6 +335,50 @@ function getBatchStatusDisplay(status: string): { text: string; color: string } 
   return { text: 'Liberado', color: 'text-green-600 dark:text-green-400' }
 }
 
+function PillOutlineIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M9.5 4.5h5A5.5 5.5 0 0 1 20 10v4A5.5 5.5 0 0 1 14.5 19.5h-5A5.5 5.5 0 0 1 4 14v-4A5.5 5.5 0 0 1 9.5 4.5Z" />
+      <path d="M8 8l8 8" />
+    </svg>
+  )
+}
+
+function getPresentationIcon(presentationName: string | null | undefined): JSX.Element {
+  const name = (presentationName ?? '').toLowerCase()
+  const cls = 'h-4 w-4 text-slate-600 dark:text-slate-300'
+  if (name.includes('caja')) return <ArchiveBoxIcon className={cls} />
+  if (name.includes('frasco')) return <BeakerIcon className={cls} />
+  if (name.includes('unidad') || name.includes('blister')) return <PillOutlineIcon className={cls} />
+  return <ArchiveBoxIcon className={cls} />
+}
+
+function getPresentationEmoji(presentationName: string | null | undefined): string {
+  const name = (presentationName ?? '').toLowerCase()
+  if (name.includes('caja')) return '📦'
+  if (name.includes('frasco')) return '🧪'
+  if (name.includes('unidad') || name.includes('blister')) return '💊'
+  return '📦'
+}
+
+function formatPresentationCountFromUnits(units: number, unitsPerPresentation: number): string {
+  const u = Number(units)
+  const upp = Number(unitsPerPresentation)
+  if (!Number.isFinite(u) || u <= 0) return '0'
+  if (!Number.isFinite(upp) || upp <= 1) return String(Math.round(u))
+  const count = u / upp
+  return Math.abs(count - Math.round(count)) < 1e-9 ? String(Math.round(count)) : count.toFixed(2)
+}
+
 function formatPresentation(p: {
   presentationWrapper?: string | null
   presentationQuantity?: any
@@ -580,6 +624,8 @@ export function InventoryPage() {
         expiresAt: item.batch?.expiresAt ?? null,
         status: item.batch?.status ?? 'RELEASED',
         version: item.batch?.version ?? 1,
+        presentationName: item.batch?.presentation?.name ?? null,
+        unitsPerPresentation: item.batch?.presentation?.unitsPerPresentation ?? null,
         quantity: qty,
         reservedQuantity: reserved,
         availableQuantity: available,
@@ -786,126 +832,193 @@ export function InventoryPage() {
                       : 'border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900'
                   }`}
                 >
-                  <button
+                  <div
+                    role="button"
+                    tabIndex={0}
                     onClick={() => setExpandedProduct(expandedProduct === pg.productId ? null : pg.productId)}
-                    className="flex w-full items-center justify-between p-4 text-left hover:bg-slate-50 dark:hover:bg-slate-800"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        setExpandedProduct(expandedProduct === pg.productId ? null : pg.productId)
+                      }
+                    }}
+                    className="flex w-full items-start justify-between gap-4 p-4 text-left hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-400/40 dark:hover:bg-slate-800"
                   >
-                    <div className="flex items-center gap-3">
-                      <span className="text-2xl">{expandedProduct === pg.productId ? '📂' : '📁'}</span>
-                      <div>
-                        <div className="font-medium text-slate-900 dark:text-slate-100">
-                          <span>
-                            {pg.name}
-                            {(() => {
-                              const pres = formatPresentation(pg)
-                              return pres ? ` - ${pres}` : ''
-                            })()}
-                          </span>
-                          <span className="ml-2 text-xs font-mono text-slate-500 dark:text-slate-400">| {pg.sku}</span>
-                        </div>
-                        <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
-                          {(() => {
-                            const activeCount = activeWarehouses.length
-                            const withStock = activeWarehouses.filter((w) =>
-                              pg.warehouses.some((x) => x.warehouseId === w.id && x.availableQuantity > 0),
-                            ).length
-                            const pill = getCoveragePill(withStock, activeCount)
-                            return (
-                              <span
-                                className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${pill.className}`}
-                                title={pill.title}
-                              >
-                                {pill.label}
-                              </span>
-                            )
-                          })()}
-                          {pg.genericName ? (
-                            <span className="text-xs text-slate-500 dark:text-slate-400">Genérico: {pg.genericName}</span>
-                          ) : null}
-                        </div>
-                      </div>
+                    <div className="min-w-0">
+                      <div className="truncate font-semibold text-slate-900 dark:text-slate-100">{pg.name}</div>
+                      <div className="mt-1 text-xs font-mono text-slate-500 dark:text-slate-400">{pg.sku}</div>
                     </div>
-                    <div className="text-right">
-                      <div className="text-2xl font-bold text-[var(--pf-primary)]">
-                        {formatTotalsFromBatches(pg.warehouses.flatMap((w) => w.batches), 'availableQuantity')}
-                      </div>
-                      <div className="text-xs text-slate-600 dark:text-slate-400">
-                        disp. · {formatTotalsFromBatches(pg.warehouses.flatMap((w) => w.batches), 'reservedQuantity')} res. ·{' '}
-                        {formatTotalsFromBatches(pg.warehouses.flatMap((w) => w.batches), 'quantity')} total
-                      </div>
+
+                    <div className="flex flex-wrap justify-end gap-2">
+                      {(() => {
+                        const batches = pg.warehouses.flatMap((w) =>
+                          w.batches.map((b) => ({
+                            ...b,
+                            warehouseCode: w.warehouseCode,
+                          })),
+                        )
+
+                        const byPresentation = new Map<
+                          string,
+                          {
+                            name: string
+                            unitsPer: number
+                            byWarehouse: Map<string, number>
+                            totalUnits: number
+                          }
+                        >()
+
+                        for (const b of batches) {
+                          const name = (b.presentationName ?? 'Unidad').trim() || 'Unidad'
+                          const unitsPer = Number(b.unitsPerPresentation ?? 1)
+                          const availableUnits = Number(b.availableQuantity ?? 0)
+                          if (!Number.isFinite(availableUnits) || availableUnits <= 0) continue
+
+                          const key = `${name}|${Number.isFinite(unitsPer) && unitsPer > 0 ? unitsPer : 1}`
+                          const entry = byPresentation.get(key) ?? {
+                            name,
+                            unitsPer: Number.isFinite(unitsPer) && unitsPer > 0 ? unitsPer : 1,
+                            byWarehouse: new Map<string, number>(),
+                            totalUnits: 0,
+                          }
+                          entry.totalUnits += availableUnits
+                          entry.byWarehouse.set(b.warehouseCode, (entry.byWarehouse.get(b.warehouseCode) ?? 0) + availableUnits)
+                          byPresentation.set(key, entry)
+                        }
+
+                        const cards = Array.from(byPresentation.values())
+                          .filter((x) => x.totalUnits > 0)
+                          .sort((a, b) => b.unitsPer - a.unitsPer)
+
+                        if (cards.length === 0) {
+                          return (
+                            <div className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+                              Sin existencias
+                            </div>
+                          )
+                        }
+
+                        return cards.map((c) => (
+                          <div
+                            key={`${c.name}|${c.unitsPer}`}
+                            className="min-w-[200px] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm transition hover:shadow-md dark:border-slate-700 dark:bg-slate-900"
+                          >
+                            <div className="flex items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-800">
+                              <div className="flex items-center gap-2">
+                                {getPresentationIcon(c.name)}
+                                <div className="text-xs font-semibold text-slate-800 dark:text-slate-200">{c.name}</div>
+                              </div>
+                              {c.unitsPer > 1 ? (
+                                <div className="rounded-full bg-white px-2 py-0.5 text-[10px] font-mono text-slate-600 shadow-sm dark:bg-slate-900 dark:text-slate-300">
+                                  {c.unitsPer}u
+                                </div>
+                              ) : null}
+                            </div>
+                            <div className="space-y-1 px-3 py-2 text-xs text-slate-700 dark:text-slate-300">
+                              {Array.from(c.byWarehouse.entries())
+                                .filter(([, units]) => units > 0)
+                                .sort(([a], [b]) => a.localeCompare(b))
+                                .map(([warehouseCode, units]) => (
+                                  <div key={warehouseCode} className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-2 py-1.5 dark:bg-slate-800/60">
+                                    <span className="font-mono text-slate-500 dark:text-slate-400">{warehouseCode}:</span>
+                                    <span className="font-bold text-slate-800 dark:text-slate-100">
+                                      {formatPresentationCountFromUnits(units, c.unitsPer)}
+                                    </span>
+                                  </div>
+                                ))}
+                            </div>
+                          </div>
+                        ))
+                      })()}
                     </div>
-                  </button>
+                  </div>
 
                   {expandedProduct === pg.productId && (
                     <div className="border-t border-slate-200 p-4 dark:border-slate-700">
-                      {pg.warehouses.map((wh) => (
-                        <div
-                          key={wh.warehouseId}
-                          className="mb-4 last:mb-0 rounded border border-slate-100 bg-slate-50 p-3 dark:border-slate-600 dark:bg-slate-800"
-                        >
-                          <div className="mb-2 flex items-center justify-between">
-                            <div className="font-medium text-slate-900 dark:text-slate-100">
-                                🏢 {wh.warehouseName}
-                            </div>
-                            <div className="text-right">
-                              <div className="text-lg font-semibold text-slate-700 dark:text-slate-300">
-                                {formatTotalsFromBatches(wh.batches, 'availableQuantity')}
-                              </div>
-                              <div className="text-xs text-slate-500 dark:text-slate-400">
-                                {formatTotalsFromBatches(wh.batches, 'reservedQuantity')} res. · {formatTotalsFromBatches(wh.batches, 'quantity')} total
-                              </div>
-                            </div>
-                          </div>
+                      {(() => {
+                        const rows = pg.warehouses
+                          .flatMap((wh) =>
+                            wh.batches.map((b) => ({
+                              ...b,
+                              warehouseCode: wh.warehouseCode,
+                              warehouseName: wh.warehouseName,
+                            })),
+                          )
+                          .sort((a, b) => {
+                            const w = a.warehouseCode.localeCompare(b.warehouseCode)
+                            if (w !== 0) return w
+                            return (a.batchNumber ?? '').localeCompare(b.batchNumber ?? '')
+                          })
 
+                        return (
                           <Table
                             columns={[
-                              { header: '🏷️ Lote', accessor: (b) => b.batchNumber },
                               {
-                                header: '📅 Vence',
+                                header: 'Sucursal',
+                                accessor: (b) => (
+                                  <div>
+                                    <div className="font-mono text-sm text-slate-800 dark:text-slate-200">{b.warehouseCode}</div>
+                                    <div className="text-xs text-slate-500 dark:text-slate-400">{b.warehouseName}</div>
+                                  </div>
+                                ),
+                                width: '160px',
+                              },
+                              { header: 'Lote', accessor: (b) => b.batchNumber, width: '140px' },
+                              {
+                                header: 'Presentación',
+                                accessor: (b) => {
+                                  const name = (b.presentationName ?? 'Unidad').trim() || 'Unidad'
+                                  const unitsPer = Number(b.unitsPerPresentation ?? 1)
+                                  const label = Number.isFinite(unitsPer) && unitsPer > 1 ? `${name} (${unitsPer.toFixed(0)}u)` : name
+                                  return (
+                                    <span className="text-sm text-slate-800 dark:text-slate-200">
+                                      {getPresentationEmoji(name)} {label}
+                                    </span>
+                                  )
+                                },
+                                width: '160px',
+                              },
+                              {
+                                header: 'Total (Disp/Res)',
+                                accessor: (b) => {
+                                  const total = Number(b.quantity ?? 0)
+                                  const disp = Number(b.availableQuantity ?? 0)
+                                  const res = Number(b.reservedQuantity ?? 0)
+                                  return (
+                                    <div className="text-sm">
+                                      <div className="font-medium text-slate-800 dark:text-slate-200">
+                                        {formatQtyByBatchPresentation(total, b)}
+                                      </div>
+                                      <div className="text-xs text-slate-500 dark:text-slate-400">
+                                        {formatQtyByBatchPresentation(disp, b)} disp · {formatQtyByBatchPresentation(res, b)} res
+                                      </div>
+                                    </div>
+                                  )
+                                },
+                                width: '190px',
+                              },
+                              {
+                                header: 'Vence',
                                 accessor: (b) => {
                                   if (!b.expiresAt) return '-'
                                   const expiryStatus = calculateExpiryStatus(b.expiresAt)
                                   const colors = getExpiryColors(expiryStatus)
                                   return (
-                                    <span className={`inline-block px-2 py-1 rounded-md border text-xs font-medium ${colors.bg} ${colors.border} ${colors.text}`}>
+                                    <span className={`inline-block rounded-md border px-2 py-1 text-xs font-medium ${colors.bg} ${colors.border} ${colors.text}`}>
                                       {new Date(b.expiresAt).toLocaleDateString()}
                                     </span>
                                   )
                                 },
+                                width: '120px',
                               },
                               {
-                                header: '🔒 Estado',
+                                header: 'Estado',
                                 accessor: (b) => {
                                   const statusDisplay = getBatchStatusDisplay(b.status)
-                                  return (
-                                    <span className={`text-sm font-medium ${statusDisplay.color}`}>
-                                      {statusDisplay.text}
-                                    </span>
-                                  )
+                                  return <span className={`text-sm font-medium ${statusDisplay.color}`}>{statusDisplay.text}</span>
                                 },
+                                width: '120px',
                               },
-                              { header: '📍 Ubicación', accessor: (b) => b.locationCode },
-                              { header: '📊 Total', accessor: (b) => formatQtyByBatchPresentation(Number(b.quantity), b) },
-                              {
-                                header: '🧷 Reservado',
-                                accessor: (b) => {
-                                  const reserved = Number(b.reservedQuantity ?? '0')
-                                  if (reserved > 0) {
-                                    return (
-                                      <Button
-                                        size="sm"
-                                        variant="secondary"
-                                        onClick={() => openReservationsModal(b.id)}
-                                        loading={loadingReservations}
-                                      >
-                                        {formatQtyByBatchPresentation(reserved, b)}
-                                      </Button>
-                                    )
-                                  }
-                                  return formatQtyByBatchPresentation(reserved, b)
-                                },
-                              },
-                              { header: '✅ Disponible', accessor: (b) => formatQtyByBatchPresentation(Number(b.availableQuantity), b) },
                               {
                                 header: 'Acción',
                                 className: 'text-center',
@@ -914,7 +1027,7 @@ export function InventoryPage() {
                                     <Button
                                       variant="ghost"
                                       size="sm"
-                                      icon={<ArrowPathIcon className="w-4 h-4" />}
+                                      icon={<ArrowPathIcon className="h-4 w-4" />}
                                       onClick={() =>
                                         setMovingItem({
                                           productId: pg.productId,
@@ -922,7 +1035,7 @@ export function InventoryPage() {
                                           batchId: b.batchId,
                                           batchNumber: b.batchNumber,
                                           fromLocationId: b.locationId,
-                                          fromWarehouseCode: wh.warehouseCode,
+                                          fromWarehouseCode: b.warehouseCode,
                                           fromLocationCode: b.locationCode,
                                           availableQty: formatQtyByBatchPresentation(Number(b.availableQuantity), b),
                                         })
@@ -933,12 +1046,13 @@ export function InventoryPage() {
                                     <Button
                                       variant="ghost"
                                       size="sm"
-                                      icon={<ArrowPathIcon className="w-4 h-4" />}
+                                      icon={<ArrowPathIcon className="h-4 w-4" />}
                                       onClick={() => {
+                                        if (!b.batchId) return
                                         setStatusChangeItem({
                                           productId: pg.productId,
                                           productName: formatProductTitle(pg),
-                                          batchId: b.batchId!,
+                                          batchId: b.batchId,
                                           batchNumber: b.batchNumber,
                                           currentStatus: b.status,
                                           version: b.version,
@@ -950,13 +1064,14 @@ export function InventoryPage() {
                                     </Button>
                                   </div>
                                 ),
+                                width: '200px',
                               },
                             ]}
-                            data={wh.batches}
-                            keyExtractor={(b) => `${b.batchId ?? 'null'}-${b.locationId}`}
+                            data={rows}
+                            keyExtractor={(b: any) => `${b.batchId ?? 'null'}-${b.locationId}`}
                           />
-                        </div>
-                      ))}
+                        )
+                      })()}
                     </div>
                   )}
                 </div>

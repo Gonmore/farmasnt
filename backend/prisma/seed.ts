@@ -982,114 +982,96 @@ async function main() {
   for (const p of createdProducts) {
     const stockData = farmaciaProducts.find(fp => fp.sku === p.sku)!
 
-    const batchPresentation =
-      (await db.productPresentation.findFirst({
-        where: { tenantId: demoTenant.id, productId: p.id, name: 'Caja de 10', isActive: true },
-        select: { id: true, unitsPerPresentation: true },
-      })) ??
-      (await db.productPresentation.findFirst({
-        where: { tenantId: demoTenant.id, productId: p.id, isDefault: true, isActive: true },
-        select: { id: true, unitsPerPresentation: true },
-      })) ??
-      (await db.productPresentation.findFirst({
-        where: { tenantId: demoTenant.id, productId: p.id, isActive: true },
-        select: { id: true, unitsPerPresentation: true },
-      }))
+    const presUnit = await db.productPresentation.findFirst({
+      where: { tenantId: demoTenant.id, productId: p.id, name: 'Unidad', isActive: true },
+      select: { id: true, unitsPerPresentation: true },
+    })
+    const presCaja10 = await db.productPresentation.findFirst({
+      where: { tenantId: demoTenant.id, productId: p.id, name: 'Caja de 10', isActive: true },
+      select: { id: true, unitsPerPresentation: true },
+    })
+    const presCaja20 = await db.productPresentation.findFirst({
+      where: { tenantId: demoTenant.id, productId: p.id, name: 'Caja de 20', isActive: true },
+      select: { id: true, unitsPerPresentation: true },
+    })
 
-    const unitsPerPresentation = batchPresentation ? Number(batchPresentation.unitsPerPresentation.toString()) : 1
-    const totalStockUnits =
-      unitsPerPresentation > 1
-        ? Math.max(unitsPerPresentation, roundDownToMultiple(stockData.stock, unitsPerPresentation))
-        : stockData.stock
-    
-    // Crear batch
-    const batch = await db.batch.upsert({
-      where: { tenantId_productId_batchNumber: { tenantId: demoTenant.id, productId: p.id, batchNumber: `${p.sku}-2025-01` } },
-      update: {
-        expiresAt: addDaysUtc(todayUtc, 365 + Math.floor(Math.random() * 365)),
-        presentationId: batchPresentation?.id ?? null,
-      },
-      create: {
-        tenantId: demoTenant.id,
-        productId: p.id,
-        batchNumber: `${p.sku}-2025-01`,
-        expiresAt: addDaysUtc(todayUtc, 365 + Math.floor(Math.random() * 365)),
-        presentationId: batchPresentation?.id ?? null,
-        createdBy: demoAdminUser.id,
-      },
+    const unitUnitsPer = presUnit ? Number(presUnit.unitsPerPresentation.toString()) : 1
+    const caja10UnitsPer = presCaja10 ? Number(presCaja10.unitsPerPresentation.toString()) : 10
+    const caja20UnitsPer = presCaja20 ? Number(presCaja20.unitsPerPresentation.toString()) : 20
+
+    const totalStockUnits = Math.max(stockData.stock, 0)
+
+    const expiresAt = addDaysUtc(todayUtc, 365 + Math.floor(Math.random() * 365))
+    const batchUnit = await db.batch.upsert({
+      where: { tenantId_productId_batchNumber: { tenantId: demoTenant.id, productId: p.id, batchNumber: `${p.sku}-U-2025` } },
+      update: { expiresAt, presentationId: presUnit?.id ?? null },
+      create: { tenantId: demoTenant.id, productId: p.id, batchNumber: `${p.sku}-U-2025`, expiresAt, presentationId: presUnit?.id ?? null, createdBy: demoAdminUser.id },
+      select: { id: true },
+    })
+    const batchCaja10 = await db.batch.upsert({
+      where: { tenantId_productId_batchNumber: { tenantId: demoTenant.id, productId: p.id, batchNumber: `${p.sku}-C10-2025` } },
+      update: { expiresAt, presentationId: presCaja10?.id ?? null },
+      create: { tenantId: demoTenant.id, productId: p.id, batchNumber: `${p.sku}-C10-2025`, expiresAt, presentationId: presCaja10?.id ?? null, createdBy: demoAdminUser.id },
+      select: { id: true },
+    })
+    const batchCaja20 = await db.batch.upsert({
+      where: { tenantId_productId_batchNumber: { tenantId: demoTenant.id, productId: p.id, batchNumber: `${p.sku}-C20-2025` } },
+      update: { expiresAt, presentationId: presCaja20?.id ?? null },
+      create: { tenantId: demoTenant.id, productId: p.id, batchNumber: `${p.sku}-C20-2025`, expiresAt, presentationId: presCaja20?.id ?? null, createdBy: demoAdminUser.id },
       select: { id: true },
     })
 
-    // Distribuir stock en las 3 ubicaciones
-    const stockLaPaz =
-      unitsPerPresentation > 1 ? roundDownToMultiple(totalStockUnits * 0.5, unitsPerPresentation) : Math.ceil(totalStockUnits * 0.5)
-    const stockCbba =
-      unitsPerPresentation > 1 ? roundDownToMultiple(totalStockUnits * 0.3, unitsPerPresentation) : Math.ceil(totalStockUnits * 0.3)
-    const stockScz = Math.max(0, totalStockUnits - stockLaPaz - stockCbba)
+    // Distribuir stock total en las 3 ubicaciones
+    const locStockLaPaz = Math.ceil(totalStockUnits * 0.5)
+    const locStockCbba = Math.ceil(totalStockUnits * 0.3)
+    const locStockScz = Math.max(0, totalStockUnits - locStockLaPaz - locStockCbba)
 
-    await db.inventoryBalance.upsert({
-      where: {
-        tenantId_locationId_productId_batchId: {
-          tenantId: demoTenant.id,
-          locationId: loc.id,
-          productId: p.id,
-          batchId: batch.id,
-        },
-      },
-      update: { quantity: stockLaPaz.toString() },
-      create: {
-        tenantId: demoTenant.id,
-        locationId: loc.id,
-        productId: p.id,
-        batchId: batch.id,
-        quantity: stockLaPaz.toString(),
-        createdBy: demoAdminUser.id,
-      },
-    })
+    const splitByPresentation = (locationUnits: number) => {
+      const caja10Units = roundDownToMultiple(locationUnits * 0.5, caja10UnitsPer)
+      const caja20Units = roundDownToMultiple(locationUnits * 0.3, caja20UnitsPer)
+      const used = caja10Units + caja20Units
+      const unitUnits = Math.max(0, Math.round(locationUnits - used))
+      return { unitUnits, caja10Units, caja20Units }
+    }
 
-    if (stockCbba > 0) {
+    const laPaz = splitByPresentation(locStockLaPaz)
+    const cbba = splitByPresentation(locStockCbba)
+    const scz = splitByPresentation(locStockScz)
+
+    const upsertBalance = async (locationId: string, batchId: string, qty: number) => {
+      if (!Number.isFinite(qty) || qty <= 0) return
       await db.inventoryBalance.upsert({
         where: {
           tenantId_locationId_productId_batchId: {
             tenantId: demoTenant.id,
-            locationId: locCochabamba.id,
+            locationId,
             productId: p.id,
-            batchId: batch.id,
+            batchId,
           },
         },
-        update: { quantity: stockCbba.toString() },
+        update: { quantity: String(Math.round(qty)) },
         create: {
           tenantId: demoTenant.id,
-          locationId: locCochabamba.id,
+          locationId,
           productId: p.id,
-          batchId: batch.id,
-          quantity: stockCbba.toString(),
+          batchId,
+          quantity: String(Math.round(qty)),
           createdBy: demoAdminUser.id,
         },
       })
     }
 
-    if (stockScz > 0) {
-      await db.inventoryBalance.upsert({
-        where: {
-          tenantId_locationId_productId_batchId: {
-            tenantId: demoTenant.id,
-            locationId: locSantaCruz.id,
-            productId: p.id,
-            batchId: batch.id,
-          },
-        },
-        update: { quantity: stockScz.toString() },
-        create: {
-          tenantId: demoTenant.id,
-          locationId: locSantaCruz.id,
-          productId: p.id,
-          batchId: batch.id,
-          quantity: stockScz.toString(),
-          createdBy: demoAdminUser.id,
-        },
-      })
-    }
+    await upsertBalance(loc.id, batchUnit.id, laPaz.unitUnits)
+    await upsertBalance(loc.id, batchCaja10.id, laPaz.caja10Units)
+    await upsertBalance(loc.id, batchCaja20.id, laPaz.caja20Units)
+
+    await upsertBalance(locCochabamba.id, batchUnit.id, cbba.unitUnits)
+    await upsertBalance(locCochabamba.id, batchCaja10.id, cbba.caja10Units)
+    await upsertBalance(locCochabamba.id, batchCaja20.id, cbba.caja20Units)
+
+    await upsertBalance(locSantaCruz.id, batchUnit.id, scz.unitUnits)
+    await upsertBalance(locSantaCruz.id, batchCaja10.id, scz.caja10Units)
+    await upsertBalance(locSantaCruz.id, batchCaja20.id, scz.caja20Units)
   }
   console.log('   ✅ Stock distribuido en todas las ubicaciones')
 
