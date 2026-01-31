@@ -52,6 +52,15 @@ type BulkFulfillResponse = {
   fulfilledRequestIds: string[]
 }
 
+const parsePresentationFromBatchNumber = (batchNumber: string): { name: string; unitsPerPresentation: string } | null => {
+  const match = batchNumber.match(/C(\d+)/i)
+  if (match) {
+    const units = parseInt(match[1], 10)
+    if (Number.isFinite(units) && units > 0) return { name: 'Caja', unitsPerPresentation: String(units) }
+  }
+  return null
+}
+
 async function listWarehouses(token: string): Promise<{ items: WarehouseListItem[] }> {
   return apiFetch('/api/v1/warehouses?take=100', { token })
 }
@@ -191,16 +200,24 @@ export function BulkFulfillRequestsPage() {
         const total = Number(r.quantity || '0')
         const reserved = Number(r.reservedQuantity ?? '0')
         const available = Math.max(0, total - reserved)
+
+        // Get presentation units
+        const pres = r.batch?.batchNumber ? parsePresentationFromBatchNumber(r.batch.batchNumber) : null
+        const unitsPerPres = pres ? Number(pres.unitsPerPresentation) : 1
+        if (!Number.isFinite(unitsPerPres) || unitsPerPres <= 0) throw new Error('Presentación inválida')
+
         const qtyRaw = (qtyByStockRowId[r.id] ?? '').trim()
-        const qty = qtyRaw ? Number(qtyRaw) : available
-        if (!Number.isFinite(qty) || qty <= 0) throw new Error('Cantidad inválida en una fila seleccionada')
-        if (qty > available + 1e-9) throw new Error('Una fila supera la cantidad disponible')
+        let qtyInPres = qtyRaw ? Number(qtyRaw) : (available / unitsPerPres)
+        if (!Number.isFinite(qtyInPres) || qtyInPres <= 0) throw new Error('Cantidad inválida en una fila seleccionada')
+
+        const qtyInUnits = qtyInPres * unitsPerPres
+        if (qtyInUnits > available + 1e-9) throw new Error('Una fila supera la cantidad disponible')
 
         return {
           productId: r.productId,
           batchId: r.batchId,
           fromLocationId: r.locationId,
-          quantity: qty,
+          quantity: qtyInUnits,
         }
       })
 
@@ -288,7 +305,9 @@ export function BulkFulfillRequestsPage() {
               }}
               options={[
                 { value: '', label: 'Selecciona sucursal' },
-                ...activeWarehouses.map((w) => ({ value: w.id, label: `${w.code} - ${w.name}${w.city ? ` (${w.city})` : ''}` })),
+                ...activeWarehouses
+                  .filter((w) => w.id !== fromWarehouseId)
+                  .map((w) => ({ value: w.id, label: `${w.code} - ${w.name}${w.city ? ` (${w.city})` : ''}` })),
               ]}
               disabled={warehousesQuery.isLoading}
             />
@@ -337,7 +356,7 @@ export function BulkFulfillRequestsPage() {
           )}
           {submitSuccess && (
             <div className="mt-3 rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-800 dark:border-green-800 dark:bg-green-900/20 dark:text-green-200">
-              Listo. Ref: <span className="font-mono">{submitSuccess.referenceId}</span> · Solicitudes atendidas: {submitSuccess.fulfilledCount}
+              Listo. Referencia: <span className="font-mono">{submitSuccess.referenceId}</span>
             </div>
           )}
         </div>
@@ -441,11 +460,26 @@ export function BulkFulfillRequestsPage() {
                   },
                   { header: 'Lote', accessor: (r) => r.batch?.batchNumber ?? '—' },
                   {
+                    header: 'Presentación',
+                    accessor: (r) => {
+                      if (!r.batch?.batchNumber) return 'Unidad'
+                      const pres = parsePresentationFromBatchNumber(r.batch.batchNumber)
+                      return pres ? `${pres.name} (${pres.unitsPerPresentation}u)` : 'Unidad'
+                    }
+                  },
+                  {
                     header: 'Disponible',
                     accessor: (r) => {
                       const total = Number(r.quantity || '0')
                       const reserved = Number(r.reservedQuantity ?? '0')
-                      return String(Math.max(0, total - reserved))
+                      const available = Math.max(0, total - reserved)
+                      if (!r.batch?.batchNumber) return String(available)
+                      const pres = parsePresentationFromBatchNumber(r.batch.batchNumber)
+                      if (!pres) return String(available)
+                      const unitsPerPres = Number(pres.unitsPerPresentation)
+                      if (!Number.isFinite(unitsPerPres) || unitsPerPres <= 0) return String(available)
+                      const availPres = available / unitsPerPres
+                      return Number.isInteger(availPres) ? String(availPres) : availPres.toFixed(2)
                     },
                   },
                   {
@@ -455,15 +489,28 @@ export function BulkFulfillRequestsPage() {
                       const reserved = Number(r.reservedQuantity ?? '0')
                       const available = Math.max(0, total - reserved)
                       const disabled = !selectedStockRowIds[r.id]
+                      let placeholder = String(available)
+                      let maxValue = available
+                      if (r.batch?.batchNumber) {
+                        const pres = parsePresentationFromBatchNumber(r.batch.batchNumber)
+                        if (pres) {
+                          const unitsPerPres = Number(pres.unitsPerPresentation)
+                          if (Number.isFinite(unitsPerPres) && unitsPerPres > 0) {
+                            const availPres = available / unitsPerPres
+                            placeholder = Number.isInteger(availPres) ? String(availPres) : availPres.toFixed(2)
+                            maxValue = availPres
+                          }
+                        }
+                      }
                       return (
                         <input
                           className="w-28 rounded-md border border-slate-300 bg-white px-2 py-1 text-sm dark:border-slate-600 dark:bg-slate-800"
                           type="number"
                           min={0}
-                          max={available}
+                          max={maxValue}
                           disabled={disabled}
                           value={qtyByStockRowId[r.id] ?? ''}
-                          placeholder={String(available)}
+                          placeholder={placeholder}
                           onChange={(e) => setQtyByStockRowId((prev) => ({ ...prev, [r.id]: e.target.value }))}
                         />
                       )

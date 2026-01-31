@@ -1042,12 +1042,15 @@ export function InventoryPage() {
                       </div>
                     </div>
                     <div className="text-right">
-                      <div className="text-2xl font-bold text-[var(--pf-primary)]">
-                        {formatTotalsFromBatches(wg.products.flatMap((p) => p.batches), 'availableQuantity')}
-                      </div>
-                      <div className="text-xs text-slate-600 dark:text-slate-400">
-                        disp. · {formatTotalsFromBatches(wg.products.flatMap((p) => p.batches), 'reservedQuantity')} res. ·{' '}
-                        {formatTotalsFromBatches(wg.products.flatMap((p) => p.batches), 'quantity')} total
+                      <div className="font-bold text-[var(--pf-primary)]">
+                        <span className="text-xl">
+                          {(() => {
+                            const totalProducts = wg.products.length
+                            const productsWithStock = wg.products.filter(p => p.availableQuantity > 0).length
+                            return `${productsWithStock}/${totalProducts}`
+                          })()}
+                        </span>
+                        <span className="text-sm"> productos con stock</span>
                       </div>
                     </div>
                   </button>

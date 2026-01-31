@@ -4,9 +4,8 @@ import { useNavigate } from 'react-router-dom'
 import { apiFetch } from '../../lib/api'
 import { getProductDisplayName } from '../../lib/productName'
 import { useAuth } from '../../providers/AuthProvider'
-import { MainLayout, PageContainer, Button, Table, Loading, ErrorState, EmptyState, PaginationCursor, Modal, ExpiryBadge, CatalogSearch } from '../../components'
+import { MainLayout, PageContainer, Button, Table, Loading, ErrorState, EmptyState, PaginationCursor, Modal, CatalogSearch } from '../../components'
 import { useNavigation } from '../../hooks'
-import type { ExpiryStatus } from '../../components'
 import { EyeIcon, PlusIcon } from '@heroicons/react/24/outline'
 
 type ProductListItem = {
@@ -24,6 +23,12 @@ type ProductListItem = {
     totalReservedQuantity?: string
     totalAvailableQuantity?: string
     expiresAt?: string
+  }>
+  presentations?: Array<{
+    id: string
+    name: string
+    unitsPerPresentation: number
+    isDefault: boolean
   }>
 }
 
@@ -44,15 +49,72 @@ async function fetchProductBatches(token: string, productId: string) {
   }
 }
 
-function calculateExpiryStatus(expiresAt: string): ExpiryStatus {
-  const expiryDate = new Date(expiresAt)
-  const today = new Date()
-  const daysToExpire = Math.ceil((expiryDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
+async function fetchBalancesExpanded(token: string, productId: string): Promise<{ items: any[] }> {
+  const params = new URLSearchParams({ take: '200', productId })
+  return apiFetch(`/api/v1/reports/stock/balances-expanded?${params}`, { token })
+}
 
-  if (daysToExpire < 0) return 'EXPIRED'
-  if (daysToExpire <= 30) return 'RED'
-  if (daysToExpire <= 90) return 'YELLOW'
-  return 'GREEN'
+function formatQtyByBatchPresentation(qtyUnits: number, batch: { presentationName?: string | null; unitsPerPresentation?: number | null } | null | undefined): string {
+  const qtyNum = Number(qtyUnits)
+  if (!Number.isFinite(qtyNum) || qtyNum <= 0) return '0'
+
+  const unitsPer = Number(batch?.unitsPerPresentation ?? 0)
+  const presName = (batch?.presentationName ?? '').trim()
+  if (Number.isFinite(unitsPer) && unitsPer > 1 && presName) {
+    const count = qtyNum / unitsPer
+    const countStr = Number.isFinite(count) && Math.abs(count - Math.round(count)) < 1e-9 ? String(Math.round(count)) : count.toFixed(2)
+    return `${countStr} ${presName} (${unitsPer.toFixed(0)}u)`
+  }
+
+  return `${qtyNum} unidades`
+}
+
+import React from 'react'
+
+function formatStockWithEmojis(availableUnits: number, presentation: { name?: string | null; unitsPerPresentation?: number | null } | null | undefined): React.JSX.Element {
+  const unitsPer = Number(presentation?.unitsPerPresentation ?? 0)
+  const presName = (presentation?.name ?? '').trim().toLowerCase()
+
+  // Función para obtener el emoji según el tipo de presentación
+  const getEmoji = (presentationName: string): string => {
+    if (presentationName.includes('unidad') || presentationName.includes('píldora') || presentationName.includes('cápsula') || presentationName.includes('comprimido') || presentationName.includes('tableta')) {
+      return '💊'
+    } else if (presentationName.includes('frasco') || presentationName.includes('botella')) {
+      return '🧴'
+    } else {
+      return '📦'
+    }
+  }
+
+  if (Number.isFinite(unitsPer) && unitsPer > 1 && presName && availableUnits >= unitsPer) {
+    const completePresentations = Math.floor(availableUnits / unitsPer)
+    const remainingUnits = availableUnits % unitsPer
+
+    const emoji = getEmoji(presName)
+    const presentationName = presentation?.name || 'presentación'
+    const presentationText = completePresentations === 1 ? presentationName : `${presentationName}${presentationName.endsWith('s') ? '' : 's'}`
+
+    return (
+      <div className="text-right">
+        <div className="text-sm text-slate-600 dark:text-slate-400 leading-tight">
+          {completePresentations} {presentationText} ({unitsPer} u) {emoji}
+        </div>
+        {remainingUnits > 0 && (
+          <div className="text-sm text-slate-600 dark:text-slate-400 leading-tight">
+            {remainingUnits} unidades sueltas 💊
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div className="text-right">
+      <div className="text-sm text-slate-600 dark:text-slate-400 leading-tight">
+        {availableUnits} unidades 💊
+      </div>
+    </div>
+  )
 }
 
 export function ProductsListPage() {
@@ -82,7 +144,10 @@ export function ProductsListPage() {
 
       const enrichments = await Promise.all(
         productsQuery.data.items.map(async (product) => {
-          const batches = await fetchProductBatches(auth.accessToken!, product.id).catch(() => [])
+          const [batches, presentationsResp] = await Promise.all([
+            fetchProductBatches(auth.accessToken!, product.id).catch(() => []),
+            apiFetch(`/api/v1/products/${product.id}/presentations`, { token: auth.accessToken }).catch(() => ({ items: [] }))
+          ])
 
           // Process batches to get warehouse totals
           const batchSummaries = batches.map((batch: any) => ({
@@ -96,7 +161,8 @@ export function ProductsListPage() {
 
           return {
             id: product.id,
-            batches: batchSummaries.slice(0, 3) // Show first 3 batches
+            batches: batchSummaries.slice(0, 3), // Show first 3 batches
+            presentations: (presentationsResp as any).items || []
           }
         })
       )
@@ -114,7 +180,10 @@ export function ProductsListPage() {
 
       const enrichments = await Promise.all(
         searchResults.map(async (product) => {
-          const batches = await fetchProductBatches(auth.accessToken!, product.id).catch(() => [])
+          const [batches, presentationsResp] = await Promise.all([
+            fetchProductBatches(auth.accessToken!, product.id).catch(() => []),
+            apiFetch(`/api/v1/products/${product.id}/presentations`, { token: auth.accessToken }).catch(() => ({ items: [] }))
+          ])
 
           // Process batches to get warehouse totals
           const batchSummaries = batches.map((batch: any) => ({
@@ -128,7 +197,8 @@ export function ProductsListPage() {
 
           return {
             id: product.id,
-            batches: batchSummaries.slice(0, 3) // Show first 3 batches
+            batches: batchSummaries.slice(0, 3), // Show first 3 batches
+            presentations: (presentationsResp as any).items || []
           }
         })
       )
@@ -138,6 +208,57 @@ export function ProductsListPage() {
     enabled: !!auth.accessToken && !!searchResults,
   })
 
+  // Query for stock balances when modal is open
+  const stockBalancesQuery = useQuery({
+    queryKey: ['stock-balances', stockModal.product?.id],
+    queryFn: () => fetchBalancesExpanded(auth.accessToken!, stockModal.product!.id),
+    enabled: !!auth.accessToken && stockModal.isOpen && !!stockModal.product,
+  })
+
+  // Group balances by warehouse for modal display
+  const groupedBalancesForModal = useMemo(() => {
+    if (!stockBalancesQuery.data?.items) return []
+
+    const map = new Map<string, {
+      warehouseId: string
+      warehouseName: string
+      totalQuantity: number
+      totalReservedQuantity: number
+      totalAvailableQuantity: number
+      presentationName: string | null
+      unitsPerPresentation: number | null
+    }>()
+
+    for (const item of stockBalancesQuery.data.items) {
+      const qty = Number(item.quantity)
+      if (!Number.isFinite(qty) || qty <= 0) continue
+
+      const reserved = Math.max(0, Number(item.reservedQuantity ?? '0'))
+      const available = Math.max(0, qty - reserved)
+
+      const warehouseId = item.location.warehouse.id
+      let group = map.get(warehouseId)
+      if (!group) {
+        group = {
+          warehouseId,
+          warehouseName: item.location.warehouse.name,
+          totalQuantity: 0,
+          totalReservedQuantity: 0,
+          totalAvailableQuantity: 0,
+          presentationName: item.batch?.presentation?.name ?? null,
+          unitsPerPresentation: item.batch?.presentation?.unitsPerPresentation ?? null
+        }
+        map.set(warehouseId, group)
+      }
+
+      group.totalQuantity += qty
+      group.totalReservedQuantity += reserved
+      group.totalAvailableQuantity += available
+    }
+
+    return Array.from(map.values()).sort((a, b) => a.warehouseName.localeCompare(b.warehouseName))
+  }, [stockBalancesQuery.data])
+
   // Combine search results with enrichment data
   const combinedSearchData = useMemo(() => {
     if (!searchResults) return null
@@ -145,7 +266,8 @@ export function ProductsListPage() {
       // Return search results with default enrichment values
       return searchResults.map(product => ({
         ...product,
-        batches: []
+        batches: [],
+        presentations: []
       }))
     }
 
@@ -155,7 +277,8 @@ export function ProductsListPage() {
       const enrichment = enrichmentMap.get(product.id)
       return enrichment ? { ...product, ...enrichment } : {
         ...product,
-        batches: []
+        batches: [],
+        presentations: []
       }
     })
   }, [searchResults, searchEnrichmentQuery.data])
@@ -169,7 +292,8 @@ export function ProductsListPage() {
         ...productsQuery.data,
         items: productsQuery.data.items.map(product => ({
           ...product,
-          batches: []
+          batches: [],
+          presentations: []
         }))
       }
     }
@@ -184,7 +308,8 @@ export function ProductsListPage() {
           ...product,
           hasRecipe: false,
           recipeItems: [],
-          batches: []
+          batches: [],
+          presentations: []
         }
       })
     }
@@ -261,13 +386,15 @@ export function ProductsListPage() {
                   { header: 'SKU', accessor: (p) => p.sku },
                   { header: 'Nombre', accessor: (p) => getProductDisplayName(p) },
                   {
-                    header: 'Stock',
+                    header: 'STOCK(unidades)',
                     accessor: (p) => {
                       // Determinar si usar datos de búsqueda o datos normales
                       const isSearchResult = !!searchResults
                       const productData = isSearchResult ? combinedSearchData?.find(sp => sp.id === p.id) : p
                       
                       if (!productData) return '-'
+                      
+                      const totalUnits = productData.batches.reduce((total: number, batch: any) => total + parseInt(batch.totalAvailableQuantity || batch.totalQuantity), 0)
                       
                       return (
                         <div className="cursor-pointer">
@@ -276,7 +403,7 @@ export function ProductsListPage() {
                             onClick={() => productData.batches.length > 0 && setStockModal({ isOpen: true, product: productData })}
                             title={productData.batches.length > 0 ? "Ver stock completo" : "Sin stock"}
                           >
-                            {productData.batches.length > 0 ? productData.batches.reduce((total: number, batch: any) => total + parseInt(batch.totalAvailableQuantity || batch.totalQuantity), 0) : '➖'}
+                            {productData.batches.length > 0 ? totalUnits : '➖'}
                           </div>
                         </div>
                       )
@@ -321,62 +448,71 @@ export function ProductsListPage() {
         title={`Stock - ${stockModal.product?.name || ''}`}
         maxWidth="lg"
       >
-        <div className="space-y-4">
-          {stockModal.product?.batches && stockModal.product.batches.length > 0 ? (
-            <div className="grid gap-3">
-              {stockModal.product.batches.map((batch, idx) => {
-                const expiryStatus = batch.expiresAt ? calculateExpiryStatus(batch.expiresAt) : 'GREEN'
-                const bgColorClass = {
-                  EXPIRED: 'from-red-50 to-red-100 border-red-200',
-                  RED: 'from-red-50 to-red-100 border-red-200',
-                  YELLOW: 'from-yellow-50 to-yellow-100 border-yellow-200',
-                  GREEN: 'from-green-50 to-emerald-50 border-green-200'
-                }[expiryStatus]
+        <div className="flex flex-col max-h-[80vh]">
+          {/* Fixed header with total */}
+          <div className="flex-shrink-0 p-4 bg-slate-50 dark:bg-slate-800 rounded-t-lg border-b border-slate-200 dark:border-slate-700">
+            <div className="flex justify-between items-center">
+              <span className="font-bold text-slate-700 dark:text-slate-300">Total disponible en todos los almacenes:</span>
+              <span className="text-2xl font-bold text-slate-800 dark:text-slate-200">
+                {(() => {
+                  const totalAvailable = groupedBalancesForModal.reduce((total, warehouse) => total + warehouse.totalAvailableQuantity, 0)
+                  return (
+                    <span>
+                      <span className="text-2xl">{totalAvailable}</span>
+                      <span className="text-sm ml-1 text-slate-800 dark:text-slate-200">unidades</span>
+                    </span>
+                  )
+                })()}
+              </span>
+            </div>
+          </div>
 
-                return (
-                  <div key={idx} className={`flex items-center justify-between p-4 bg-gradient-to-r ${bgColorClass} rounded-lg border`}>
+          {/* Scrollable content */}
+          <div className="flex-1 overflow-y-auto p-4">
+            {stockBalancesQuery.isLoading ? (
+              <Loading />
+            ) : stockBalancesQuery.error ? (
+              <ErrorState
+                message={stockBalancesQuery.error instanceof Error ? stockBalancesQuery.error.message : 'Error al cargar stock'}
+                retry={stockBalancesQuery.refetch}
+              />
+            ) : groupedBalancesForModal.length > 0 ? (
+              <div className="grid gap-4">
+                {groupedBalancesForModal.map((warehouse, idx) => (
+                  <div key={idx} className="flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg">
                     <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center">
-                        <span className="text-white text-sm">📦</span>
+                      <div className="w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center">
+                        <span className="text-white text-lg">🏢</span>
                       </div>
                       <div>
-                        <div className="font-medium text-slate-700">Lote {batch.batchNumber}</div>
-                        <div className="text-sm text-slate-500">{batch.warehouseName}</div>
-                        {batch.expiresAt && (
-                          <div className="text-xs text-slate-600 mt-1">
-                            Vence: {new Date(batch.expiresAt).toLocaleDateString()}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                    <div className="text-right flex flex-col items-end gap-2">
-                      <div>
-                        <span className="text-3xl font-bold text-green-600">{batch.totalAvailableQuantity || batch.totalQuantity}</span>
-                        <span className="text-green-500 ml-1">disp.</span>
-                        <div className="text-xs text-slate-600">
-                          {batch.totalReservedQuantity || '0'} res. · {batch.totalQuantity} total
+                        <div className="font-medium text-slate-900 dark:text-slate-100 text-lg">{warehouse.warehouseName}</div>
+                        <div className="text-sm text-slate-600 dark:text-slate-400">
+                          {formatQtyByBatchPresentation(warehouse.totalReservedQuantity, {
+                            presentationName: warehouse.presentationName,
+                            unitsPerPresentation: warehouse.unitsPerPresentation
+                          })} reservados
                         </div>
                       </div>
-                      {batch.expiresAt && <ExpiryBadge status={expiryStatus} />}
+                    </div>
+                    <div className="text-right">
+                      {formatStockWithEmojis(warehouse.totalAvailableQuantity, {
+                        name: warehouse.presentationName,
+                        unitsPerPresentation: warehouse.unitsPerPresentation
+                      })}
+                      <div className="text-sm font-bold text-blue-600 mt-1">
+                        total: {warehouse.totalAvailableQuantity} unidades
+                      </div>
                     </div>
                   </div>
-                )
-              })}
-              <div className="mt-6 p-4 bg-slate-100 rounded-lg">
-                <div className="flex justify-between items-center">
-                  <span className="font-bold text-slate-700">Total disponible en todos los almacenes:</span>
-                  <span className="text-3xl font-bold text-slate-800">
-                    {stockModal.product.batches.reduce((total, batch) => total + parseInt(batch.totalAvailableQuantity || batch.totalQuantity), 0)}
-                  </span>
-                </div>
+                ))}
               </div>
-            </div>
-          ) : (
-            <div className="text-center py-8 text-slate-500">
-              <span className="text-4xl mb-4 block">📭</span>
-              <p className="text-lg">Este producto no tiene stock disponible</p>
-            </div>
-          )}
+            ) : (
+              <div className="text-center py-8 text-slate-500">
+                <span className="text-4xl mb-4 block">📭</span>
+                <p className="text-lg">Este producto no tiene stock disponible</p>
+              </div>
+            )}
+          </div>
         </div>
       </Modal>
     </MainLayout>

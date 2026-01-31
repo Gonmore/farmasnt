@@ -1703,10 +1703,13 @@ export function ProductDetailPage() {
 
                             <div className="text-right">
                                 <div className="text-sm font-medium text-slate-900 dark:text-slate-100">
-                                  {b.totalAvailableQuantity ?? b.totalQuantity ?? '-'}
+                                  {(() => {
+                                    const availUnits = getBatchAvailableUnits(b)
+                                    return availUnits !== null ? availUnits : '-'
+                                  })()}
                                 </div>
                                 <div className="text-xs text-slate-600 dark:text-slate-400">
-                                  disp. · {b.totalReservedQuantity ?? '0'} res. · {b.totalQuantity ?? '-'} total
+                                  Unidad · {b.totalReservedQuantity ?? '0'} res. · {b.totalQuantity ?? '-'} total
                                 </div>
                             </div>
                           </div>

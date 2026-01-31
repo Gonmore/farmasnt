@@ -32,6 +32,15 @@ type BulkTransferResponse = {
   items: Array<{ createdMovement: any; fromBalance: any; toBalance: any }>
 }
 
+const parsePresentationFromBatchNumber = (batchNumber: string): { name: string; unitsPerPresentation: string } | null => {
+  const match = batchNumber.match(/C(\d+)/i)
+  if (match) {
+    const units = parseInt(match[1], 10)
+    if (Number.isFinite(units) && units > 0) return { name: 'Caja', unitsPerPresentation: String(units) }
+  }
+  return null
+}
+
 async function listWarehouses(token: string): Promise<{ items: WarehouseListItem[] }> {
   return apiFetch('/api/v1/warehouses?take=100', { token })
 }
@@ -58,6 +67,7 @@ export function BulkTransferPage() {
   const [selectedRowIds, setSelectedRowIds] = useState<Record<string, boolean>>({})
   const [submitError, setSubmitError] = useState('')
   const [submitSuccess, setSubmitSuccess] = useState<null | { referenceId: string }>(null)
+  const [productFilter, setProductFilter] = useState('')
 
   const warehousesQuery = useQuery({
     queryKey: ['warehouses', 'bulkTransfer'],
@@ -91,8 +101,15 @@ export function BulkTransferPage() {
   const filteredStock = useMemo(() => {
     const items = stockQuery.data?.items ?? []
     if (!fromLocationId) return []
-    return items.filter((r) => r.locationId === fromLocationId)
-  }, [stockQuery.data?.items, fromLocationId])
+    let filtered = items.filter((r) => r.locationId === fromLocationId)
+    if (productFilter.trim()) {
+      const filter = productFilter.toLowerCase()
+      filtered = filtered.filter((r) =>
+        getProductLabel({ id: r.productId, sku: r.product.sku, name: r.product.name, genericName: r.product.genericName ?? null } as any).toLowerCase().includes(filter)
+      )
+    }
+    return filtered
+  }, [stockQuery.data?.items, fromLocationId, productFilter])
 
   const selectedRows = useMemo(() => {
     return filteredStock.filter((r) => selectedRowIds[r.id])
@@ -110,17 +127,25 @@ export function BulkTransferPage() {
         const total = Number(r.quantity || '0')
         const reserved = Number(r.reservedQuantity ?? '0')
         const available = Math.max(0, total - reserved)
+
+        // Get presentation units
+        const pres = r.batch?.batchNumber ? parsePresentationFromBatchNumber(r.batch.batchNumber) : null
+        const unitsPerPres = pres ? Number(pres.unitsPerPresentation) : 1
+        if (!Number.isFinite(unitsPerPres) || unitsPerPres <= 0) throw new Error('Presentación inválida')
+
         const qtyRaw = (qtyByRowId[r.id] ?? '').trim()
-        const qty = qtyRaw ? Number(qtyRaw) : available
-        if (!Number.isFinite(qty) || qty <= 0) throw new Error('Cantidad inválida en una fila seleccionada')
-        if (qty > available + 1e-9) throw new Error('Una fila supera la cantidad disponible')
+        let qtyInPres = qtyRaw ? Number(qtyRaw) : (available / unitsPerPres)
+        if (!Number.isFinite(qtyInPres) || qtyInPres <= 0) throw new Error('Cantidad inválida en una fila seleccionada')
+
+        const qtyInUnits = qtyInPres * unitsPerPres
+        if (qtyInUnits > available + 1e-9) throw new Error('Una fila supera la cantidad disponible')
 
         return {
           productId: r.productId,
           batchId: r.batchId,
           fromLocationId: r.locationId,
           toLocationId,
-          quantity: qty,
+          quantity: qtyInUnits,
         }
       })
 
@@ -141,10 +166,30 @@ export function BulkTransferPage() {
       setSubmitError('')
       setSubmitSuccess(null)
     },
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
       setSubmitSuccess({ referenceId: data.referenceId })
       setSelectedRowIds({})
       setQtyByRowId({})
+
+      // Enviar notificaciones
+      try {
+        await apiFetch('/api/v1/notifications/send-bulk-transfer', {
+          token: auth.accessToken!,
+          method: 'POST',
+          body: JSON.stringify({
+            referenceId: data.referenceId,
+            fromWarehouseId,
+            toWarehouseId,
+            items: data.items.map((item: any) => ({
+              productId: item.createdMovement.productId,
+              quantity: item.createdMovement.quantity,
+            })),
+          }),
+        })
+      } catch (error) {
+        console.warn('Error enviando notificaciones:', error)
+        // No fallar la operación por error en notificaciones
+      }
     },
     onError: (e: any) => {
       setSubmitError(e?.message || 'Error')
@@ -204,7 +249,9 @@ export function BulkTransferPage() {
               }}
               options={[
                 { value: '', label: 'Selecciona almacén' },
-                ...activeWarehouses.map((w) => ({ value: w.id, label: `${w.code} - ${w.name}` })),
+                ...activeWarehouses
+                  .filter((w) => w.id !== fromWarehouseId)
+                  .map((w) => ({ value: w.id, label: `${w.code} - ${w.name}` })),
               ]}
               disabled={warehousesQuery.isLoading}
             />
@@ -262,6 +309,15 @@ export function BulkTransferPage() {
             Selecciona filas (lote/ubicación) y define cantidad a mover.
           </div>
 
+          <div className="mb-4">
+            <Input
+              label="Buscar por producto"
+              value={productFilter}
+              onChange={(e) => setProductFilter(e.target.value)}
+              placeholder="Nombre del producto"
+            />
+          </div>
+
           {!fromWarehouseId || !fromLocationId ? (
             <EmptyState message="Selecciona almacén y ubicación de origen" />
           ) : stockQuery.isLoading ? (
@@ -302,11 +358,26 @@ export function BulkTransferPage() {
                 },
                 { header: 'Lote', accessor: (r) => r.batch?.batchNumber ?? '—' },
                 {
+                  header: 'Presentación',
+                  accessor: (r) => {
+                    if (!r.batch?.batchNumber) return 'Unidad'
+                    const pres = parsePresentationFromBatchNumber(r.batch.batchNumber)
+                    return pres ? `${pres.name} (${pres.unitsPerPresentation}u)` : 'Unidad'
+                  }
+                },
+                {
                   header: 'Disponible',
                   accessor: (r) => {
                     const total = Number(r.quantity || '0')
                     const reserved = Number(r.reservedQuantity ?? '0')
-                    return String(Math.max(0, total - reserved))
+                    const available = Math.max(0, total - reserved)
+                    if (!r.batch?.batchNumber) return String(available)
+                    const pres = parsePresentationFromBatchNumber(r.batch.batchNumber)
+                    if (!pres) return String(available)
+                    const unitsPerPres = Number(pres.unitsPerPresentation)
+                    if (!Number.isFinite(unitsPerPres) || unitsPerPres <= 0) return String(available)
+                    const availPres = available / unitsPerPres
+                    return Number.isInteger(availPres) ? String(availPres) : availPres.toFixed(2)
                   },
                 },
                 {
@@ -316,15 +387,28 @@ export function BulkTransferPage() {
                     const reserved = Number(r.reservedQuantity ?? '0')
                     const available = Math.max(0, total - reserved)
                     const disabled = !selectedRowIds[r.id]
+                    let placeholder = String(available)
+                    let maxValue = available
+                    if (r.batch?.batchNumber) {
+                      const pres = parsePresentationFromBatchNumber(r.batch.batchNumber)
+                      if (pres) {
+                        const unitsPerPres = Number(pres.unitsPerPresentation)
+                        if (Number.isFinite(unitsPerPres) && unitsPerPres > 0) {
+                          const availPres = available / unitsPerPres
+                          placeholder = Number.isInteger(availPres) ? String(availPres) : availPres.toFixed(2)
+                          maxValue = availPres
+                        }
+                      }
+                    }
                     return (
                       <input
                         className="w-28 rounded-md border border-slate-300 bg-white px-2 py-1 text-sm dark:border-slate-600 dark:bg-slate-800"
                         type="number"
                         min={0}
-                        max={available}
+                        max={maxValue}
                         disabled={disabled}
                         value={qtyByRowId[r.id] ?? ''}
-                        placeholder={String(available)}
+                        placeholder={placeholder}
                         onChange={(e) => setQtyByRowId((prev) => ({ ...prev, [r.id]: e.target.value }))}
                       />
                     )

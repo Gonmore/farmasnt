@@ -1,10 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import React, { useState } from 'react'
 import { apiFetch } from '../../lib/api'
 import { getProductLabel } from '../../lib/productName'
 import { useAuth } from '../../providers/AuthProvider'
 import { MainLayout, PageContainer, Select, Input, Button, Table, Loading, ErrorState, Modal } from '../../components'
-import { useNavigation } from '../../hooks'
+import { useNavigation, usePermissions } from '../../hooks'
 import { MovementQuickActions } from '../../components/MovementQuickActions'
 
 type MovementRequestItem = {
@@ -186,6 +186,7 @@ function dateOnlyToUtcIso(dateString: string): string {
 
 export function MovementsPage() {
   const auth = useAuth()
+  const permissions = usePermissions()
   const navGroups = useNavigation()
   const queryClient = useQueryClient()
 
@@ -222,16 +223,21 @@ export function MovementsPage() {
   // Estados para CREAR SOLICITUD
   const [showCreateRequestModal, setShowCreateRequestModal] = useState(false)
   const [requestWarehouseId, setRequestWarehouseId] = useState('')
-  const [requestRequestedByName, setRequestRequestedByName] = useState('')
   const [requestProductId, setRequestProductId] = useState('')
-  const [requestItems, setRequestItems] = useState<{ presentationId: string; quantity: number }[]>([])
+  const [requestItem, setRequestItem] = useState<{ presentationId: string; quantity: number } | null>(null)
+  const [requestPresentationId, setRequestPresentationId] = useState('')
+  const [requestQuantity, setRequestQuantity] = useState('1')
   const [requestNote, setRequestNote] = useState('')
   const [createRequestError, setCreateRequestError] = useState('')
+
+  // Estados para el selector de producto con búsqueda
+  const [productSearchQuery, setProductSearchQuery] = useState('')
+  const [showProductOptions, setShowProductOptions] = useState(false)
 
   const productsQuery = useQuery({
     queryKey: ['products', 'forMovements'],
     queryFn: () => fetchProducts(auth.accessToken!),
-    enabled: !!auth.accessToken && !!type,
+    enabled: !!auth.accessToken && (!!type || showCreateRequestModal),
   })
 
   const productBatchesQuery = useQuery({
@@ -276,6 +282,38 @@ export function MovementsPage() {
     queryFn: () => fetchProductPresentations(auth.accessToken!, requestProductId),
     enabled: !!auth.accessToken && !!requestProductId,
   })
+
+  const requestWarehousesQuery = useQuery({
+    queryKey: ['warehouses', 'forRequests'],
+    queryFn: () => listWarehouses(auth.accessToken!),
+    enabled: !!auth.accessToken,
+  })
+
+  // Filtrar productos para el selector con búsqueda
+  const filteredProducts = React.useMemo(() => {
+    if (!productsQuery.data?.items) return []
+    if (!productSearchQuery.trim()) return productsQuery.data.items.filter(p => p.isActive)
+    const query = productSearchQuery.toLowerCase()
+    return productsQuery.data.items
+      .filter(p => p.isActive)
+      .filter(p =>
+        p.name.toLowerCase().includes(query) ||
+        p.genericName?.toLowerCase().includes(query) ||
+        p.sku.toLowerCase().includes(query)
+      )
+      .slice(0, 10) // Limitar a 10 resultados
+  }, [productsQuery.data, productSearchQuery])
+
+  // Auto-select default presentation when presentations load
+  React.useEffect(() => {
+    if (!requestProductPresentationsQuery.data?.items || requestPresentationId) return
+
+    const defaultPresentation = requestProductPresentationsQuery.data.items.find(p => p.isDefault && p.isActive !== false)
+    if (defaultPresentation) {
+      setRequestPresentationId(defaultPresentation.id)
+      setRequestItem({ presentationId: defaultPresentation.id, quantity: Number(requestQuantity) })
+    }
+  }, [requestProductPresentationsQuery.data, requestPresentationId, requestQuantity])
 
   const batchMutation = useMutation({
     mutationFn: (data: {
@@ -375,40 +413,12 @@ export function MovementsPage() {
 
   const handleRequestProductChange = (nextProductId: string) => {
     setRequestProductId(nextProductId)
-    setRequestItems([])
+    setRequestItem(null)
+    setRequestPresentationId('')
+    setRequestQuantity('1')
   }
 
-  const handleAddRequestItem = (presentationId: string, quantity: number) => {
-    if (!presentationId || quantity <= 0) return
-    setRequestItems(prev => {
-      const existing = prev.find(item => item.presentationId === presentationId)
-      if (existing) {
-        return prev.map(item =>
-          item.presentationId === presentationId
-            ? { ...item, quantity: item.quantity + quantity }
-            : item
-        )
-      } else {
-        return [...prev, { presentationId, quantity }]
-      }
-    })
-  }
 
-  const handleRemoveRequestItem = (presentationId: string) => {
-    setRequestItems(prev => prev.filter(item => item.presentationId !== presentationId))
-  }
-
-  const handleUpdateRequestItemQuantity = (presentationId: string, quantity: number) => {
-    if (quantity <= 0) {
-      handleRemoveRequestItem(presentationId)
-    } else {
-      setRequestItems(prev => prev.map(item =>
-        item.presentationId === presentationId
-          ? { ...item, quantity }
-          : item
-      ))
-    }
-  }
 
   // Obtener existencias por lote/ubicación para mostrar en tabla
   const stockRows = (() => {
@@ -546,25 +556,28 @@ export function MovementsPage() {
   const createRequestMutation = useMutation({
     mutationFn: () => {
       if (!requestWarehouseId) throw new Error('Seleccioná la sucursal que solicita')
-      if (!requestRequestedByName.trim()) throw new Error('Ingresá el nombre de quien solicita')
+      const requestedByName = permissions.user?.fullName || permissions.user?.email || 'Usuario desconocido'
       if (!requestProductId) throw new Error('Seleccioná un producto')
-      if (requestItems.length === 0) throw new Error('Agregá al menos una presentación solicitada')
+      if (!requestItem) throw new Error('Seleccioná una presentación')
 
       return createMovementRequest(auth.accessToken!, {
         warehouseId: requestWarehouseId,
-        requestedByName: requestRequestedByName.trim(),
+        requestedByName,
         productId: requestProductId,
-        items: requestItems,
+        items: [requestItem],
         note: requestNote.trim() || undefined,
       })
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['movementRequests'] })
       setShowCreateRequestModal(false)
-      setRequestWarehouseId('')
-      setRequestRequestedByName('')
+      // Only reset warehouse for non-branch-admin users
+      if (!permissions.roles.some(r => r.code === 'BRANCH_ADMIN')) {
+        setRequestWarehouseId('')
+      }
       setRequestProductId('')
-      setRequestItems([])
+      setRequestItem(null)
+      setRequestPresentationId('')
       setRequestNote('')
       setCreateRequestError('')
       alert('Solicitud creada exitosamente')
@@ -1536,7 +1549,7 @@ export function MovementsPage() {
             e.preventDefault()
             createRequestMutation.mutate()
           }}
-          className="space-y-4"
+          className="space-y-4 max-h-96 overflow-y-auto"
         >
           <Select
             label="Sucursal que solicita"
@@ -1544,106 +1557,135 @@ export function MovementsPage() {
             onChange={(e) => setRequestWarehouseId(e.target.value)}
             options={[
               { value: '', label: 'Selecciona una sucursal' },
-              ...(warehousesQuery.data?.items ?? [])
+              ...(requestWarehousesQuery.data?.items ?? [])
                 .filter((w) => w.isActive)
                 .map((w) => ({ value: w.id, label: `${w.code} - ${w.name}` })),
             ]}
-            disabled={warehousesQuery.isLoading}
+            disabled={requestWarehousesQuery.isLoading || permissions.roles.some(r => r.code === 'BRANCH_ADMIN')}
             required
           />
 
-          <Input
-            label="Solicitado por"
-            type="text"
-            value={requestRequestedByName}
-            onChange={(e) => setRequestRequestedByName(e.target.value)}
-            placeholder="Nombre de la persona que solicita"
-            required
-          />
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+              Solicitado por
+            </label>
+            <div className="px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-md text-sm text-slate-900 dark:text-slate-100">
+              {permissions.user?.fullName || permissions.user?.email || 'Usuario desconocido'}
+            </div>
+          </div>
 
-          <Select
-            label="Producto"
-            value={requestProductId}
-            onChange={(e) => handleRequestProductChange(e.target.value)}
-            options={[
-              { value: '', label: 'Selecciona un producto' },
-              ...(productsQuery.data?.items ?? [])
-                .filter((p) => p.isActive)
-                .map((p) => ({ value: p.id, label: getProductLabel(p) })),
-            ]}
-            disabled={productsQuery.isLoading}
-            required
-          />
+          <div className="relative">
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+              Producto *
+            </label>
+            <input
+              type="text"
+              value={productSearchQuery}
+              onChange={(e) => {
+                setProductSearchQuery(e.target.value)
+                setShowProductOptions(true)
+                if (!e.target.value.trim()) {
+                  handleRequestProductChange('')
+                }
+              }}
+              onFocus={() => setShowProductOptions(true)}
+              onBlur={() => setTimeout(() => setShowProductOptions(false), 200)}
+              placeholder="Buscar producto por nombre, genérico o SKU..."
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-900 dark:text-white dark:placeholder-slate-500"
+              disabled={productsQuery.isLoading}
+              required
+            />
+            {showProductOptions && filteredProducts.length > 0 && (
+              <div className="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md border border-slate-300 bg-white shadow-lg dark:border-slate-600 dark:bg-slate-900">
+                {filteredProducts.map((product) => (
+                  <div
+                    key={product.id}
+                    className="cursor-pointer px-3 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-800"
+                    onClick={() => {
+                      setProductSearchQuery(getProductLabel(product))
+                      setRequestProductId(product.id)
+                      setRequestItem(null)
+                      setRequestPresentationId('')
+                      setShowProductOptions(false)
+                    }}
+                  >
+                    {getProductLabel(product)}
+                  </div>
+                ))}
+              </div>
+            )}
+            {productsQuery.isLoading && (
+              <div className="mt-1 text-sm text-slate-500">Cargando productos...</div>
+            )}
+          </div>
 
           {requestProductId && (
             <div className="space-y-3">
-              <h4 className="font-medium text-slate-900 dark:text-slate-100">Presentaciones solicitadas</h4>
+              <h4 className="font-medium text-slate-900 dark:text-slate-100">Presentación solicitada</h4>
 
               <div className="flex gap-2">
                 <Select
-                  value=""
+                  value={requestPresentationId}
                   onChange={(e) => {
                     const presentationId = e.target.value
+                    setRequestPresentationId(presentationId)
                     if (presentationId) {
-                      const presentation = requestProductPresentationsQuery.data?.items.find(p => p.id === presentationId)
-                      if (presentation) {
-                        handleAddRequestItem(presentationId, 1)
-                      }
+                      setRequestItem({ presentationId, quantity: Number(requestQuantity) })
+                    } else {
+                      setRequestItem(null)
                     }
                   }}
                   options={[
                     { value: '', label: 'Selecciona presentación' },
                     ...(requestProductPresentationsQuery.data?.items ?? [])
-                      .filter((p) => p.isActive)
+                      .filter((p) => p.isActive !== false)
                       .map((p) => ({ value: p.id, label: `${p.name} (${p.unitsPerPresentation}u)` })),
                   ]}
                   disabled={requestProductPresentationsQuery.isLoading}
-                  className="flex-1"
                 />
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => {
-                    const firstPresentation = requestProductPresentationsQuery.data?.items.find(p => p.isActive)
-                    if (firstPresentation) {
-                      handleAddRequestItem(firstPresentation.id, 1)
+                <Input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={requestQuantity}
+                  onChange={(e) => {
+                    setRequestQuantity(e.target.value)
+                    if (requestItem) {
+                      setRequestItem({ ...requestItem, quantity: Number(e.target.value) })
                     }
                   }}
-                  disabled={!requestProductPresentationsQuery.data?.items.some(p => p.isActive)}
-                >
-                  + Agregar
-                </Button>
+                  placeholder="Cant."
+                  className="w-20"
+                  disabled={requestProductPresentationsQuery.isLoading}
+                />
               </div>
 
-              {requestItems.length > 0 && (
-                <div className="space-y-2">
-                  {requestItems.map((item) => {
-                    const presentation = requestProductPresentationsQuery.data?.items.find(p => p.id === item.presentationId)
+              {requestProductPresentationsQuery.isLoading && (
+                <p className="text-sm text-slate-600 dark:text-slate-400">Cargando presentaciones...</p>
+              )}
+
+              {requestProductPresentationsQuery.error && (
+                <p className="text-sm text-red-600">
+                  Error cargando presentaciones: {requestProductPresentationsQuery.error instanceof Error ? requestProductPresentationsQuery.error.message : 'Error desconocido'}
+                </p>
+              )}
+
+              {requestProductPresentationsQuery.data && requestProductPresentationsQuery.data.items.filter(p => p.isActive !== false).length === 0 && (
+                <p className="text-sm text-slate-600 dark:text-slate-400">
+                  Este producto no tiene presentaciones activas configuradas.
+                </p>
+              )}
+
+              {requestItem && (
+                <div className="p-2 bg-slate-50 dark:bg-slate-800 rounded">
+                  {(() => {
+                    const presentation = requestProductPresentationsQuery.data?.items.find(p => p.id === requestItem.presentationId)
                     return (
-                      <div key={item.presentationId} className="flex items-center gap-2 p-2 bg-slate-50 dark:bg-slate-800 rounded">
-                        <span className="flex-1 text-sm">
-                          {presentation ? `${presentation.name} (${presentation.unitsPerPresentation}u)` : 'Presentación'}
-                        </span>
-                        <Input
-                          type="number"
-                          min="0.01"
-                          step="0.01"
-                          value={item.quantity}
-                          onChange={(e) => handleUpdateRequestItemQuantity(item.presentationId, Number(e.target.value))}
-                          className="w-20"
-                        />
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => handleRemoveRequestItem(item.presentationId)}
-                        >
-                          ✕
-                        </Button>
-                      </div>
+                      <span className="text-sm">
+                        {presentation ? `${presentation.name} (${presentation.unitsPerPresentation}u)` : 'Presentación'} - Cantidad: {requestItem.quantity}
+                      </span>
                     )
-                  })}
+                  })()}
                 </div>
               )}
             </div>
@@ -1682,7 +1724,7 @@ export function MovementsPage() {
               type="submit"
               variant="primary"
               loading={createRequestMutation.isPending}
-              disabled={!requestWarehouseId || !requestRequestedByName.trim() || !requestProductId || requestItems.length === 0}
+              disabled={!requestItem || !requestWarehouseId || Number(requestQuantity) <= 0}
             >
               Crear solicitud
             </Button>
