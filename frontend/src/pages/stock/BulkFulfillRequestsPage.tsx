@@ -56,14 +56,6 @@ type BulkFulfillResponse = {
   fulfilledRequestIds: string[]
 }
 
-function parsePresentationFromBatchNumber(batchNumber: string): string {
-  const parts = batchNumber.split('-')
-  if (parts.length >= 3) {
-    return parts[2].toUpperCase()
-  }
-  return 'Unidad'
-}
-
 async function listWarehouses(token: string): Promise<{ items: WarehouseListItem[] }> {
   return apiFetch('/api/v1/warehouses?take=100', { token })
 }
@@ -478,7 +470,7 @@ export function BulkFulfillRequestsPage() {
                     header: 'Producto',
                     accessor: (r) => {
                       const isSuggested = (() => {
-                        const batchPresentationName = r.presentation?.name ?? parsePresentationFromBatchNumber(r.batch?.batchNumber ?? '')
+                        const batchPresentationName = r.presentation?.name ?? 'Unidad'
                         return neededByProduct.some((n) => {
                           const neededPresentationName = n.presentationName ?? 'Unidad'
                           return neededPresentationName === batchPresentationName
@@ -500,7 +492,7 @@ export function BulkFulfillRequestsPage() {
                     header: 'Presentación',
                     accessor: (r) => {
                       if (r.presentation) return `${r.presentation.name} (${r.presentation.unitsPerPresentation}u)`
-                      return parsePresentationFromBatchNumber(r.batch?.batchNumber ?? '')
+                      return 'Unidad'
                     }
                   },
                   {
