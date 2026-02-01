@@ -18,6 +18,8 @@ type WarehouseStockRow = {
   productId: string
   batchId: string | null
   locationId: string
+  presentationId?: string | null
+  presentation?: { id: string; name: string; unitsPerPresentation: string } | null
   product: { sku: string; name: string; genericName?: string | null }
   batch: { batchNumber: string; expiresAt: string | null; status: string } | null
   location: { id: string; code: string; warehouse: { id: string; code: string; name: string } }
@@ -52,15 +54,6 @@ type BulkFulfillResponse = {
   destinationCity: string
   createdMovements: Array<{ createdMovement: any; fromBalance: any; toBalance: any }>
   fulfilledRequestIds: string[]
-}
-
-const parsePresentationFromBatchNumber = (batchNumber: string): { name: string; unitsPerPresentation: string } | null => {
-  const match = batchNumber.match(/(?:Caja|C)(\d+)/i)
-  if (match) {
-    const units = parseInt(match[1], 10)
-    if (Number.isFinite(units) && units > 0) return { name: 'Caja', unitsPerPresentation: String(units) }
-  }
-  return null
 }
 
 async function listWarehouses(token: string): Promise<{ items: WarehouseListItem[] }> {
@@ -211,8 +204,7 @@ export function BulkFulfillRequestsPage() {
         const available = Math.max(0, total - reserved)
 
         // Get presentation units
-        const pres = r.batch?.batchNumber ? parsePresentationFromBatchNumber(r.batch.batchNumber) : null
-        const unitsPerPres = pres ? Number(pres.unitsPerPresentation) : 1
+        const unitsPerPres = r.presentation ? Number(r.presentation.unitsPerPresentation) : 1
         if (!Number.isFinite(unitsPerPres) || unitsPerPres <= 0) throw new Error('Presentación inválida')
 
         const qtyRaw = (qtyByStockRowId[r.id] ?? '').trim()
@@ -478,9 +470,7 @@ export function BulkFulfillRequestsPage() {
                     header: 'Producto',
                     accessor: (r) => {
                       const isSuggested = (() => {
-                        if (!r.batch?.batchNumber) return false
-                        const batchPres = parsePresentationFromBatchNumber(r.batch.batchNumber)
-                        const batchPresentationName = batchPres ? batchPres.name : 'Unidad'
+                        const batchPresentationName = r.presentation?.name ?? 'Unidad'
                         return neededByProduct.some((n) => {
                           const neededPresentationName = n.presentationName ?? 'Unidad'
                           return neededPresentationName === batchPresentationName
@@ -501,9 +491,8 @@ export function BulkFulfillRequestsPage() {
                   {
                     header: 'Presentación',
                     accessor: (r) => {
-                      if (!r.batch?.batchNumber) return 'Unidad'
-                      const pres = parsePresentationFromBatchNumber(r.batch.batchNumber)
-                      return pres ? `${pres.name} (${pres.unitsPerPresentation}u)` : 'Unidad'
+                      if (r.presentation) return `${r.presentation.name} (${r.presentation.unitsPerPresentation}u)`
+                      return 'Unidad'
                     }
                   },
                   {
@@ -512,10 +501,8 @@ export function BulkFulfillRequestsPage() {
                       const total = Number(r.quantity || '0')
                       const reserved = Number(r.reservedQuantity ?? '0')
                       const available = Math.max(0, total - reserved)
-                      if (!r.batch?.batchNumber) return String(available)
-                      const pres = parsePresentationFromBatchNumber(r.batch.batchNumber)
-                      if (!pres) return String(available)
-                      const unitsPerPres = Number(pres.unitsPerPresentation)
+                      if (!r.presentation) return String(available)
+                      const unitsPerPres = Number(r.presentation.unitsPerPresentation)
                       if (!Number.isFinite(unitsPerPres) || unitsPerPres <= 0) return String(available)
                       const availPres = available / unitsPerPres
                       return Number.isInteger(availPres) ? String(availPres) : availPres.toFixed(2)
@@ -530,15 +517,12 @@ export function BulkFulfillRequestsPage() {
                       const disabled = !selectedStockRowIds[r.id]
                       let placeholder = String(available)
                       let maxValue = available
-                      if (r.batch?.batchNumber) {
-                        const pres = parsePresentationFromBatchNumber(r.batch.batchNumber)
-                        if (pres) {
-                          const unitsPerPres = Number(pres.unitsPerPresentation)
-                          if (Number.isFinite(unitsPerPres) && unitsPerPres > 0) {
-                            const availPres = available / unitsPerPres
-                            placeholder = Number.isInteger(availPres) ? String(availPres) : availPres.toFixed(2)
-                            maxValue = availPres
-                          }
+                      if (r.presentation) {
+                        const unitsPerPres = Number(r.presentation.unitsPerPresentation)
+                        if (Number.isFinite(unitsPerPres) && unitsPerPres > 0) {
+                          const availPres = available / unitsPerPres
+                          placeholder = Number.isInteger(availPres) ? String(availPres) : availPres.toFixed(2)
+                          maxValue = availPres
                         }
                       }
                       return (
