@@ -55,7 +55,7 @@ type BulkFulfillResponse = {
 }
 
 const parsePresentationFromBatchNumber = (batchNumber: string): { name: string; unitsPerPresentation: string } | null => {
-  const match = batchNumber.match(/C(\d+)/i)
+  const match = batchNumber.match(/(?:Caja|C)(\d+)/i)
   if (match) {
     const units = parseInt(match[1], 10)
     if (Number.isFinite(units) && units > 0) return { name: 'Caja', unitsPerPresentation: String(units) }
