@@ -470,9 +470,11 @@ export function BulkFulfillRequestsPage() {
                     header: 'Producto',
                     accessor: (r) => {
                       const isSuggested = (() => {
-                        if (!r.presentation) return false
-                        const batchPresentationName = r.presentation.name
-                        return neededByProduct.some((n) => n.presentationName === batchPresentationName)
+                        const batchPresentationName = r.presentation?.name ?? 'Unidad'
+                        return neededByProduct.some((n) => {
+                          const neededPresentationName = n.presentationName ?? 'Unidad'
+                          return neededPresentationName === batchPresentationName
+                        })
                       })()
                       return (
                         <div className="flex items-center gap-2">
