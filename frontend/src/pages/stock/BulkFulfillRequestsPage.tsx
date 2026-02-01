@@ -480,8 +480,11 @@ export function BulkFulfillRequestsPage() {
                       const isSuggested = (() => {
                         if (!r.batch?.batchNumber) return false
                         const batchPres = parsePresentationFromBatchNumber(r.batch.batchNumber)
-                        if (!batchPres) return false
-                        return neededByProduct.some((n) => n.presentationName === batchPres.name && n.presentationQuantity === Number(batchPres.unitsPerPresentation))
+                        const batchPresentationName = batchPres ? batchPres.name : 'Unidad'
+                        return neededByProduct.some((n) => {
+                          const neededPresentationName = n.presentationName ?? 'Unidad'
+                          return neededPresentationName === batchPresentationName
+                        })
                       })()
                       return (
                         <div className="flex items-center gap-2">
