@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { apiFetch } from '../../lib/api'
-import { getProductLabel } from '../../lib/productName'
 import { useAuth } from '../../providers/AuthProvider'
 import { useNavigation } from '../../hooks'
 import { MainLayout, PageContainer, Table, Loading, ErrorState, EmptyState, Button, Input, Select } from '../../components'
@@ -477,7 +476,23 @@ export function BulkFulfillRequestsPage() {
                   },
                   {
                     header: 'Producto',
-                    accessor: (r) => getProductLabel({ id: r.productId, sku: r.product.sku, name: r.product.name, genericName: r.product.genericName ?? null } as any),
+                    accessor: (r) => {
+                      const isSuggested = (() => {
+                        if (!r.batch?.batchNumber) return false
+                        const batchPres = parsePresentationFromBatchNumber(r.batch.batchNumber)
+                        if (!batchPres) return false
+                        return neededByProduct.some((n) => n.presentationName === batchPres.name && n.presentationQuantity === Number(batchPres.unitsPerPresentation))
+                      })()
+                      return (
+                        <div className="flex items-center gap-2">
+                          {isSuggested && <span className="text-yellow-500">⭐</span>}
+                          <div>
+                            <div>{r.product.name}</div>
+                            <div className="text-xs text-slate-500">{r.product.sku}</div>
+                          </div>
+                        </div>
+                      )
+                    },
                   },
                   { header: 'Lote', accessor: (r) => r.batch?.batchNumber ?? '—' },
                   {
