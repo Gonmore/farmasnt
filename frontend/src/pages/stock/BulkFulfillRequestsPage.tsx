@@ -481,11 +481,9 @@ export function BulkFulfillRequestsPage() {
                         if (!r.batch?.batchNumber) return false
                         const batchPres = parsePresentationFromBatchNumber(r.batch.batchNumber)
                         const batchPresentationName = batchPres ? batchPres.name : 'Unidad'
-                        const batchUnits = batchPres ? Number(batchPres.unitsPerPresentation) : null
                         return neededByProduct.some((n) => {
                           const neededPresentationName = n.presentationName ?? 'Unidad'
-                          const neededUnits = n.presentationQuantity
-                          return neededPresentationName === batchPresentationName && neededUnits === batchUnits
+                          return neededPresentationName === batchPresentationName
                         })
                       })()
                       return (
