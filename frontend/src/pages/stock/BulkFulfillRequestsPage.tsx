@@ -33,6 +33,9 @@ type MovementRequestItem = {
   productName: string | null
   genericName: string | null
   remainingQuantity: number
+  presentationId?: string | null
+  presentationName?: string | null
+  presentationQuantity?: number | null
 }
 
 type MovementRequest = {
@@ -92,6 +95,9 @@ async function listMovementRequests(token: string, city?: string): Promise<{ ite
         productName: it.productName ?? null,
         genericName: it.genericName ?? null,
         remainingQuantity: Number(it.remainingQuantity ?? 0),
+        presentationId: it.presentationId ?? null,
+        presentationName: it.presentationName ?? null,
+        presentationQuantity: it.presentationQuantity ? Number(it.presentationQuantity) : null,
       })),
     })),
   }
@@ -155,25 +161,15 @@ export function BulkFulfillRequestsPage() {
     enabled: !!auth.accessToken && !!fromWarehouseId,
   })
 
-  const filteredStock = useMemo(() => {
-    const items = stockQuery.data?.items ?? []
-    if (!fromLocationId) return []
-    return items.filter((r) => r.locationId === fromLocationId)
-  }, [stockQuery.data?.items, fromLocationId])
-
   const selectedRequests = useMemo(() => {
     return (requestsQuery.data?.items ?? []).filter((r) => selectedRequestIds[r.id])
   }, [requestsQuery.data?.items, selectedRequestIds])
 
-  const selectedStockRows = useMemo(() => {
-    return filteredStock.filter((r) => selectedStockRowIds[r.id])
-  }, [filteredStock, selectedStockRowIds])
-
   const neededByProduct = useMemo(() => {
-    const map = new Map<string, { productId: string; sku: string | null; name: string | null; genericName: string | null; needed: number }>()
+    const map = new Map<string, { productId: string; sku: string | null; name: string | null; genericName: string | null; presentationId: string | null; presentationName: string | null; presentationQuantity: number | null; needed: number }>()
     for (const req of selectedRequests) {
       for (const it of req.items) {
-        const key = it.productId
+        const key = `${it.productId}-${it.presentationId ?? 'null'}`
         const prev = map.get(key)
         const needed = (prev?.needed ?? 0) + Number(it.remainingQuantity ?? 0)
         map.set(key, {
@@ -181,12 +177,26 @@ export function BulkFulfillRequestsPage() {
           sku: it.productSku,
           name: it.productName,
           genericName: it.genericName,
+          presentationId: it.presentationId ?? null,
+          presentationName: it.presentationName ?? null,
+          presentationQuantity: it.presentationQuantity ?? null,
           needed,
         })
       }
     }
     return [...map.values()].sort((a, b) => b.needed - a.needed)
   }, [selectedRequests])
+
+  const filteredStock = useMemo(() => {
+    const items = stockQuery.data?.items ?? []
+    if (!fromLocationId) return []
+    const productIds = new Set(neededByProduct.map((n) => n.productId))
+    return items.filter((r) => r.locationId === fromLocationId && productIds.has(r.productId))
+  }, [stockQuery.data?.items, fromLocationId, neededByProduct])
+
+  const selectedStockRows = useMemo(() => {
+    return filteredStock.filter((r) => selectedStockRowIds[r.id])
+  }, [filteredStock, selectedStockRowIds])
 
   const bulkFulfillMutation = useMutation({
     mutationFn: async (): Promise<BulkFulfillResponse> => {
@@ -404,14 +414,25 @@ export function BulkFulfillRequestsPage() {
               ) : (
                 <Table
                   data={neededByProduct}
-                  keyExtractor={(r) => r.productId}
+                  keyExtractor={(r) => `${r.productId}-${r.presentationId ?? 'null'}`}
                   columns={[
                     {
                       header: 'Producto',
-                      accessor: (r) =>
-                        getProductLabel({ id: r.productId, sku: r.sku ?? '—', name: r.name ?? '—', genericName: r.genericName ?? null } as any),
+                      accessor: (r) => (
+                        <div>
+                          <div>{r.name ?? '—'}</div>
+                          <div className="text-xs text-slate-500">{r.sku ?? '—'}</div>
+                        </div>
+                      ),
                     },
-                    { header: 'Pendiente', accessor: (r) => String(r.needed) },
+                    {
+                      header: 'Presentación',
+                      accessor: (r) => r.presentationName ?? 'Unidad',
+                    },
+                    {
+                      header: 'Solicitado',
+                      accessor: (r) => String(r.needed),
+                    },
                   ]}
                 />
               )}
