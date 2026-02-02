@@ -704,3 +704,7 @@ Tenant Admin (Clientes)
   - API_REFERENCE.md: documentación de nuevos endpoints de reportes OPS.
   - bitacora.md: log de cambios en esta sesión.
 
+- **Mejoras en vista "Atender solicitudes"**:
+  - Agregada columna "Presentación" en tabla de stock origen para mostrar la presentación del lote.
+  - Modificada columna "Lote" para mostrar fecha de vencimiento debajo en formato pill (rectángulo curvo con background sólido, letra pequeña).
+
