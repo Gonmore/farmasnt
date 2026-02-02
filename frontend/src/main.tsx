@@ -8,6 +8,9 @@ import { TenantProvider } from './providers/TenantProvider'
 import { ThemeProvider } from './providers/ThemeProvider'
 import { CartProvider } from './providers/CartProvider'
 import { NotificationsProvider } from './providers/NotificationsProvider'
+
+// FORZAR RECARGA - STOCK ORIGEN ELIMINADO - TIMESTAMP: 2026-02-02T13:00:00.000Z
+console.log('🚀 MAIN.TSX CARGADO - STOCK ORIGEN ELIMINADO - VERSION:', new Date().toISOString())
 import { ScrollProvider } from './contexts/ScrollContext'
 
 const queryClient = new QueryClient({

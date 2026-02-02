@@ -1,31 +1,14 @@
-﻿import { useEffect, useMemo, useState } from 'react'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMemo, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+
 import { apiFetch } from '../../lib/api'
-import { useAuth } from '../../providers/AuthProvider'
+import { getProductLabel } from '../../lib/productName'
 import { useNavigation } from '../../hooks'
-import { MainLayout, PageContainer, Table, Loading, ErrorState, EmptyState, Button, Input, Select } from '../../components'
+import { useAuth } from '../../providers/AuthProvider'
+
+import { Button, EmptyState, ErrorState, Input, Loading, MainLayout, Modal, PageContainer, Table } from '../../components'
 import { MovementQuickActions } from '../../components/MovementQuickActions'
-
-type WarehouseListItem = { id: string; code: string; name: string; city?: string | null; isActive: boolean }
-
-type LocationListItem = { id: string; warehouseId: string; code: string; isActive: boolean }
-
-type WarehouseStockRow = {
-  id: string
-  quantity: string
-  reservedQuantity?: string
-  updatedAt: string
-  productId: string
-  batchId: string | null
-  locationId: string
-  presentationId?: string | null
-  presentation?: { id: string; name: string; unitsPerPresentation: string } | null
-  product: { sku: string; name: string; genericName?: string | null }
-  batch: { batchNumber: string; expiresAt: string | null; status: string } | null
-  location: { id: string; code: string; warehouse: { id: string; code: string; name: string } }
-}
-
-type WarehouseStockResponse = { items: WarehouseStockRow[] }
+import { exportLabelToPdf } from '../../lib/movementRequestDocsPdf'
 
 type MovementRequestItem = {
   id: string
@@ -33,12 +16,11 @@ type MovementRequestItem = {
   productSku: string | null
   productName: string | null
   genericName: string | null
+  requestedQuantity: number
   remainingQuantity: number
-  presentationId?: string | null
-  presentationName?: string | null
-  presentationQuantity?: number | null
-  unitsPerPresentation?: number | string | null
-  presentation?: { id: string; name: string; unitsPerPresentation: string } | null
+  presentationId: string | null
+  presentationQuantity: number | null
+  presentation: { id: string; name: string; unitsPerPresentation: unknown } | null
 }
 
 type MovementRequest = {
@@ -47,85 +29,44 @@ type MovementRequest = {
   requestedCity: string
   requestedByName: string | null
   createdAt: string
+  warehouseId: string | null
+  warehouse: { id: string; code: string; name: string; city: string | null } | null
   items: MovementRequestItem[]
 }
 
-type BulkFulfillResponse = {
-  referenceType: string
-  referenceId: string
-  destinationCity: string
-  createdMovements: Array<{ createdMovement: any; fromBalance: any; toBalance: any }>
-  fulfilledRequestIds: string[]
-}
-function normalizeUnitsPerPresentation(value: unknown): number | null {
-  const n = Number(value)
-  if (!Number.isFinite(n) || n <= 0) return null
-  return n
-}
-
-function formatPresentationLabel(input: { name?: string | null; unitsPerPresentation?: unknown }): string | null {
-  const name = String(input.name ?? '').trim()
-  if (!name) return null
-  const units = normalizeUnitsPerPresentation(input.unitsPerPresentation)
-  if (units && units > 1) return `${name} (${units}u)`
+function formatPresentationLabel(p: { name: string; unitsPerPresentation: unknown } | null | undefined): string {
+  if (!p) return '—'
+  const name = String(p.name ?? '').trim()
+  const units = Number(p.unitsPerPresentation)
+  if (!name) return '—'
+  if (Number.isFinite(units) && units > 1) return `${name} (${units}u)`
   return name
 }
 
-function presentationKey(input: { id?: string | null; name?: string | null; unitsPerPresentation?: unknown }): string | null {
-  const id = String(input.id ?? '').trim()
-  if (id) return `id:${id}`
-  const name = String(input.name ?? '').trim()
-  const units = normalizeUnitsPerPresentation(input.unitsPerPresentation)
-  if (!name || !units) return null
-  return `name:${name.toLowerCase()}|u:${units}`
-}
-
-async function listWarehouses(token: string): Promise<{ items: WarehouseListItem[] }> {
-  return apiFetch('/api/v1/warehouses?take=100', { token })
-}
-
-async function listWarehouseLocations(token: string, warehouseId: string): Promise<{ items: LocationListItem[] }> {
-  return apiFetch(`/api/v1/warehouses/${encodeURIComponent(warehouseId)}/locations?take=100`, { token })
-}
-
-async function fetchWarehouseStock(token: string, warehouseId: string): Promise<WarehouseStockResponse> {
-  const params = new URLSearchParams({ warehouseId, take: '200' })
-  return apiFetch(`/api/v1/reports/stock/balances-expanded?${params}`, { token })
-}
-
-async function listMovementRequests(token: string, city?: string): Promise<{ items: MovementRequest[] }> {
+async function listOpenMovementRequests(token: string): Promise<{ items: MovementRequest[] }> {
   const params = new URLSearchParams({ take: '100', status: 'OPEN' })
-  if (city && city.trim()) params.set('city', city.trim())
   const response = await apiFetch<{ items: any[] }>(`/api/v1/stock/movement-requests?${params.toString()}`, { token })
   return {
-    items: response.items.map((req: any) => ({
+    items: (response.items ?? []).map((req: any) => ({
       id: req.id,
       status: req.status,
       requestedCity: req.requestedCity,
       requestedByName: req.requestedByName ?? null,
       createdAt: req.createdAt,
+      warehouseId: req.warehouseId ?? null,
+      warehouse: req.warehouse ?? null,
       items: (req.items ?? []).map((it: any) => ({
         id: it.id,
         productId: it.productId,
         productSku: it.productSku ?? null,
         productName: it.productName ?? null,
         genericName: it.genericName ?? null,
+        requestedQuantity: Number(it.requestedQuantity ?? 0),
         remainingQuantity: Number(it.remainingQuantity ?? 0),
-        presentationId: it.presentationId ?? it.presentation?.id ?? null,
-        presentationName: it.presentationName ?? it.presentation?.name ?? null,
+        presentationId: it.presentation?.id ?? it.presentationId ?? null,
         presentationQuantity: it.presentationQuantity === null || it.presentationQuantity === undefined ? null : Number(it.presentationQuantity),
-        unitsPerPresentation:
-          it.unitsPerPresentation === null || it.unitsPerPresentation === undefined
-            ? it.presentation?.unitsPerPresentation === null || it.presentation?.unitsPerPresentation === undefined
-              ? null
-              : Number(it.presentation.unitsPerPresentation)
-            : Number(it.unitsPerPresentation),
         presentation: it.presentation
-          ? {
-              id: String(it.presentation.id),
-              name: String(it.presentation.name),
-              unitsPerPresentation: String(it.presentation.unitsPerPresentation),
-            }
+          ? { id: String(it.presentation.id), name: String(it.presentation.name), unitsPerPresentation: it.presentation.unitsPerPresentation }
           : null,
       })),
     })),
@@ -136,629 +77,245 @@ export function BulkFulfillRequestsPage() {
   const auth = useAuth()
   const navGroups = useNavigation()
 
-  useEffect(() => {
-    if (!import.meta.env.DEV) return
-    // eslint-disable-next-line no-console
-    console.log('[BulkFulfillRequestsPage] mounted')
-  }, [])
-  const [fromWarehouseId, setFromWarehouseId] = useState('')
-  const [fromLocationId, setFromLocationId] = useState('')
-  const [toWarehouseId, setToWarehouseId] = useState('')
-  const [toLocationId, setToLocationId] = useState('')
-  const [note, setNote] = useState('')
+  const [selectedRequestId, setSelectedRequestId] = useState<string>('')
 
-  const [selectedRequestIds, setSelectedRequestIds] = useState<Record<string, boolean>>({})
-  const [selectedStockRowIds, setSelectedStockRowIds] = useState<Record<string, boolean>>({})
-  const [qtyByStockRowId, setQtyByStockRowId] = useState<Record<string, string>>({})
+  const [isLabelModalOpen, setIsLabelModalOpen] = useState(false)
+  const [labelBultos, setLabelBultos] = useState('')
+  const [labelResponsable, setLabelResponsable] = useState('')
+  const [labelObservaciones, setLabelObservaciones] = useState('')
 
   const [submitError, setSubmitError] = useState('')
-  const [submitSuccess, setSubmitSuccess] = useState<null | { referenceId: string; fulfilledCount: number }>(null)
-
-  const warehousesQuery = useQuery({
-    queryKey: ['warehouses', 'bulkFulfill'],
-    queryFn: () => listWarehouses(auth.accessToken!),
-    enabled: !!auth.accessToken,
-  })
-
-  const activeWarehouses = useMemo(
-    () => (warehousesQuery.data?.items ?? []).filter((w) => w.isActive),
-    [warehousesQuery.data?.items],
-  )
-
-  const fromLocationsQuery = useQuery({
-    queryKey: ['warehouseLocations', 'bulkFulfill', 'from', fromWarehouseId],
-    queryFn: () => listWarehouseLocations(auth.accessToken!, fromWarehouseId),
-    enabled: !!auth.accessToken && !!fromWarehouseId,
-  })
-
-  const toLocationsQuery = useQuery({
-    queryKey: ['warehouseLocations', 'bulkFulfill', 'to', toWarehouseId],
-    queryFn: () => listWarehouseLocations(auth.accessToken!, toWarehouseId),
-    enabled: !!auth.accessToken && !!toWarehouseId,
-  })
-
-  const destCity = useMemo(() => {
-    const w = (warehousesQuery.data?.items ?? []).find((x) => x.id === toWarehouseId)
-    return (w?.city ?? '').trim() || ''
-  }, [warehousesQuery.data?.items, toWarehouseId])
+  const [submitSuccess, setSubmitSuccess] = useState<null | { requestId: string; status: string; movements: number }>(null)
 
   const requestsQuery = useQuery({
-    queryKey: ['movementRequests', 'bulkFulfill', destCity],
-    queryFn: () => listMovementRequests(auth.accessToken!, destCity),
-    enabled: !!auth.accessToken && !!destCity,
+    queryKey: ['movementRequests', 'fulfillRequestsV2'],
+    queryFn: () => listOpenMovementRequests(auth.accessToken!),
+    enabled: !!auth.accessToken,
     refetchInterval: 10_000,
   })
 
-  const stockQuery = useQuery({
-    queryKey: ['warehouseStock', 'bulkFulfill', fromWarehouseId],
-    queryFn: () => fetchWarehouseStock(auth.accessToken!, fromWarehouseId),
-    enabled: !!auth.accessToken && !!fromWarehouseId,
-  })
+  const selectedRequest = useMemo(() => {
+    return (requestsQuery.data?.items ?? []).find((r) => r.id === selectedRequestId) ?? null
+  }, [requestsQuery.data?.items, selectedRequestId])
 
-  const selectedRequests = useMemo(() => {
-    return (requestsQuery.data?.items ?? []).filter((r) => selectedRequestIds[r.id])
-  }, [requestsQuery.data?.items, selectedRequestIds])
-
-  const neededByProduct = useMemo(() => {
-    const map = new Map<
-      string,
-      {
-        productId: string
-        sku: string | null
-        name: string | null
-        genericName: string | null
-        presentationId: string | null
-        presentationName: string | null
-        unitsPerPresentation: number | null
-        presentationLabel: string
-        presentationQuantity: number | null
-        needed: number
-      }
-    >()
-
-    for (const req of selectedRequests) {
-      for (const it of req.items ?? []) {
-        const presentationId = it.presentationId ?? it.presentation?.id ?? null
-        const presentationName = it.presentation?.name ?? it.presentationName ?? null
-        const unitsPerPresentation = normalizeUnitsPerPresentation(it.presentation?.unitsPerPresentation ?? it.unitsPerPresentation)
-        const presentationLabel =
-          formatPresentationLabel({ name: presentationName, unitsPerPresentation }) ?? (presentationName ? String(presentationName) : 'Unidad')
-
-        const key = `${it.productId}-${presentationId ?? 'null'}`
-        const prev = map.get(key)
-        const needed = (prev?.needed ?? 0) + Number(it.remainingQuantity ?? 0)
-
-        map.set(key, {
-          productId: it.productId,
-          sku: it.productSku,
-          name: it.productName,
-          genericName: it.genericName,
-          presentationId,
-          presentationName,
-          unitsPerPresentation,
-          presentationLabel,
-          presentationQuantity: it.presentationQuantity ?? null,
-          needed,
-        })
-      }
+  const groupedRequests = useMemo(() => {
+    const groups = new Map<string, { key: string; title: string; items: MovementRequest[] }>()
+    for (const r of requestsQuery.data?.items ?? []) {
+      const key = r.warehouse?.id ? `wh:${r.warehouse.id}` : `city:${(r.requestedCity ?? '').trim().toUpperCase()}`
+      const title = r.warehouse
+        ? `${r.warehouse.code} - ${r.warehouse.name}${r.warehouse.city ? ` (${r.warehouse.city})` : ''}`
+        : `Ciudad: ${r.requestedCity}`
+      const g = groups.get(key) ?? { key, title, items: [] }
+      g.items.push(r)
+      groups.set(key, g)
     }
-
-    return [...map.values()].sort((a, b) => b.needed - a.needed)
-  }, [selectedRequests])
-
-  const requestedPresentationKeysByProductId = useMemo(() => {
-    const m = new Map<string, Set<string>>()
-    for (const req of selectedRequests) {
-      for (const it of req.items ?? []) {
-        const name = it.presentation?.name ?? it.presentationName ?? null
-        const unitsPerPresentation = it.presentation?.unitsPerPresentation ?? it.unitsPerPresentation
-
-        // Evita que "Unidad (1u)" (valor por defecto) genere sugerencias.
-        const hasId = !!(it.presentationId ?? it.presentation?.id)
-        if (!hasId) {
-          const n = String(name ?? '').trim().toLowerCase()
-          const u = normalizeUnitsPerPresentation(unitsPerPresentation)
-          if (n === 'unidad' && u === 1) continue
-        }
-
-        const key = presentationKey({
-          id: it.presentationId ?? it.presentation?.id ?? null,
-          name,
-          unitsPerPresentation,
-        })
-        if (!key) continue
-        const set = m.get(it.productId) ?? new Set<string>()
-        set.add(key)
-        m.set(it.productId, set)
-      }
-    }
-    return m
-  }, [selectedRequests])
-  const filteredStock = useMemo(() => {
-    const items = stockQuery.data?.items ?? []
-    if (!fromLocationId) return []
-    const productIds = new Set(neededByProduct.map((n) => n.productId))
-    return items.filter((r) => r.locationId === fromLocationId && productIds.has(r.productId))
-  }, [stockQuery.data?.items, fromLocationId, neededByProduct])
-
-  const selectedStockRows = useMemo(() => {
-    return filteredStock.filter((r) => selectedStockRowIds[r.id])
-  }, [filteredStock, selectedStockRowIds])
-  const plannedUnitsByRowId = useMemo(() => {
-    const m = new Map<string, number>()
-    for (const r of selectedStockRows) {
-      const total = Number(r.quantity || '0')
-      const reserved = Number(r.reservedQuantity ?? '0')
-      const available = Math.max(0, total - reserved)
-
-      const unitsPerPres = normalizeUnitsPerPresentation(r.presentation?.unitsPerPresentation) ?? 1
-      const qtyRaw = (qtyByStockRowId[r.id] ?? '').trim()
-      let qtyInPres = qtyRaw ? Number(qtyRaw) : available / unitsPerPres
-      if (!Number.isFinite(qtyInPres) || qtyInPres <= 0) qtyInPres = 0
-
-      const qtyInUnits = qtyInPres * unitsPerPres
-      const clamped = Math.max(0, Math.min(qtyInUnits, available))
-      m.set(r.id, clamped)
-    }
-    return m
-  }, [qtyByStockRowId, selectedStockRows])
-
-  const plannedUnitsByProductId = useMemo(() => {
-    const m = new Map<string, number>()
-    for (const r of selectedStockRows) {
-      const units = plannedUnitsByRowId.get(r.id) ?? 0
-      m.set(r.productId, (m.get(r.productId) ?? 0) + units)
-    }
-    return m
-  }, [plannedUnitsByRowId, selectedStockRows])
-
-  const neededUnitsByProductId = useMemo(() => {
-    const m = new Map<string, number>()
-    for (const req of selectedRequests) {
-      for (const it of req.items ?? []) {
-        m.set(it.productId, (m.get(it.productId) ?? 0) + Number(it.remainingQuantity ?? 0))
-      }
-    }
-    return m
-  }, [selectedRequests])
-
-  const fulfillmentByProductId = useMemo(() => {
-    const m = new Map<string, { needed: number; planned: number; missing: number }>()
-    for (const [productId, needed] of neededUnitsByProductId.entries()) {
-      const planned = plannedUnitsByProductId.get(productId) ?? 0
-      const missing = Math.max(0, needed - planned)
-      m.set(productId, { needed, planned, missing })
-    }
-    return m
-  }, [neededUnitsByProductId, plannedUnitsByProductId])
-
-  const requestCoverageByRequestId = useMemo(() => {
-    const remainingByProduct = new Map<string, number>()
-    for (const [productId, units] of plannedUnitsByProductId.entries()) {
-      remainingByProduct.set(productId, units)
-    }
-
-    const byRequestId = new Map<string, { isFullyCovered: boolean }>()
-
-    for (const req of selectedRequests) {
-      let ok = true
-      for (const it of req.items ?? []) {
-        const needed = Number(it.remainingQuantity ?? 0)
-        const available = remainingByProduct.get(it.productId) ?? 0
-        const allocated = Math.max(0, Math.min(needed, available))
-        remainingByProduct.set(it.productId, Math.max(0, available - allocated))
-        const missing = Math.max(0, needed - allocated)
-        if (missing > 1e-9) ok = false
-      }
-      byRequestId.set(req.id, { isFullyCovered: ok })
-    }
-
-    return byRequestId
-  }, [plannedUnitsByProductId, selectedRequests])
-  const bulkFulfillMutation = useMutation({
-    mutationFn: async (): Promise<BulkFulfillResponse> => {
-      if (!fromWarehouseId || !fromLocationId) throw new Error('Selecciona almacén y ubicación de origen')
-      if (!toWarehouseId || !toLocationId) throw new Error('Selecciona almacén y ubicación destino (sucursal)')
-
-      const requestIds = selectedRequests.map((r) => r.id)
-      if (requestIds.length <= 0) throw new Error('Selecciona al menos una solicitud OPEN')
-
-      const lines = selectedStockRows.map((r) => {
-        const total = Number(r.quantity || '0')
-        const reserved = Number(r.reservedQuantity ?? '0')
-        const available = Math.max(0, total - reserved)
-
-        // Get presentation units
-        const unitsPerPres = r.presentation ? Number(r.presentation.unitsPerPresentation) : 1
-        if (!Number.isFinite(unitsPerPres) || unitsPerPres <= 0) throw new Error('Presentación inválida')
-
-        const qtyRaw = (qtyByStockRowId[r.id] ?? '').trim()
-        let qtyInPres = qtyRaw ? Number(qtyRaw) : (available / unitsPerPres)
-        if (!Number.isFinite(qtyInPres) || qtyInPres <= 0) throw new Error('Cantidad inválida en una fila seleccionada')
-
-        const qtyInUnits = qtyInPres * unitsPerPres
-        if (qtyInUnits > available + 1e-9) throw new Error('Una fila supera la cantidad disponible')
-
-        return {
-          productId: r.productId,
-          batchId: r.batchId,
-          fromLocationId: r.locationId,
-          quantity: qtyInUnits,
-        }
-      })
-
-      if (lines.length <= 0) throw new Error('Selecciona al menos un lote/producto para enviar')
-
-      return apiFetch('/api/v1/stock/movement-requests/bulk-fulfill', {
-        token: auth.accessToken!,
-        method: 'POST',
-        body: JSON.stringify({
-          requestIds,
-          fromLocationId,
-          toLocationId,
-          note: note.trim() || undefined,
-          lines,
-        }),
-      })
-    },
-    onMutate: () => {
-      setSubmitError('')
-      setSubmitSuccess(null)
-    },
-    onSuccess: (data) => {
-      setSubmitSuccess({ referenceId: data.referenceId, fulfilledCount: data.fulfilledRequestIds.length })
-      setSelectedRequestIds({})
-      setSelectedStockRowIds({})
-      setQtyByStockRowId({})
-    },
-    onError: (e: any) => {
-      setSubmitError(e?.message || 'Error')
-    },
-  })
-
-  const canSubmit = !!fromLocationId && !!toLocationId && selectedRequests.length > 0 && selectedStockRows.length > 0
+    return [...groups.values()].map((g) => ({
+      ...g,
+      items: g.items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
+    }))
+  }, [requestsQuery.data?.items])
 
   return (
     <MainLayout navGroups={navGroups}>
-      <PageContainer title="✅ Atender múltiples solicitudes">
+      <PageContainer title="✅ Atender solicitudes (sin selección de stock)">
         <MovementQuickActions currentPath="/stock/fulfill-requests" />
-        {import.meta.env.DEV && (
-          <div className="mb-2 rounded border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-900">
-            DEBUG: BulkFulfillRequestsPage activo
-          </div>
-        )}        <div className="mb-4 text-sm text-slate-700 dark:text-slate-300">
-          Selecciona solicitudes OPEN de una sucursal y envía stock desde un origen.
-        </div>
-
-        <div className="grid gap-4">
-        <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
-          <div className="grid gap-3 md:grid-cols-2">
-            <Select
-              label="Almacén origen"
-              value={fromWarehouseId}
-              onChange={(e) => {
-                setFromWarehouseId(e.target.value)
-                setFromLocationId('')
-                setSelectedStockRowIds({})
-                setQtyByStockRowId({})
-              }}
-              options={[
-                { value: '', label: 'Selecciona almacén' },
-                ...activeWarehouses.map((w) => ({ value: w.id, label: `${w.code} - ${w.name}` })),
-              ]}
-              disabled={warehousesQuery.isLoading}
-            />
-            <Select
-              label="Ubicación origen"
-              value={fromLocationId}
-              onChange={(e) => {
-                setFromLocationId(e.target.value)
-                setSelectedStockRowIds({})
-                setQtyByStockRowId({})
-              }}
-              options={[
-                { value: '', label: 'Selecciona ubicación' },
-                ...(fromLocationsQuery.data?.items ?? [])
-                  .filter((l) => l.isActive)
-                  .map((l) => ({ value: l.id, label: l.code })),
-              ]}
-              disabled={!fromWarehouseId || fromLocationsQuery.isLoading}
-            />
-
-            <Select
-              label="Sucursal destino"
-              value={toWarehouseId}
-              onChange={(e) => {
-                setToWarehouseId(e.target.value)
-                setToLocationId('')
-                setSelectedRequestIds({})
-              }}
-              options={[
-                { value: '', label: 'Selecciona sucursal' },
-                ...activeWarehouses
-                  .filter((w) => w.id !== fromWarehouseId)
-                  .map((w) => ({ value: w.id, label: `${w.code} - ${w.name}${w.city ? ` (${w.city})` : ''}` })),
-              ]}
-              disabled={warehousesQuery.isLoading}
-            />
-
-            <Select
-              label="Ubicación destino"
-              value={toLocationId}
-              onChange={(e) => setToLocationId(e.target.value)}
-              options={[
-                { value: '', label: 'Selecciona ubicación' },
-                ...(toLocationsQuery.data?.items ?? [])
-                  .filter((l) => l.isActive)
-                  .map((l) => ({ value: l.id, label: l.code })),
-              ]}
-              disabled={!toWarehouseId || toLocationsQuery.isLoading}
-            />
-          </div>
-
-          <div className="mt-3">
-            <Input label="Nota (opcional)" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Ej: Atención de pedidos SCZ" />
-          </div>
-
-          <div className="mt-4 flex gap-2">
-            <Button onClick={() => bulkFulfillMutation.mutate()} disabled={!canSubmit} loading={bulkFulfillMutation.isPending}>
-              Enviar y aplicar a solicitudes
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => {
-                setSelectedRequestIds({})
-                setSelectedStockRowIds({})
-                setQtyByStockRowId({})
-                setSubmitError('')
-                setSubmitSuccess(null)
-              }}
-              disabled={bulkFulfillMutation.isPending}
-            >
-              Limpiar
-            </Button>
-          </div>
-
-          {submitError && (
-            <div className="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-200">
-              {submitError}
-            </div>
-          )}
-          {submitSuccess && (
-            <div className="mt-3 rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-800 dark:border-green-800 dark:bg-green-900/20 dark:text-green-200">
-              Listo. Referencia: <span className="font-mono">{submitSuccess.referenceId}</span>
-            </div>
-          )}
+        <div className="mb-4 text-sm text-slate-700 dark:text-slate-300">
+          Selecciona una solicitud para atender.
         </div>
 
         <div className="grid gap-4 lg:grid-cols-2">
           <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
-            <div className="mb-2 text-sm text-slate-700 dark:text-slate-300">Solicitudes OPEN {destCity ? `(${destCity})` : ''}</div>
-            {!destCity ? (
-              <EmptyState message="Selecciona sucursal destino para cargar solicitudes" />
-            ) : requestsQuery.isLoading ? (
+            <div className="mb-2 text-sm font-medium text-slate-800 dark:text-slate-200">Solicitudes OPEN (agrupadas)</div>
+            {requestsQuery.isLoading ? (
               <Loading />
             ) : requestsQuery.error ? (
               <ErrorState message="Error cargando solicitudes" retry={requestsQuery.refetch} />
-            ) : (requestsQuery.data?.items ?? []).length === 0 ? (
-              <EmptyState message="No hay solicitudes OPEN para esta sucursal" />
+            ) : groupedRequests.length === 0 ? (
+              <EmptyState message="No hay solicitudes OPEN" />
             ) : (
-              <Table
-                data={requestsQuery.data!.items}
-                keyExtractor={(r) => r.id}
-                columns={[
-                  {
-                    header: '✓',
-                    className: 'w-12',
-                    accessor: (r) => (
-                      <input
-                        type="checkbox"
-                        checked={!!selectedRequestIds[r.id]}
-                        onChange={(e) => setSelectedRequestIds((prev) => ({ ...prev, [r.id]: e.target.checked }))}
-                      />
-                    ),
-                  },
-                  {
-                    header: 'Estado',
-                    className: 'w-20',
-                    accessor: (r) => {
-                      if (!selectedRequestIds[r.id]) return ''
-                      const cov = requestCoverageByRequestId.get(r.id)
-                      if (cov?.isFullyCovered) return '\u2705'
-                      return '\u23F3'
-                    },
-                  },                  { header: 'Solicitante', accessor: (r) => r.requestedByName ?? '—' },
-                  { header: 'Items', accessor: (r) => String(r.items.length) },
-                  { header: 'Creada', accessor: (r) => new Date(r.createdAt).toLocaleString() },
-                ]}
-              />
+              <div className="space-y-4">
+                {groupedRequests.map((g) => (
+                  <div key={g.key}>
+                    <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-400">{g.title}</div>
+                    <div className="space-y-2">
+                      {g.items.map((r) => {
+                        const isSelected = r.id === selectedRequestId
+                        const itemsCount = (r.items ?? []).length
+                        return (
+                          <button
+                            key={r.id}
+                            className={`w-full rounded-md border p-3 text-left transition ${
+                              isSelected
+                                ? 'border-blue-300 bg-blue-50 dark:border-blue-700 dark:bg-blue-900/20'
+                                : 'border-slate-200 bg-white hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:hover:bg-slate-800/50'
+                            }`}
+                            onClick={() => {
+                              setSelectedRequestId(r.id)
+                              setSubmitError('')
+                              setSubmitSuccess(null)
+                            }}
+                          >
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="min-w-0 truncate text-sm font-medium text-slate-900 dark:text-slate-100">
+                                {r.requestedByName ?? '—'} · {new Date(r.createdAt).toLocaleString()}
+                              </div>
+                              <div className="shrink-0 text-xs text-slate-600 dark:text-slate-400">{itemsCount} ítems</div>
+                            </div>
+                            <div className="mt-1 text-xs text-slate-600 dark:text-slate-400">Destino: {r.warehouse?.name ?? r.requestedCity}</div>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
             )}
-
-            <div className="mt-4">
-              <div className="mb-2 text-sm font-medium text-slate-800 dark:text-slate-200">Necesidad (seleccionadas)</div>
-              {selectedRequests.length === 0 ? (
-                <div className="text-sm text-slate-600 dark:text-slate-400">Selecciona solicitudes para ver lo necesario.</div>
-              ) : neededByProduct.length === 0 ? (
-                <div className="text-sm text-slate-600 dark:text-slate-400">Sin items pendientes.</div>
-              ) : (
-                <Table
-                  data={neededByProduct}
-                  keyExtractor={(r) => `${r.productId}-${r.presentationId ?? 'null'}`}
-                  columns={[
-                    {
-                      header: 'Producto',
-                      accessor: (r) => (
-                        <div>
-                          <div>{r.name ?? '—'}</div>
-                          <div className="text-xs text-slate-500">{r.sku ?? '—'}</div>
-                        </div>
-                      ),
-                    },
-                    {
-                      header: 'Presentación',
-                      accessor: (r) => r.presentationLabel ?? 'Unidad',
-                    },
-                    {
-                      header: 'Solicitado',
-                      accessor: (r) => String(r.needed),
-                    },
-                    {
-                      header: 'Planificado',
-                      accessor: (r) => String(plannedUnitsByProductId.get(r.productId) ?? 0),
-                    },
-                    {
-                      header: 'Falta',
-                      accessor: (r) => String(fulfillmentByProductId.get(r.productId)?.missing ?? 0),
-                    },                  ]}
-                />
-              )}
-            </div>
           </div>
 
           <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
-            <div className="mb-2 text-sm text-slate-700 dark:text-slate-300">Stock origen (selecciona filas y cantidades)</div>
-            {!fromWarehouseId || !fromLocationId ? (
-              <EmptyState message="Selecciona almacén y ubicación origen" />
-            ) : stockQuery.isLoading ? (
-              <Loading />
-            ) : stockQuery.error ? (
-              <ErrorState message="Error cargando stock" retry={stockQuery.refetch} />
-            ) : filteredStock.length === 0 ? (
-              <EmptyState message="Sin stock en esta ubicación" />
+            <div className="mb-2 text-sm font-medium text-slate-800 dark:text-slate-200">Detalles de la solicitud</div>
+            {!selectedRequest ? (
+              <EmptyState message="Selecciona una solicitud para ver detalles" />
             ) : (
-              <Table
-                data={filteredStock}
-                keyExtractor={(r) => r.id}
-                columns={[
-                  {
-                    header: '✓',
-                    className: 'w-12',
-                    accessor: (r) => (
-                      <input
-                        type="checkbox"
-                        checked={!!selectedStockRowIds[r.id]}
-                        onChange={(e) => {
-                          const checked = e.target.checked
-                          setSelectedStockRowIds((prev) => ({ ...prev, [r.id]: checked }))
-                          if (!checked) {
-                            setQtyByStockRowId((prev) => {
-                              const next = { ...prev }
-                              delete next[r.id]
-                              return next
-                            })
-                          }
-                        }}
-                      />
-                    ),
-                  },
-                  {
-                    header: 'Producto',
-                    accessor: (r) => {
-                      const isSuggested = (() => {
-                        const batchKey = presentationKey({
-                          id: r.presentation?.id ?? r.presentationId ?? null,
-                          name: r.presentation?.name ?? null,
-                          unitsPerPresentation: r.presentation?.unitsPerPresentation,
-                        })
-                        if (!batchKey) return false
+              <div className="space-y-4">
+                <div className="rounded-md border border-slate-200 p-3 text-sm dark:border-slate-700">
+                  <div className="text-slate-900 dark:text-slate-100">
+                    <span className="font-medium">Solicitante:</span> {selectedRequest.requestedByName ?? '—'}
+                  </div>
+                  <div className="text-slate-700 dark:text-slate-300">
+                    <span className="font-medium">Destino:</span>{' '}
+                    {selectedRequest.warehouse ? `${selectedRequest.warehouse.code} - ${selectedRequest.warehouse.name}` : selectedRequest.requestedCity}
+                  </div>
+                </div>
 
-                        const wantedKeys = requestedPresentationKeysByProductId.get(r.productId)
-                        if (!wantedKeys || wantedKeys.size === 0) return false
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    onClick={() => {
+                      if (!selectedRequest) return
+                      setIsLabelModalOpen(true)
+                    }}
+                  >
+                    Generar rótulo PDF
+                  </Button>
+                </div>
 
-                        return wantedKeys.has(batchKey)
-                      })()
-                      return (
-                        <div className="flex items-center gap-2">
-                          {isSuggested && <span className="text-yellow-500">⭐</span>}
-                          <div>
-                            <div>{r.product.name}</div>
-                            <div className="text-xs text-slate-500">{r.product.sku}</div>
-                          </div>
-                        </div>
-                      )
-                    },
-                  },
-                  { header: 'Lote', accessor: (r) => r.batch?.batchNumber ?? '—' },
-                  {
-                    header: 'Presentación',
-                    accessor: (r) => {
-                      const label = r.presentation
-                        ? formatPresentationLabel({ name: r.presentation.name, unitsPerPresentation: r.presentation.unitsPerPresentation })
-                        : null
-                      return label ?? '\\u2014'
-                    }
-                  },
-                  {
-                    header: 'Disponible',
-                    accessor: (r) => {
-                      const total = Number(r.quantity || '0')
-                      const reserved = Number(r.reservedQuantity ?? '0')
-                      const available = Math.max(0, total - reserved)
-                      if (!r.presentation) return String(available)
-                      const unitsPerPres = Number(r.presentation.unitsPerPresentation)
-                      if (!Number.isFinite(unitsPerPres) || unitsPerPres <= 0) return String(available)
-                      const availPres = available / unitsPerPres
-                      return Number.isInteger(availPres) ? String(availPres) : availPres.toFixed(2)
-                    },
-                  },
-                  {
-                    header: 'Cantidad',
-                    accessor: (r) => {
-                      const total = Number(r.quantity || '0')
-                      const reserved = Number(r.reservedQuantity ?? '0')
-                      const available = Math.max(0, total - reserved)
-                      const disabled = !selectedStockRowIds[r.id]
-                      let placeholder = String(available)
-                      let maxValue = available
-                      if (r.presentation) {
-                        const unitsPerPres = Number(r.presentation.unitsPerPresentation)
-                        if (Number.isFinite(unitsPerPres) && unitsPerPres > 0) {
-                          const availPres = available / unitsPerPres
-                          placeholder = Number.isInteger(availPres) ? String(availPres) : availPres.toFixed(2)
-                          maxValue = availPres
-                        }
-                      }
-                      return (
-                        <input
-                          className="w-28 rounded-md border border-slate-300 bg-white px-2 py-1 text-sm dark:border-slate-600 dark:bg-slate-800"
-                          type="number"
-                          min={0}
-                          max={maxValue}
-                          disabled={disabled}
-                          value={qtyByStockRowId[r.id] ?? ''}
-                          placeholder={placeholder}
-                          onChange={(e) => setQtyByStockRowId((prev) => ({ ...prev, [r.id]: e.target.value }))}
-                        />
-                      )
-                    },
-                  },
-                ]}
-              />
+                {submitError && (
+                  <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-200">
+                    {submitError}
+                  </div>
+                )}
+                {submitSuccess && (
+                  <div className="rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-800 dark:border-green-800 dark:bg-green-900/20 dark:text-green-200">
+                    Listo. Solicitud {submitSuccess.requestId} → {submitSuccess.status}. Movimientos: {submitSuccess.movements}
+                  </div>
+                )}
+
+                <div>
+                  <div className="mb-2 text-sm font-medium text-slate-800 dark:text-slate-200">Ítems solicitados</div>
+                  {(selectedRequest.items ?? []).length === 0 ? (
+                    <EmptyState message="Sin ítems" />
+                  ) : (
+                    <Table
+                      data={selectedRequest.items}
+                      keyExtractor={(it) => it.id}
+                      columns={[
+                        {
+                          header: 'Producto',
+                          accessor: (it) => getProductLabel({
+                            sku: it.productSku ?? '—',
+                            name: it.productName ?? '—',
+                            genericName: it.genericName ?? null,
+                          }),
+                        },
+                        {
+                          header: 'Presentación',
+                          accessor: (it) => formatPresentationLabel(it.presentation ? { name: it.presentation.name, unitsPerPresentation: it.presentation.unitsPerPresentation } : null),
+                        },
+                        {
+                          header: 'Solicitado (u)',
+                          className: 'w-32',
+                          accessor: (it) => String(Number(it.requestedQuantity ?? 0)),
+                        },
+                        {
+                          header: 'Pendiente (u)',
+                          className: 'w-32',
+                          accessor: (it) => String(Number(it.remainingQuantity ?? 0)),
+                        },
+                      ]}
+                    />
+                  )}
+                </div>
+              </div>
             )}
           </div>
         </div>
-        </div>
+
+        <Modal isOpen={isLabelModalOpen} onClose={() => setIsLabelModalOpen(false)} title="Rótulo (PDF)" maxWidth="lg">
+          <div className="space-y-3">
+            <div className="rounded-md border border-slate-200 p-3 text-sm dark:border-slate-700">
+              <div className="text-slate-900 dark:text-slate-100">
+                <span className="font-medium">Solicitud:</span> {selectedRequest?.id ?? '—'}
+              </div>
+              <div className="text-slate-700 dark:text-slate-300">
+                <span className="font-medium">Destino:</span>{' '}
+                {selectedRequest?.warehouse ? `${selectedRequest.warehouse.code} - ${selectedRequest.warehouse.name}` : selectedRequest?.requestedCity}
+              </div>
+              <div className="text-slate-700 dark:text-slate-300">
+                <span className="font-medium">Solicitante:</span> {selectedRequest?.requestedByName ?? '—'}
+              </div>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-2">
+              <Input label="Bultos" value={labelBultos} onChange={(e) => setLabelBultos(e.target.value)} placeholder="Ej: 3" />
+              <Input
+                label="Responsable"
+                value={labelResponsable}
+                onChange={(e) => setLabelResponsable(e.target.value)}
+                placeholder="Ej: Juan Pérez"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Observaciones</label>
+              <textarea
+                className="w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
+                rows={3}
+                value={labelObservaciones}
+                onChange={(e) => setLabelObservaciones(e.target.value)}
+                placeholder="Opcional"
+              />
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <Button
+                onClick={() => {
+                  if (!selectedRequest) return
+
+                  exportLabelToPdf({
+                    requestId: selectedRequest.id,
+                    generatedAtIso: new Date().toISOString(),
+                    fromWarehouseLabel: '—',
+                    fromLocationCode: '—',
+                    toWarehouseLabel: selectedRequest.warehouse ? `${selectedRequest.warehouse.code} - ${selectedRequest.warehouse.name}` : selectedRequest.requestedCity,
+                    toLocationCode: '—',
+                    requestedByName: selectedRequest.requestedByName ?? null,
+                    bultos: labelBultos,
+                    responsable: labelResponsable,
+                    observaciones: labelObservaciones,
+                  })
+                  setIsLabelModalOpen(false)
+                }}
+              >
+                Descargar rótulo PDF
+              </Button>
+              <Button variant="secondary" onClick={() => setIsLabelModalOpen(false)}>
+                Cancelar
+              </Button>
+            </div>
+          </div>
+        </Modal>
+        {/* SECCIÓN STOCK ORIGEN ELIMINADA COMPLETAMENTE - TIMESTAMP: 2026-02-02T12:00:00.000Z */}
       </PageContainer>
     </MainLayout>
   )
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

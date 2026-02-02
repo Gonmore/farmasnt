@@ -1,5 +1,6 @@
 export { BalancesPage } from './BalancesPage'
-export { BulkFulfillRequestsPage } from './BulkFulfillRequestsPage'
+// export { BulkFulfillRequestsPage } from './BulkFulfillRequestsPage'
+export { BulkFulfillRequestsPage } from './BulkFulfillRequestsPageSimple'
 export { BulkTransferPage } from './BulkTransferPage'
 export { MovementRequestsPage } from './MovementRequestsPage'
 export { MovementsPage } from './MovementsPage'
