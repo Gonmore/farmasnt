@@ -399,6 +399,8 @@ model Batch {
   expiresAt        DateTime?
   presentationId   String?
   status           String   @default("RELEASED")
+  openedAt         DateTime?
+  openedBy         String?
   version          Int      @default(1)
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
@@ -417,6 +419,7 @@ model Batch {
   @@index([tenantId, productId])
   @@index([expiresAt])
   @@index([presentationId])
+  @@index([openedAt])
 }
 
 model Warehouse {
@@ -434,6 +437,7 @@ model Warehouse {
   locations Location[]
   laboratories Laboratory[]
   users     User[]
+  stockMovementRequests StockMovementRequest[]
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -542,6 +546,7 @@ model StockMovement {
 model StockMovementRequest {
   id            String                    @id @default(uuid())
   tenantId      String
+  warehouseId   String?
   status        StockMovementRequestStatus @default(OPEN)
   confirmationStatus StockMovementRequestConfirmationStatus @default(PENDING)
   requestedCity String
@@ -557,12 +562,14 @@ model StockMovementRequest {
   updatedAt     DateTime @updatedAt
 
   quote Quote? @relation(fields: [quoteId], references: [id], onDelete: SetNull)
+  warehouse Warehouse? @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
 
   items StockMovementRequestItem[]
 
   @@index([tenantId])
   @@index([tenantId, status])
   @@index([tenantId, confirmationStatus])
+  @@index([tenantId, warehouseId])
   @@index([tenantId, requestedCity])
   @@index([tenantId, requestedCity, status])
   @@index([quoteId])

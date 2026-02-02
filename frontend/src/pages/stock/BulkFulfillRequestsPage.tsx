@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+﻿import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { apiFetch } from '../../lib/api'
 import { useAuth } from '../../providers/AuthProvider'
@@ -37,6 +37,8 @@ type MovementRequestItem = {
   presentationId?: string | null
   presentationName?: string | null
   presentationQuantity?: number | null
+  unitsPerPresentation?: number | string | null
+  presentation?: { id: string; name: string; unitsPerPresentation: string } | null
 }
 
 type MovementRequest = {
@@ -54,6 +56,28 @@ type BulkFulfillResponse = {
   destinationCity: string
   createdMovements: Array<{ createdMovement: any; fromBalance: any; toBalance: any }>
   fulfilledRequestIds: string[]
+}
+function normalizeUnitsPerPresentation(value: unknown): number | null {
+  const n = Number(value)
+  if (!Number.isFinite(n) || n <= 0) return null
+  return n
+}
+
+function formatPresentationLabel(input: { name?: string | null; unitsPerPresentation?: unknown }): string | null {
+  const name = String(input.name ?? '').trim()
+  if (!name) return null
+  const units = normalizeUnitsPerPresentation(input.unitsPerPresentation)
+  if (units && units > 1) return `${name} (${units}u)`
+  return name
+}
+
+function presentationKey(input: { id?: string | null; name?: string | null; unitsPerPresentation?: unknown }): string | null {
+  const id = String(input.id ?? '').trim()
+  if (id) return `id:${id}`
+  const name = String(input.name ?? '').trim()
+  const units = normalizeUnitsPerPresentation(input.unitsPerPresentation)
+  if (!name || !units) return null
+  return `name:${name.toLowerCase()}|u:${units}`
 }
 
 async function listWarehouses(token: string): Promise<{ items: WarehouseListItem[] }> {
@@ -87,9 +111,22 @@ async function listMovementRequests(token: string, city?: string): Promise<{ ite
         productName: it.productName ?? null,
         genericName: it.genericName ?? null,
         remainingQuantity: Number(it.remainingQuantity ?? 0),
-        presentationId: it.presentationId ?? null,
-        presentationName: it.presentationName ?? null,
-        presentationQuantity: it.presentationQuantity ? Number(it.presentationQuantity) : null,
+        presentationId: it.presentationId ?? it.presentation?.id ?? null,
+        presentationName: it.presentationName ?? it.presentation?.name ?? null,
+        presentationQuantity: it.presentationQuantity === null || it.presentationQuantity === undefined ? null : Number(it.presentationQuantity),
+        unitsPerPresentation:
+          it.unitsPerPresentation === null || it.unitsPerPresentation === undefined
+            ? it.presentation?.unitsPerPresentation === null || it.presentation?.unitsPerPresentation === undefined
+              ? null
+              : Number(it.presentation.unitsPerPresentation)
+            : Number(it.unitsPerPresentation),
+        presentation: it.presentation
+          ? {
+              id: String(it.presentation.id),
+              name: String(it.presentation.name),
+              unitsPerPresentation: String(it.presentation.unitsPerPresentation),
+            }
+          : null,
       })),
     })),
   }
@@ -99,6 +136,11 @@ export function BulkFulfillRequestsPage() {
   const auth = useAuth()
   const navGroups = useNavigation()
 
+  useEffect(() => {
+    if (!import.meta.env.DEV) return
+    // eslint-disable-next-line no-console
+    console.log('[BulkFulfillRequestsPage] mounted')
+  }, [])
   const [fromWarehouseId, setFromWarehouseId] = useState('')
   const [fromLocationId, setFromLocationId] = useState('')
   const [toWarehouseId, setToWarehouseId] = useState('')
@@ -158,27 +200,80 @@ export function BulkFulfillRequestsPage() {
   }, [requestsQuery.data?.items, selectedRequestIds])
 
   const neededByProduct = useMemo(() => {
-    const map = new Map<string, { productId: string; sku: string | null; name: string | null; genericName: string | null; presentationId: string | null; presentationName: string | null; presentationQuantity: number | null; needed: number }>()
+    const map = new Map<
+      string,
+      {
+        productId: string
+        sku: string | null
+        name: string | null
+        genericName: string | null
+        presentationId: string | null
+        presentationName: string | null
+        unitsPerPresentation: number | null
+        presentationLabel: string
+        presentationQuantity: number | null
+        needed: number
+      }
+    >()
+
     for (const req of selectedRequests) {
-      for (const it of req.items) {
-        const key = `${it.productId}-${it.presentationId ?? 'null'}`
+      for (const it of req.items ?? []) {
+        const presentationId = it.presentationId ?? it.presentation?.id ?? null
+        const presentationName = it.presentation?.name ?? it.presentationName ?? null
+        const unitsPerPresentation = normalizeUnitsPerPresentation(it.presentation?.unitsPerPresentation ?? it.unitsPerPresentation)
+        const presentationLabel =
+          formatPresentationLabel({ name: presentationName, unitsPerPresentation }) ?? (presentationName ? String(presentationName) : 'Unidad')
+
+        const key = `${it.productId}-${presentationId ?? 'null'}`
         const prev = map.get(key)
         const needed = (prev?.needed ?? 0) + Number(it.remainingQuantity ?? 0)
+
         map.set(key, {
           productId: it.productId,
           sku: it.productSku,
           name: it.productName,
           genericName: it.genericName,
-          presentationId: it.presentationId ?? null,
-          presentationName: it.presentationName ?? null,
+          presentationId,
+          presentationName,
+          unitsPerPresentation,
+          presentationLabel,
           presentationQuantity: it.presentationQuantity ?? null,
           needed,
         })
       }
     }
+
     return [...map.values()].sort((a, b) => b.needed - a.needed)
   }, [selectedRequests])
 
+  const requestedPresentationKeysByProductId = useMemo(() => {
+    const m = new Map<string, Set<string>>()
+    for (const req of selectedRequests) {
+      for (const it of req.items ?? []) {
+        const name = it.presentation?.name ?? it.presentationName ?? null
+        const unitsPerPresentation = it.presentation?.unitsPerPresentation ?? it.unitsPerPresentation
+
+        // Evita que "Unidad (1u)" (valor por defecto) genere sugerencias.
+        const hasId = !!(it.presentationId ?? it.presentation?.id)
+        if (!hasId) {
+          const n = String(name ?? '').trim().toLowerCase()
+          const u = normalizeUnitsPerPresentation(unitsPerPresentation)
+          if (n === 'unidad' && u === 1) continue
+        }
+
+        const key = presentationKey({
+          id: it.presentationId ?? it.presentation?.id ?? null,
+          name,
+          unitsPerPresentation,
+        })
+        if (!key) continue
+        const set = m.get(it.productId) ?? new Set<string>()
+        set.add(key)
+        m.set(it.productId, set)
+      }
+    }
+    return m
+  }, [selectedRequests])
   const filteredStock = useMemo(() => {
     const items = stockQuery.data?.items ?? []
     if (!fromLocationId) return []
@@ -189,7 +284,77 @@ export function BulkFulfillRequestsPage() {
   const selectedStockRows = useMemo(() => {
     return filteredStock.filter((r) => selectedStockRowIds[r.id])
   }, [filteredStock, selectedStockRowIds])
+  const plannedUnitsByRowId = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const r of selectedStockRows) {
+      const total = Number(r.quantity || '0')
+      const reserved = Number(r.reservedQuantity ?? '0')
+      const available = Math.max(0, total - reserved)
 
+      const unitsPerPres = normalizeUnitsPerPresentation(r.presentation?.unitsPerPresentation) ?? 1
+      const qtyRaw = (qtyByStockRowId[r.id] ?? '').trim()
+      let qtyInPres = qtyRaw ? Number(qtyRaw) : available / unitsPerPres
+      if (!Number.isFinite(qtyInPres) || qtyInPres <= 0) qtyInPres = 0
+
+      const qtyInUnits = qtyInPres * unitsPerPres
+      const clamped = Math.max(0, Math.min(qtyInUnits, available))
+      m.set(r.id, clamped)
+    }
+    return m
+  }, [qtyByStockRowId, selectedStockRows])
+
+  const plannedUnitsByProductId = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const r of selectedStockRows) {
+      const units = plannedUnitsByRowId.get(r.id) ?? 0
+      m.set(r.productId, (m.get(r.productId) ?? 0) + units)
+    }
+    return m
+  }, [plannedUnitsByRowId, selectedStockRows])
+
+  const neededUnitsByProductId = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const req of selectedRequests) {
+      for (const it of req.items ?? []) {
+        m.set(it.productId, (m.get(it.productId) ?? 0) + Number(it.remainingQuantity ?? 0))
+      }
+    }
+    return m
+  }, [selectedRequests])
+
+  const fulfillmentByProductId = useMemo(() => {
+    const m = new Map<string, { needed: number; planned: number; missing: number }>()
+    for (const [productId, needed] of neededUnitsByProductId.entries()) {
+      const planned = plannedUnitsByProductId.get(productId) ?? 0
+      const missing = Math.max(0, needed - planned)
+      m.set(productId, { needed, planned, missing })
+    }
+    return m
+  }, [neededUnitsByProductId, plannedUnitsByProductId])
+
+  const requestCoverageByRequestId = useMemo(() => {
+    const remainingByProduct = new Map<string, number>()
+    for (const [productId, units] of plannedUnitsByProductId.entries()) {
+      remainingByProduct.set(productId, units)
+    }
+
+    const byRequestId = new Map<string, { isFullyCovered: boolean }>()
+
+    for (const req of selectedRequests) {
+      let ok = true
+      for (const it of req.items ?? []) {
+        const needed = Number(it.remainingQuantity ?? 0)
+        const available = remainingByProduct.get(it.productId) ?? 0
+        const allocated = Math.max(0, Math.min(needed, available))
+        remainingByProduct.set(it.productId, Math.max(0, available - allocated))
+        const missing = Math.max(0, needed - allocated)
+        if (missing > 1e-9) ok = false
+      }
+      byRequestId.set(req.id, { isFullyCovered: ok })
+    }
+
+    return byRequestId
+  }, [plannedUnitsByProductId, selectedRequests])
   const bulkFulfillMutation = useMutation({
     mutationFn: async (): Promise<BulkFulfillResponse> => {
       if (!fromWarehouseId || !fromLocationId) throw new Error('Selecciona almacén y ubicación de origen')
@@ -257,7 +422,11 @@ export function BulkFulfillRequestsPage() {
     <MainLayout navGroups={navGroups}>
       <PageContainer title="✅ Atender múltiples solicitudes">
         <MovementQuickActions currentPath="/stock/fulfill-requests" />
-        <div className="mb-4 text-sm text-slate-700 dark:text-slate-300">
+        {import.meta.env.DEV && (
+          <div className="mb-2 rounded border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-900">
+            DEBUG: BulkFulfillRequestsPage activo
+          </div>
+        )}        <div className="mb-4 text-sm text-slate-700 dark:text-slate-300">
           Selecciona solicitudes OPEN de una sucursal y envía stock desde un origen.
         </div>
 
@@ -389,7 +558,16 @@ export function BulkFulfillRequestsPage() {
                       />
                     ),
                   },
-                  { header: 'Solicitante', accessor: (r) => r.requestedByName ?? '—' },
+                  {
+                    header: 'Estado',
+                    className: 'w-20',
+                    accessor: (r) => {
+                      if (!selectedRequestIds[r.id]) return ''
+                      const cov = requestCoverageByRequestId.get(r.id)
+                      if (cov?.isFullyCovered) return '\u2705'
+                      return '\u23F3'
+                    },
+                  },                  { header: 'Solicitante', accessor: (r) => r.requestedByName ?? '—' },
                   { header: 'Items', accessor: (r) => String(r.items.length) },
                   { header: 'Creada', accessor: (r) => new Date(r.createdAt).toLocaleString() },
                 ]}
@@ -418,13 +596,20 @@ export function BulkFulfillRequestsPage() {
                     },
                     {
                       header: 'Presentación',
-                      accessor: (r) => r.presentationName ?? 'Unidad',
+                      accessor: (r) => r.presentationLabel ?? 'Unidad',
                     },
                     {
                       header: 'Solicitado',
                       accessor: (r) => String(r.needed),
                     },
-                  ]}
+                    {
+                      header: 'Planificado',
+                      accessor: (r) => String(plannedUnitsByProductId.get(r.productId) ?? 0),
+                    },
+                    {
+                      header: 'Falta',
+                      accessor: (r) => String(fulfillmentByProductId.get(r.productId)?.missing ?? 0),
+                    },                  ]}
                 />
               )}
             </div>
@@ -470,11 +655,17 @@ export function BulkFulfillRequestsPage() {
                     header: 'Producto',
                     accessor: (r) => {
                       const isSuggested = (() => {
-                        const batchPresentationName = r.presentation?.name ?? 'Unidad'
-                        return neededByProduct.some((n) => {
-                          const neededPresentationName = n.presentationName ?? 'Unidad'
-                          return neededPresentationName === batchPresentationName
+                        const batchKey = presentationKey({
+                          id: r.presentation?.id ?? r.presentationId ?? null,
+                          name: r.presentation?.name ?? null,
+                          unitsPerPresentation: r.presentation?.unitsPerPresentation,
                         })
+                        if (!batchKey) return false
+
+                        const wantedKeys = requestedPresentationKeysByProductId.get(r.productId)
+                        if (!wantedKeys || wantedKeys.size === 0) return false
+
+                        return wantedKeys.has(batchKey)
                       })()
                       return (
                         <div className="flex items-center gap-2">
@@ -491,8 +682,10 @@ export function BulkFulfillRequestsPage() {
                   {
                     header: 'Presentación',
                     accessor: (r) => {
-                      if (r.presentation) return `${r.presentation.name} (${r.presentation.unitsPerPresentation}u)`
-                      return 'Unidad'
+                      const label = r.presentation
+                        ? formatPresentationLabel({ name: r.presentation.name, unitsPerPresentation: r.presentation.unitsPerPresentation })
+                        : null
+                      return label ?? '\\u2014'
                     }
                   },
                   {
@@ -549,3 +742,23 @@ export function BulkFulfillRequestsPage() {
     </MainLayout>
   )
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

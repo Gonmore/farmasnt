@@ -161,6 +161,15 @@ export async function createStockMovementTx(
     toBalance = await upsertBalance(locationId, delta)
   }
 
+  // Mark batch as opened when stock is moved out (sale/transfer).
+  // Business rule: batches start "closed"; once any OUT/TRANSFER occurs, it becomes "opened".
+  if ((input.type === 'OUT' || input.type === 'TRANSFER') && batchId) {
+    await tx.batch.updateMany({
+      where: { tenantId, id: batchId, openedAt: null },
+      data: { openedAt: new Date(), openedBy: userId, version: { increment: 1 } },
+    })
+  }
+
   const year = currentYearUtc()
   const seq = await nextSequence(tx, { tenantId, year, key: 'MS' })
 

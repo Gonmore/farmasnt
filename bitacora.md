@@ -147,6 +147,28 @@ Se incorporaron endpoints read-only de reportes para acelerar dashboards y panta
 
 ---
 
+## **[02 Feb 2026] Stock: Atender solicitudes + Reportes OPS (flujos y trazabilidad)**
+
+### Operación: Atender solicitudes (1 solicitud, múltiples ítems)
+- Se consolidó el flujo para atender **una** solicitud de movimiento con múltiples ítems (con autopick FEFO y soporte de atención parcial).
+- Se incorporó documentación operativa (PDF):
+  - Picking PDF.
+  - Rótulo editable (PDF).
+
+### Reportes > Stock > OPS: flujos completados + tiempo promedio + trazabilidad
+- Se ampliaron los reportes de OPS para solicitudes de movimiento:
+  - **Flujos** (origen → destino) de solicitudes atendidas y **tiempo promedio de atención** (`fulfilledAt - createdAt`).
+  - **Listado** de solicitudes atendidas con métricas (tiempo, ítems, cantidades, movimientos) y acceso a drill-down.
+  - **Trazabilidad** por solicitud: comparar **lo solicitado** vs **lo enviado** (movimientos/picking real).
+- UX menor:
+  - Filtro client-side en la lista de atendidas.
+  - Botón "Exportar picking (PDF)" dentro del modal de trazabilidad.
+
+### Endpoints (read-only)
+- `GET /api/v1/reports/stock/movement-requests/flows`
+- `GET /api/v1/reports/stock/movement-requests/fulfilled`
+- `GET /api/v1/reports/stock/movement-requests/:id/trace`
+
 ## **[14 Ene 2026] Módulo Entregas + cierre de venta por reservas**
 
 ### Entregas (UI)
@@ -657,4 +679,28 @@ Tenant Admin (Clientes)
 
 - **Docker build**:
   - Se corrigió un error de build del backend en Docker por un `select` inválido sobre `UserRole` (tabla con clave compuesta).
+
+### **[02 Feb 2026]** — Mejora de flujo "Atender solicitudes" + Reportes OPS enriquecidos + UX en creación de solicitudes
+
+- **Rediseño de "Atender solicitudes"**:
+  - Se cambió de bulk a atender **una solicitud multi-ítem** con selección previa.
+  - **Autopick FEFO**: prioriza lotes abiertos, asigna automáticamente cantidades/orígenes a ítems pendientes.
+  - **Atención parcial**: permite enviar menos de lo solicitado, actualizando `remainingQuantity` en `StockMovementRequestItem`.
+  - **Documentos**: generación de PDF picking (lista de líneas con ubicación/lote/vence) y rótulo editable (100x150mm con campos como bultos/responsable/observaciones).
+  - **UX sugeridos**: badges ⭐ en stock y resumen por ítem para destacar asignaciones automáticas.
+  - **Validaciones visuales**: colores y "Falta (u)" para ítems no cubiertos; filtros por "solo productos requeridos".
+
+- **Enriquecimiento de Reportes > Stock > OPS**:
+  - **Flujos completados**: tabla con rutas (origen → destino) de solicitudes FULFILLED + promedio minutos de atención (fulfilledAt - createdAt).
+  - **Trazabilidad**: lista de solicitudes atendidas con métricas (tiempo, cantidades, rutas agregadas); modal con comparación solicitado vs enviado (picking real) + botón "Exportar picking PDF".
+  - **Backend**: nuevos endpoints `/api/v1/reports/stock/movement-requests/flows`, `/fulfilled`, `/:id/trace` con queries SQL para deducir rutas desde movimientos TRANSFER.
+
+- **UX en "Crear solicitud" (MovementsPage)**:
+  - Se ajustó la condición del botón "Crear solicitud" para habilitarse una vez que hay ítems agregados, sin requerir llenar el formulario de producto individual (evita confusión en usuarios que agregan ítems pero no entienden por qué no se habilita).
+  - Campo "Producto" deja de mostrar * (requerido) cuando ya hay ítems agregados.
+  - Campo "Producto" deja de ser `required` en HTML cuando hay ítems agregados, evitando mensaje "rellena este campo" al enviar el formulario.
+
+- **Docs actualizadas**:
+  - API_REFERENCE.md: documentación de nuevos endpoints de reportes OPS.
+  - bitacora.md: log de cambios en esta sesión.
 

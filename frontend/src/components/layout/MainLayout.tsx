@@ -7,10 +7,11 @@ import type { NavGroup } from './Sidebar'
 
 export interface MainLayoutProps {
   children: ReactNode
-  navGroups: NavGroup[]
+  navGroups?: NavGroup[]
 }
 
 export function MainLayout({ children, navGroups }: MainLayoutProps) {
+  const groups = navGroups ?? []
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [isMobile, setIsMobile] = useState(false)
 
@@ -40,7 +41,7 @@ export function MainLayout({ children, navGroups }: MainLayoutProps) {
       <Header onMenuClick={toggleSidebar} showMenuButton={isMobile} />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar 
-          groups={navGroups} 
+          groups={groups} 
           isOpen={sidebarOpen} 
           isMobile={isMobile}
           onClose={() => setSidebarOpen(false)}

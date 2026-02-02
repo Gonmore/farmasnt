@@ -7,6 +7,8 @@ import { KPICard, ReportSection, reportColors, getChartColor, chartTooltipStyle,
 import { useNavigation } from '../../hooks'
 import { apiFetch } from '../../lib/api'
 import { blobToBase64, exportElementToPdf, pdfBlobFromElement } from '../../lib/exportPdf'
+import { getProductLabel } from '../../lib/productName'
+import { exportPickingToPdf } from '../../lib/movementRequestDocsPdf'
 import { useAuth } from '../../providers/AuthProvider'
 import { useTenant } from '../../providers/TenantProvider'
 
@@ -91,6 +93,83 @@ type MovementRequestsByCityItem = MovementRequestsSummary & {
   city: string | null
 }
 
+type MovementRequestsFlowItem = {
+  fromWarehouse: { id: string | null; code: string | null; name: string | null } | null
+  toWarehouse: { id: string | null; code: string | null; name: string | null } | null
+  requestsCount: number
+  avgMinutes: number | null
+}
+
+type FulfilledMovementRequestItem = {
+  id: string
+  requestedCity: string | null
+  destinationWarehouse: { id: string; code: string | null; name: string | null } | null
+  requestedByName: string | null
+  createdAt: string
+  fulfilledAt: string
+  minutesToFulfill: number
+  itemsCount: number
+  requestedQuantity: string
+  movementsCount: number
+  sentQuantity: string
+  fromWarehouseCodes: string | null
+  fromLocationCodes: string | null
+  toWarehouseCodes: string | null
+  toLocationCodes: string | null
+}
+
+type MovementRequestTraceResponse = {
+  request: {
+    id: string
+    status: string
+    confirmationStatus: string
+    requestedCity: string
+    warehouseId: string | null
+    warehouse: { id: string; code: string | null; name: string | null; city: string | null } | null
+    note: string | null
+    createdAt: string
+    requestedBy: string
+    requestedByName: string | null
+    fulfilledAt: string | null
+    fulfilledBy: string | null
+    fulfilledByName: string | null
+  }
+  requestedItems: Array<{
+    id: string
+    productId: string
+    productSku: string | null
+    productName: string | null
+    genericName: string | null
+    requestedQuantity: number
+    presentation: { id: string; name: string; unitsPerPresentation: unknown } | null
+    unitsPerPresentation: unknown
+  }>
+  sentLines: Array<{
+    id: string
+    createdAt: string
+    productId: string
+    productSku: string | null
+    productName: string | null
+    genericName: string | null
+    batchId: string | null
+    batchNumber: string | null
+    expiresAt: string | null
+    quantity: number
+    presentation: { id: string; name: string | null; unitsPerPresentation: number | null } | null
+    presentationQuantity: number | null
+    fromLocation: {
+      id: string
+      code: string | null
+      warehouse: { id: string; code: string | null; name: string | null; city: string | null } | null
+    } | null
+    toLocation: {
+      id: string
+      code: string | null
+      warehouse: { id: string; code: string | null; name: string | null; city: string | null } | null
+    } | null
+  }>
+}
+
 type ReturnsSummary = {
   returnsCount: number
   itemsCount: number
@@ -132,6 +211,30 @@ function formatDate(date: Date): string {
     month: 'short',
     day: 'numeric',
   })
+}
+
+function formatMinutes(minutes: number | null | undefined): string {
+  const m = Number(minutes ?? 0)
+  if (!Number.isFinite(m) || m <= 0) return '—'
+  const total = Math.round(m)
+  const h = Math.floor(total / 60)
+  const mm = total % 60
+  if (h <= 0) return `${mm} min`
+  return `${h}h ${String(mm).padStart(2, '0')}m`
+}
+
+function formatPresentationLabel(p: { name: string | null; unitsPerPresentation: unknown } | null): string {
+  if (!p) return '—'
+  const name = String(p.name ?? '').trim()
+  const units = Number(p.unitsPerPresentation)
+  if (!name) return '—'
+  if (Number.isFinite(units) && units > 1) return `${name} (${units}u)`
+  return name
+}
+
+function formatWarehouseLabel(wh: { code: string | null; name: string | null } | null | undefined): string {
+  if (!wh) return '—'
+  return `${wh.code ?? ''} ${wh.name ?? ''}`.trim() || '—'
 }
 
 async function fetchInputsByProduct(token: string, q: { from?: string; to?: string; take: number }): Promise<{ items: StockInputsItem[] }> {
@@ -193,6 +296,30 @@ async function fetchMovementRequestsByCity(
   if (q.from) params.set('from', q.from)
   if (q.to) params.set('to', q.to)
   return apiFetch(`/api/v1/reports/stock/movement-requests/by-city?${params}`, { token })
+}
+
+async function fetchMovementRequestFlows(
+  token: string,
+  q: { from?: string; to?: string; take: number },
+): Promise<{ items: MovementRequestsFlowItem[] }> {
+  const params = new URLSearchParams({ take: String(q.take) })
+  if (q.from) params.set('from', q.from)
+  if (q.to) params.set('to', q.to)
+  return apiFetch(`/api/v1/reports/stock/movement-requests/flows?${params}`, { token })
+}
+
+async function fetchFulfilledMovementRequests(
+  token: string,
+  q: { from?: string; to?: string; take: number },
+): Promise<{ items: FulfilledMovementRequestItem[] }> {
+  const params = new URLSearchParams({ take: String(q.take) })
+  if (q.from) params.set('from', q.from)
+  if (q.to) params.set('to', q.to)
+  return apiFetch(`/api/v1/reports/stock/movement-requests/fulfilled?${params}`, { token })
+}
+
+async function fetchMovementRequestTrace(token: string, id: string): Promise<MovementRequestTraceResponse> {
+  return apiFetch(`/api/v1/reports/stock/movement-requests/${encodeURIComponent(id)}/trace`, { token })
 }
 
 async function fetchReturnsSummary(token: string, q: { from?: string; to?: string }): Promise<ReturnsSummary> {
@@ -293,6 +420,9 @@ export function StockReportsPage() {
   const [scheduleDayOfWeek, setScheduleDayOfWeek] = useState(1)
   const [scheduleDayOfMonth, setScheduleDayOfMonth] = useState(1)
 
+  const [traceRequestId, setTraceRequestId] = useState<string | null>(null)
+  const [fulfilledFilter, setFulfilledFilter] = useState('')
+
   const title = useMemo(() => {
     const period = `${from} a ${to}`
     switch (tab) {
@@ -352,6 +482,24 @@ export function StockReportsPage() {
     queryKey: ['reports', 'stock', 'movementRequestsByCity', { from, to }],
     queryFn: () => fetchMovementRequestsByCity(auth.accessToken!, { from, to, take: 200 }),
     enabled: !!auth.accessToken && tab === 'OPS',
+  })
+
+  const movementRequestFlowsQuery = useQuery({
+    queryKey: ['reports', 'stock', 'movementRequestFlows', { from, to }],
+    queryFn: () => fetchMovementRequestFlows(auth.accessToken!, { from, to, take: 200 }),
+    enabled: !!auth.accessToken && tab === 'OPS',
+  })
+
+  const fulfilledMovementRequestsQuery = useQuery({
+    queryKey: ['reports', 'stock', 'movementRequestsFulfilled', { from, to }],
+    queryFn: () => fetchFulfilledMovementRequests(auth.accessToken!, { from, to, take: 200 }),
+    enabled: !!auth.accessToken && tab === 'OPS',
+  })
+
+  const movementRequestTraceQuery = useQuery({
+    queryKey: ['reports', 'stock', 'movementRequestTrace', traceRequestId],
+    queryFn: () => fetchMovementRequestTrace(auth.accessToken!, traceRequestId!),
+    enabled: !!auth.accessToken && tab === 'OPS' && !!traceRequestId,
   })
 
   const returnsSummaryQuery = useQuery({
@@ -1262,6 +1410,147 @@ export function StockReportsPage() {
                           />
                         )}
                       </div>
+
+                      <div className="mt-4 rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+                        <h3 className="mb-2 text-sm font-semibold text-slate-900 dark:text-white">Flujos completados (de dónde → a dónde)</h3>
+
+                        {movementRequestFlowsQuery.isLoading && <Loading />}
+                        {movementRequestFlowsQuery.isError && (
+                          <ErrorState message={(movementRequestFlowsQuery.error as any)?.message ?? 'Error cargando flujos'} />
+                        )}
+                        {!movementRequestFlowsQuery.isLoading && !movementRequestFlowsQuery.isError && (movementRequestFlowsQuery.data?.items?.length ?? 0) === 0 && (
+                          <EmptyState message="No hay solicitudes atendidas en el período." />
+                        )}
+                        {!movementRequestFlowsQuery.isLoading && !movementRequestFlowsQuery.isError && (movementRequestFlowsQuery.data?.items?.length ?? 0) > 0 && (
+                          <Table
+                            columns={[
+                              {
+                                header: 'Origen',
+                                accessor: (r: MovementRequestsFlowItem) =>
+                                  r.fromWarehouse
+                                    ? `${r.fromWarehouse.code ?? ''} ${r.fromWarehouse.name ?? ''}`.trim() || r.fromWarehouse.id || '—'
+                                    : '—',
+                              },
+                              {
+                                header: 'Destino',
+                                accessor: (r: MovementRequestsFlowItem) =>
+                                  r.toWarehouse
+                                    ? `${r.toWarehouse.code ?? ''} ${r.toWarehouse.name ?? ''}`.trim() || r.toWarehouse.id || '—'
+                                    : '—',
+                              },
+                              { header: 'Completadas', accessor: (r: MovementRequestsFlowItem) => r.requestsCount },
+                              { header: 'T. prom.', accessor: (r: MovementRequestsFlowItem) => formatMinutes(r.avgMinutes) },
+                            ]}
+                            data={movementRequestFlowsQuery.data?.items ?? []}
+                            keyExtractor={(r: MovementRequestsFlowItem) => `${r.fromWarehouse?.id ?? 'null'}-${r.toWarehouse?.id ?? 'null'}`}
+                          />
+                        )}
+                      </div>
+
+                      <div className="mt-4 rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+                        <h3 className="mb-2 text-sm font-semibold text-slate-900 dark:text-white">Trazabilidad (solicitudes atendidas)</h3>
+                        <div className="mb-2 text-xs text-slate-600 dark:text-slate-400">
+                          Ver lo solicitado vs. lo enviado (picking) por solicitud.
+                        </div>
+
+                        <div className="mb-3 flex flex-col gap-2 md:flex-row md:items-end">
+                          <Input
+                            label="Filtrar"
+                            placeholder="ID, solicitante, origen/destino (códigos)…"
+                            value={fulfilledFilter}
+                            onChange={(e) => setFulfilledFilter(e.target.value)}
+                          />
+                          {!fulfilledMovementRequestsQuery.isLoading && !fulfilledMovementRequestsQuery.isError && (
+                            <div className="text-xs text-slate-600 dark:text-slate-400">
+                              {(() => {
+                                const all = fulfilledMovementRequestsQuery.data?.items ?? []
+                                const q = fulfilledFilter.trim().toLowerCase()
+                                if (!q) return `Mostrando ${all.length}`
+                                const filtered = all.filter((r) => {
+                                  const dest = r.destinationWarehouse ? `${r.destinationWarehouse.code ?? ''} ${r.destinationWarehouse.name ?? ''}` : ''
+                                  const haystack = [
+                                    r.id,
+                                    r.requestedCity ?? '',
+                                    dest,
+                                    r.requestedByName ?? '',
+                                    r.fromWarehouseCodes ?? '',
+                                    r.fromLocationCodes ?? '',
+                                    r.toWarehouseCodes ?? '',
+                                    r.toLocationCodes ?? '',
+                                  ]
+                                    .join(' ')
+                                    .toLowerCase()
+                                  return haystack.includes(q)
+                                })
+                                return `Mostrando ${filtered.length} de ${all.length}`
+                              })()}
+                            </div>
+                          )}
+                        </div>
+
+                        {fulfilledMovementRequestsQuery.isLoading && <Loading />}
+                        {fulfilledMovementRequestsQuery.isError && (
+                          <ErrorState message={(fulfilledMovementRequestsQuery.error as any)?.message ?? 'Error cargando solicitudes atendidas'} />
+                        )}
+                        {!fulfilledMovementRequestsQuery.isLoading && !fulfilledMovementRequestsQuery.isError && (fulfilledMovementRequestsQuery.data?.items?.length ?? 0) === 0 && (
+                          <EmptyState message="No hay solicitudes atendidas en el período." />
+                        )}
+                        {!fulfilledMovementRequestsQuery.isLoading && !fulfilledMovementRequestsQuery.isError && (fulfilledMovementRequestsQuery.data?.items?.length ?? 0) > 0 && (
+                          <Table
+                            columns={[
+                              { header: 'ID', accessor: (r: FulfilledMovementRequestItem) => r.id },
+                              {
+                                header: 'Destino',
+                                accessor: (r: FulfilledMovementRequestItem) =>
+                                  r.destinationWarehouse
+                                    ? `${r.destinationWarehouse.code ?? ''} ${r.destinationWarehouse.name ?? ''}`.trim() || r.destinationWarehouse.id
+                                    : r.requestedCity ?? '—',
+                              },
+                              {
+                                header: 'Origen',
+                                accessor: (r: FulfilledMovementRequestItem) => {
+                                  const wh = r.fromWarehouseCodes ?? '—'
+                                  const loc = r.fromLocationCodes ?? null
+                                  return loc ? `${wh} · ${loc}` : wh
+                                },
+                              },
+                              { header: 'T. atención', accessor: (r: FulfilledMovementRequestItem) => formatMinutes(r.minutesToFulfill) },
+                              { header: 'Ítems', accessor: (r: FulfilledMovementRequestItem) => r.itemsCount },
+                              { header: 'Envíos', accessor: (r: FulfilledMovementRequestItem) => r.movementsCount },
+                              {
+                                header: 'Acción',
+                                accessor: (r: FulfilledMovementRequestItem) => (
+                                  <Button size="sm" variant="outline" onClick={() => setTraceRequestId(r.id)}>
+                                    Ver
+                                  </Button>
+                                ),
+                              },
+                            ]}
+                            data={(() => {
+                              const all = fulfilledMovementRequestsQuery.data?.items ?? []
+                              const q = fulfilledFilter.trim().toLowerCase()
+                              if (!q) return all
+                              return all.filter((r) => {
+                                const dest = r.destinationWarehouse ? `${r.destinationWarehouse.code ?? ''} ${r.destinationWarehouse.name ?? ''}` : ''
+                                const haystack = [
+                                  r.id,
+                                  r.requestedCity ?? '',
+                                  dest,
+                                  r.requestedByName ?? '',
+                                  r.fromWarehouseCodes ?? '',
+                                  r.fromLocationCodes ?? '',
+                                  r.toWarehouseCodes ?? '',
+                                  r.toLocationCodes ?? '',
+                                ]
+                                  .join(' ')
+                                  .toLowerCase()
+                                return haystack.includes(q)
+                              })
+                            })()}
+                            keyExtractor={(r: FulfilledMovementRequestItem) => r.id}
+                          />
+                        )}
+                      </div>
                     </>
                   )
                 })()}
@@ -1324,6 +1613,146 @@ export function StockReportsPage() {
               </ReportSection>
             </>
           )}
+
+          <Modal
+            isOpen={!!traceRequestId}
+            onClose={() => setTraceRequestId(null)}
+            title={traceRequestId ? `Trazabilidad · ${traceRequestId}` : 'Trazabilidad'}
+            maxWidth="xl"
+          >
+            {movementRequestTraceQuery.isLoading && <Loading />}
+            {movementRequestTraceQuery.isError && (
+              <ErrorState message={(movementRequestTraceQuery.error as any)?.message ?? 'Error cargando trazabilidad'} />
+            )}
+            {!movementRequestTraceQuery.isLoading && !movementRequestTraceQuery.isError && movementRequestTraceQuery.data && (() => {
+              const d = movementRequestTraceQuery.data
+              const createdAt = new Date(d.request.createdAt)
+              const fulfilledAt = d.request.fulfilledAt ? new Date(d.request.fulfilledAt) : null
+              const minutes = fulfilledAt ? (fulfilledAt.getTime() - createdAt.getTime()) / 60000 : null
+
+              const canExportPicking = (d.sentLines ?? []).length > 0
+              const onExportPicking = () => {
+                const sent = d.sentLines ?? []
+                if (sent.length === 0) return
+
+                const uniqFromWh = Array.from(new Set(sent.map((l) => formatWarehouseLabel(l.fromLocation?.warehouse ?? null))))
+                const uniqToWh = Array.from(new Set(sent.map((l) => formatWarehouseLabel(l.toLocation?.warehouse ?? null))))
+                const uniqFromLoc = Array.from(new Set(sent.map((l) => String(l.fromLocation?.code ?? '—'))))
+                const uniqToLoc = Array.from(new Set(sent.map((l) => String(l.toLocation?.code ?? '—'))))
+
+                const fromWarehouseLabel = uniqFromWh.length === 1 ? uniqFromWh[0] : 'MIXED'
+                const toWarehouseLabel = uniqToWh.length === 1 ? uniqToWh[0] : 'MIXED'
+                const fromLocationCode = uniqFromLoc.length === 1 ? uniqFromLoc[0] : 'MIXED'
+                const toLocationCode = uniqToLoc.length === 1 ? uniqToLoc[0] : 'MIXED'
+
+                exportPickingToPdf(
+                  {
+                    requestId: d.request.id,
+                    generatedAtIso: new Date().toISOString(),
+                    fromWarehouseLabel,
+                    fromLocationCode,
+                    toWarehouseLabel,
+                    toLocationCode,
+                    requestedByName: d.request.requestedByName ?? null,
+                  },
+                  sent.map((l) => ({
+                    locationCode: String(l.fromLocation?.code ?? '—'),
+                    productLabel: getProductLabel({ sku: l.productSku ?? '—', name: l.productName ?? '—', genericName: l.genericName ?? null }),
+                    batchNumber: l.batchNumber ?? null,
+                    expiresAt: l.expiresAt ?? null,
+                    quantityUnits: Number(l.quantity ?? 0),
+                  })),
+                )
+              }
+
+              return (
+                <div className="space-y-4">
+                  <div className="rounded-md border border-slate-200 p-3 text-sm dark:border-slate-700">
+                    <div className="mb-2 flex flex-col gap-2 md:flex-row md:items-center md:justify-end">
+                      <Button size="sm" variant="outline" disabled={!canExportPicking} onClick={onExportPicking}>
+                        Exportar picking (PDF)
+                      </Button>
+                    </div>
+                    <div className="text-slate-900 dark:text-slate-100">
+                      <span className="font-medium">Destino:</span>{' '}
+                      {d.request.warehouse ? `${d.request.warehouse.code ?? ''} ${d.request.warehouse.name ?? ''}`.trim() : d.request.requestedCity}
+                    </div>
+                    <div className="text-slate-700 dark:text-slate-300">
+                      <span className="font-medium">Solicitado:</span> {createdAt.toLocaleString()} · <span className="font-medium">Atendido:</span>{' '}
+                      {fulfilledAt ? fulfilledAt.toLocaleString() : '—'} · <span className="font-medium">Tiempo:</span> {formatMinutes(minutes)}
+                    </div>
+                    <div className="text-slate-700 dark:text-slate-300">
+                      <span className="font-medium">Solicitante:</span> {d.request.requestedByName ?? '—'} · <span className="font-medium">Atendió:</span>{' '}
+                      {d.request.fulfilledByName ?? '—'}
+                    </div>
+                  </div>
+
+                  <div>
+                    <h4 className="mb-2 text-sm font-semibold text-slate-900 dark:text-white">Lo solicitado</h4>
+                    {(d.requestedItems ?? []).length === 0 ? (
+                      <EmptyState message="Sin ítems" />
+                    ) : (
+                      <Table
+                        data={d.requestedItems}
+                        keyExtractor={(r) => r.id}
+                        columns={[
+                          {
+                            header: 'Producto',
+                            accessor: (r) => getProductLabel({ sku: r.productSku ?? '—', name: r.productName ?? '—', genericName: r.genericName ?? null }),
+                          },
+                          {
+                            header: 'Presentación',
+                            accessor: (r) => formatPresentationLabel(r.presentation ? { name: r.presentation.name, unitsPerPresentation: r.presentation.unitsPerPresentation } : null),
+                          },
+                          { header: 'Cantidad (u)', className: 'w-32', accessor: (r) => String(r.requestedQuantity ?? 0) },
+                        ]}
+                      />
+                    )}
+                  </div>
+
+                  <div>
+                    <h4 className="mb-2 text-sm font-semibold text-slate-900 dark:text-white">Lo enviado (picking)</h4>
+                    {(d.sentLines ?? []).length === 0 ? (
+                      <EmptyState message="Sin movimientos asociados" />
+                    ) : (
+                      <Table
+                        data={d.sentLines}
+                        keyExtractor={(r) => r.id}
+                        columns={[
+                          { header: 'Fecha', className: 'w-40', accessor: (r) => new Date(r.createdAt).toLocaleString() },
+                          {
+                            header: 'Origen',
+                            accessor: (r) => {
+                              const wh = r.fromLocation?.warehouse
+                              const loc = r.fromLocation?.code
+                              const whLabel = wh ? `${wh.code ?? ''} ${wh.name ?? ''}`.trim() : '—'
+                              return loc ? `${whLabel} · ${loc}` : whLabel
+                            },
+                          },
+                          {
+                            header: 'Destino',
+                            accessor: (r) => {
+                              const wh = r.toLocation?.warehouse
+                              const loc = r.toLocation?.code
+                              const whLabel = wh ? `${wh.code ?? ''} ${wh.name ?? ''}`.trim() : '—'
+                              return loc ? `${whLabel} · ${loc}` : whLabel
+                            },
+                          },
+                          {
+                            header: 'Producto',
+                            accessor: (r) => getProductLabel({ sku: r.productSku ?? '—', name: r.productName ?? '—', genericName: r.genericName ?? null }),
+                          },
+                          { header: 'Lote', className: 'w-28', accessor: (r) => r.batchNumber ?? '—' },
+                          { header: 'Vence', className: 'w-28', accessor: (r) => (r.expiresAt ? new Date(r.expiresAt).toLocaleDateString() : '—') },
+                          { header: 'Cantidad (u)', className: 'w-24', accessor: (r) => String(r.quantity ?? 0) },
+                        ]}
+                      />
+                    )}
+                  </div>
+                </div>
+              )
+            })()}
+          </Modal>
 
           {/* Reporte de Productos Por Vencer */}
           {tab === 'EXPIRY' && (

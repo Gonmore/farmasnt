@@ -1066,6 +1066,206 @@ Response 201
 }
 ```
 
+### GET /api/v1/stock/movement-requests
+Requiere permiso: `stock:read`.
+
+Query
+- `take` (1..100, default 50)
+- `status` (opcional): `OPEN` | `FULFILLED` | `CANCELLED`
+- `city` (opcional): ciudad (string)
+- `warehouseId` (opcional): id de sucursal/almacén destino
+
+Notas
+- Si el usuario tiene scope de sucursal (`ScopeBranch`), el backend filtra por la ciudad de la sucursal autenticada y no permite operar sin sucursal seleccionada.
+
+Response 200
+```json
+{
+  "items": [
+    {
+      "id": "...",
+      "status": "OPEN",
+      "confirmationStatus": "PENDING",
+      "warehouseId": "...",
+      "warehouse": { "id": "...", "code": "SCZ", "name": "Sucursal SCZ", "city": "SANTA CRUZ" },
+      "requestedCity": "SANTA CRUZ",
+      "quoteId": null,
+      "note": null,
+      "requestedBy": "...",
+      "requestedByName": "Juan Pérez",
+      "fulfilledAt": null,
+      "fulfilledBy": null,
+      "confirmedAt": null,
+      "confirmedBy": null,
+      "confirmationNote": null,
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "items": [
+        {
+          "id": "...",
+          "productId": "...",
+          "productSku": "...",
+          "productName": "...",
+          "genericName": "...",
+          "requestedQuantity": 100,
+          "remainingQuantity": 100,
+          "presentationId": "...",
+          "presentationQuantity": 10,
+          "presentation": { "id": "...", "name": "Caja", "unitsPerPresentation": "10" },
+          "presentationName": "Caja",
+          "unitsPerPresentation": "10"
+        }
+      ]
+    }
+  ]
+}
+```
+
+Nota
+- `presentation` es el campo recomendado (metadata completa). `presentationName` y `unitsPerPresentation` se mantienen por compatibilidad.
+
+### POST /api/v1/stock/movement-requests
+Requiere permiso: `stock:read`.
+
+Body
+```json
+{
+  "warehouseId": "...",
+  "items": [
+    { "productId": "...", "presentationId": "...", "quantity": 10 },
+    { "productId": "...", "presentationId": "...", "quantity": 30 }
+  ],
+  "note": "opcional"
+}
+```
+
+Notas
+- `quantity` está expresado en cantidad de presentaciones (no en unidades base).
+- El backend calcula `requestedQuantity`/`remainingQuantity` en unidades base usando `presentation.unitsPerPresentation`.
+- `requestedByName` se determina automáticamente desde el usuario autenticado (nombre o email).
+
+Response 201 (resumen)
+```json
+{
+  "id": "...",
+  "status": "OPEN",
+  "confirmationStatus": "PENDING",
+  "warehouseId": "...",
+  "requestedCity": "SANTA CRUZ",
+  "requestedByName": "Juan Pérez",
+  "createdAt": "2026-01-01T00:00:00.000Z",
+  "items": [
+    {
+      "id": "...",
+      "productId": "...",
+      "requestedQuantity": 100,
+      "remainingQuantity": 100,
+      "presentationId": "...",
+      "presentationQuantity": 10,
+      "presentation": { "id": "...", "name": "Caja", "unitsPerPresentation": "10" },
+      "presentationName": "Caja",
+      "unitsPerPresentation": "10"
+    }
+  ]
+}
+```
+
+### POST /api/v1/stock/movement-requests/:id/plan
+Requiere permiso: `stock:move`.
+
+Body
+```json
+{
+  "fromWarehouseId": "...",
+  "fromLocationId": "...",
+  "takePerItem": 50,
+  "allowExpired": false
+}
+```
+
+### POST /api/v1/stock/movement-requests/:id/fulfill
+Requiere permiso: `stock:move`.
+
+Body
+```json
+{
+  "fromLocationId": "...",
+  "toLocationId": "...",
+  "note": "opcional",
+  "lines": [
+    {
+      "requestItemId": "...",
+      "productId": "...",
+      "batchId": "...",
+      "quantity": 100,
+      "note": "opcional"
+    }
+  ]
+}
+```
+
+Notas
+- Permite atención parcial: decrementa `remainingQuantity` por ítem y solo marca `FULFILLED` cuando el total restante llega a 0.
+- Cada línea crea un movimiento `TRANSFER` con `referenceType: "REQUEST_FULFILL"` y `referenceId = requestId`.
+- `quantity` está en unidades base. Alternativamente se puede enviar `presentationId + presentationQuantity` (debe coincidir con la presentación del ítem).
+
+Response 201 (resumen)
+```json
+{
+  "request": {
+    "id": "...",
+    "status": "OPEN"
+  },
+  "movements": [{ "id": "..." }],
+  "balances": [{ "id": "..." }]
+}
+```
+
+Notas
+- Requiere `fromWarehouseId` o `fromLocationId`.
+- Devuelve sugerencias de picking por ítem usando FEFO (vence primero) y priorizando lotes abiertos (`batch.openedAt != null`).
+- `suggestedQuantityUnits` está en unidades base.
+
+Response 200 (resumen)
+```json
+{
+  "requestId": "...",
+  "status": "OPEN",
+  "warehouseId": "...",
+  "warehouse": { "id": "...", "code": "SCZ", "name": "Sucursal SCZ", "city": "SANTA CRUZ" },
+  "requestedCity": "SANTA CRUZ",
+  "fromWarehouseId": "...",
+  "fromWarehouse": { "id": "...", "code": "CEN", "name": "Central", "city": "SANTA CRUZ" },
+  "fromLocationId": null,
+  "generatedAt": "2026-02-02T00:00:00.000Z",
+  "items": [
+    {
+      "requestItemId": "...",
+      "productId": "...",
+      "productSku": "...",
+      "productName": "...",
+      "remainingQuantityUnits": 100,
+      "presentation": { "id": "...", "name": "Caja", "unitsPerPresentation": "10" },
+      "suggestions": [
+        {
+          "inventoryBalanceId": "...",
+          "locationId": "...",
+          "locationCode": "A1",
+          "batchId": "...",
+          "batchNumber": "L-0001",
+          "expiresAt": "2026-06-01T00:00:00.000Z",
+          "openedAt": "2026-01-15T00:00:00.000Z",
+          "availableQuantityUnits": 200,
+          "suggestedQuantityUnits": 100,
+          "suggestedPresentationQuantity": 10
+        }
+      ],
+      "suggestedTotalUnits": 100,
+      "shortageUnits": 0
+    }
+  ]
+}
+```
+
 ### POST /api/v1/stock/movement-requests/bulk-fulfill
 Requiere permiso: `stock:move`.
 
@@ -1991,6 +2191,131 @@ Response 200
 {
   "items": [
     { "city": "Santa Cruz", "total": 5, "open": 1, "fulfilled": 3, "cancelled": 1, "pending": 2, "accepted": 2, "rejected": 1 }
+  ]
+}
+```
+
+#### GET /api/v1/reports/stock/movement-requests/flows
+Requiere: módulo `WAREHOUSE` + permiso `report:stock:read`.
+
+Objetivo
+- Mostrar rutas (origen → destino) de solicitudes **atendidas** (`FULFILLED`) y el **tiempo promedio de atención** (minutos) medido como `fulfilledAt - createdAt`.
+
+Query
+- `from` (date-time, opcional)
+- `to` (date-time, opcional)
+- `take` (1..500, default 200)
+
+Response 200
+```json
+{
+  "items": [
+    {
+      "fromWarehouse": { "id": "...", "code": "WH-01", "name": "Sucursal Centro" },
+      "toWarehouse": { "id": "...", "code": "WH-02", "name": "Sucursal Norte" },
+      "requestsCount": 12,
+      "avgMinutes": 18.5
+    }
+  ]
+}
+```
+
+Notas
+- El origen/destino se deduce desde los movimientos `TRANSFER` creados al atender la solicitud (`referenceType='REQUEST_FULFILL'`).
+- Si una solicitud tuvo múltiples orígenes/destinos, el backend puede reportar “mixto” (depende del agregado usado por el read-side).
+
+#### GET /api/v1/reports/stock/movement-requests/fulfilled
+Requiere: módulo `WAREHOUSE` + permiso `report:stock:read`.
+
+Objetivo
+- Listar solicitudes **atendidas** con métricas de operación (tiempo, cantidades) y “rutas” agregadas para permitir drill-down.
+
+Query
+- `from` (date-time, opcional)
+- `to` (date-time, opcional)
+- `take` (1..500, default 200)
+
+Response 200
+```json
+{
+  "items": [
+    {
+      "id": "...",
+      "requestedCity": "Santa Cruz",
+      "destinationWarehouse": { "id": "...", "code": "WH-02", "name": "Sucursal Norte" },
+      "requestedByName": "Juan Perez",
+      "createdAt": "2026-02-02T10:00:00.000Z",
+      "fulfilledAt": "2026-02-02T10:20:00.000Z",
+      "minutesToFulfill": 20,
+      "itemsCount": 4,
+      "requestedQuantity": "40",
+      "movementsCount": 6,
+      "sentQuantity": "40",
+      "fromWarehouseCodes": "WH-01",
+      "fromLocationCodes": "BIN-01",
+      "toWarehouseCodes": "WH-02",
+      "toLocationCodes": "BIN-01"
+    }
+  ]
+}
+```
+
+#### GET /api/v1/reports/stock/movement-requests/:id/trace
+Requiere: módulo `WAREHOUSE` + permiso `report:stock:read`.
+
+Objetivo
+- Trazabilidad de una solicitud: comparar **lo solicitado** vs **lo enviado** (movimientos/picking real).
+
+Params
+- `id` (uuid)
+
+Response 200
+```json
+{
+  "request": {
+    "id": "...",
+    "status": "FULFILLED",
+    "confirmationStatus": "ACCEPTED",
+    "requestedCity": "Santa Cruz",
+    "warehouseId": "...",
+    "warehouse": { "id": "...", "code": "WH-02", "name": "Sucursal Norte", "city": "Santa Cruz" },
+    "note": null,
+    "createdAt": "2026-02-02T10:00:00.000Z",
+    "requestedBy": "...",
+    "requestedByName": "Juan Perez",
+    "fulfilledAt": "2026-02-02T10:20:00.000Z",
+    "fulfilledBy": "...",
+    "fulfilledByName": "Maria Lopez"
+  },
+  "requestedItems": [
+    {
+      "id": "...",
+      "productId": "...",
+      "productSku": "SKU-001",
+      "productName": "Producto",
+      "genericName": "Genérico",
+      "requestedQuantity": 10,
+      "presentation": { "id": "...", "name": "Caja", "unitsPerPresentation": 10 },
+      "unitsPerPresentation": 10
+    }
+  ],
+  "sentLines": [
+    {
+      "id": "...",
+      "createdAt": "2026-02-02T10:05:00.000Z",
+      "productId": "...",
+      "productSku": "SKU-001",
+      "productName": "Producto",
+      "genericName": "Genérico",
+      "batchId": "...",
+      "batchNumber": "L-001",
+      "expiresAt": "2026-12-31T00:00:00.000Z",
+      "quantity": 10,
+      "presentation": { "id": "...", "name": "Caja", "unitsPerPresentation": 10 },
+      "presentationQuantity": 1,
+      "fromLocation": { "id": "...", "code": "BIN-01", "warehouse": { "id": "...", "code": "WH-01", "name": "Sucursal Centro", "city": "Santa Cruz" } },
+      "toLocation": { "id": "...", "code": "BIN-01", "warehouse": { "id": "...", "code": "WH-02", "name": "Sucursal Norte", "city": "Santa Cruz" } }
+    }
   ]
 }
 ```

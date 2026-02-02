@@ -80,6 +80,14 @@ const stockMovementRequestsOpsQuerySchema = dateRangeQuerySchema.extend({
   take: z.coerce.number().int().min(1).max(500).default(200),
 })
 
+const stockMovementRequestsFulfilledQuerySchema = dateRangeQuerySchema.extend({
+  take: z.coerce.number().int().min(1).max(500).default(200),
+})
+
+const movementRequestTraceParamsSchema = z.object({
+  id: z.string().uuid(),
+})
+
 const stockReturnsOpsQuerySchema = dateRangeQuerySchema.extend({
   take: z.coerce.number().int().min(1).max(500).default(200),
 })
@@ -103,6 +111,67 @@ type StockMovementRequestsByCityRow = {
   pending: bigint
   accepted: bigint
   rejected: bigint
+}
+
+type StockMovementRequestsFlowRow = {
+  fromWarehouseId: string | null
+  fromWarehouseCode: string | null
+  fromWarehouseName: string | null
+  toWarehouseId: string | null
+  toWarehouseCode: string | null
+  toWarehouseName: string | null
+  requestsCount: bigint
+  avgMinutes: number | null
+}
+
+type StockMovementRequestsFulfilledRow = {
+  requestId: string
+  requestedCity: string | null
+  warehouseId: string | null
+  warehouseCode: string | null
+  warehouseName: string | null
+  requestedBy: string
+  requestedByName: string | null
+  createdAt: Date
+  fulfilledAt: Date
+  minutesToFulfill: number
+  itemsCount: bigint
+  requestedQuantity: string | null
+  movementsCount: bigint
+  sentQuantity: string | null
+  fromWarehouseCodes: string | null
+  fromLocationCodes: string | null
+  toWarehouseCodes: string | null
+  toLocationCodes: string | null
+}
+
+type StockMovementRequestTraceMovementRow = {
+  id: string
+  createdAt: Date
+  productId: string
+  productSku: string | null
+  productName: string | null
+  genericName: string | null
+  batchId: string | null
+  batchNumber: string | null
+  expiresAt: Date | null
+  quantity: string | null
+  presentationId: string | null
+  presentationName: string | null
+  unitsPerPresentation: string | null
+  presentationQuantity: string | null
+  fromLocationId: string | null
+  fromLocationCode: string | null
+  fromWarehouseId: string | null
+  fromWarehouseCode: string | null
+  fromWarehouseName: string | null
+  fromWarehouseCity: string | null
+  toLocationId: string | null
+  toLocationCode: string | null
+  toWarehouseId: string | null
+  toWarehouseCode: string | null
+  toWarehouseName: string | null
+  toWarehouseCity: string | null
 }
 
 type StockReturnsSummaryRow = {
@@ -1353,6 +1422,394 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
           pending: Number(r.pending),
           accepted: Number(r.accepted),
           rejected: Number(r.rejected),
+        })),
+      })
+    },
+  )
+
+  app.get(
+    '/api/v1/reports/stock/movement-requests/flows',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.ReportStockRead)],
+    },
+    async (request, reply) => {
+      const parsed = stockMovementRequestsFulfilledQuerySchema.safeParse(request.query)
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
+
+      const tenantId = request.auth!.tenantId
+      const branchCity = branchCityOf(request)
+      if (branchCity === '__MISSING__') return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+
+      const { from, to, take } = parsed.data
+
+      const rows = await db.$queryRaw<StockMovementRequestsFlowRow[]>`
+        WITH req AS (
+          SELECT
+            smr.id as "requestId",
+            smr."createdAt" as "createdAt",
+            smr."fulfilledAt" as "fulfilledAt",
+            string_agg(distinct wf.id::text, ',' ORDER BY wf.id) FILTER (WHERE wf.id IS NOT NULL) as "fromWarehouseIds",
+            string_agg(distinct wf.code, ',' ORDER BY wf.code) FILTER (WHERE wf.code IS NOT NULL) as "fromWarehouseCodes",
+            string_agg(distinct wf.name, ',' ORDER BY wf.name) FILTER (WHERE wf.name IS NOT NULL) as "fromWarehouseNames",
+            string_agg(distinct wt.id::text, ',' ORDER BY wt.id) FILTER (WHERE wt.id IS NOT NULL) as "toWarehouseIds",
+            string_agg(distinct wt.code, ',' ORDER BY wt.code) FILTER (WHERE wt.code IS NOT NULL) as "toWarehouseCodes",
+            string_agg(distinct wt.name, ',' ORDER BY wt.name) FILTER (WHERE wt.name IS NOT NULL) as "toWarehouseNames"
+          FROM "StockMovementRequest" smr
+          LEFT JOIN "StockMovement" sm
+            ON sm."tenantId" = smr."tenantId"
+            AND sm."referenceType" = 'REQUEST_FULFILL'
+            AND sm."referenceId" = smr.id
+            AND sm.type = 'TRANSFER'::"StockMovementType"
+          LEFT JOIN "Location" lf ON lf.id = sm."fromLocationId"
+          LEFT JOIN "Warehouse" wf ON wf.id = lf."warehouseId"
+          LEFT JOIN "Location" lt ON lt.id = sm."toLocationId"
+          LEFT JOIN "Warehouse" wt ON wt.id = lt."warehouseId"
+          WHERE smr."tenantId" = ${tenantId}
+            AND smr.status = 'FULFILLED'::"StockMovementRequestStatus"
+            AND smr."fulfilledAt" IS NOT NULL
+            AND (${from ?? null}::timestamptz IS NULL OR smr."createdAt" >= ${from ?? null})
+            AND (${to ?? null}::timestamptz IS NULL OR smr."createdAt" < ${to ?? null})
+            AND (${branchCity ?? null}::text IS NULL OR upper(coalesce(smr."requestedCity", '')) = upper(${branchCity ?? null}))
+          GROUP BY smr.id
+        ), normalized AS (
+          SELECT
+            CASE
+              WHEN "fromWarehouseIds" IS NULL THEN NULL
+              WHEN strpos("fromWarehouseIds", ',') = 0 THEN "fromWarehouseIds"
+              ELSE NULL
+            END as "fromWarehouseId",
+            CASE
+              WHEN "fromWarehouseCodes" IS NULL THEN NULL
+              WHEN strpos("fromWarehouseCodes", ',') = 0 THEN "fromWarehouseCodes"
+              ELSE 'MIXED'
+            END as "fromWarehouseCode",
+            CASE
+              WHEN "fromWarehouseNames" IS NULL THEN NULL
+              WHEN strpos("fromWarehouseNames", ',') = 0 THEN "fromWarehouseNames"
+              ELSE 'MIXED'
+            END as "fromWarehouseName",
+            CASE
+              WHEN "toWarehouseIds" IS NULL THEN NULL
+              WHEN strpos("toWarehouseIds", ',') = 0 THEN "toWarehouseIds"
+              ELSE NULL
+            END as "toWarehouseId",
+            CASE
+              WHEN "toWarehouseCodes" IS NULL THEN NULL
+              WHEN strpos("toWarehouseCodes", ',') = 0 THEN "toWarehouseCodes"
+              ELSE 'MIXED'
+            END as "toWarehouseCode",
+            CASE
+              WHEN "toWarehouseNames" IS NULL THEN NULL
+              WHEN strpos("toWarehouseNames", ',') = 0 THEN "toWarehouseNames"
+              ELSE 'MIXED'
+            END as "toWarehouseName",
+            EXTRACT(EPOCH FROM ("fulfilledAt" - "createdAt")) / 60.0 as "minutes"
+          FROM req
+        )
+        SELECT
+          n."fromWarehouseId" as "fromWarehouseId",
+          n."fromWarehouseCode" as "fromWarehouseCode",
+          n."fromWarehouseName" as "fromWarehouseName",
+          n."toWarehouseId" as "toWarehouseId",
+          n."toWarehouseCode" as "toWarehouseCode",
+          n."toWarehouseName" as "toWarehouseName",
+          count(*) as "requestsCount",
+          avg(n."minutes") as "avgMinutes"
+        FROM normalized n
+        GROUP BY n."fromWarehouseId", n."fromWarehouseCode", n."fromWarehouseName", n."toWarehouseId", n."toWarehouseCode", n."toWarehouseName"
+        ORDER BY count(*) DESC NULLS LAST
+        LIMIT ${take}
+      `
+
+      return reply.send({
+        items: rows.map((r) => ({
+          fromWarehouse: r.fromWarehouseCode || r.fromWarehouseName
+            ? {
+                id: r.fromWarehouseId,
+                code: r.fromWarehouseCode,
+                name: r.fromWarehouseName,
+              }
+            : null,
+          toWarehouse: r.toWarehouseCode || r.toWarehouseName
+            ? {
+                id: r.toWarehouseId,
+                code: r.toWarehouseCode,
+                name: r.toWarehouseName,
+              }
+            : null,
+          requestsCount: Number(r.requestsCount),
+          avgMinutes: r.avgMinutes === null || r.avgMinutes === undefined ? null : Number(r.avgMinutes),
+        })),
+      })
+    },
+  )
+
+  app.get(
+    '/api/v1/reports/stock/movement-requests/fulfilled',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.ReportStockRead)],
+    },
+    async (request, reply) => {
+      const parsed = stockMovementRequestsFulfilledQuerySchema.safeParse(request.query)
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
+
+      const tenantId = request.auth!.tenantId
+      const branchCity = branchCityOf(request)
+      if (branchCity === '__MISSING__') return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+
+      const { from, to, take } = parsed.data
+
+      const rows = await db.$queryRaw<StockMovementRequestsFulfilledRow[]>`
+        WITH req AS (
+          SELECT
+            smr.id as "requestId",
+            smr."requestedCity" as "requestedCity",
+            smr."warehouseId" as "warehouseId",
+            w.code as "warehouseCode",
+            w.name as "warehouseName",
+            smr."requestedBy" as "requestedBy",
+            coalesce(u."fullName", u.email, smr."requestedBy") as "requestedByName",
+            smr."createdAt" as "createdAt",
+            smr."fulfilledAt" as "fulfilledAt",
+            EXTRACT(EPOCH FROM (smr."fulfilledAt" - smr."createdAt")) / 60.0 as "minutesToFulfill"
+          FROM "StockMovementRequest" smr
+          LEFT JOIN "User" u ON u.id = smr."requestedBy" AND u."tenantId" = smr."tenantId"
+          LEFT JOIN "Warehouse" w ON w.id = smr."warehouseId"
+          WHERE smr."tenantId" = ${tenantId}
+            AND smr.status = 'FULFILLED'::"StockMovementRequestStatus"
+            AND smr."fulfilledAt" IS NOT NULL
+            AND (${from ?? null}::timestamptz IS NULL OR smr."createdAt" >= ${from ?? null})
+            AND (${to ?? null}::timestamptz IS NULL OR smr."createdAt" < ${to ?? null})
+            AND (${branchCity ?? null}::text IS NULL OR upper(coalesce(smr."requestedCity", '')) = upper(${branchCity ?? null}))
+          ORDER BY smr."fulfilledAt" DESC
+          LIMIT ${take}
+        ), itemsAgg AS (
+          SELECT
+            smri."requestId" as "requestId",
+            count(*) as "itemsCount",
+            sum(smri."requestedQuantity")::text as "requestedQuantity"
+          FROM "StockMovementRequestItem" smri
+          WHERE smri."tenantId" = ${tenantId}
+            AND smri."requestId" IN (SELECT "requestId" FROM req)
+          GROUP BY smri."requestId"
+        ), movAgg AS (
+          SELECT
+            sm."referenceId" as "requestId",
+            count(sm.id) as "movementsCount",
+            sum(sm.quantity)::text as "sentQuantity",
+            string_agg(distinct wf.code, ',' ORDER BY wf.code) FILTER (WHERE wf.code IS NOT NULL) as "fromWarehouseCodes",
+            string_agg(distinct lf.code, ',' ORDER BY lf.code) FILTER (WHERE lf.code IS NOT NULL) as "fromLocationCodes",
+            string_agg(distinct wt.code, ',' ORDER BY wt.code) FILTER (WHERE wt.code IS NOT NULL) as "toWarehouseCodes",
+            string_agg(distinct lt.code, ',' ORDER BY lt.code) FILTER (WHERE lt.code IS NOT NULL) as "toLocationCodes"
+          FROM "StockMovement" sm
+          LEFT JOIN "Location" lf ON lf.id = sm."fromLocationId"
+          LEFT JOIN "Warehouse" wf ON wf.id = lf."warehouseId"
+          LEFT JOIN "Location" lt ON lt.id = sm."toLocationId"
+          LEFT JOIN "Warehouse" wt ON wt.id = lt."warehouseId"
+          WHERE sm."tenantId" = ${tenantId}
+            AND sm.type = 'TRANSFER'::"StockMovementType"
+            AND sm."referenceType" = 'REQUEST_FULFILL'
+            AND sm."referenceId" IN (SELECT "requestId" FROM req)
+          GROUP BY sm."referenceId"
+        )
+        SELECT
+          r.*,
+          coalesce(i."itemsCount", 0) as "itemsCount",
+          i."requestedQuantity" as "requestedQuantity",
+          coalesce(m."movementsCount", 0) as "movementsCount",
+          m."sentQuantity" as "sentQuantity",
+          m."fromWarehouseCodes" as "fromWarehouseCodes",
+          m."fromLocationCodes" as "fromLocationCodes",
+          m."toWarehouseCodes" as "toWarehouseCodes",
+          m."toLocationCodes" as "toLocationCodes"
+        FROM req r
+        LEFT JOIN itemsAgg i ON i."requestId" = r."requestId"
+        LEFT JOIN movAgg m ON m."requestId" = r."requestId"
+        ORDER BY r."fulfilledAt" DESC
+      `
+
+      return reply.send({
+        items: rows.map((r) => ({
+          id: r.requestId,
+          requestedCity: r.requestedCity,
+          destinationWarehouse: r.warehouseId ? { id: r.warehouseId, code: r.warehouseCode, name: r.warehouseName } : null,
+          requestedByName: r.requestedByName,
+          createdAt: r.createdAt.toISOString(),
+          fulfilledAt: r.fulfilledAt.toISOString(),
+          minutesToFulfill: Number(r.minutesToFulfill ?? 0),
+          itemsCount: Number(r.itemsCount ?? 0),
+          requestedQuantity: r.requestedQuantity ?? '0',
+          movementsCount: Number(r.movementsCount ?? 0),
+          sentQuantity: r.sentQuantity ?? '0',
+          fromWarehouseCodes: r.fromWarehouseCodes ?? null,
+          fromLocationCodes: r.fromLocationCodes ?? null,
+          toWarehouseCodes: r.toWarehouseCodes ?? null,
+          toLocationCodes: r.toLocationCodes ?? null,
+        })),
+      })
+    },
+  )
+
+  app.get(
+    '/api/v1/reports/stock/movement-requests/:id/trace',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.ReportStockRead)],
+    },
+    async (request, reply) => {
+      const tenantId = request.auth!.tenantId
+      const branchCity = branchCityOf(request)
+      if (branchCity === '__MISSING__') return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+
+      const parsedParams = movementRequestTraceParamsSchema.safeParse((request as any).params)
+      if (!parsedParams.success) return reply.status(400).send({ message: 'Invalid params', issues: parsedParams.error.issues })
+      const { id } = parsedParams.data
+
+      const req = await db.stockMovementRequest.findFirst({
+        where: {
+          tenantId,
+          id,
+          ...(branchCity ? { requestedCity: { equals: branchCity, mode: 'insensitive' as const } } : {}),
+        },
+        include: {
+          warehouse: { select: { id: true, code: true, name: true, city: true } },
+          items: {
+            include: {
+              product: { select: { id: true, sku: true, name: true, genericName: true } },
+              presentation: { select: { id: true, name: true, unitsPerPresentation: true } },
+            },
+            orderBy: [{ createdAt: 'asc' }],
+          },
+        },
+      })
+
+      if (!req) return reply.status(404).send({ message: 'Movement request not found' })
+
+      const userIds = [req.requestedBy, req.fulfilledBy].filter(Boolean) as string[]
+      const users = userIds.length
+        ? await db.user.findMany({ where: { tenantId, id: { in: userIds } }, select: { id: true, email: true, fullName: true } })
+        : []
+      const userMap = new Map(users.map((u) => [u.id, u.fullName || u.email || u.id]))
+      if (req.requestedBy && !userMap.has(req.requestedBy)) userMap.set(req.requestedBy, req.requestedBy)
+      if (req.fulfilledBy && !userMap.has(req.fulfilledBy)) userMap.set(req.fulfilledBy, req.fulfilledBy)
+
+      const sentLines = await db.$queryRaw<StockMovementRequestTraceMovementRow[]>`
+        SELECT
+          sm.id as "id",
+          sm."createdAt" as "createdAt",
+          sm."productId" as "productId",
+          p.sku as "productSku",
+          p.name as "productName",
+          p."genericName" as "genericName",
+          sm."batchId" as "batchId",
+          b."batchNumber" as "batchNumber",
+          b."expiresAt" as "expiresAt",
+          sm.quantity::text as "quantity",
+          sm."presentationId" as "presentationId",
+          pp.name as "presentationName",
+          pp."unitsPerPresentation"::text as "unitsPerPresentation",
+          sm."presentationQuantity"::text as "presentationQuantity",
+          sm."fromLocationId" as "fromLocationId",
+          lf.code as "fromLocationCode",
+          wf.id as "fromWarehouseId",
+          wf.code as "fromWarehouseCode",
+          wf.name as "fromWarehouseName",
+          wf.city as "fromWarehouseCity",
+          sm."toLocationId" as "toLocationId",
+          lt.code as "toLocationCode",
+          wt.id as "toWarehouseId",
+          wt.code as "toWarehouseCode",
+          wt.name as "toWarehouseName",
+          wt.city as "toWarehouseCity"
+        FROM "StockMovement" sm
+        LEFT JOIN "Product" p ON p.id = sm."productId"
+        LEFT JOIN "Batch" b ON b.id = sm."batchId"
+        LEFT JOIN "ProductPresentation" pp ON pp.id = sm."presentationId"
+        LEFT JOIN "Location" lf ON lf.id = sm."fromLocationId"
+        LEFT JOIN "Warehouse" wf ON wf.id = lf."warehouseId"
+        LEFT JOIN "Location" lt ON lt.id = sm."toLocationId"
+        LEFT JOIN "Warehouse" wt ON wt.id = lt."warehouseId"
+        WHERE sm."tenantId" = ${tenantId}
+          AND sm.type = 'TRANSFER'::"StockMovementType"
+          AND sm."referenceType" = 'REQUEST_FULFILL'
+          AND sm."referenceId" = ${id}
+        ORDER BY sm."createdAt" ASC
+      `
+
+      return reply.send({
+        request: {
+          id: req.id,
+          status: req.status,
+          confirmationStatus: (req as any).confirmationStatus,
+          requestedCity: req.requestedCity,
+          warehouseId: (req as any).warehouseId ?? null,
+          warehouse: (req as any).warehouse ?? null,
+          note: req.note ?? null,
+          createdAt: req.createdAt.toISOString(),
+          requestedBy: req.requestedBy,
+          requestedByName: userMap.get(req.requestedBy) ?? null,
+          fulfilledAt: req.fulfilledAt ? req.fulfilledAt.toISOString() : null,
+          fulfilledBy: req.fulfilledBy ?? null,
+          fulfilledByName: req.fulfilledBy ? userMap.get(req.fulfilledBy) ?? null : null,
+        },
+        requestedItems: (req.items ?? []).map((it: any) => ({
+          id: it.id,
+          productId: it.productId,
+          productSku: it.product?.sku ?? null,
+          productName: it.product?.name ?? null,
+          genericName: it.product?.genericName ?? null,
+          requestedQuantity: Number(it.requestedQuantity ?? 0),
+          presentation: it.presentation
+            ? { id: it.presentation.id, name: it.presentation.name, unitsPerPresentation: it.presentation.unitsPerPresentation }
+            : null,
+          unitsPerPresentation: it.presentation?.unitsPerPresentation ?? null,
+        })),
+        sentLines: sentLines.map((m) => ({
+          id: m.id,
+          createdAt: m.createdAt.toISOString(),
+          productId: m.productId,
+          productSku: m.productSku,
+          productName: m.productName,
+          genericName: m.genericName,
+          batchId: m.batchId,
+          batchNumber: m.batchNumber,
+          expiresAt: m.expiresAt ? m.expiresAt.toISOString() : null,
+          quantity: Number(m.quantity ?? 0),
+          presentation: m.presentationId
+            ? {
+                id: m.presentationId,
+                name: m.presentationName,
+                unitsPerPresentation: m.unitsPerPresentation === null ? null : Number(m.unitsPerPresentation),
+              }
+            : null,
+          presentationQuantity: m.presentationQuantity === null ? null : Number(m.presentationQuantity),
+          fromLocation: m.fromLocationId
+            ? {
+                id: m.fromLocationId,
+                code: m.fromLocationCode,
+                warehouse: m.fromWarehouseId
+                  ? {
+                      id: m.fromWarehouseId,
+                      code: m.fromWarehouseCode,
+                      name: m.fromWarehouseName,
+                      city: m.fromWarehouseCity,
+                    }
+                  : null,
+              }
+            : null,
+          toLocation: m.toLocationId
+            ? {
+                id: m.toLocationId,
+                code: m.toLocationCode,
+                warehouse: m.toWarehouseId
+                  ? {
+                      id: m.toWarehouseId,
+                      code: m.toWarehouseCode,
+                      name: m.toWarehouseName,
+                      city: m.toWarehouseCity,
+                    }
+                  : null,
+              }
+            : null,
         })),
       })
     },

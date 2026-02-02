@@ -19,6 +19,7 @@ type MovementRequestItem = {
   presentationName: string | null
   presentationQuantity: number | null
   unitsPerPresentation: number | null
+  presentation?: { id: string; name: string; unitsPerPresentation: number } | null
 }
 
 type MovementRequest = {
@@ -154,9 +155,25 @@ async function listMovementRequests(token: string): Promise<{ items: MovementReq
         ...item,
         // Backend puede enviar presentación como campos planos o anidada (item.presentation)
         // No pisar valores válidos con null.
+        requestedQuantity: Number(item.requestedQuantity ?? 0),
+        remainingQuantity: Number(item.remainingQuantity ?? 0),
         presentationId: item.presentationId ?? item.presentation?.id ?? null,
         presentationName: item.presentationName ?? item.presentation?.name ?? null,
-        unitsPerPresentation: item.unitsPerPresentation ?? item.presentation?.unitsPerPresentation ?? null,
+        presentationQuantity:
+          item.presentationQuantity === null || item.presentationQuantity === undefined ? null : Number(item.presentationQuantity),
+        unitsPerPresentation:
+          item.unitsPerPresentation === null || item.unitsPerPresentation === undefined
+            ? item.presentation?.unitsPerPresentation === null || item.presentation?.unitsPerPresentation === undefined
+              ? null
+              : Number(item.presentation.unitsPerPresentation)
+            : Number(item.unitsPerPresentation),
+        presentation: item.presentation
+          ? {
+              id: String(item.presentation.id),
+              name: String(item.presentation.name),
+              unitsPerPresentation: Number(item.presentation.unitsPerPresentation ?? 0),
+            }
+          : null,
       })),
     })),
   }
@@ -166,9 +183,7 @@ async function createMovementRequest(
   token: string,
   data: {
     warehouseId: string
-    requestedByName: string
-    productId: string
-    items: { presentationId: string; quantity: number }[]
+    items: { productId: string; presentationId: string; quantity: number }[]
     note?: string
   },
 ): Promise<MovementRequest> {
@@ -225,6 +240,16 @@ export function MovementsPage() {
   const [requestWarehouseId, setRequestWarehouseId] = useState('')
   const [requestProductId, setRequestProductId] = useState('')
   const [requestItem, setRequestItem] = useState<{ presentationId: string; quantity: number } | null>(null)
+  const [requestItems, setRequestItems] = useState<
+    Array<{
+      productId: string
+      productLabel: string
+      presentationId: string
+      presentationLabel: string
+      unitsPerPresentation: number
+      quantity: number
+    }>
+  >([])
   const [requestPresentationId, setRequestPresentationId] = useState('')
   const [requestQuantity, setRequestQuantity] = useState('1')
   const [requestNote, setRequestNote] = useState('')
@@ -556,15 +581,25 @@ export function MovementsPage() {
   const createRequestMutation = useMutation({
     mutationFn: () => {
       if (!requestWarehouseId) throw new Error('Seleccioná la sucursal que solicita')
-      const requestedByName = permissions.user?.fullName || permissions.user?.email || 'Usuario desconocido'
-      if (!requestProductId) throw new Error('Seleccioná un producto')
-      if (!requestItem) throw new Error('Seleccioná una presentación')
+
+      const combined = new Map<string, { productId: string; presentationId: string; quantity: number }>()
+      for (const it of requestItems) {
+        const key = `${it.productId}::${it.presentationId}`
+        const prev = combined.get(key)
+        combined.set(key, prev ? { ...prev, quantity: prev.quantity + it.quantity } : { productId: it.productId, presentationId: it.presentationId, quantity: it.quantity })
+      }
+      if (requestProductId && requestItem?.presentationId) {
+        const key = `${requestProductId}::${requestItem.presentationId}`
+        const prev = combined.get(key)
+        combined.set(key, prev ? { ...prev, quantity: prev.quantity + requestItem.quantity } : { productId: requestProductId, presentationId: requestItem.presentationId, quantity: requestItem.quantity })
+      }
+
+      const items = [...combined.values()].filter((x) => Number.isFinite(x.quantity) && x.quantity > 0)
+      if (items.length === 0) throw new Error('Agregá al menos un ítem a la solicitud')
 
       return createMovementRequest(auth.accessToken!, {
         warehouseId: requestWarehouseId,
-        requestedByName,
-        productId: requestProductId,
-        items: [requestItem],
+        items,
         note: requestNote.trim() || undefined,
       })
     },
@@ -577,6 +612,7 @@ export function MovementsPage() {
       }
       setRequestProductId('')
       setRequestItem(null)
+      setRequestItems([])
       setRequestPresentationId('')
       setRequestNote('')
       setCreateRequestError('')
@@ -1503,10 +1539,11 @@ export function MovementsPage() {
                         const remaining = Number(it.remainingQuantity)
                         const requested = Number(it.requestedQuantity)
                         let display = ''
-                        if (it.presentationQuantity && it.presentationName) {
+                        const presName = it.presentation?.name ?? it.presentationName
+                        if (it.presentationQuantity && presName) {
                           const presQty = Number(it.presentationQuantity)
-                          const unitsPer = Number(it.unitsPerPresentation || 1)
-                          display = `${presQty.toFixed(0)} ${it.presentationName} (${unitsPer.toFixed(0)}u) de ${name}`
+                          const unitsPer = Number(it.presentation?.unitsPerPresentation ?? it.unitsPerPresentation ?? 1)
+                          display = `${presQty.toFixed(0)} ${presName}${Number.isFinite(unitsPer) && unitsPer > 0 ? ` (${unitsPer.toFixed(0)}u)` : ''} de ${name}`
                         } else {
                           const suffix = r.status === 'OPEN' ? `Pendiente: ${remaining} / ${requested}` : `Solicitado: ${requested}`
                           display = `${name} — ${suffix} unidades`
@@ -1576,7 +1613,7 @@ export function MovementsPage() {
 
           <div className="relative">
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-              Producto *
+              Producto{requestItems.length === 0 ? ' *' : ''}
             </label>
             <input
               type="text"
@@ -1593,7 +1630,7 @@ export function MovementsPage() {
               placeholder="Buscar producto por nombre, genérico o SKU..."
               className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-900 dark:text-white dark:placeholder-slate-500"
               disabled={productsQuery.isLoading}
-              required
+              required={requestItems.length === 0}
             />
             {showProductOptions && filteredProducts.length > 0 && (
               <div className="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md border border-slate-300 bg-white shadow-lg dark:border-slate-600 dark:bg-slate-900">
@@ -1688,6 +1725,75 @@ export function MovementsPage() {
                   })()}
                 </div>
               )}
+
+              <div className="flex justify-end">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={!requestProductId || !requestItem?.presentationId || !(requestItem.quantity > 0)}
+                  onClick={() => {
+                    const product = productsQuery.data?.items?.find((p) => p.id === requestProductId)
+                    const productLabel = product ? getProductLabel(product as any) : requestProductId
+                    const pres = requestProductPresentationsQuery.data?.items?.find((p) => p.id === requestItem?.presentationId)
+                    const presLabel = pres ? `${pres.name} (${pres.unitsPerPresentation}u)` : requestItem!.presentationId
+                    const unitsPer = pres ? Number(pres.unitsPerPresentation ?? 1) : 1
+
+                    setRequestItems((prev) => {
+                      const key = `${requestProductId}::${requestItem!.presentationId}`
+                      const next = [...prev]
+                      const idx = next.findIndex((x) => `${x.productId}::${x.presentationId}` === key)
+                      if (idx >= 0) {
+                        next[idx] = { ...next[idx], quantity: next[idx].quantity + requestItem!.quantity }
+                        return next
+                      }
+                      next.push({
+                        productId: requestProductId,
+                        productLabel,
+                        presentationId: requestItem!.presentationId,
+                        presentationLabel: presLabel,
+                        unitsPerPresentation: unitsPer,
+                        quantity: requestItem!.quantity,
+                      })
+                      return next
+                    })
+
+                    // Reset draft to allow adding more items quickly
+                    setRequestProductId('')
+                    setRequestPresentationId('')
+                    setRequestQuantity('1')
+                    setRequestItem(null)
+                    setProductSearchQuery('')
+                  }}
+                >
+                  Agregar ítem
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {requestItems.length > 0 && (
+            <div className="rounded-lg border border-slate-200 bg-white p-3 text-sm dark:border-slate-700 dark:bg-slate-900">
+              <div className="mb-2 font-medium text-slate-900 dark:text-slate-100">Ítems agregados</div>
+              <div className="space-y-2">
+                {requestItems.map((it) => (
+                  <div key={`${it.productId}::${it.presentationId}`} className="flex items-center justify-between gap-2">
+                    <div className="text-slate-700 dark:text-slate-200">
+                      <div className="font-medium">{it.productLabel}</div>
+                      <div className="text-xs text-slate-500 dark:text-slate-400">
+                        {it.presentationLabel} × {it.quantity}
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => setRequestItems((prev) => prev.filter((x) => !(x.productId === it.productId && x.presentationId === it.presentationId)))}
+                    >
+                      Quitar
+                    </Button>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
@@ -1724,7 +1830,7 @@ export function MovementsPage() {
               type="submit"
               variant="primary"
               loading={createRequestMutation.isPending}
-              disabled={!requestItem || !requestWarehouseId || Number(requestQuantity) <= 0}
+              disabled={!requestWarehouseId || requestItems.length === 0}
             >
               Crear solicitud
             </Button>

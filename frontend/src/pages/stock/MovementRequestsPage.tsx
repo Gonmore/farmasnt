@@ -18,6 +18,7 @@ type MovementRequestItem = {
   presentationName: string | null
   presentationQuantity: number | null
   unitsPerPresentation: number | null
+  presentation?: { id: string; name: string; unitsPerPresentation: number } | null
 }
 
 type MovementRequest = {
@@ -65,9 +66,25 @@ async function listMovementRequests(token: string): Promise<{ items: MovementReq
       ...req,
       items: (req.items ?? []).map((item: any) => ({
         ...item,
+        requestedQuantity: Number(item.requestedQuantity ?? 0),
+        remainingQuantity: Number(item.remainingQuantity ?? 0),
         presentationId: item.presentationId ?? item.presentation?.id ?? null,
         presentationName: item.presentationName ?? item.presentation?.name ?? null,
-        unitsPerPresentation: item.unitsPerPresentation ?? item.presentation?.unitsPerPresentation ?? null,
+        presentationQuantity:
+          item.presentationQuantity === null || item.presentationQuantity === undefined ? null : Number(item.presentationQuantity),
+        unitsPerPresentation:
+          item.unitsPerPresentation === null || item.unitsPerPresentation === undefined
+            ? item.presentation?.unitsPerPresentation === null || item.presentation?.unitsPerPresentation === undefined
+              ? null
+              : Number(item.presentation.unitsPerPresentation)
+            : Number(item.unitsPerPresentation),
+        presentation: item.presentation
+          ? {
+              id: String(item.presentation.id),
+              name: String(item.presentation.name),
+              unitsPerPresentation: Number(item.presentation.unitsPerPresentation ?? 0),
+            }
+          : null,
       })),
     })),
   }
@@ -90,9 +107,7 @@ async function createMovementRequest(
   token: string,
   data: {
     warehouseId: string
-    requestedByName: string
-    productId: string
-    items: { presentationId: string; quantity: number }[]
+    items: { productId: string; presentationId: string; quantity: number }[]
     note?: string
   },
 ): Promise<MovementRequest> {
@@ -146,7 +161,6 @@ export function MovementRequestsPage() {
   const [confirmNote, setConfirmNote] = useState('')
   const [confirmError, setConfirmError] = useState<string | null>(null)
   const [requestWarehouseId, setRequestWarehouseId] = useState('')
-  const [requestRequestedByName, setRequestRequestedByName] = useState('')
   const [requestProductId, setRequestProductId] = useState('')
   const [requestItems, setRequestItems] = useState<Array<{ presentationId: string; quantity: number }>>([])
   const [requestNote, setRequestNote] = useState('')
@@ -199,15 +213,12 @@ export function MovementRequestsPage() {
     mutationFn: async () => {
       setCreateError(null)
       if (!requestWarehouseId) throw new Error('Seleccioná la sucursal que solicita')
-      if (!requestRequestedByName.trim()) throw new Error('Ingresá el nombre de quien solicita')
       if (!requestProductId) throw new Error('Seleccioná un producto')
       if (requestItems.length === 0) throw new Error('Agregá al menos una presentación solicitada')
 
       return createMovementRequest(auth.accessToken!, {
         warehouseId: requestWarehouseId,
-        requestedByName: requestRequestedByName.trim(),
-        productId: requestProductId,
-        items: requestItems,
+        items: requestItems.map((it) => ({ productId: requestProductId, presentationId: it.presentationId, quantity: it.quantity })),
         note: requestNote.trim() || undefined,
       })
     },
@@ -215,7 +226,6 @@ export function MovementRequestsPage() {
       await queryClient.invalidateQueries({ queryKey: ['movementRequests'] })
       setShowCreateModal(false)
       setRequestWarehouseId('')
-      setRequestRequestedByName('')
       setRequestProductId('')
       setRequestItems([])
       setRequestNote('')
@@ -387,7 +397,7 @@ export function MovementRequestsPage() {
                   <div key={it.id} className="rounded border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900">
                     <div className="font-medium text-slate-900 dark:text-slate-100">{getProductLabel({ sku: it.productSku ?? '', name: it.productName ?? '', genericName: it.genericName })}</div>
                     <div className="text-slate-600 dark:text-slate-300">
-                      Solic.: {it.presentationName ?? '—'} × {it.presentationQuantity ?? '—'} · Pendiente(unid): {it.remainingQuantity}
+                      Solic.: {(it.presentation?.name ?? it.presentationName) ? `${it.presentation?.name ?? it.presentationName}${(it.presentation?.unitsPerPresentation ?? it.unitsPerPresentation) ? ` (${Number(it.presentation?.unitsPerPresentation ?? it.unitsPerPresentation)}u)` : ''}` : '—'} × {it.presentationQuantity ?? '—'} · Pendiente(unid): {it.remainingQuantity}
                     </div>
                   </div>
                 ))}
@@ -476,14 +486,6 @@ export function MovementRequestsPage() {
               ...activeWarehouses.map((w) => ({ value: w.id, label: `${w.code} - ${w.name}${w.city ? ` (${String(w.city).toUpperCase()})` : ''}` })),
             ]}
             disabled={warehousesQuery.isLoading}
-            required
-          />
-
-          <Input
-            label="Solicitado por"
-            value={requestRequestedByName}
-            onChange={(e) => setRequestRequestedByName(e.target.value)}
-            placeholder="Nombre de la persona que solicita"
             required
           />
 

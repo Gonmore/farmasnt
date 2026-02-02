@@ -258,16 +258,20 @@ const movementRequestsListQuerySchema = z.object({
   take: z.coerce.number().int().min(1).max(100).default(50),
   status: z.enum(['OPEN', 'FULFILLED', 'CANCELLED']).optional(),
   city: z.string().trim().max(80).optional(),
+  warehouseId: z.string().uuid().optional(),
 })
 
 const movementRequestCreateSchema = z.object({
   warehouseId: z.string().uuid(),
-  requestedByName: z.string().trim().min(1).max(100),
-  productId: z.string().uuid(),
-  items: z.array(z.object({
-    presentationId: z.string().uuid(),
-    quantity: z.coerce.number().positive(),
-  })).min(1),
+  items: z
+    .array(
+      z.object({
+        productId: z.string().uuid(),
+        presentationId: z.string().uuid(),
+        quantity: z.coerce.number().int().positive(),
+      }),
+    )
+    .min(1),
   note: z.string().trim().max(500).optional(),
 })
 
@@ -275,9 +279,65 @@ const movementRequestConfirmParamsSchema = z.object({
   id: z.string().uuid(),
 })
 
+const movementRequestPlanParamsSchema = z.object({
+  id: z.string().uuid(),
+})
+
+const movementRequestPlanBodySchema = z
+  .object({
+    fromWarehouseId: z.string().uuid().optional(),
+    fromLocationId: z.string().uuid().optional(),
+    takePerItem: z.coerce.number().int().min(1).max(200).default(50),
+    allowExpired: z.coerce.boolean().optional().default(false),
+  })
+  .refine((x) => !!x.fromWarehouseId || !!x.fromLocationId, {
+    message: 'fromWarehouseId or fromLocationId is required',
+  })
+
 const movementRequestConfirmBodySchema = z.object({
   action: z.enum(['ACCEPT', 'REJECT']),
   note: z.string().trim().max(500).optional(),
+})
+
+const movementRequestFulfillParamsSchema = z.object({
+  id: z.string().uuid(),
+})
+
+const movementRequestFulfillBodySchema = z.object({
+  fromLocationId: z.string().uuid(),
+  toLocationId: z.string().uuid(),
+  note: z.string().trim().max(500).optional(),
+  lines: z
+    .array(
+      z
+        .object({
+          requestItemId: z.string().uuid().optional(),
+          productId: z.string().uuid(),
+          batchId: z.string().uuid().nullable().optional(),
+          fromLocationId: z.string().uuid().optional(),
+          quantity: z.coerce.number().positive().optional(),
+          presentationId: z.string().uuid().optional(),
+          presentationQuantity: z.coerce.number().positive().optional(),
+          note: z.string().trim().max(500).optional(),
+        })
+        .refine(
+          (x) => {
+            const hasPresentation = typeof x.presentationId === 'string' && x.presentationId.length > 0
+            if (hasPresentation) {
+              const pq = Number(x.presentationQuantity)
+              return Number.isFinite(pq) && pq > 0
+            }
+            const q = Number(x.quantity)
+            return Number.isFinite(q) && q > 0
+          },
+          { message: 'Provide quantity or (presentationId + presentationQuantity)' },
+        )
+        .refine((x) => !!x.requestItemId || !!x.presentationId, {
+          message: 'Provide requestItemId or presentationId to match the request item',
+        }),
+    )
+    .min(1)
+    .max(300),
 })
 
 function startOfTodayUtc(): Date {
@@ -299,6 +359,13 @@ function semaphoreStatusForDays(d: number): 'EXPIRED' | 'RED' | 'YELLOW' | 'GREE
   if (d <= 30) return 'RED'
   if (d <= 90) return 'YELLOW'
   return 'GREEN'
+}
+
+function cmpNullableDateAsc(a: Date | null, b: Date | null): number {
+  if (!a && !b) return 0
+  if (!a) return 1
+  if (!b) return -1
+  return a.getTime() - b.getTime()
 }
 
 export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
@@ -662,11 +729,29 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
       const where: any = {
         tenantId,
         ...(parsed.data.status ? { status: parsed.data.status } : {}),
-        ...(branchCity
-          ? { requestedCity: { equals: branchCity, mode: 'insensitive' as const } }
-          : parsed.data.city
-            ? { requestedCity: { equals: parsed.data.city, mode: 'insensitive' as const } }
-            : {}),
+      }
+
+      if (parsed.data.warehouseId) {
+        if (branchCity && branchCity !== '__MISSING__') {
+          const wh = await (db as any).warehouse.findFirst({
+            where: { tenantId, id: parsed.data.warehouseId },
+            select: { city: true },
+          })
+          const whCity = String(wh?.city ?? '').trim().toUpperCase()
+          if (!whCity || whCity !== branchCity) {
+            return reply.status(403).send({ message: 'Solo puede ver solicitudes de su sucursal' })
+          }
+        }
+        where.warehouseId = parsed.data.warehouseId
+      } else {
+        Object.assign(
+          where,
+          branchCity
+            ? { requestedCity: { equals: branchCity, mode: 'insensitive' as const } }
+            : parsed.data.city
+              ? { requestedCity: { equals: parsed.data.city, mode: 'insensitive' as const } }
+              : {},
+        )
       }
 
       const rows = await db.stockMovementRequest.findMany({
@@ -674,6 +759,7 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
         take: parsed.data.take,
         orderBy: [{ status: 'asc' }, { createdAt: 'desc' }],
         include: {
+          warehouse: { select: { id: true, code: true, name: true, city: true } },
           items: {
             include: { 
               product: { select: { id: true, sku: true, name: true, genericName: true } },
@@ -705,6 +791,15 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
           id: r.id,
           status: r.status,
           confirmationStatus: (r as any).confirmationStatus,
+          warehouseId: (r as any).warehouseId ?? null,
+          warehouse: (r as any).warehouse
+            ? {
+                id: (r as any).warehouse.id,
+                code: (r as any).warehouse.code,
+                name: (r as any).warehouse.name,
+                city: (r as any).warehouse.city,
+              }
+            : null,
           requestedCity: r.requestedCity,
           quoteId: r.quoteId,
           note: r.note,
@@ -726,6 +821,9 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
             remainingQuantity: Number(it.remainingQuantity),
             presentationId: it.presentationId,
             presentationQuantity: it.presentationQuantity ? Number(it.presentationQuantity) : null,
+            presentation: it.presentation
+              ? { id: it.presentation.id, name: it.presentation.name, unitsPerPresentation: it.presentation.unitsPerPresentation }
+              : null,
             presentationName: it.presentation?.name ?? null,
             unitsPerPresentation: it.presentation?.unitsPerPresentation ?? null,
           })),
@@ -775,46 +873,63 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
             }
           }
 
-          // Validate product exists
-          const product = await (tx as any).product.findFirst({
-            where: { tenantId, id: input.productId, isActive: true },
+          // Normalize items (merge duplicates)
+          const normalizedItemsMap = new Map<string, { productId: string; presentationId: string; quantity: number }>()
+          for (const it of input.items) {
+            const key = `${it.productId}::${it.presentationId}`
+            const prev = normalizedItemsMap.get(key)
+            normalizedItemsMap.set(key, prev ? { ...prev, quantity: prev.quantity + it.quantity } : { ...it })
+          }
+          const normalizedItems = [...normalizedItemsMap.values()]
+
+          // Validate products exist
+          const productIds = [...new Set(normalizedItems.map((x) => x.productId))]
+          const products = await (tx as any).product.findMany({
+            where: { tenantId, id: { in: productIds }, isActive: true },
             select: { id: true },
           })
-          if (!product) {
-            const err = new Error('Product not found') as Error & { statusCode?: number }
+          if (products.length !== productIds.length) {
+            const err = new Error('One or more products not found') as Error & { statusCode?: number }
             err.statusCode = 404
             throw err
           }
 
-          // Validate presentations and calculate quantities
-          const presentationIds = input.items.map(item => item.presentationId)
+          // Validate presentations belong to the specified products and calculate unitsPerPresentation
+          const presentationIds = [...new Set(normalizedItems.map((x) => x.presentationId))]
           const presentations = await (tx as any).productPresentation.findMany({
-            where: { tenantId, id: { in: presentationIds }, productId: input.productId, isActive: true },
-            select: { id: true, unitsPerPresentation: true },
+            where: { tenantId, id: { in: presentationIds }, isActive: true },
+            select: { id: true, productId: true, unitsPerPresentation: true },
           })
+          type PresentationRow = { id: string; productId: string; unitsPerPresentation: any }
+          const presById = new Map<string, PresentationRow>(
+            (presentations ?? []).map((p: any) => [String(p.id), p as PresentationRow]),
+          )
 
-          if (presentations.length !== presentationIds.length) {
-            const err = new Error('One or more presentations not found or invalid for this product') as Error & { statusCode?: number }
-            err.statusCode = 400
-            throw err
+          for (const it of normalizedItems) {
+            const pres = presById.get(it.presentationId)
+            if (!pres || pres.productId !== it.productId) {
+              const err = new Error('One or more presentations not found or invalid for the selected product') as Error & { statusCode?: number }
+              err.statusCode = 400
+              throw err
+            }
           }
-
-          const presentationMap = new Map(presentations.map((p: any) => [p.id, Number(p.unitsPerPresentation)]))
 
           // Create the movement request
           const movementRequest = await (tx as any).stockMovementRequest.create({
             data: {
               tenantId,
+              warehouseId: input.warehouseId,
               requestedCity: warehouse.city,
-              requestedBy: input.requestedByName, // Store the provided name directly
+              requestedBy: userId,
               note: input.note,
               items: {
-                create: input.items.map(item => {
-                  const unitsPerPresentation = presentationMap.get(item.presentationId) ?? 1
-                  const requestedQuantity = item.quantity * (unitsPerPresentation as number)
+                create: normalizedItems.map((item) => {
+                  const pres = presById.get(item.presentationId)
+                  const unitsPerPresentation = Number(pres?.unitsPerPresentation ?? 1)
+                  const requestedQuantity = item.quantity * unitsPerPresentation
                   return {
                     tenantId,
-                    productId: input.productId,
+                    productId: item.productId,
                     presentationId: item.presentationId,
                     presentationQuantity: item.quantity,
                     requestedQuantity,
@@ -841,10 +956,8 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
             entityType: 'StockMovementRequest',
             entityId: movementRequest.id,
             after: {
-              requestedByName: input.requestedByName,
               warehouseId: input.warehouseId,
-              productId: input.productId,
-              itemsCount: input.items.length,
+              itemsCount: normalizedItems.length,
             },
           })
 
@@ -862,8 +975,9 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
           id: result.id,
           status: result.status,
           confirmationStatus: (result as any).confirmationStatus,
+          warehouseId: (result as any).warehouseId ?? input.warehouseId,
           requestedCity: result.requestedCity,
-          requestedByName: input.requestedByName, // Use the provided name
+          requestedByName: userName,
           confirmedAt: null,
           confirmedBy: null,
           confirmationNote: null,
@@ -878,6 +992,9 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
             remainingQuantity: Number(it.remainingQuantity),
             presentationId: it.presentationId,
             presentationQuantity: Number(it.presentationQuantity),
+            presentation: it.presentation
+              ? { id: it.presentation.id, name: it.presentation.name, unitsPerPresentation: it.presentation.unitsPerPresentation }
+              : null,
             presentationName: it.presentation?.name ?? null,
             unitsPerPresentation: it.presentation?.unitsPerPresentation ?? null,
           })),
@@ -886,6 +1003,483 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
         if (e.statusCode) return reply.status(e.statusCode).send({ message: e.message })
         console.error('Error creating movement request:', e)
         return reply.status(500).send({ message: 'Internal server error' })
+      }
+    },
+  )
+
+  // Plan picking for a movement request (suggest lots/locations)
+  app.post(
+    '/api/v1/stock/movement-requests/:id/plan',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.StockMove)],
+    },
+    async (request, reply) => {
+      const tenantId = request.auth!.tenantId
+      const branchCity = branchCityOf(request)
+      if (branchCity === '__MISSING__') {
+        return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+      }
+
+      const parsedParams = movementRequestPlanParamsSchema.safeParse((request as any).params)
+      if (!parsedParams.success) return reply.status(400).send({ message: 'Invalid params', issues: parsedParams.error.issues })
+
+      const parsedBody = movementRequestPlanBodySchema.safeParse(request.body)
+      if (!parsedBody.success) return reply.status(400).send({ message: 'Invalid request', issues: parsedBody.error.issues })
+
+      const now = new Date()
+      const todayUtc = startOfTodayUtc()
+      const { id } = parsedParams.data
+      const input = parsedBody.data
+
+      const req = await db.stockMovementRequest.findFirst({
+        where: {
+          tenantId,
+          id,
+          status: 'OPEN',
+          ...(branchCity ? { requestedCity: { equals: branchCity, mode: 'insensitive' as const } } : {}),
+        },
+        include: {
+          warehouse: { select: { id: true, code: true, name: true, city: true } },
+          items: {
+            where: { remainingQuantity: { gt: 0 } },
+            include: {
+              product: { select: { id: true, sku: true, name: true, genericName: true } },
+              presentation: { select: { id: true, name: true, unitsPerPresentation: true } },
+            },
+            orderBy: [{ remainingQuantity: 'desc' }],
+          },
+        },
+      })
+
+      if (!req) return reply.status(404).send({ message: 'Movement request not found' })
+
+      let fromWarehouseId = input.fromWarehouseId ?? null
+      let fromLocationId = input.fromLocationId ?? null
+
+      if (fromLocationId) {
+        const loc = await (db as any).location.findFirst({
+          where: { tenantId, id: fromLocationId, isActive: true },
+          select: { id: true, warehouseId: true },
+        })
+        if (!loc) return reply.status(404).send({ message: 'Origin location not found' })
+        fromWarehouseId = loc.warehouseId
+      }
+
+      const originWarehouse = fromWarehouseId
+        ? await (db as any).warehouse.findFirst({
+            where: { tenantId, id: fromWarehouseId, isActive: true },
+            select: { id: true, code: true, name: true, city: true },
+          })
+        : null
+      if (!originWarehouse) return reply.status(404).send({ message: 'Origin warehouse not found' })
+
+      const productIds = [...new Set((req.items ?? []).map((it: any) => it.productId))]
+      if (productIds.length === 0) {
+        return reply.send({
+          requestId: req.id,
+          fromWarehouseId: originWarehouse.id,
+          fromLocationId,
+          generatedAt: now.toISOString(),
+          items: [],
+        })
+      }
+
+      const balances = await db.inventoryBalance.findMany({
+        where: {
+          tenantId,
+          productId: { in: productIds },
+          quantity: { gt: 0 },
+          location: {
+            warehouseId: originWarehouse.id,
+            ...(fromLocationId ? { id: fromLocationId } : {}),
+          },
+        },
+        select: {
+          id: true,
+          productId: true,
+          quantity: true,
+          reservedQuantity: true,
+          location: {
+            select: {
+              id: true,
+              code: true,
+              warehouse: { select: { id: true, code: true, name: true } },
+            },
+          },
+          batch: {
+            select: {
+              id: true,
+              batchNumber: true,
+              expiresAt: true,
+              status: true,
+              openedAt: true,
+            },
+          },
+        },
+      })
+
+      type BalanceRow = {
+        id: string
+        productId: string
+        quantity: any
+        reservedQuantity: any
+        location: { id: string; code: string; warehouse: { id: string; code: string; name: string } }
+        batch: { id: string; batchNumber: string; expiresAt: Date | null; status: string; openedAt: Date | null } | null
+      }
+
+      const usableByProductId = new Map<string, Array<BalanceRow & { available: number }>>()
+      for (const b of balances as any as BalanceRow[]) {
+        const total = Number(b.quantity ?? '0')
+        const reserved = Number((b as any).reservedQuantity ?? '0')
+        const available = Math.max(0, total - Math.max(0, reserved))
+        if (available <= 0) continue
+
+        const exp = b.batch?.expiresAt ?? null
+        if (!input.allowExpired && exp && exp < todayUtc) continue
+
+        const arr = usableByProductId.get(b.productId) ?? []
+        arr.push({ ...(b as any), available })
+        usableByProductId.set(b.productId, arr)
+      }
+
+      // Sort once per product and keep a shared availability map so we don't over-allocate
+      // the same balance across multiple request items for the same product.
+      const sortedCandidatesByProductId = new Map<string, Array<BalanceRow & { available: number }>>()
+      const mutableAvailableByBalanceId = new Map<string, number>()
+      for (const [productId, arr] of usableByProductId.entries()) {
+        const candidates = [...arr]
+        candidates.sort((a, b) => {
+          const aOpened = a.batch?.openedAt ? 1 : 0
+          const bOpened = b.batch?.openedAt ? 1 : 0
+          if (aOpened !== bOpened) return bOpened - aOpened
+
+          const expCmp = cmpNullableDateAsc(a.batch?.expiresAt ?? null, b.batch?.expiresAt ?? null)
+          if (expCmp !== 0) return expCmp
+
+          const aNum = String(a.batch?.batchNumber ?? '')
+          const bNum = String(b.batch?.batchNumber ?? '')
+          if (aNum !== bNum) return aNum.localeCompare(bNum)
+
+          return String(a.id).localeCompare(String(b.id))
+        })
+        sortedCandidatesByProductId.set(productId, candidates)
+        for (const c of candidates) {
+          mutableAvailableByBalanceId.set(c.id, c.available)
+        }
+      }
+
+      const plannedItems = (req.items ?? []).map((it: any) => {
+        const remainingUnits = Number(it.remainingQuantity ?? '0')
+        const unitsPerPresentation = Number(it.presentation?.unitsPerPresentation ?? it.unitsPerPresentation ?? '1')
+        const remainingPresentationQty =
+          Number.isFinite(unitsPerPresentation) && unitsPerPresentation > 0 && remainingUnits % unitsPerPresentation === 0
+            ? remainingUnits / unitsPerPresentation
+            : null
+
+        const candidates = sortedCandidatesByProductId.get(it.productId) ?? []
+
+        let need = Math.max(0, remainingUnits)
+        const suggestions: any[] = []
+
+        for (const c of candidates) {
+          if (need <= 0) break
+          const availNow = mutableAvailableByBalanceId.get(c.id) ?? 0
+          const take = Math.min(need, availNow)
+          if (take <= 0) continue
+
+          mutableAvailableByBalanceId.set(c.id, availNow - take)
+
+          const suggestedPresentationQuantity =
+            Number.isFinite(unitsPerPresentation) && unitsPerPresentation > 0 && take % unitsPerPresentation === 0
+              ? take / unitsPerPresentation
+              : null
+
+          suggestions.push({
+            inventoryBalanceId: c.id,
+            locationId: c.location.id,
+            locationCode: c.location.code,
+            warehouseId: c.location.warehouse.id,
+            warehouseCode: c.location.warehouse.code,
+            warehouseName: c.location.warehouse.name,
+            batchId: c.batch?.id ?? null,
+            batchNumber: c.batch?.batchNumber ?? null,
+            expiresAt: c.batch?.expiresAt ? c.batch.expiresAt.toISOString() : null,
+            openedAt: c.batch?.openedAt ? c.batch.openedAt.toISOString() : null,
+            status: c.batch?.status ?? null,
+            availableQuantityUnits: c.available,
+            suggestedQuantityUnits: take,
+            suggestedPresentationQuantity,
+          })
+
+          need -= take
+          if (suggestions.length >= input.takePerItem) break
+        }
+
+        const suggestedTotalUnits = suggestions.reduce((sum, s) => sum + Number(s.suggestedQuantityUnits ?? 0), 0)
+        const shortageUnits = Math.max(0, remainingUnits - suggestedTotalUnits)
+
+        return {
+          requestItemId: it.id,
+          productId: it.productId,
+          productSku: it.product?.sku ?? null,
+          productName: it.product?.name ?? null,
+          genericName: it.product?.genericName ?? null,
+          remainingQuantityUnits: remainingUnits,
+          remainingPresentationQuantity: remainingPresentationQty,
+          presentationId: it.presentationId ?? null,
+          presentationQuantity: it.presentationQuantity ? Number(it.presentationQuantity) : null,
+          presentation: it.presentation
+            ? { id: it.presentation.id, name: it.presentation.name, unitsPerPresentation: it.presentation.unitsPerPresentation }
+            : null,
+          unitsPerPresentation: it.presentation?.unitsPerPresentation ?? null,
+          suggestions,
+          suggestedTotalUnits,
+          shortageUnits,
+        }
+      })
+
+      return reply.send({
+        requestId: req.id,
+        status: req.status,
+        confirmationStatus: (req as any).confirmationStatus,
+        warehouseId: (req as any).warehouseId ?? null,
+        warehouse: (req as any).warehouse ?? null,
+        requestedCity: req.requestedCity,
+        fromWarehouseId: originWarehouse.id,
+        fromWarehouse: originWarehouse,
+        fromLocationId,
+        generatedAt: now.toISOString(),
+        items: plannedItems,
+      })
+    },
+  )
+
+  // Fulfill a single movement request (supports partial fulfillment)
+  app.post(
+    '/api/v1/stock/movement-requests/:id/fulfill',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.StockMove)],
+    },
+    async (request, reply) => {
+      const tenantId = request.auth!.tenantId
+      const userId = request.auth!.userId
+      const branchCity = branchCityOf(request)
+      if (branchCity === '__MISSING__') {
+        return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+      }
+
+      const parsedParams = movementRequestFulfillParamsSchema.safeParse((request as any).params)
+      if (!parsedParams.success) return reply.status(400).send({ message: 'Invalid params', issues: parsedParams.error.issues })
+
+      const parsedBody = movementRequestFulfillBodySchema.safeParse(request.body)
+      if (!parsedBody.success) return reply.status(400).send({ message: 'Invalid request', issues: parsedBody.error.issues })
+
+      const { id } = parsedParams.data
+      const input = parsedBody.data
+
+      try {
+        const txResult = await db.$transaction(async (tx) => {
+          const req = await (tx as any).stockMovementRequest.findFirst({
+            where: {
+              tenantId,
+              id,
+              status: 'OPEN',
+              ...(branchCity ? { requestedCity: { equals: branchCity, mode: 'insensitive' as const } } : {}),
+            },
+            include: {
+              warehouse: { select: { id: true, code: true, name: true, city: true } },
+              items: {
+                include: {
+                  product: { select: { id: true, sku: true, name: true, genericName: true } },
+                  presentation: { select: { id: true, name: true, unitsPerPresentation: true } },
+                },
+              },
+            },
+          })
+          if (!req) throw Object.assign(new Error('Movement request not found'), { statusCode: 404 })
+          if ((req as any).confirmationStatus === 'REJECTED') {
+            throw Object.assign(new Error('Request is rejected'), { statusCode: 409 })
+          }
+
+          const [fromLoc, toLoc] = await Promise.all([
+            (tx as any).location.findFirst({
+              where: { tenantId, id: input.fromLocationId },
+              select: { id: true, code: true, warehouse: { select: { id: true, code: true, name: true, city: true } } },
+            }),
+            (tx as any).location.findFirst({
+              where: { tenantId, id: input.toLocationId },
+              select: { id: true, code: true, warehouse: { select: { id: true, code: true, name: true, city: true } } },
+            }),
+          ])
+          if (!fromLoc) throw Object.assign(new Error('fromLocationId not found'), { statusCode: 404 })
+          if (!toLoc) throw Object.assign(new Error('toLocationId not found'), { statusCode: 404 })
+
+          // Enforce destination consistency when request has warehouseId.
+          const reqWarehouseId = (req as any).warehouseId ?? null
+          if (reqWarehouseId && toLoc.warehouse?.id !== reqWarehouseId) {
+            throw Object.assign(new Error('toLocationId does not belong to the requested warehouse'), { statusCode: 400 })
+          }
+          if (!reqWarehouseId) {
+            const toCity = String(toLoc.warehouse?.city ?? '').trim().toUpperCase()
+            const reqCity = String(req.requestedCity ?? '').trim().toUpperCase()
+            if (toCity && reqCity && toCity !== reqCity) {
+              throw Object.assign(new Error('toLocationId city does not match requestedCity'), { statusCode: 400 })
+            }
+          }
+
+          const itemsById = new Map<string, any>((req.items ?? []).map((it: any) => [it.id, it]))
+          const itemsByKey = new Map<string, any>()
+          for (const it of req.items ?? []) {
+            if (!it.presentationId) continue
+            itemsByKey.set(`${it.productId}::${it.presentationId}`, it)
+          }
+
+          const createdMovements: any[] = []
+          const balances: any[] = []
+
+          for (const line of input.lines) {
+            const item =
+              line.requestItemId ? itemsById.get(line.requestItemId) : itemsByKey.get(`${line.productId}::${line.presentationId}`)
+            if (!item) {
+              throw Object.assign(new Error('Request item not found for line'), { statusCode: 400 })
+            }
+            if (item.productId !== line.productId) {
+              throw Object.assign(new Error('Line productId does not match request item'), { statusCode: 400 })
+            }
+
+            const itemUnitsPerPresentation = Number(item.presentation?.unitsPerPresentation ?? '1')
+            const remaining = Number(item.remainingQuantity ?? '0')
+            if (!Number.isFinite(remaining) || remaining <= 0) {
+              throw Object.assign(new Error('Request item has no remaining quantity'), { statusCode: 409 })
+            }
+
+            const hasPresentation = typeof line.presentationId === 'string' && line.presentationId.length > 0
+            let baseQty: number
+            let presentationId: string | null
+            let presentationQuantity: number | null
+
+            if (hasPresentation) {
+              if (!item.presentationId || item.presentationId !== line.presentationId) {
+                throw Object.assign(new Error('Line presentationId does not match request item'), { statusCode: 400 })
+              }
+              const pq = Number(line.presentationQuantity)
+              if (!Number.isFinite(pq) || pq <= 0) {
+                throw Object.assign(new Error('presentationQuantity is required'), { statusCode: 400 })
+              }
+              const factor = Number.isFinite(itemUnitsPerPresentation) && itemUnitsPerPresentation > 0 ? itemUnitsPerPresentation : 1
+              baseQty = pq * factor
+              presentationId = line.presentationId!
+              presentationQuantity = pq
+            } else {
+              const q = Number(line.quantity)
+              if (!Number.isFinite(q) || q <= 0) {
+                throw Object.assign(new Error('quantity is required'), { statusCode: 400 })
+              }
+              baseQty = q
+              presentationId = item.presentationId ?? null
+              presentationQuantity =
+                presentationId && Number.isFinite(itemUnitsPerPresentation) && itemUnitsPerPresentation > 0
+                  ? q / itemUnitsPerPresentation
+                  : null
+            }
+
+            if (!Number.isFinite(baseQty) || baseQty <= 0) {
+              throw Object.assign(new Error('Invalid quantity'), { statusCode: 400 })
+            }
+            if (baseQty > remaining + 1e-9) {
+              throw Object.assign(new Error('Line exceeds remaining quantity'), { statusCode: 409 })
+            }
+
+            const dec = await (tx as any).stockMovementRequestItem.updateMany({
+              where: {
+                tenantId,
+                id: item.id,
+                remainingQuantity: { gte: baseQty },
+              },
+              data: { remainingQuantity: { decrement: baseQty } },
+            })
+            if (!dec || dec.count !== 1) {
+              throw Object.assign(new Error('Concurrent update: remaining quantity changed'), { statusCode: 409 })
+            }
+
+            const created = await createStockMovementTx(tx, {
+              tenantId,
+              userId,
+              type: 'TRANSFER',
+              productId: line.productId,
+              batchId: line.batchId ?? null,
+              fromLocationId: line.fromLocationId ?? input.fromLocationId,
+              toLocationId: input.toLocationId,
+              quantity: baseQty,
+              presentationId,
+              presentationQuantity,
+              referenceType: 'REQUEST_FULFILL',
+              referenceId: req.id,
+              note: line.note ?? input.note ?? null,
+            })
+
+            createdMovements.push(created.createdMovement)
+            if (created.fromBalance) balances.push(created.fromBalance)
+            if (created.toBalance) balances.push(created.toBalance)
+          }
+
+          const agg = await (tx as any).stockMovementRequestItem.aggregate({
+            where: { tenantId, requestId: req.id },
+            _sum: { remainingQuantity: true },
+          })
+          const sumRemaining = Number((agg as any)?._sum?.remainingQuantity ?? 0)
+
+          const updatedReq = sumRemaining <= 1e-9
+            ? await (tx as any).stockMovementRequest.update({
+                where: { id: req.id },
+                data: { status: 'FULFILLED', fulfilledAt: new Date(), fulfilledBy: userId },
+                select: { id: true, status: true, requestedCity: true, warehouseId: true, fulfilledAt: true, fulfilledBy: true },
+              })
+            : { id: req.id, status: req.status, requestedCity: req.requestedCity, warehouseId: reqWarehouseId, fulfilledAt: req.fulfilledAt, fulfilledBy: req.fulfilledBy }
+
+          await audit.append({
+            tenantId,
+            actorUserId: userId,
+            action: 'stock.movement-request.fulfill',
+            entityType: 'StockMovementRequest',
+            entityId: req.id,
+            after: {
+              requestId: req.id,
+              linesCount: input.lines.length,
+              fromLocationId: input.fromLocationId,
+              toLocationId: input.toLocationId,
+            },
+          })
+
+          return { request: updatedReq, movements: createdMovements, balances }
+        })
+
+        const room = `tenant:${tenantId}`
+        for (const m of txResult.movements ?? []) {
+          if (m) app.io?.to(room).emit('stock.movement.created', m)
+        }
+        for (const b of txResult.balances ?? []) {
+          if (b) app.io?.to(room).emit('stock.balance.changed', b)
+        }
+        if ((txResult.request as any)?.status === 'FULFILLED') {
+          app.io?.to(room).emit('stock.movement_request.fulfilled', txResult.request)
+        }
+
+        return reply.status(201).send(txResult)
+      } catch (e: any) {
+        if (e?.code === 'BATCH_EXPIRED') {
+          await audit.append({
+            tenantId,
+            actorUserId: userId,
+            action: 'stock.expiry.blocked',
+            entityType: 'Batch',
+            entityId: e?.meta?.batchId ?? null,
+            metadata: { operation: 'stock.movement-request.fulfill', ...e.meta },
+          })
+          return reply.status(409).send({ message: 'Batch expired' })
+        }
+        if (e?.statusCode) return reply.status(e.statusCode).send({ message: e.message })
+        throw e
       }
     },
   )
