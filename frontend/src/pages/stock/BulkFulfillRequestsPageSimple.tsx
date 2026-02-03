@@ -242,18 +242,6 @@ export function BulkFulfillRequestsPage() {
     const batchUnitsPerPresentation = parseInt(batch.unitsPerPresentation) || 1
     const productUnitsPerPresentation = product.unitsPerPresentation || 1
     
-    console.log('calculateAutoSelectQuantity:', {
-      product: {
-        remaining: product.remaining,
-        presentationId: product.presentationId,
-        unitsPerPresentation: productUnitsPerPresentation
-      },
-      batch: {
-        unitsPerPresentation: batchUnitsPerPresentation,
-        quantity: batch.quantity
-      }
-    })
-    
     // Si el lote tiene la misma presentación que lo solicitado
     if (batch.presentationId === product.presentationId) {
       return Math.min(product.remaining, batch.quantity)
@@ -262,26 +250,22 @@ export function BulkFulfillRequestsPage() {
     // Si el lote es de unidades individuales (unitsPerPresentation === 1) y el producto tiene presentación empaquetada
     if (batchUnitsPerPresentation === 1 && product.presentationId && productUnitsPerPresentation > 1) {
       const unitsNeeded = product.remaining * productUnitsPerPresentation
-      console.log('Case 1: unitsNeeded =', unitsNeeded)
       return Math.min(unitsNeeded, batch.quantity)
     }
     
     // Si el lote tiene presentación empaquetada y el producto solicita unidades individuales
     if (batchUnitsPerPresentation > 1 && (!product.presentationId || productUnitsPerPresentation === 1)) {
       const presentationsNeeded = Math.ceil(product.remaining / batchUnitsPerPresentation)
-      console.log('Case 2: presentationsNeeded =', presentationsNeeded)
       return Math.min(presentationsNeeded, batch.quantity)
     }
     
     // Si el producto tiene presentación empaquetada y el lote es de unidades individuales
     if (product.presentationId && productUnitsPerPresentation > 1 && batchUnitsPerPresentation === 1) {
       const unitsNeeded = product.remaining * productUnitsPerPresentation
-      console.log('Case 3: unitsNeeded =', unitsNeeded)
       return Math.min(unitsNeeded, batch.quantity)
     }
     
     // En otros casos, usar la lógica actual (mismas unidades)
-    console.log('Default case: using product.remaining =', product.remaining)
     return Math.min(product.remaining, batch.quantity)
   }
 
@@ -374,21 +358,10 @@ export function BulkFulfillRequestsPage() {
       const batch = availableBatches.find(b => b.id === batchId)
       if (batch && batch.productId === product.productId) {
         const convertedQuantity = convertQuantityToProductPresentation(quantity, batch, product)
-        console.log('Converting quantity:', quantity, 'from batch presentation to product presentation:', convertedQuantity, {
-          batch: { unitsPerPresentation: batch.unitsPerPresentation, presentationId: batch.presentationId },
-          product: { unitsPerPresentation: product.unitsPerPresentation, presentationId: product.presentationId }
-        })
         return total + convertedQuantity
       }
       return total
     }, 0)
-    
-    console.log('Product fulfillment check:', {
-      productName: product.productName,
-      selectedEquivalentQuantity,
-      productRemaining: product.remaining,
-      isFulfilled: selectedEquivalentQuantity >= product.remaining
-    })
     
     return selectedEquivalentQuantity >= product.remaining
   }
