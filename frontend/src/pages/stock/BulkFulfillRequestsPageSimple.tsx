@@ -1,6 +1,6 @@
-import { useState, useMemo } from 'react'
+import React, { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { MainLayout, PageContainer, Select, Input, Button } from '../../components'
+import { MainLayout, PageContainer, Select, Input, Button, Modal } from '../../components'
 import { MovementQuickActions } from '../../components/MovementQuickActions'
 import { useNavigation } from '../../hooks'
 import { useAuth } from '../../providers/AuthProvider'
@@ -46,6 +46,53 @@ async function listWarehouseLocations(token: string, warehouseId: string): Promi
   return apiFetch(`/api/v1/warehouses/${encodeURIComponent(warehouseId)}/locations?take=100`, { token })
 }
 
+type StockBatch = {
+  id: string
+  batchId: string
+  batchNumber: string | null
+  productId: string
+  productName: string | null
+  productSku: string | null
+  presentationId: string | null
+  presentationName: string | null
+  unitsPerPresentation: number | null
+  quantity: number
+  expiryDate: string | null
+}
+
+async function listLocationStock(token: string, locationId: string): Promise<{ items: StockBatch[] }> {
+  const data = await apiFetch<{ items: any[] }>(`/api/v1/reports/stock/balances-expanded?locationId=${locationId}&take=1000`, { token })
+  
+  const items: StockBatch[] = data.items
+    .filter((item: any) => item.quantity > 0)
+    .map((item: any) => {
+      // Find the appropriate presentation
+      let presentation = null
+      if (item.batch?.presentation) {
+        presentation = item.batch.presentation
+      } else if (item.product?.presentations) {
+        // Use default presentation or first one
+        presentation = item.product.presentations.find((p: any) => p.isDefault) || item.product.presentations[0]
+      }
+      
+      return {
+        id: item.id,
+        batchId: item.batchId,
+        batchNumber: item.batch?.batchNumber || 'Sin lote',
+        productId: item.productId,
+        productName: item.product?.name || null,
+        productSku: item.product?.sku || null,
+        presentationId: presentation?.id || null,
+        presentationName: presentation?.name || item.product?.presentationWrapper || null,
+        unitsPerPresentation: presentation?.unitsPerPresentation || null,
+        quantity: Number(item.quantity),
+        expiryDate: item.batch?.expiresAt || null,
+      }
+    })
+  
+  return { items }
+}
+
 async function listMovementRequests(token: string): Promise<{ items: MovementRequest[] }> {
   const response = await apiFetch<{ items: any[] }>('/api/v1/stock/movement-requests?take=50', { token })
   return {
@@ -80,6 +127,8 @@ export function BulkFulfillRequestsPage() {
   const [toLocationId, setToLocationId] = useState('')
   const [note, setNote] = useState('')
   const [selectedRequestIds, setSelectedRequestIds] = useState<string[]>([])
+  const [isFulfillModalOpen, setIsFulfillModalOpen] = useState(false)
+  const [batchSelections, setBatchSelections] = useState<Record<string, number>>({})
 
   const warehousesQuery = useQuery({
     queryKey: ['warehouses', 'fulfillRequests'],
@@ -97,6 +146,12 @@ export function BulkFulfillRequestsPage() {
     queryKey: ['warehouseLocations', 'fulfillRequests', 'to', toWarehouseId],
     queryFn: () => listWarehouseLocations(auth.accessToken!, toWarehouseId),
     enabled: !!auth.accessToken && !!toWarehouseId,
+  })
+
+  const locationStockQuery = useQuery({
+    queryKey: ['locationStock', fromLocationId],
+    queryFn: () => listLocationStock(auth.accessToken!, fromLocationId),
+    enabled: !!auth.accessToken && !!fromLocationId && isFulfillModalOpen,
   })
 
   const movementRequestsQuery = useQuery({
@@ -119,11 +174,81 @@ export function BulkFulfillRequestsPage() {
     if (!movementRequestsQuery.data?.items || !toWarehouseId) return []
 
     return movementRequestsQuery.data.items.filter(
-      (request) =>
+      (request: MovementRequest) =>
         request.status === 'OPEN' &&
         request.requestedCity === activeWarehouses.find((w) => w.id === toWarehouseId)?.city
     )
   }, [movementRequestsQuery.data, toWarehouseId, activeWarehouses])
+
+  const selectedRequests = useMemo(() => {
+    return filteredRequests.filter((request: MovementRequest) => selectedRequestIds.includes(request.id))
+  }, [filteredRequests, selectedRequestIds])
+
+  const requestedProducts = useMemo(() => {
+    const productsMap = new Map()
+    
+    selectedRequests.forEach((request: MovementRequest) => {
+      request.items.forEach((item: MovementRequestItem) => {
+        const key = `${item.productId}-${item.presentationId || 'no-presentation'}`
+        if (!productsMap.has(key)) {
+          productsMap.set(key, {
+            productId: item.productId,
+            productName: item.productName,
+            productSku: item.productSku,
+            presentationId: item.presentationId,
+            presentationName: item.presentationName,
+            unitsPerPresentation: item.unitsPerPresentation,
+            totalRequested: 0,
+            remaining: 0
+          })
+        }
+        const product = productsMap.get(key)
+        const presentationQuantity = item.unitsPerPresentation && item.unitsPerPresentation > 0 
+          ? Math.ceil(item.requestedQuantity / item.unitsPerPresentation)
+          : item.presentationQuantity || item.requestedQuantity
+        
+        product.totalRequested += presentationQuantity
+        product.remaining += presentationQuantity
+      })
+    })
+    
+    return Array.from(productsMap.values())
+  }, [selectedRequests])
+
+  const availableBatches = useMemo(() => {
+    if (!locationStockQuery.data?.items || !requestedProducts.length) return []
+    
+    const requestedProductIds = new Set(requestedProducts.map(p => p.productId))
+    
+    return locationStockQuery.data.items.filter(batch => 
+      requestedProductIds.has(batch.productId) && batch.quantity > 0
+    )
+  }, [locationStockQuery.data, requestedProducts])
+
+  const getExpiryColor = (expiryDate: string | null) => {
+    if (!expiryDate) return 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300'
+    
+    const now = new Date()
+    const expiry = new Date(expiryDate)
+    const daysUntilExpiry = Math.ceil((expiry.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+    
+    if (daysUntilExpiry < 0) return 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200' // Vencido
+    if (daysUntilExpiry <= 30) return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200' // Próximo a vencer
+    if (daysUntilExpiry <= 90) return 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200' // Advertencia
+    return 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' // Bueno
+  }
+
+  const getProductFulfillmentStatus = (product: typeof requestedProducts[0]) => {
+    const selectedQuantity = Object.entries(batchSelections).reduce((total, [batchId, quantity]) => {
+      const batch = availableBatches.find(b => b.id === batchId)
+      if (batch && batch.productId === product.productId) {
+        return total + quantity
+      }
+      return total
+    }, 0)
+    
+    return selectedQuantity >= product.remaining
+  }
 
   const queryClient = useQueryClient()
 
@@ -236,7 +361,7 @@ export function BulkFulfillRequestsPage() {
                   Solicitudes a atender
                 </label>
                 <div className="max-h-60 overflow-y-auto border border-slate-200 rounded-md dark:border-slate-700">
-                  {filteredRequests.map((request) => (
+                  {filteredRequests.map((request: MovementRequest) => (
                     <div key={request.id} className="flex items-center p-3 border-b border-slate-100 last:border-b-0 dark:border-slate-700">
                       <input
                         type="checkbox"
@@ -272,7 +397,7 @@ export function BulkFulfillRequestsPage() {
                             </span>
                           </div>
                           <div className="flex-1 text-xs text-slate-600 dark:text-slate-400 ml-4">
-                            {request.items.map((item, index) => {
+                            {request.items.map((item: MovementRequestItem, index: number) => {
                               const presentationQuantity = item.unitsPerPresentation && item.unitsPerPresentation > 0 
                                 ? Math.ceil(item.requestedQuantity / item.unitsPerPresentation)
                                 : item.presentationQuantity || item.requestedQuantity;
@@ -299,14 +424,10 @@ export function BulkFulfillRequestsPage() {
             <div className="mt-4 flex gap-2">
               <Button 
                 onClick={() => {
-                  bulkFulfillMutation.mutate({
-                    requestIds: selectedRequestIds,
-                    fromLocationId,
-                    toLocationId,
-                    note: note.trim() || undefined,
-                  })
-                }} 
-                disabled={!canSubmit || selectedRequestIds.length === 0 || bulkFulfillMutation.isPending}
+                  setBatchSelections({})
+                  setIsFulfillModalOpen(true)
+                }}
+                disabled={!canSubmit || selectedRequestIds.length === 0}
               >
                 Atender {selectedRequestIds.length > 0 ? `${selectedRequestIds.length} solicitud${selectedRequestIds.length !== 1 ? 'es' : ''}` : 'solicitudes'}
               </Button>
@@ -344,6 +465,268 @@ export function BulkFulfillRequestsPage() {
           </div>
         </div>
       </PageContainer>
+
+      <Modal
+        isOpen={isFulfillModalOpen}
+        onClose={() => {
+          setIsFulfillModalOpen(false)
+          setBatchSelections({})
+        }}
+        title={`Transferencia de ${activeWarehouses.find(w => w.id === fromWarehouseId)?.name || 'Origen'} a ${activeWarehouses.find(w => w.id === toWarehouseId)?.name || 'Destino'}`}
+        maxWidth="2xl"
+      >
+        <div className="space-y-6 max-h-96 overflow-y-auto">
+          {/* Lo Solicitado */}
+          <div className="border border-slate-200 rounded-lg p-4 dark:border-slate-700">
+            <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100 mb-4">Lo Solicitado</h3>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-slate-200 dark:border-slate-700">
+                    <th className="w-12 py-2 px-3"></th>
+                    <th className="text-left py-2 px-3 font-medium text-slate-700 dark:text-slate-300">Producto</th>
+                    <th className="text-left py-2 px-3 font-medium text-slate-700 dark:text-slate-300">Presentación</th>
+                    <th className="text-left py-2 px-3 font-medium text-slate-700 dark:text-slate-300">Se requiere</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {requestedProducts.map((product, index) => {
+                    const isFulfilled = getProductFulfillmentStatus(product)
+                    return (
+                      <tr key={index} className="border-b border-slate-100 dark:border-slate-700">
+                        <td className="py-3 px-3 text-center">
+                          <div className={`inline-flex items-center justify-center w-6 h-6 rounded-full border-2 ${
+                            isFulfilled 
+                              ? 'border-green-500 bg-green-50 dark:bg-green-900/20' 
+                              : 'border-slate-300 bg-slate-50 dark:bg-slate-800 dark:border-slate-600'
+                          }`}>
+                            <span className={`text-sm ${isFulfilled ? 'text-green-600 dark:text-green-400' : 'text-slate-400 dark:text-slate-500'}`}>
+                              ✓
+                            </span>
+                          </div>
+                        </td>
+                        <td className="py-3 px-3">
+                          <span className="font-bold text-sm text-slate-900 dark:text-slate-100">
+                            {product.productName || 'Producto desconocido'}
+                          </span>
+                        </td>
+                        <td className="py-3 px-3 text-slate-600 dark:text-slate-400">
+                          {product.presentationName || 'Sin presentación'}{product.unitsPerPresentation ? ` (${product.unitsPerPresentation}u)` : ''}
+                        </td>
+                        <td className="py-3 px-3">
+                          <strong className="text-slate-900 dark:text-slate-100">{product.remaining}</strong>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Lo Seleccionado */}
+          <div className="border border-slate-200 rounded-lg p-4 dark:border-slate-700">
+            <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100 mb-4">Lo Seleccionado</h3>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-slate-200 dark:border-slate-700">
+                    <th className="text-left py-2 px-3 font-medium text-slate-700 dark:text-slate-300">Producto</th>
+                    <th className="text-left py-2 px-3 font-medium text-slate-700 dark:text-slate-300">Lote (Vencimiento)</th>
+                    <th className="text-left py-2 px-3 font-medium text-slate-700 dark:text-slate-300">Presentación</th>
+                    <th className="text-left py-2 px-3 font-medium text-slate-700 dark:text-slate-300">Disp</th>
+                    <th className="text-left py-2 px-3 font-medium text-slate-700 dark:text-slate-300">Selección</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {requestedProducts.map((product, index) => {
+                    const productBatches = availableBatches.filter(batch => batch.productId === product.productId)
+                    
+                    return (
+                      <React.Fragment key={product.productId}>
+                        {/* Línea arriba del producto */}
+                        <tr>
+                          <td colSpan={5} className="py-1">
+                            <div className="border-b-4 border-blue-500"></div>
+                          </td>
+                        </tr>
+
+                        {/* Fila principal del producto */}
+                        <tr className="bg-slate-50 dark:bg-slate-800">
+                          <td className="py-3 px-3" rowSpan={productBatches.length || 1}>
+                            <div>
+                              <div className="font-bold text-sm text-slate-900 dark:text-slate-100">
+                                {product.productName || 'Producto desconocido'}
+                              </div>
+                              <div className="text-xs text-slate-500 dark:text-slate-400">
+                                {product.productSku || 'Sin SKU'}
+                              </div>
+                            </div>
+                          </td>
+                          {productBatches.length === 0 ? (
+                            <>
+                              <td className="py-3 px-3 text-slate-500 dark:text-slate-400 italic" colSpan={4}>
+                                No hay lotes disponibles
+                              </td>
+                            </>
+                          ) : (
+                            <>
+                              {/* Primera fila del lote */}
+                              <td className="py-3 px-3">
+                                <div>
+                                  <div className="text-xs text-slate-700 dark:text-slate-300">
+                                    {productBatches[0].batchNumber}
+                                  </div>
+                                  <div className={`text-xs px-2 py-1 rounded-full inline-block ${getExpiryColor(productBatches[0].expiryDate)}`}>
+                                    {productBatches[0].expiryDate ? new Date(productBatches[0].expiryDate).toLocaleDateString('es-ES') : 'Sin fecha'}
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="py-3 px-3">
+                                <div className="text-xs text-slate-700 dark:text-slate-300">
+                                  {productBatches[0].presentationName || 'Sin presentación'}{productBatches[0].unitsPerPresentation ? ` (${productBatches[0].unitsPerPresentation}u)` : ''}
+                                </div>
+                              </td>
+                              <td className="py-3 px-3 text-slate-600 dark:text-slate-400">
+                                {productBatches[0].quantity}
+                              </td>
+                              <td className="py-3 px-3">
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    type="checkbox"
+                                    checked={!!batchSelections[productBatches[0].id]}
+                                    onChange={(e) => {
+                                      if (e.target.checked) {
+                                        setBatchSelections(prev => ({
+                                          ...prev,
+                                          [productBatches[0].id]: Math.min(product.remaining, productBatches[0].quantity)
+                                        }))
+                                      } else {
+                                        setBatchSelections(prev => {
+                                          const newSelections = { ...prev }
+                                          delete newSelections[productBatches[0].id]
+                                          return newSelections
+                                        })
+                                      }
+                                    }}
+                                    className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-slate-300 rounded"
+                                  />
+                                  <Input
+                                    type="number"
+                                    value={batchSelections[productBatches[0].id] || ''}
+                                    onChange={(e) => {
+                                      const value = parseInt(e.target.value) || 0
+                                      setBatchSelections(prev => ({
+                                        ...prev,
+                                        [productBatches[0].id]: Math.min(value, productBatches[0].quantity)
+                                      }))
+                                    }}
+                                    disabled={!batchSelections[productBatches[0].id]}
+                                    min="0"
+                                    max={productBatches[0].quantity}
+                                    className="w-20"
+                                    placeholder="0"
+                                  />
+                                </div>
+                              </td>
+                            </>
+                          )}
+                        </tr>
+                        
+                        {/* Filas adicionales de lotes */}
+                        {productBatches.slice(1).map((batch) => (
+                          <tr key={batch.id} className="border-b border-slate-100 dark:border-slate-700">
+                            <td className="py-3 px-3">
+                              <div>
+                                <div className="text-xs text-slate-700 dark:text-slate-300">
+                                  {batch.batchNumber}
+                                </div>
+                                <div className={`text-xs px-2 py-1 rounded-full inline-block ${getExpiryColor(batch.expiryDate)}`}>
+                                  {batch.expiryDate ? new Date(batch.expiryDate).toLocaleDateString('es-ES') : 'Sin fecha'}
+                                </div>
+                              </div>
+                            </td>
+                            <td className="py-3 px-3">
+                              <div className="text-xs text-slate-700 dark:text-slate-300">
+                                {batch.presentationName || 'Sin presentación'}{batch.unitsPerPresentation ? ` (${batch.unitsPerPresentation}u)` : ''}
+                              </div>
+                            </td>
+                            <td className="py-3 px-3 text-slate-600 dark:text-slate-400">
+                              {batch.quantity}
+                            </td>
+                            <td className="py-3 px-3">
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={!!batchSelections[batch.id]}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      setBatchSelections(prev => ({
+                                        ...prev,
+                                        [batch.id]: Math.min(product.remaining, batch.quantity)
+                                      }))
+                                    } else {
+                                      setBatchSelections(prev => {
+                                        const newSelections = { ...prev }
+                                        delete newSelections[batch.id]
+                                        return newSelections
+                                      })
+                                    }
+                                  }}
+                                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-slate-300 rounded"
+                                />
+                                <Input
+                                  type="number"
+                                  value={batchSelections[batch.id] || ''}
+                                  onChange={(e) => {
+                                    const value = parseInt(e.target.value) || 0
+                                    setBatchSelections(prev => ({
+                                      ...prev,
+                                      [batch.id]: Math.min(value, batch.quantity)
+                                    }))
+                                  }}
+                                  disabled={!batchSelections[batch.id]}
+                                  min="0"
+                                  max={batch.quantity}
+                                  className="w-20"
+                                  placeholder="0"
+                                />
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </React.Fragment>
+                    )
+                  })}
+
+                  {/* Línea final abajo de todos los productos */}
+                  <tr>
+                    <td colSpan={5} className="py-1">
+                      <div className="border-b-4 border-blue-500"></div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-slate-200 dark:border-slate-700">
+          <Button variant="secondary" onClick={() => setIsFulfillModalOpen(false)}>
+            Cancelar
+          </Button>
+          <Button 
+            onClick={() => {
+              // Aquí irá la lógica para procesar la transferencia
+              console.log('Batch selections:', batchSelections)
+              setIsFulfillModalOpen(false)
+            }}
+            disabled={Object.keys(batchSelections).length === 0}
+          >
+            Confirmar Transferencia
+          </Button>
+        </div>
+      </Modal>
     </MainLayout>
   )
 }
