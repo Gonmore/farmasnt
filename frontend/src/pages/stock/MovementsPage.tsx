@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import React, { useState } from 'react'
+import { PencilSquareIcon, TrashIcon } from '@heroicons/react/24/outline'
 import { apiFetch } from '../../lib/api'
 import { getProductLabel } from '../../lib/productName'
 import { useAuth } from '../../providers/AuthProvider'
@@ -26,6 +27,8 @@ type MovementRequest = {
   id: string
   status: 'OPEN' | 'FULFILLED' | 'CANCELLED'
   requestedCity: string
+  warehouseId?: string | null
+  note?: string | null
   requestedByName: string | null
   createdAt: string
   fulfilledAt: string | null
@@ -194,6 +197,29 @@ async function createMovementRequest(
   })
 }
 
+async function updateMovementRequest(
+  token: string,
+  requestId: string,
+  data: {
+    warehouseId: string
+    items: { productId: string; presentationId: string; quantity: number }[]
+    note?: string
+  },
+): Promise<any> {
+  return apiFetch(`/api/v1/stock/movement-requests/${encodeURIComponent(requestId)}`, {
+    method: 'PUT',
+    token,
+    body: JSON.stringify(data),
+  })
+}
+
+async function cancelMovementRequest(token: string, requestId: string): Promise<any> {
+  return apiFetch(`/api/v1/stock/movement-requests/${encodeURIComponent(requestId)}/cancel`, {
+    method: 'PATCH',
+    token,
+  })
+}
+
 function dateOnlyToUtcIso(dateString: string): string {
   const [year, month, day] = dateString.split('-')
   return new Date(parseInt(year), parseInt(month) - 1, parseInt(day)).toISOString().split('T')[0]
@@ -237,6 +263,7 @@ export function MovementsPage() {
 
   // Estados para CREAR SOLICITUD
   const [showCreateRequestModal, setShowCreateRequestModal] = useState(false)
+  const [editingRequestId, setEditingRequestId] = useState<string | null>(null)
   const [requestWarehouseId, setRequestWarehouseId] = useState('')
   const [requestProductId, setRequestProductId] = useState('')
   const [requestItem, setRequestItem] = useState<{ presentationId: string; quantity: number } | null>(null)
@@ -597,32 +624,99 @@ export function MovementsPage() {
       const items = [...combined.values()].filter((x) => Number.isFinite(x.quantity) && x.quantity > 0)
       if (items.length === 0) throw new Error('Agregá al menos un ítem a la solicitud')
 
-      return createMovementRequest(auth.accessToken!, {
+      const payload = {
         warehouseId: requestWarehouseId,
         items,
         note: requestNote.trim() || undefined,
-      })
+      }
+
+      if (editingRequestId) {
+        return updateMovementRequest(auth.accessToken!, editingRequestId, payload)
+      }
+
+      return createMovementRequest(auth.accessToken!, payload)
     },
     onSuccess: async () => {
+      const wasEditing = !!editingRequestId
       await queryClient.invalidateQueries({ queryKey: ['movementRequests'] })
       setShowCreateRequestModal(false)
       // Only reset warehouse for non-branch-admin users
       if (!permissions.roles.some(r => r.code === 'BRANCH_ADMIN')) {
         setRequestWarehouseId('')
       }
+      setEditingRequestId(null)
       setRequestProductId('')
       setRequestItem(null)
       setRequestItems([])
       setRequestPresentationId('')
       setRequestNote('')
       setCreateRequestError('')
-      alert('Solicitud creada exitosamente')
+      setProductSearchQuery('')
+      setShowProductOptions(false)
+      alert(wasEditing ? 'Solicitud actualizada exitosamente' : 'Solicitud creada exitosamente')
     },
     onError: (err: any) => {
-      const msg = err instanceof Error ? err.message : 'Error al crear solicitud'
+      const msg = err instanceof Error ? err.message : 'Error al guardar solicitud'
       setCreateRequestError(msg)
     },
   })
+
+  const cancelRequestMutation = useMutation({
+    mutationFn: async (requestId: string) => {
+      return cancelMovementRequest(auth.accessToken!, requestId)
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['movementRequests'] })
+      alert('Solicitud cancelada')
+    },
+    onError: (err: any) => {
+      const msg = err instanceof Error ? err.message : 'Error al cancelar solicitud'
+      alert(msg)
+    },
+  })
+
+  const openEditRequestModal = (req: MovementRequest) => {
+    setEditingRequestId(req.id)
+    setCreateRequestError('')
+
+    setRequestWarehouseId(String(req.warehouseId ?? ''))
+    setRequestNote(String(req.note ?? ''))
+
+    const nextItems = (req.items ?? [])
+      .filter((it) => typeof it.presentationId === 'string' && it.presentationId.length > 0)
+      .map((it) => {
+        const productLabel = getProductLabel({ sku: it.productSku ?? '', name: it.productName ?? '', genericName: it.genericName })
+        const unitsPer = Number(it.presentation?.unitsPerPresentation ?? it.unitsPerPresentation ?? 1)
+        const presName = it.presentation?.name ?? it.presentationName
+        const presentationLabel = presName
+          ? `${presName}${Number.isFinite(unitsPer) && unitsPer > 0 ? ` (${unitsPer}u)` : ''}`
+          : String(it.presentationId)
+
+        const qtyFromBackend = it.presentationQuantity === null || it.presentationQuantity === undefined ? null : Number(it.presentationQuantity)
+        const derivedQty = Number.isFinite(unitsPer) && unitsPer > 0 ? Math.round(Number(it.requestedQuantity ?? 0) / unitsPer) : Math.round(Number(it.requestedQuantity ?? 0))
+        const quantity = Number.isFinite(qtyFromBackend as any) && (qtyFromBackend as number) > 0 ? (qtyFromBackend as number) : derivedQty
+
+        return {
+          productId: it.productId,
+          productLabel,
+          presentationId: it.presentationId as string,
+          presentationLabel,
+          unitsPerPresentation: Number.isFinite(unitsPer) && unitsPer > 0 ? unitsPer : 1,
+          quantity: Number.isFinite(quantity) && quantity > 0 ? quantity : 1,
+        }
+      })
+
+    setRequestItems(nextItems)
+
+    setRequestProductId('')
+    setRequestItem(null)
+    setRequestPresentationId('')
+    setRequestQuantity('1')
+    setProductSearchQuery('')
+    setShowProductOptions(false)
+
+    setShowCreateRequestModal(true)
+  }
 
   const repackCanApply = (() => {
     if (type !== 'REPACK') return false
@@ -1523,13 +1617,33 @@ export function MovementsPage() {
               columns={[
                 {
                   header: 'Estado',
-                  accessor: (r) => (r.status === 'OPEN' ? '🟡 Pendiente' : r.status === 'FULFILLED' ? '✅ Atendida' : '⛔ Cancelada'),
+                  className: 'wrap text-[13px]',
+                  accessor: (r) => {
+                    if (r.status === 'OPEN') {
+                      const isPartial = (r.items ?? []).some((it) => {
+                        const rq = Number(it.requestedQuantity ?? 0)
+                        const rem = Number(it.remainingQuantity ?? 0)
+                        return Number.isFinite(rq) && Number.isFinite(rem) ? rem < rq - 1e-9 : false
+                      })
+
+                      return (
+                        <div className="leading-tight">
+                          <div>🟡 Pendiente</div>
+                          {isPartial && <div className="text-[11px] text-slate-500 dark:text-slate-400">(parcial)</div>}
+                        </div>
+                      )
+                    }
+
+                    if (r.status === 'FULFILLED') return '✅ Atendida'
+                    return '⛔ Cancelada'
+                  },
                 },
-                { header: 'Destino', accessor: (r) => r.requestedCity },
-                { header: 'Solicitado por', accessor: (r) => r.requestedByName ?? '-' },
-                { header: 'Fecha', accessor: (r) => new Date(r.createdAt).toLocaleString() },
+                { header: 'Destino', className: 'text-[13px]', accessor: (r) => r.requestedCity },
+                { header: 'Solicitado por', className: 'text-[13px]', accessor: (r) => r.requestedByName ?? '-' },
+                { header: 'Fecha', className: 'text-[13px]', accessor: (r) => new Date(r.createdAt).toLocaleString() },
                 {
                   header: 'Detalle',
+                  className: 'wrap text-[13px]',
                   accessor: (r) => {
                     const lines = (r.items ?? [])
                       .filter((it) => it.remainingQuantity > 0 || r.status !== 'OPEN')
@@ -1562,6 +1676,44 @@ export function MovementsPage() {
                     )
                   },
                 },
+                {
+                  header: 'Acciones',
+                  className: 'text-right text-[13px]',
+                  accessor: (r) => {
+                    const isPending = r.status === 'OPEN'
+                    const isUnfulfilled = (r.items ?? []).every((it) => {
+                      const rq = Number(it.requestedQuantity ?? 0)
+                      const rem = Number(it.remainingQuantity ?? 0)
+                      return Number.isFinite(rq) && Number.isFinite(rem) ? Math.abs(rem - rq) <= 1e-9 : true
+                    })
+
+                    if (!isPending || !isUnfulfilled) return null
+
+                    return (
+                      <div className="flex items-center justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          title="Editar"
+                          icon={<PencilSquareIcon className="w-4 h-4" />}
+                          onClick={() => openEditRequestModal(r)}
+                        />
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          title="Cancelar"
+                          icon={<TrashIcon className="w-4 h-4 text-red-500" />}
+                          onClick={() => {
+                            const ok = confirm('¿Cancelar esta solicitud?')
+                            if (!ok) return
+                            cancelRequestMutation.mutate(r.id)
+                          }}
+                          loading={cancelRequestMutation.isPending}
+                        />
+                      </div>
+                    )
+                  },
+                },
               ]}
               data={movementRequestsQuery.data.items}
               keyExtractor={(r) => r.id}
@@ -1577,8 +1729,13 @@ export function MovementsPage() {
 
       <Modal
         isOpen={showCreateRequestModal}
-        onClose={() => setShowCreateRequestModal(false)}
-        title="Crear solicitud de movimiento"
+        onClose={() => {
+          if (createRequestMutation.isPending) return
+          setShowCreateRequestModal(false)
+          setEditingRequestId(null)
+          setCreateRequestError('')
+        }}
+        title={editingRequestId ? 'Editar solicitud de movimiento' : 'Crear solicitud de movimiento'}
         maxWidth="lg"
       >
         <form
@@ -1821,7 +1978,12 @@ export function MovementsPage() {
             <Button
               type="button"
               variant="secondary"
-              onClick={() => setShowCreateRequestModal(false)}
+              onClick={() => {
+                if (createRequestMutation.isPending) return
+                setShowCreateRequestModal(false)
+                setEditingRequestId(null)
+                setCreateRequestError('')
+              }}
               disabled={createRequestMutation.isPending}
             >
               Cancelar
@@ -1832,7 +1994,7 @@ export function MovementsPage() {
               loading={createRequestMutation.isPending}
               disabled={!requestWarehouseId || requestItems.length === 0}
             >
-              Crear solicitud
+              {editingRequestId ? 'Guardar cambios' : 'Crear solicitud'}
             </Button>
           </div>
         </form>

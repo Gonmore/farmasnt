@@ -8,7 +8,7 @@ import { useNavigation } from '../../hooks'
 import { apiFetch } from '../../lib/api'
 import { blobToBase64, exportElementToPdf, pdfBlobFromElement } from '../../lib/exportPdf'
 import { getProductLabel } from '../../lib/productName'
-import { exportPickingToPdf } from '../../lib/movementRequestDocsPdf'
+import { exportPickingToPdf, exportLabelToPdf } from '../../lib/movementRequestDocsPdf'
 import { useAuth } from '../../providers/AuthProvider'
 import { useTenant } from '../../providers/TenantProvider'
 
@@ -1645,6 +1645,21 @@ export function StockReportsPage() {
                 const fromLocationCode = uniqFromLoc.length === 1 ? uniqFromLoc[0] : 'MIXED'
                 const toLocationCode = uniqToLoc.length === 1 ? uniqToLoc[0] : 'MIXED'
 
+                const requestedItems = (d.requestedItems ?? []).map((it) => ({
+                  productLabel: getProductLabel({ sku: it.productSku ?? '—', name: it.productName ?? '—', genericName: it.genericName ?? null }),
+                  quantityUnits: Number(it.requestedQuantity ?? 0),
+                  presentationLabel: formatPresentationLabel(it.presentation),
+                }))
+
+                const sentLines = sent.map((l) => ({
+                  locationCode: String(l.fromLocation?.code ?? '—'),
+                  productLabel: getProductLabel({ sku: l.productSku ?? '—', name: l.productName ?? '—', genericName: l.genericName ?? null }),
+                  batchNumber: l.batchNumber ?? null,
+                  expiresAt: l.expiresAt ?? null,
+                  quantityUnits: Number(l.quantity ?? 0),
+                  presentationLabel: formatPresentationLabel(l.presentation),
+                }))
+
                 exportPickingToPdf(
                   {
                     requestId: d.request.id,
@@ -1655,13 +1670,8 @@ export function StockReportsPage() {
                     toLocationCode,
                     requestedByName: d.request.requestedByName ?? null,
                   },
-                  sent.map((l) => ({
-                    locationCode: String(l.fromLocation?.code ?? '—'),
-                    productLabel: getProductLabel({ sku: l.productSku ?? '—', name: l.productName ?? '—', genericName: l.genericName ?? null }),
-                    batchNumber: l.batchNumber ?? null,
-                    expiresAt: l.expiresAt ?? null,
-                    quantityUnits: Number(l.quantity ?? 0),
-                  })),
+                  requestedItems,
+                  sentLines,
                 )
               }
 
@@ -1671,6 +1681,30 @@ export function StockReportsPage() {
                     <div className="mb-2 flex flex-col gap-2 md:flex-row md:items-center md:justify-end">
                       <Button size="sm" variant="outline" disabled={!canExportPicking} onClick={onExportPicking}>
                         Exportar picking (PDF)
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => {
+                        const country = tenant.branding?.country ?? 'BOLIVIA'
+                        const destinationCity = (d.request.warehouse?.city ?? d.request.requestedCity ?? '').trim()
+                        const destination = destinationCity ? `${destinationCity}, ${country}` : country
+
+                        const sentLines = d.sentLines ?? []
+                        const fromCity = (sentLines.find((l) => (l.fromLocation?.warehouse?.city ?? '').trim())?.fromLocation?.warehouse?.city ?? '').trim()
+                        const origin = fromCity ? `${fromCity}, ${country}` : country
+                        
+                        exportLabelToPdf({
+                          requestId: d.request.id,
+                          generatedAtIso: new Date().toISOString(),
+                          fromWarehouseLabel: origin,
+                          fromLocationCode: '—',
+                          toWarehouseLabel: destination,
+                          toLocationCode: '—',
+                          requestedByName: d.request.requestedByName ?? null,
+                          bultos: '—',
+                          responsable: d.request.fulfilledByName ?? '—',
+                          observaciones: '—',
+                        })
+                      }}>
+                        Exportar rótulo (PDF)
                       </Button>
                     </div>
                     <div className="text-slate-900 dark:text-slate-100">

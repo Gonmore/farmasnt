@@ -31,7 +31,7 @@ export function MovementQuickActions({ currentPath }: { currentPath: string }) {
   return (
     <div className="mb-6">
       <div className="mb-2 text-sm font-medium text-slate-700 dark:text-slate-300">Accesos rápidos</div>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <QuickActionCard
           to="/stock/movements"
           icon="🚚"
@@ -52,6 +52,13 @@ export function MovementQuickActions({ currentPath }: { currentPath: string }) {
           title="Atender solicitudes"
           subtitle="Enviar stock a solicitudes OPEN"
           isActive={currentPath === '/stock/fulfill-requests'}
+        />
+        <QuickActionCard
+          to="/stock/completed-movements"
+          icon="📋"
+          title="Realizados"
+          subtitle="Historial con PDFs de picking y rótulos"
+          isActive={currentPath === '/stock/completed-movements'}
         />
         <QuickActionCard
           to="/stock/returns"

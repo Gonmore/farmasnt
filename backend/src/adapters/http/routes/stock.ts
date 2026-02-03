@@ -49,25 +49,45 @@ const bulkTransferCreateSchema = z.object({
     .max(200),
 })
 
+const completedMovementDocsParamsSchema = z.object({
+  id: z.string().uuid(),
+})
+
+const completedMovementDocsQuerySchema = z.object({
+  type: z.enum(['MOVEMENT', 'BULK_TRANSFER', 'FULFILL_REQUEST', 'RETURN']),
+})
+
+function formatWarehouseLabel(wh: { code: string | null; name: string | null } | null | undefined): string {
+  const code = String(wh?.code ?? '').trim()
+  const name = String(wh?.name ?? '').trim()
+  const label = [code, name].filter(Boolean).join(' - ')
+  return label || '—'
+}
+
+function buildProductLabel(p: { sku: string | null; name: string | null; genericName: string | null } | null | undefined): string {
+  const sku = String(p?.sku ?? '—').trim()
+  const name = String(p?.name ?? '—').trim()
+  const generic = String(p?.genericName ?? '').trim()
+  return generic ? `${sku} · ${name} · ${generic}` : `${sku} · ${name}`
+}
+
 const bulkFulfillRequestsSchema = z.object({
-  requestIds: z.array(z.string().uuid()).min(1).max(100),
+  fulfillments: z.array(
+    z.object({
+      requestId: z.string().uuid(),
+      items: z.array(
+        z.object({
+          requestItemId: z.string().uuid().optional(),
+          productId: z.string().uuid(),
+          batchId: z.string().uuid(),
+          quantity: z.coerce.number().positive(),
+        })
+      ).min(1),
+    })
+  ).min(1),
   fromLocationId: z.string().uuid(),
   toLocationId: z.string().uuid(),
   note: z.string().trim().max(500).optional(),
-  lines: z
-    .array(
-      z.object({
-        productId: z.string().uuid(),
-        batchId: z.string().uuid().nullable().optional(),
-        fromLocationId: z.string().uuid().optional(),
-        quantity: z.coerce.number().positive().optional(),
-        presentationId: z.string().uuid().optional(),
-        presentationQuantity: z.coerce.number().positive().optional(),
-        note: z.string().trim().max(500).optional(),
-      }),
-    )
-    .min(1)
-    .max(300),
 })
 
 const repackSchema = z.object({
@@ -274,6 +294,20 @@ const movementRequestCreateSchema = z.object({
     .min(1),
   note: z.string().trim().max(500).optional(),
 })
+
+const movementRequestUpdateParamsSchema = z.object({
+  id: z.string().uuid(),
+})
+
+const movementRequestCancelParamsSchema = z.object({
+  id: z.string().uuid(),
+})
+
+const movementRequestCancelBodySchema = z
+  .object({
+    note: z.string().trim().max(500).optional(),
+  })
+  .optional()
 
 const movementRequestConfirmParamsSchema = z.object({
   id: z.string().uuid(),
@@ -1003,6 +1037,255 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
         if (e.statusCode) return reply.status(e.statusCode).send({ message: e.message })
         console.error('Error creating movement request:', e)
         return reply.status(500).send({ message: 'Internal server error' })
+      }
+    },
+  )
+
+  app.put(
+    '/api/v1/stock/movement-requests/:id',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.StockRead)],
+    },
+    async (request, reply) => {
+      const parsedParams = movementRequestUpdateParamsSchema.safeParse((request as any).params)
+      if (!parsedParams.success) return reply.status(400).send({ message: 'Invalid params', issues: parsedParams.error.issues })
+
+      const parsedBody = movementRequestCreateSchema.safeParse(request.body)
+      if (!parsedBody.success) return reply.status(400).send({ message: 'Invalid request', issues: parsedBody.error.issues })
+
+      const tenantId = request.auth!.tenantId
+      const userId = request.auth!.userId
+      const branchCity = branchCityOf(request)
+      if (branchCity === '__MISSING__') {
+        return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+      }
+
+      const { id } = parsedParams.data
+      const input = parsedBody.data
+
+      try {
+        const updated = await db.$transaction(async (tx) => {
+          const existing = await (tx as any).stockMovementRequest.findFirst({
+            where: {
+              tenantId,
+              id,
+              status: 'OPEN',
+              ...(branchCity ? { requestedCity: { equals: branchCity, mode: 'insensitive' as const } } : {}),
+            },
+            include: { items: true },
+          })
+
+          if (!existing) {
+            const err = new Error('Movement request not found') as Error & { statusCode?: number }
+            err.statusCode = 404
+            throw err
+          }
+
+          const hasAnyFulfillment = (existing.items ?? []).some((it: any) => {
+            const rq = Number(it.requestedQuantity ?? 0)
+            const rem = Number(it.remainingQuantity ?? 0)
+            return Number.isFinite(rq) && Number.isFinite(rem) ? rem < rq - 1e-9 : false
+          })
+          if (hasAnyFulfillment) {
+            const err = new Error('No se puede editar una solicitud que ya fue atendida parcialmente') as Error & { statusCode?: number }
+            err.statusCode = 409
+            throw err
+          }
+
+          const warehouse = await (tx as any).warehouse.findFirst({
+            where: { tenantId, id: input.warehouseId, isActive: true },
+            select: { id: true, city: true },
+          })
+          if (!warehouse) {
+            const err = new Error('Warehouse not found') as Error & { statusCode?: number }
+            err.statusCode = 404
+            throw err
+          }
+
+          if (branchCity) {
+            const whCity = String(warehouse.city ?? '').trim().toUpperCase()
+            if (!whCity || whCity !== branchCity) {
+              const err = new Error('Solo puede solicitar movimientos para su sucursal') as Error & { statusCode?: number }
+              err.statusCode = 403
+              throw err
+            }
+          }
+
+          const normalizedItemsMap = new Map<string, { productId: string; presentationId: string; quantity: number }>()
+          for (const it of input.items) {
+            const key = `${it.productId}::${it.presentationId}`
+            const prev = normalizedItemsMap.get(key)
+            normalizedItemsMap.set(key, prev ? { ...prev, quantity: prev.quantity + it.quantity } : { ...it })
+          }
+          const normalizedItems = [...normalizedItemsMap.values()]
+
+          const productIds = [...new Set(normalizedItems.map((x) => x.productId))]
+          const products = await (tx as any).product.findMany({
+            where: { tenantId, id: { in: productIds }, isActive: true },
+            select: { id: true },
+          })
+          if (products.length !== productIds.length) {
+            const err = new Error('One or more products not found') as Error & { statusCode?: number }
+            err.statusCode = 404
+            throw err
+          }
+
+          const presentationIds = [...new Set(normalizedItems.map((x) => x.presentationId))]
+          const presentations = await (tx as any).productPresentation.findMany({
+            where: { tenantId, id: { in: presentationIds }, isActive: true },
+            select: { id: true, productId: true, unitsPerPresentation: true },
+          })
+          type PresentationRow = { id: string; productId: string; unitsPerPresentation: any }
+          const presById = new Map<string, PresentationRow>((presentations ?? []).map((p: any) => [String(p.id), p as PresentationRow]))
+
+          for (const it of normalizedItems) {
+            const pres = presById.get(it.presentationId)
+            if (!pres || pres.productId !== it.productId) {
+              const err = new Error('One or more presentations not found or invalid for the selected product') as Error & { statusCode?: number }
+              err.statusCode = 400
+              throw err
+            }
+          }
+
+          await (tx as any).stockMovementRequestItem.deleteMany({
+            where: { tenantId, requestId: id },
+          })
+
+          const row = await (tx as any).stockMovementRequest.update({
+            where: { id },
+            data: {
+              warehouseId: input.warehouseId,
+              requestedCity: warehouse.city,
+              note: input.note,
+              items: {
+                create: normalizedItems.map((item) => {
+                  const pres = presById.get(item.presentationId)
+                  const unitsPerPresentation = Number(pres?.unitsPerPresentation ?? 1)
+                  const requestedQuantity = item.quantity * unitsPerPresentation
+                  return {
+                    tenantId,
+                    productId: item.productId,
+                    presentationId: item.presentationId,
+                    presentationQuantity: item.quantity,
+                    requestedQuantity,
+                    remainingQuantity: requestedQuantity,
+                  }
+                }),
+              },
+            },
+            select: { id: true, status: true, requestedCity: true, warehouseId: true, note: true, updatedAt: true },
+          })
+
+          await audit.append({
+            tenantId,
+            actorUserId: userId,
+            action: 'stock.movement-request.update',
+            entityType: 'StockMovementRequest',
+            entityId: id,
+            after: {
+              warehouseId: input.warehouseId,
+              itemsCount: normalizedItems.length,
+            },
+          })
+
+          return row
+        })
+
+        return reply.send({
+          id: updated.id,
+          status: updated.status,
+          requestedCity: updated.requestedCity,
+          warehouseId: (updated as any).warehouseId ?? null,
+          note: (updated as any).note ?? null,
+          updatedAt: (updated as any).updatedAt ? (updated as any).updatedAt.toISOString?.() ?? String((updated as any).updatedAt) : null,
+        })
+      } catch (e: any) {
+        if (e.statusCode) return reply.status(e.statusCode).send({ message: e.message })
+        throw e
+      }
+    },
+  )
+
+  app.patch(
+    '/api/v1/stock/movement-requests/:id/cancel',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.StockRead)],
+    },
+    async (request, reply) => {
+      const parsedParams = movementRequestCancelParamsSchema.safeParse((request as any).params)
+      if (!parsedParams.success) return reply.status(400).send({ message: 'Invalid params', issues: parsedParams.error.issues })
+
+      const parsedBody = movementRequestCancelBodySchema.safeParse(request.body)
+      if (!parsedBody.success) return reply.status(400).send({ message: 'Invalid request', issues: parsedBody.error.issues })
+
+      const tenantId = request.auth!.tenantId
+      const userId = request.auth!.userId
+      const branchCity = branchCityOf(request)
+      if (branchCity === '__MISSING__') {
+        return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+      }
+
+      const { id } = parsedParams.data
+      const note = parsedBody.data?.note
+
+      try {
+        const updated = await db.$transaction(async (tx) => {
+          const existing = await (tx as any).stockMovementRequest.findFirst({
+            where: {
+              tenantId,
+              id,
+              status: 'OPEN',
+              ...(branchCity ? { requestedCity: { equals: branchCity, mode: 'insensitive' as const } } : {}),
+            },
+            include: { items: true },
+          })
+
+          if (!existing) {
+            const err = new Error('Movement request not found') as Error & { statusCode?: number }
+            err.statusCode = 404
+            throw err
+          }
+
+          const hasAnyFulfillment = (existing.items ?? []).some((it: any) => {
+            const rq = Number(it.requestedQuantity ?? 0)
+            const rem = Number(it.remainingQuantity ?? 0)
+            return Number.isFinite(rq) && Number.isFinite(rem) ? rem < rq - 1e-9 : false
+          })
+          if (hasAnyFulfillment) {
+            const err = new Error('No se puede cancelar una solicitud que ya fue atendida parcialmente') as Error & { statusCode?: number }
+            err.statusCode = 409
+            throw err
+          }
+
+          const row = await (tx as any).stockMovementRequest.update({
+            where: { id },
+            data: {
+              status: 'CANCELLED',
+              note: note ?? existing.note,
+            },
+            select: { id: true, status: true, requestedCity: true },
+          })
+
+          await audit.append({
+            tenantId,
+            actorUserId: userId,
+            action: 'stock.movement-request.cancel',
+            entityType: 'StockMovementRequest',
+            entityId: id,
+            after: { note: note ?? null },
+          })
+
+          return row
+        })
+
+        return reply.send({
+          id: updated.id,
+          status: updated.status,
+          requestedCity: updated.requestedCity,
+        })
+      } catch (e: any) {
+        if (e.statusCode) return reply.status(e.statusCode).send({ message: e.message })
+        throw e
       }
     },
   )
@@ -2214,202 +2497,6 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
     },
   )
 
-  // Bulk fulfill selected movement requests for a branch (multi-line TRANSFER + targeted allocation)
-  app.post(
-    '/api/v1/stock/movement-requests/bulk-fulfill',
-    {
-      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.StockMove)],
-    },
-    async (request, reply) => {
-      const parsed = bulkFulfillRequestsSchema.safeParse(request.body)
-      if (!parsed.success) return reply.status(400).send({ message: 'Invalid request', issues: parsed.error.issues })
-
-      const tenantId = request.auth!.tenantId
-      const userId = request.auth!.userId
-      const branchCity = branchCityOf(request)
-      const input = parsed.data
-
-      const referenceType = 'REQUEST_BULK_FULFILL'
-      const referenceId = randomUUID()
-
-      try {
-        const txResult = await db.$transaction(async (tx) => {
-          const toLoc = await tx.location.findFirst({
-            where: { id: input.toLocationId, tenantId },
-            select: { id: true, warehouse: { select: { id: true, city: true } } },
-          })
-          if (!toLoc) throw Object.assign(new Error('toLocationId not found'), { statusCode: 404 })
-          const destCity = String(toLoc.warehouse?.city ?? '').trim().toUpperCase()
-          if (!destCity) throw Object.assign(new Error('Destination warehouse has no city'), { statusCode: 409 })
-
-          if (branchCity === '__MISSING__') {
-            throw Object.assign(new Error('Seleccione su sucursal antes de continuar'), { statusCode: 409 })
-          }
-          if (branchCity && branchCity !== destCity) {
-            throw Object.assign(new Error('Solo puede atender solicitudes de su sucursal'), { statusCode: 403 })
-          }
-
-          const requests = await tx.stockMovementRequest.findMany({
-            where: { tenantId, id: { in: input.requestIds } },
-            orderBy: [{ createdAt: 'asc' }],
-            select: {
-              id: true,
-              status: true,
-              requestedCity: true,
-              createdAt: true,
-              items: {
-                select: { id: true, productId: true, remainingQuantity: true, createdAt: true },
-                orderBy: [{ createdAt: 'asc' }],
-              },
-            },
-          })
-
-          if (requests.length !== input.requestIds.length) {
-            throw Object.assign(new Error('One or more requests not found'), { statusCode: 404 })
-          }
-
-          for (const r of requests) {
-            if (r.status !== 'OPEN') throw Object.assign(new Error('All requests must be OPEN'), { statusCode: 409 })
-            const rc = String(r.requestedCity ?? '').trim().toUpperCase()
-            if (!rc || rc !== destCity) {
-              throw Object.assign(new Error('All requests must belong to the destination city'), { statusCode: 409 })
-            }
-          }
-
-          // Build a list of target request-items limited to selected requests
-          const requestOrder = new Map(requests.map((r, idx) => [r.id, idx]))
-
-          const fetchOpenItemsByProduct = async (productId: string) => {
-            const items = await tx.stockMovementRequestItem.findMany({
-              where: {
-                tenantId,
-                productId,
-                remainingQuantity: { gt: 0 },
-                requestId: { in: input.requestIds },
-                request: { status: 'OPEN' },
-              },
-              select: { id: true, requestId: true, remainingQuantity: true },
-            })
-            // deterministic order: request creation order then item id
-            return items.sort((a, b) => {
-              const ao = requestOrder.get(a.requestId) ?? 0
-              const bo = requestOrder.get(b.requestId) ?? 0
-              if (ao !== bo) return ao - bo
-              return a.id.localeCompare(b.id)
-            })
-          }
-
-          // Create transfers and allocate quantities only to selected requests
-          const createdMovements: any[] = []
-          const touchedRequestIds = new Set<string>()
-
-          // validate base from location exists
-          const baseFromLoc = await tx.location.findFirst({ where: { id: input.fromLocationId, tenantId }, select: { id: true } })
-          if (!baseFromLoc) throw Object.assign(new Error('fromLocationId not found'), { statusCode: 404 })
-
-          for (const line of input.lines) {
-            const fromLocationId = line.fromLocationId ?? input.fromLocationId
-            const fromLoc = await tx.location.findFirst({ where: { id: fromLocationId, tenantId }, select: { id: true } })
-            if (!fromLoc) throw Object.assign(new Error('fromLocationId not found'), { statusCode: 404 })
-
-            const product = await tx.product.findFirst({ where: { tenantId, id: line.productId, isActive: true }, select: { id: true } })
-            if (!product) throw Object.assign(new Error('Product not found'), { statusCode: 404 })
-
-            const { baseQty, presentationId, presentationQuantity } = await resolvePresentationAndBaseQty(tx, {
-              tenantId,
-              userId,
-              productId: line.productId,
-              quantityInput: line,
-            })
-
-            const created = await createStockMovementTx(tx, {
-              tenantId,
-              userId,
-              type: 'TRANSFER',
-              productId: line.productId,
-              batchId: line.batchId ?? null,
-              fromLocationId,
-              toLocationId: input.toLocationId,
-              quantity: baseQty,
-              presentationId,
-              presentationQuantity,
-              referenceType,
-              referenceId,
-              note: line.note ?? input.note ?? null,
-            })
-            createdMovements.push(created)
-
-            let remainingToApply = baseQty
-            const targetItems = await fetchOpenItemsByProduct(line.productId)
-            for (const it of targetItems) {
-              if (remainingToApply <= 0) break
-              const rem = Number(it.remainingQuantity)
-              if (!Number.isFinite(rem) || rem <= 0) continue
-              const apply = Math.min(rem, remainingToApply)
-              remainingToApply -= apply
-              touchedRequestIds.add(it.requestId)
-              await tx.stockMovementRequestItem.update({
-                where: { id: it.id },
-                data: { remainingQuantity: { decrement: apply } },
-              })
-            }
-          }
-
-          const fulfilledRequestIds: string[] = []
-          for (const requestId of touchedRequestIds) {
-            const agg = await tx.stockMovementRequestItem.aggregate({
-              where: { tenantId, requestId },
-              _sum: { remainingQuantity: true },
-            })
-            const sumRemaining = Number((agg as any)?._sum?.remainingQuantity ?? 0)
-            if (sumRemaining <= 1e-9) {
-              await tx.stockMovementRequest.update({
-                where: { id: requestId },
-                data: { status: 'FULFILLED', fulfilledAt: new Date(), fulfilledBy: userId },
-              })
-              fulfilledRequestIds.push(requestId)
-            }
-          }
-
-          return { referenceType, referenceId, createdMovements, fulfilledRequestIds, destinationCity: destCity }
-        })
-
-        await audit.append({
-          tenantId,
-          actorUserId: userId,
-          action: 'stock.movement-request.bulk-fulfill',
-          entityType: 'StockMovementRequest',
-          entityId: txResult.referenceId,
-          after: {
-            requestIds: input.requestIds,
-            fulfilledRequestIds: txResult.fulfilledRequestIds,
-            movementCount: txResult.createdMovements.length,
-            destinationCity: txResult.destinationCity,
-          },
-        })
-
-        const room = `tenant:${tenantId}`
-        for (const r of txResult.createdMovements) {
-          app.io?.to(room).emit('stock.movement.created', r.createdMovement)
-          if (r.fromBalance) app.io?.to(room).emit('stock.balance.changed', r.fromBalance)
-          if (r.toBalance) app.io?.to(room).emit('stock.balance.changed', r.toBalance)
-        }
-        for (const requestId of txResult.fulfilledRequestIds) {
-          const updatedReq = await db.stockMovementRequest.findFirst({
-            where: { tenantId, id: requestId },
-            select: { id: true, requestedCity: true, quoteId: true, requestedBy: true, status: true },
-          })
-          if (updatedReq) app.io?.to(room).emit('stock.movement_request.fulfilled', updatedReq)
-        }
-
-        return reply.status(201).send(txResult)
-      } catch (e: any) {
-        if (e?.statusCode) return reply.status(e.statusCode).send({ message: e.message })
-        throw e
-      }
-    },
-  )
-
   // Repack (armar/desarmar) within same batch + location.
   // Creates OUT + IN movements (and optional remainder IN) atomically.
   app.post(
@@ -2585,6 +2672,879 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
         }
         throw e
       }
+    },
+  )
+
+  // Bulk fulfill movement requests (partial fulfillment support)
+  app.post(
+    '/api/v1/stock/movement-requests/bulk-fulfill',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.StockMove)],
+    },
+    async (request, reply) => {
+      const parsed = bulkFulfillRequestsSchema.safeParse(request.body)
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid request', issues: parsed.error.issues })
+
+      const tenantId = request.auth!.tenantId
+      const userId = request.auth!.userId
+      const input = parsed.data
+      const branchCity = branchCityOf(request)
+
+      if (branchCity === '__MISSING__') {
+        return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+      }
+
+      try {
+        const result = await db.$transaction(async (tx) => {
+          // Validate locations exist
+          const [fromLoc, toLoc] = await Promise.all([
+            tx.location.findFirst({
+              where: { tenantId, id: input.fromLocationId },
+              select: { id: true, code: true, warehouse: { select: { id: true, code: true, name: true, city: true } } },
+            }),
+            tx.location.findFirst({
+              where: { tenantId, id: input.toLocationId },
+              select: { id: true, code: true, warehouse: { select: { id: true, code: true, name: true, city: true } } },
+            }),
+          ])
+          if (!fromLoc) throw Object.assign(new Error('fromLocationId not found'), { statusCode: 404 })
+          if (!toLoc) throw Object.assign(new Error('toLocationId not found'), { statusCode: 404 })
+
+          const createdMovements: any[] = []
+          const touchedRequestIds = new Set<string>()
+
+          for (const fulfillment of input.fulfillments) {
+            const { requestId, items } = fulfillment
+
+            // Validate request exists and is OPEN
+            const req = await tx.stockMovementRequest.findFirst({
+              where: { tenantId, id: requestId, status: 'OPEN' },
+              select: {
+                id: true,
+                status: true,
+                requestedCity: true,
+                warehouseId: true,
+                items: {
+                  select: {
+                    id: true,
+                    productId: true,
+                    remainingQuantity: true,
+                    presentationId: true,
+                    presentationQuantity: true,
+                    presentation: { select: { id: true, unitsPerPresentation: true } },
+                  },
+                },
+              },
+            })
+            if (!req) throw Object.assign(new Error(`Request ${requestId} not found or not OPEN`), { statusCode: 404 })
+
+            // Check branch city permissions
+            const reqCity = String(req.requestedCity ?? '').trim().toUpperCase()
+            if (branchCity && reqCity !== branchCity) {
+              throw Object.assign(new Error('Solo puede atender solicitudes de su sucursal'), { statusCode: 403 })
+            }
+
+            // Check destination consistency
+            if (req.warehouseId && toLoc.warehouse?.id !== req.warehouseId) {
+              throw Object.assign(new Error('toLocationId does not belong to the requested warehouse'), { statusCode: 400 })
+            }
+            if (!req.warehouseId) {
+              const toCity = String(toLoc.warehouse?.city ?? '').trim().toUpperCase()
+              if (toCity && reqCity && toCity !== reqCity) {
+                throw Object.assign(new Error('toLocationId city does not match requestedCity'), { statusCode: 400 })
+              }
+            }
+
+            // Process each item in the fulfillment
+            for (const item of items) {
+              // Find the matching request item
+              const requestItem = item.requestItemId
+                ? req.items.find((ri: any) => ri.id === item.requestItemId)
+                : req.items.find((ri: any) => ri.productId === item.productId)
+              if (!requestItem) {
+                throw Object.assign(new Error(`Item not found in request ${requestId}`), { statusCode: 400 })
+              }
+
+              if (requestItem.productId !== item.productId) {
+                throw Object.assign(new Error(`requestItemId does not match productId for request ${requestId}`), { statusCode: 400 })
+              }
+
+              if (Number(requestItem.remainingQuantity) <= 0) {
+                throw Object.assign(new Error(`Product ${item.productId} in request ${requestId} has no remaining quantity`), { statusCode: 409 })
+              }
+
+              // Validate batch exists and has sufficient stock
+              const batch = await tx.batch.findFirst({
+                where: { tenantId, id: item.batchId },
+                select: { id: true, presentationId: true, presentation: { select: { id: true, unitsPerPresentation: true } } },
+              })
+              if (!batch) throw Object.assign(new Error(`Batch ${item.batchId} not found`), { statusCode: 404 })
+
+              const totalStock = await tx.inventoryBalance.aggregate({
+                where: {
+                  tenantId,
+                  productId: item.productId,
+                  batchId: item.batchId,
+                  locationId: input.fromLocationId,
+                },
+                _sum: { quantity: true },
+              })
+              const availableStock = Number(totalStock._sum.quantity ?? 0)
+              if (availableStock < item.quantity) {
+                throw Object.assign(new Error(`Insufficient stock for batch ${item.batchId}. Available: ${availableStock}, Required: ${item.quantity}`), { statusCode: 409 })
+              }
+
+              // Create the transfer movement
+              const movementResult = await createStockMovementTx(tx, {
+                tenantId,
+                userId,
+                type: 'TRANSFER',
+                productId: item.productId,
+                batchId: item.batchId,
+                fromLocationId: input.fromLocationId,
+                toLocationId: input.toLocationId,
+                quantity: item.quantity,
+                presentationId: batch.presentationId ?? requestItem.presentationId,
+                presentationQuantity: (() => {
+                  const unitsPer = Number(batch.presentation?.unitsPerPresentation ?? 1)
+                  if (!Number.isFinite(unitsPer) || unitsPer <= 0) return item.quantity
+                  return item.quantity / unitsPer
+                })(),
+                referenceType: 'MOVEMENT_REQUEST',
+                referenceId: requestId,
+                note: input.note ?? null,
+              })
+
+              createdMovements.push(movementResult)
+
+              // Update remaining quantity
+              await tx.stockMovementRequestItem.update({
+                where: { id: requestItem.id },
+                data: { remainingQuantity: { decrement: item.quantity } },
+              })
+
+              touchedRequestIds.add(requestId)
+            }
+          }
+
+          // Check which requests are now fully fulfilled
+          const fulfilledRequestIds: string[] = []
+          for (const requestId of touchedRequestIds) {
+            const agg = await tx.stockMovementRequestItem.aggregate({
+              where: { tenantId, requestId },
+              _sum: { remainingQuantity: true },
+            })
+            const sumRemaining = Number((agg as any)?._sum?.remainingQuantity ?? 0)
+            if (sumRemaining <= 1e-9) {
+              await tx.stockMovementRequest.update({
+                where: { id: requestId },
+                data: { status: 'FULFILLED', fulfilledAt: new Date(), fulfilledBy: userId },
+              })
+              fulfilledRequestIds.push(requestId)
+            }
+          }
+
+          return { createdMovements, fulfilledRequestIds, touchedRequestIds: Array.from(touchedRequestIds) }
+        })
+
+        // Audit the operation
+        await audit.append({
+          tenantId,
+          actorUserId: userId,
+          action: 'stock.movement-request.bulk-fulfill',
+          entityType: 'StockMovementRequest',
+          entityId: null,
+          after: {
+            fulfillments: input.fulfillments.map(f => ({ requestId: f.requestId, itemCount: f.items.length })),
+            fulfilledRequestIds: result.fulfilledRequestIds,
+            movementCount: result.createdMovements.length,
+          },
+        })
+
+        // Emit socket events
+        const room = `tenant:${tenantId}`
+        for (const movement of result.createdMovements) {
+          app.io?.to(room).emit('stock.movement.created', movement.createdMovement)
+          if (movement.fromBalance) app.io?.to(room).emit('stock.balance.changed', movement.fromBalance)
+          if (movement.toBalance) app.io?.to(room).emit('stock.balance.changed', movement.toBalance)
+        }
+
+        // Emit request status updates
+        for (const requestId of result.fulfilledRequestIds) {
+          const updatedReq = await db.stockMovementRequest.findFirst({
+            where: { tenantId, id: requestId },
+            select: { id: true, requestedCity: true, status: true },
+          })
+          if (updatedReq) {
+            app.io?.to(room).emit('stock.movement_request.updated', {
+              id: updatedReq.id,
+              status: updatedReq.status,
+              requestedCity: updatedReq.requestedCity,
+            })
+          }
+        }
+
+        return reply.send({
+          message: 'Solicitudes atendidas exitosamente',
+          fulfilledRequestIds: result.fulfilledRequestIds,
+          touchedRequestIds: result.touchedRequestIds,
+          movementCount: result.createdMovements.length,
+        })
+      } catch (e: any) {
+        if (e.statusCode) return reply.status(e.statusCode).send({ message: e.message })
+        throw e
+      }
+    },
+  )
+
+  // Get completed movements (movements, bulk transfers, fulfilled requests, returns)
+  app.get(
+    '/api/v1/stock/completed-movements',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.StockMove)],
+    },
+    async (request, reply) => {
+      const tenantId = request.auth!.tenantId
+
+      try {
+        // Get fulfillments of movement requests (includes partials)
+        const movementRequestGroups = await db.stockMovement.groupBy({
+          by: ['referenceId'],
+          where: {
+            tenantId,
+            referenceType: 'MOVEMENT_REQUEST',
+            referenceId: { not: null },
+          },
+          _max: { createdAt: true },
+          _count: { id: true },
+          _sum: { quantity: true },
+          orderBy: { _max: { createdAt: 'desc' } },
+          take: 100,
+        })
+
+        // Get bulk transfers (grouped by referenceId)
+        const bulkTransfers = await db.stockMovement.groupBy({
+          by: ['referenceId', 'referenceType'],
+          where: {
+            tenantId,
+            referenceType: 'BULK_TRANSFER',
+          },
+          _max: {
+            createdAt: true,
+          },
+          _count: {
+            id: true,
+          },
+          _sum: {
+            quantity: true,
+          },
+          orderBy: {
+            _max: {
+              createdAt: 'desc',
+            },
+          },
+          take: 100,
+        })
+
+        // Get bulk transfer details
+        const bulkTransferDetails = await Promise.all(
+          bulkTransfers.map(async (bt) => {
+            const movements = await db.stockMovement.findMany({
+              where: {
+                tenantId,
+                referenceId: bt.referenceId,
+                referenceType: bt.referenceType,
+              },
+              orderBy: {
+                createdAt: 'desc',
+              },
+              take: 1, // Get first movement for details
+            })
+
+            if (movements.length === 0) return null
+
+            const movement = movements[0]!
+            
+            // Get location and warehouse details separately
+            const [fromLocation, toLocation] = await Promise.all([
+              movement.fromLocationId ? db.location.findFirst({
+                where: { id: movement.fromLocationId, tenantId },
+                include: { warehouse: true }
+              }) : Promise.resolve(null),
+              movement.toLocationId ? db.location.findFirst({
+                where: { id: movement.toLocationId, tenantId },
+                include: { warehouse: true }
+              }) : Promise.resolve(null),
+            ])
+
+            const createdBy = movement.createdBy
+              ? await db.user.findFirst({
+                  where: { tenantId, id: movement.createdBy },
+                  select: { fullName: true, email: true },
+                })
+              : null
+
+            return {
+              id: bt.referenceId!,
+              type: 'BULK_TRANSFER' as const,
+              typeLabel: 'Transferencia masiva',
+              createdAt: movement.createdAt,
+              completedAt: movement.createdAt,
+              fromWarehouseCode: fromLocation?.warehouse?.code,
+              toWarehouseCode: toLocation?.warehouse?.code,
+              requestedByName: null,
+              fulfilledByName: createdBy?.fullName || createdBy?.email,
+              totalItems: bt._count.id,
+              totalQuantity: Number(bt._sum.quantity),
+              canExportPicking: true,
+              canExportLabel: true,
+            }
+          })
+        )
+
+        // Get individual movements (non-bulk)
+        const individualMovements = await db.stockMovement.findMany({
+          where: {
+            tenantId,
+            referenceType: null, // Individual movements
+            type: {
+              not: 'IN',
+            },
+          },
+          orderBy: {
+            createdAt: 'desc',
+          },
+          take: 100,
+        })
+
+        // Get individual movement details
+        const individualMovementDetails = await Promise.all(
+          individualMovements.map(async (movement) => {
+            // Get location and warehouse details separately
+            const [fromLocation, toLocation] = await Promise.all([
+              movement.fromLocationId ? db.location.findFirst({
+                where: { id: movement.fromLocationId, tenantId },
+                include: { warehouse: true }
+              }) : null,
+              movement.toLocationId ? db.location.findFirst({
+                where: { id: movement.toLocationId, tenantId },
+                include: { warehouse: true }
+              }) : null,
+            ])
+
+            const createdBy = movement.createdBy
+              ? await db.user.findFirst({
+                  where: { tenantId, id: movement.createdBy },
+                  select: { fullName: true, email: true },
+                })
+              : null
+
+            let typeLabel = 'Movimiento'
+            switch (movement.type) {
+              case 'IN':
+                typeLabel = 'Entrada'
+                break
+              case 'OUT':
+                typeLabel = 'Salida'
+                break
+              case 'TRANSFER':
+                typeLabel = 'Transferencia'
+                break
+              case 'ADJUSTMENT':
+                typeLabel = 'Ajuste'
+                break
+            }
+
+            return {
+              id: movement.id,
+              type: 'MOVEMENT' as const,
+              typeLabel,
+              createdAt: movement.createdAt,
+              completedAt: movement.createdAt,
+              fromWarehouseCode: fromLocation?.warehouse?.code,
+              toWarehouseCode: toLocation?.warehouse?.code,
+              requestedByName: null,
+              fulfilledByName: createdBy?.fullName || createdBy?.email,
+              totalItems: 1,
+              totalQuantity: Number(movement.quantity),
+              canExportPicking: movement.type === 'OUT' || movement.type === 'TRANSFER',
+              canExportLabel: movement.type === 'OUT' || movement.type === 'TRANSFER',
+            }
+          })
+        )
+
+        // Get returns
+        const returns = await db.stockReturn.findMany({
+          where: {
+            tenantId,
+          },
+          include: {
+            items: {
+              include: {
+                product: true,
+                batch: true,
+                presentation: true,
+              },
+            },
+            toLocation: {
+              include: {
+                warehouse: true,
+              },
+            },
+          },
+          orderBy: {
+            createdAt: 'desc',
+          },
+          take: 100,
+        })
+
+        // Get return details
+        const returnDetails = await Promise.all(
+          returns.map(async (returnRecord) => {
+            const createdBy = returnRecord.createdBy
+              ? await db.user.findFirst({
+                  where: { tenantId, id: returnRecord.createdBy },
+                  select: { fullName: true, email: true },
+                })
+              : null
+
+            const totalQuantity = returnRecord.items.reduce((sum, item) => sum + Number(item.quantity), 0)
+
+            return {
+              id: returnRecord.id,
+              type: 'RETURN' as const,
+              typeLabel: 'Devolución',
+              createdAt: returnRecord.createdAt,
+              completedAt: returnRecord.createdAt,
+              fromWarehouseCode: null,
+              toWarehouseCode: returnRecord.toLocation.warehouse?.code,
+              requestedByName: null,
+              fulfilledByName: createdBy?.fullName || createdBy?.email,
+              totalItems: returnRecord.items.length,
+              totalQuantity,
+              canExportPicking: false,
+              canExportLabel: false,
+            }
+          })
+        )
+
+        const isUuid = (value: unknown) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value ?? ''))
+
+        const movementRequestFulfillmentDetails = await Promise.all(
+          movementRequestGroups.map(async (g) => {
+            const requestId = g.referenceId as string
+            const req = await db.stockMovementRequest.findFirst({
+              where: { tenantId, id: requestId },
+              select: {
+                id: true,
+                createdAt: true,
+                fulfilledAt: true,
+                status: true,
+                requestedBy: true,
+                fulfilledBy: true,
+                warehouse: { select: { id: true, name: true, code: true } },
+              },
+            })
+            if (!req) return null
+
+            const lastMovement = await db.stockMovement.findFirst({
+              where: { tenantId, referenceType: 'MOVEMENT_REQUEST', referenceId: requestId },
+              orderBy: { createdAt: 'desc' },
+              select: { createdAt: true, createdBy: true, fromLocationId: true, toLocationId: true },
+            })
+
+            const [fromLocation, toLocation] = await Promise.all([
+              lastMovement?.fromLocationId
+                ? db.location.findFirst({ where: { tenantId, id: lastMovement.fromLocationId }, include: { warehouse: true } })
+                : Promise.resolve(null),
+              lastMovement?.toLocationId
+                ? db.location.findFirst({ where: { tenantId, id: lastMovement.toLocationId }, include: { warehouse: true } })
+                : Promise.resolve(null),
+            ])
+
+            const requestedByUser = req.requestedBy && isUuid(req.requestedBy)
+              ? await db.user.findFirst({ where: { tenantId, id: req.requestedBy }, select: { fullName: true, email: true } })
+              : null
+            const requestedByName = requestedByUser?.fullName || requestedByUser?.email || (req.requestedBy && !isUuid(req.requestedBy) ? req.requestedBy : null)
+
+            const fulfilledByUser = req.fulfilledBy
+              ? await db.user.findFirst({ where: { tenantId, id: req.fulfilledBy }, select: { fullName: true, email: true } })
+              : null
+            const createdByUser = !req.fulfilledBy && lastMovement?.createdBy
+              ? await db.user.findFirst({ where: { tenantId, id: lastMovement.createdBy }, select: { fullName: true, email: true } })
+              : null
+            const fulfilledByName = fulfilledByUser?.fullName || fulfilledByUser?.email || createdByUser?.fullName || createdByUser?.email || null
+
+            const completedAt = (req.fulfilledAt ?? g._max.createdAt ?? req.createdAt) as any
+            const typeLabel = req.status === 'FULFILLED' ? 'Atención de solicitud' : 'Atención de solicitud (parcial)'
+
+            return {
+              id: req.id,
+              type: 'FULFILL_REQUEST' as const,
+              typeLabel,
+              createdAt: req.createdAt,
+              completedAt,
+              fromWarehouseCode: fromLocation?.warehouse?.code ?? null,
+              toWarehouseCode: req.warehouse?.code ?? toLocation?.warehouse?.code ?? null,
+              requestedByName,
+              fulfilledByName,
+              totalItems: g._count.id,
+              totalQuantity: Number(g._sum.quantity ?? 0),
+              canExportPicking: true,
+              canExportLabel: true,
+            }
+          })
+        )
+
+        // Combine all completed movements and sort by completion date
+        const allMovements = [
+          ...bulkTransferDetails.filter(Boolean),
+          ...individualMovementDetails,
+          ...returnDetails,
+          ...movementRequestFulfillmentDetails.filter(Boolean),
+        ].filter(m => m !== null).sort((a, b) => new Date(b!.completedAt).getTime() - new Date(a!.completedAt).getTime())
+
+        return reply.send({
+          items: allMovements.slice(0, 100), // Limit to 100 most recent
+        })
+      } catch (e: any) {
+        if (e.statusCode) return reply.status(e.statusCode).send({ message: e.message })
+        throw e
+      }
+    },
+  )
+
+  // Picking data for completed movements
+  app.get(
+    '/api/v1/stock/completed-movements/:id/picking',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.StockMove)],
+    },
+    async (request, reply) => {
+      const tenantId = request.auth!.tenantId
+
+      const parsedParams = completedMovementDocsParamsSchema.safeParse((request as any).params)
+      if (!parsedParams.success) return reply.status(400).send({ message: 'Invalid params', issues: parsedParams.error.issues })
+
+      const parsedQuery = completedMovementDocsQuerySchema.safeParse((request as any).query)
+      if (!parsedQuery.success) return reply.status(400).send({ message: 'Invalid query', issues: parsedQuery.error.issues })
+
+      const { id } = parsedParams.data
+      const { type } = parsedQuery.data
+
+      if (type === 'RETURN') return reply.status(409).send({ message: 'Picking not available for returns' })
+
+      // Get movements that will compose the picking
+      const movements =
+        type === 'FULFILL_REQUEST'
+          ? await db.stockMovement.findMany({
+              where: { tenantId, referenceType: 'MOVEMENT_REQUEST', referenceId: id },
+              orderBy: { createdAt: 'asc' },
+            })
+          : type === 'BULK_TRANSFER'
+            ? await db.stockMovement.findMany({
+                where: { tenantId, referenceType: 'BULK_TRANSFER', referenceId: id },
+                orderBy: { createdAt: 'asc' },
+              })
+            : await db.stockMovement.findMany({
+                where: { tenantId, id },
+                orderBy: { createdAt: 'asc' },
+              })
+
+      if (!movements.length) return reply.status(404).send({ message: 'Movement not found' })
+
+      if (type === 'MOVEMENT') {
+        const m = movements[0]!
+        if (!(m.type === 'OUT' || m.type === 'TRANSFER')) {
+          return reply.status(409).send({ message: 'Picking not available for this movement type' })
+        }
+      }
+
+      const productIds = Array.from(new Set(movements.map((m) => m.productId)))
+      const batchIds = Array.from(new Set(movements.map((m) => m.batchId).filter(Boolean) as string[]))
+      const locationIds = Array.from(
+        new Set(
+          movements
+            .flatMap((m) => [m.fromLocationId, m.toLocationId])
+            .filter(Boolean) as string[],
+        ),
+      )
+
+      const [products, batches, locations] = await Promise.all([
+        db.product.findMany({ where: { tenantId, id: { in: productIds } }, select: { id: true, sku: true, name: true, genericName: true } }),
+        batchIds.length
+          ? db.batch.findMany({
+              where: { tenantId, id: { in: batchIds } },
+              select: {
+                id: true,
+                batchNumber: true,
+                expiresAt: true,
+                presentation: { select: { name: true, unitsPerPresentation: true } },
+              },
+            })
+          : Promise.resolve([]),
+        locationIds.length
+          ? db.location.findMany({
+              where: { tenantId, id: { in: locationIds } },
+              select: { id: true, code: true, warehouse: { select: { code: true, name: true, city: true } } },
+            })
+          : Promise.resolve([]),
+      ])
+
+      const productMap = new Map(products.map((p) => [p.id, p]))
+      const batchMap = new Map(batches.map((b) => [b.id, b]))
+      const locationMap = new Map(locations.map((l) => [l.id, l]))
+
+      const fromWhLabels = new Set<string>()
+      const toWhLabels = new Set<string>()
+      const fromLocCodes = new Set<string>()
+      const toLocCodes = new Set<string>()
+
+      for (const m of movements) {
+        const fromLoc = m.fromLocationId ? locationMap.get(m.fromLocationId) : null
+        const toLoc = m.toLocationId ? locationMap.get(m.toLocationId) : null
+
+        if (fromLoc) {
+          fromLocCodes.add(String(fromLoc.code ?? '—'))
+          fromWhLabels.add(formatWarehouseLabel(fromLoc.warehouse))
+        }
+        if (toLoc) {
+          toLocCodes.add(String(toLoc.code ?? '—'))
+          toWhLabels.add(formatWarehouseLabel(toLoc.warehouse))
+        }
+      }
+
+      const fromWarehouseLabel = fromWhLabels.size === 1 ? Array.from(fromWhLabels)[0] : fromWhLabels.size > 1 ? 'MIXED' : '—'
+      const toWarehouseLabel = toWhLabels.size === 1 ? Array.from(toWhLabels)[0] : toWhLabels.size > 1 ? 'MIXED' : '—'
+      const fromLocationCode = fromLocCodes.size === 1 ? Array.from(fromLocCodes)[0] : fromLocCodes.size > 1 ? 'MIXED' : '—'
+      const toLocationCode = toLocCodes.size === 1 ? Array.from(toLocCodes)[0] : toLocCodes.size > 1 ? 'MIXED' : '—'
+
+      let requestedByName: string | null | undefined = undefined
+      let requestedItems: Array<{ productLabel: string; quantityUnits: number; presentationLabel: string }> = []
+      if (type === 'FULFILL_REQUEST') {
+        const req = await db.stockMovementRequest.findFirst({
+          where: { tenantId, id },
+          select: {
+            requestedBy: true,
+            items: {
+              select: {
+                requestedQuantity: true,
+                presentation: { select: { name: true, unitsPerPresentation: true } },
+                product: { select: { sku: true, name: true, genericName: true } },
+              },
+            },
+          },
+        })
+        if (req?.requestedBy) {
+          const u = await db.user.findFirst({ where: { tenantId, id: req.requestedBy }, select: { fullName: true, email: true } })
+          requestedByName = u?.fullName || u?.email || null
+        }
+
+        requestedItems = (req?.items ?? []).map((it) => {
+          const presName = String(it.presentation?.name ?? '').trim()
+          const presUnits = Number(it.presentation?.unitsPerPresentation ?? 1)
+          const presentationLabel = presName
+            ? Number.isFinite(presUnits) && presUnits > 1
+              ? `${presName} (${presUnits}u)`
+              : presName
+            : '—'
+
+          return {
+            productLabel: buildProductLabel({ sku: it.product?.sku ?? null, name: it.product?.name ?? null, genericName: it.product?.genericName ?? null }),
+            quantityUnits: Math.ceil(Number(it.requestedQuantity ?? 0)),
+            presentationLabel,
+          }
+        })
+      } else {
+        const createdBy = movements[0]?.createdBy
+        if (createdBy) {
+          const u = await db.user.findFirst({ where: { tenantId, id: createdBy }, select: { fullName: true, email: true } })
+          requestedByName = u?.fullName || u?.email || null
+        }
+      }
+
+      const meta = {
+        requestId: id,
+        generatedAtIso: new Date().toISOString(),
+        fromWarehouseLabel,
+        fromLocationCode,
+        toWarehouseLabel,
+        toLocationCode,
+        requestedByName,
+      }
+
+      const sentLines = movements.map((m) => {
+        const loc = m.fromLocationId ? locationMap.get(m.fromLocationId) : null
+        const p = productMap.get(m.productId)
+        const b = m.batchId ? batchMap.get(m.batchId) : null
+        const presName = String(b?.presentation?.name ?? '').trim()
+        const presUnits = Number(b?.presentation?.unitsPerPresentation ?? 1)
+        const presentationLabel = presName
+          ? Number.isFinite(presUnits) && presUnits > 1
+            ? `${presName} (${presUnits}u)`
+            : presName
+          : '—'
+        return {
+          locationCode: String(loc?.code ?? '—'),
+          productLabel: buildProductLabel(p),
+          batchNumber: b?.batchNumber ?? null,
+          expiresAt: b?.expiresAt ? new Date(b.expiresAt).toISOString() : null,
+          quantityUnits: Math.ceil(Number(m.quantity ?? 0)),
+          presentationLabel,
+        }
+      })
+
+      return reply.send({ meta, requestedItems, sentLines })
+    },
+  )
+
+  // Label data for completed movements
+  app.get(
+    '/api/v1/stock/completed-movements/:id/label',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.StockMove)],
+    },
+    async (request, reply) => {
+      const tenantId = request.auth!.tenantId
+
+      const parsedParams = completedMovementDocsParamsSchema.safeParse((request as any).params)
+      if (!parsedParams.success) return reply.status(400).send({ message: 'Invalid params', issues: parsedParams.error.issues })
+
+      const parsedQuery = completedMovementDocsQuerySchema.safeParse((request as any).query)
+      if (!parsedQuery.success) return reply.status(400).send({ message: 'Invalid query', issues: parsedQuery.error.issues })
+
+      const { id } = parsedParams.data
+      const { type } = parsedQuery.data
+
+      if (type === 'RETURN') return reply.status(409).send({ message: 'Label not available for returns' })
+
+      const movements =
+        type === 'FULFILL_REQUEST'
+          ? await db.stockMovement.findMany({
+              where: { tenantId, referenceType: 'MOVEMENT_REQUEST', referenceId: id },
+              orderBy: { createdAt: 'asc' },
+            })
+          : type === 'BULK_TRANSFER'
+            ? await db.stockMovement.findMany({
+                where: { tenantId, referenceType: 'BULK_TRANSFER', referenceId: id },
+                orderBy: { createdAt: 'asc' },
+              })
+            : await db.stockMovement.findMany({
+                where: { tenantId, id },
+                orderBy: { createdAt: 'asc' },
+              })
+
+      if (!movements.length) return reply.status(404).send({ message: 'Movement not found' })
+
+      if (type === 'MOVEMENT') {
+        const m = movements[0]!
+        if (!(m.type === 'OUT' || m.type === 'TRANSFER')) {
+          return reply.status(409).send({ message: 'Label not available for this movement type' })
+        }
+      }
+
+      const locationIds = Array.from(
+        new Set(
+          movements
+            .flatMap((m) => [m.fromLocationId, m.toLocationId])
+            .filter(Boolean) as string[],
+        ),
+      )
+
+      const locations = locationIds.length
+        ? await db.location.findMany({
+            where: { tenantId, id: { in: locationIds } },
+            select: { id: true, code: true, warehouse: { select: { code: true, name: true, city: true } } },
+          })
+        : []
+
+      const locationMap = new Map(locations.map((l) => [l.id, l]))
+
+      const fromWhLabels = new Set<string>()
+      const toWhLabels = new Set<string>()
+      const fromLocCodes = new Set<string>()
+      const toLocCodes = new Set<string>()
+
+      for (const m of movements) {
+        const fromLoc = m.fromLocationId ? locationMap.get(m.fromLocationId) : null
+        const toLoc = m.toLocationId ? locationMap.get(m.toLocationId) : null
+
+        if (fromLoc) {
+          fromLocCodes.add(String(fromLoc.code ?? '—'))
+          fromWhLabels.add(formatWarehouseLabel(fromLoc.warehouse))
+        }
+        if (toLoc) {
+          toLocCodes.add(String(toLoc.code ?? '—'))
+          toWhLabels.add(formatWarehouseLabel(toLoc.warehouse))
+        }
+      }
+
+      const fromWarehouseLabel = fromWhLabels.size === 1 ? Array.from(fromWhLabels)[0] : fromWhLabels.size > 1 ? 'MIXED' : '—'
+      const toWarehouseLabel = toWhLabels.size === 1 ? Array.from(toWhLabels)[0] : toWhLabels.size > 1 ? 'MIXED' : '—'
+      const fromLocationCode = fromLocCodes.size === 1 ? Array.from(fromLocCodes)[0] : fromLocCodes.size > 1 ? 'MIXED' : '—'
+      const toLocationCode = toLocCodes.size === 1 ? Array.from(toLocCodes)[0] : toLocCodes.size > 1 ? 'MIXED' : '—'
+
+      let requestedByName: string | null | undefined = undefined
+      let responsable: string = '—'
+
+      const tenant = await db.tenant.findFirst({ where: { id: tenantId }, select: { country: true } })
+      const country = String(tenant?.country ?? 'BOLIVIA')
+
+      let toCity: string | null = null
+      let fromCity: string | null = null
+
+      if (type === 'FULFILL_REQUEST') {
+        const req = await db.stockMovementRequest.findFirst({
+          where: { tenantId, id },
+          select: { requestedBy: true, fulfilledBy: true, requestedCity: true, warehouse: { select: { city: true } } },
+        })
+        if (req?.requestedBy) {
+          const u = await db.user.findFirst({ where: { tenantId, id: req.requestedBy }, select: { fullName: true, email: true } })
+          requestedByName = u?.fullName || u?.email || null
+        }
+        if (req?.fulfilledBy) {
+          const u = await db.user.findFirst({ where: { tenantId, id: req.fulfilledBy }, select: { fullName: true, email: true } })
+          responsable = u?.fullName || u?.email || responsable
+        }
+        toCity = (req?.warehouse?.city ?? req?.requestedCity ?? null) as any
+      } else {
+        const createdBy = movements[0]?.createdBy
+        if (createdBy) {
+          const u = await db.user.findFirst({ where: { tenantId, id: createdBy }, select: { fullName: true, email: true } })
+          responsable = u?.fullName || u?.email || responsable
+          requestedByName = responsable
+        }
+      }
+
+      // infer cities from movements locations when possible
+      const firstFromLocId = movements.find((m) => m.fromLocationId)?.fromLocationId
+      const firstToLocId = movements.find((m) => m.toLocationId)?.toLocationId
+      if (firstFromLocId) {
+        const loc = locationMap.get(firstFromLocId)
+        fromCity = (loc?.warehouse?.city ?? null) as any
+      }
+      if (!toCity && firstToLocId) {
+        const loc = locationMap.get(firstToLocId)
+        toCity = (loc?.warehouse?.city ?? null) as any
+      }
+
+      const destinationCityCountry = toCity ? `${toCity}, ${country}` : country
+      const originCityCountry = fromCity ? `${fromCity}, ${country}` : country
+
+      const data = {
+        requestId: id,
+        generatedAtIso: new Date().toISOString(),
+        fromWarehouseLabel: originCityCountry,
+        fromLocationCode,
+        toWarehouseLabel: destinationCityCountry,
+        toLocationCode,
+        requestedByName,
+        bultos: '—',
+        responsable,
+        observaciones: '—',
+      }
+
+      return reply.send(data)
     },
   )
 }

@@ -5,7 +5,7 @@ import { apiFetch } from '../../lib/api'
 import { useAuth } from '../../providers/AuthProvider'
 import { MainLayout, PageContainer, Button, Table, PaginationCursor, Input, Badge, Modal } from '../../components'
 import { useNavigation } from '../../hooks'
-import { EyeIcon, PencilIcon, ArrowPathIcon, PlusIcon } from '@heroicons/react/24/outline'
+import { EyeIcon, ArrowPathIcon, TrashIcon, PlusIcon } from '@heroicons/react/24/outline'
 import { useNotifications } from '../../providers/NotificationsProvider'
 
 type QuoteListItem = {
@@ -39,6 +39,10 @@ async function fetchQuotes(token: string, take: number, cursor?: string, custome
 
 async function processQuote(token: string, quoteId: string): Promise<ProcessQuoteResponse> {
   return apiFetch(`/api/v1/sales/quotes/${encodeURIComponent(quoteId)}/process`, { token, method: 'POST' })
+}
+
+async function deleteQuote(token: string, quoteId: string): Promise<{ success: true }> {
+  return apiFetch(`/api/v1/sales/quotes/${encodeURIComponent(quoteId)}`, { token, method: 'DELETE' })
 }
 
 async function requestQuoteStock(token: string, quoteId: string): Promise<{ ok: true; city: string; items: any[] }> {
@@ -94,6 +98,17 @@ export function QuotesPage() {
 
   const requestStockMutation = useMutation({
     mutationFn: async (quoteId: string) => requestQuoteStock(auth.accessToken!, quoteId),
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: async (quoteId: string) => deleteQuote(auth.accessToken!, quoteId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['quotes'] })
+      notifications.notify({ kind: 'success', title: 'Cotización desactivada', body: 'La cotización ha sido desactivada exitosamente.' })
+    },
+    onError: (err: any) => {
+      notifications.notify({ kind: 'error', title: 'Error al desactivar', body: err?.message ?? 'Error desconocido' })
+    },
   })
 
   const processErrorMsg = String((processMutation.error as any)?.message ?? '')
@@ -185,7 +200,7 @@ export function QuotesPage() {
                     ),
                   },
                   { header: 'Cotizado por', className: 'hidden md:table-cell', accessor: (q) => q.quotedBy ?? '-' },
-                  { header: 'Fecha', accessor: (q) => new Date(q.createdAt).toLocaleDateString() },
+                  { header: 'Fecha', accessor: (q) => new Date(q.createdAt).toLocaleString('es-ES', { timeZone: 'America/La_Paz' }) },
                   {
                     header: 'TOTAL(BOB)',
                     accessor: (q) => q.total.toLocaleString('es-BO', { minimumFractionDigits: 2 })
@@ -203,27 +218,26 @@ export function QuotesPage() {
                         >
                           <span className="hidden md:inline">Ver</span>
                         </Button>
-                        {q.status !== 'PROCESSED' && (
-                          <>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              icon={<PencilIcon className="w-4 h-4" />}
-                              onClick={() => navigate(`/catalog/seller?quoteId=${q.id}`)}
-                            >
-                              <span className="hidden md:inline">Editar</span>
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              icon={<ArrowPathIcon className="w-4 h-4" />}
-                              onClick={() => processMutation.mutate(q.id)}
-                              loading={processMutation.isPending}
-                            >
-                              Procesar
-                            </Button>
-                          </>
-                        )}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          icon={<ArrowPathIcon className="w-4 h-4" />}
+                          onClick={() => processMutation.mutate(q.id)}
+                          loading={processMutation.isPending}
+                        >
+                          <span className="hidden md:inline">Procesar</span>
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          icon={<TrashIcon className="w-4 h-4 text-red-500" />}
+                          onClick={() => {
+                            if (confirm('¿Estás seguro de que quieres eliminar esta cotización?')) {
+                              deleteMutation.mutate(q.id)
+                            }
+                          }}
+                          loading={deleteMutation.isPending}
+                        />
                       </div>
                     ),
                   },

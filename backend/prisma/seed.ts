@@ -443,8 +443,8 @@ async function main() {
   // Basic warehouse/location for immediate stock tests
   const wh = await db.warehouse.upsert({
     where: { tenantId_code: { tenantId: demoTenant.id, code: 'WH-01' } },
-    update: { name: 'Almacén Central' },
-    create: { tenantId: demoTenant.id, code: 'WH-01', name: 'Almacén Central', createdBy: demoAdminUser.id },
+    update: { name: 'Almacén Central', city: 'La Paz' },
+    create: { tenantId: demoTenant.id, code: 'WH-01', name: 'Almacén Central', city: 'La Paz', createdBy: demoAdminUser.id },
   })
 
   const loc = await db.location.upsert({

@@ -746,6 +746,7 @@ model Quote {
   number     String
   customerId String
   status     QuoteStatus @default(CREATED)
+  isActive   Boolean  @default(true)
   processedAt DateTime?
   validityDays Int     @default(7)
   paymentMode  String  @default("CASH")
@@ -771,6 +772,7 @@ model Quote {
   @@index([tenantId])
   @@index([customerId])
   @@index([status])
+  @@index([isActive])
 }
 
 model QuoteLine {

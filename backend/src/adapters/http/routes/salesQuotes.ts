@@ -431,7 +431,7 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
       const { take, cursor, customerSearch } = parsed.data
       const tenantId = request.auth!.tenantId
 
-      const where: any = { tenantId }
+      const where: any = { tenantId, isActive: true }
       if (customerSearch) {
         where.customer = {
           name: { contains: customerSearch, mode: 'insensitive' },
@@ -1533,15 +1533,19 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: 'Quote not found' })
       }
 
-      await db.quote.delete({ where: { id } })
+      await db.quote.update({
+        where: { id },
+        data: { isActive: false, updatedAt: new Date() }
+      })
 
       await audit.append({
         tenantId,
         actorUserId: userId,
-        action: 'DELETE',
+        action: 'DEACTIVATE',
         entityType: 'QUOTE',
         entityId: id,
         before: quote,
+        after: { ...quote, isActive: false },
       })
 
       return { success: true }

@@ -13,6 +13,7 @@ import {
   BalancesPage,
   BulkFulfillRequestsPage,
   BulkTransferPage,
+  CompletedMovementsPage,
   MovementRequestsPage,
   MovementsPage,
   ReturnsPage,
@@ -150,6 +151,15 @@ export function AppRouter() {
           element={
             <ProtectedRoute requiredPermissions={['stock:move', 'stock:manage']} requireAll={false}>
               <BulkFulfillRequestsPage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/stock/completed-movements"
+          element={
+            <ProtectedRoute requiredPermissions={['stock:move', 'stock:manage']} requireAll={false}>
+              <CompletedMovementsPage />
             </ProtectedRoute>
           }
         />

@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { MainLayout, PageContainer, Select, Input, Button, Modal } from '../../components'
 import { MovementQuickActions } from '../../components/MovementQuickActions'
 import { useNavigation } from '../../hooks'
+import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../providers/AuthProvider'
 import { apiFetch } from '../../lib/api'
 
@@ -56,7 +57,7 @@ type StockBatch = {
   presentationId: string | null
   presentationName: string | null
   unitsPerPresentation: number | null
-  quantity: number
+  quantity: number // base units (inventoryBalance.quantity)
   expiryDate: string | null
 }
 
@@ -93,8 +94,11 @@ async function listLocationStock(token: string, locationId: string): Promise<{ i
   return { items }
 }
 
-async function listMovementRequests(token: string): Promise<{ items: MovementRequest[] }> {
-  const response = await apiFetch<{ items: any[] }>('/api/v1/stock/movement-requests?take=50', { token })
+async function listMovementRequests(token: string, city?: string): Promise<{ items: MovementRequest[] }> {
+  const url = city 
+    ? `/api/v1/stock/movement-requests?take=50&city=${encodeURIComponent(city)}`
+    : '/api/v1/stock/movement-requests?take=50'
+  const response = await apiFetch<{ items: any[] }>(url, { token })
   return {
     items: response.items.map((req: any) => ({
       ...req,
@@ -120,6 +124,7 @@ async function listMovementRequests(token: string): Promise<{ items: MovementReq
 export function BulkFulfillRequestsPage() {
   const auth = useAuth()
   const navGroups = useNavigation()
+  const navigate = useNavigate()
 
   const [fromWarehouseId, setFromWarehouseId] = useState('')
   const [fromLocationId, setFromLocationId] = useState('')
@@ -155,9 +160,12 @@ export function BulkFulfillRequestsPage() {
   })
 
   const movementRequestsQuery = useQuery({
-    queryKey: ['movement-requests'],
-    queryFn: () => listMovementRequests(auth.accessToken!),
-    enabled: !!auth.accessToken,
+    queryKey: ['movement-requests', toWarehouseId],
+    queryFn: () => {
+      const destinationCity = activeWarehouses.find((w) => w.id === toWarehouseId)?.city
+      return listMovementRequests(auth.accessToken!, destinationCity || undefined)
+    },
+    enabled: !!auth.accessToken && !!toWarehouseId,
   })
 
   const activeWarehouses = useMemo(
@@ -171,14 +179,12 @@ export function BulkFulfillRequestsPage() {
   const canSubmit = !!fromWarehouseId && !!fromLocationId && !!toWarehouseId && !!toLocationId
 
   const filteredRequests = useMemo(() => {
-    if (!movementRequestsQuery.data?.items || !toWarehouseId) return []
+    if (!movementRequestsQuery.data?.items) return []
 
     return movementRequestsQuery.data.items.filter(
-      (request: MovementRequest) =>
-        request.status === 'OPEN' &&
-        request.requestedCity === activeWarehouses.find((w) => w.id === toWarehouseId)?.city
+      (request: MovementRequest) => request.status === 'OPEN'
     )
-  }, [movementRequestsQuery.data, toWarehouseId, activeWarehouses])
+  }, [movementRequestsQuery.data])
 
   const selectedRequests = useMemo(() => {
     return filteredRequests.filter((request: MovementRequest) => selectedRequestIds.includes(request.id))
@@ -199,7 +205,9 @@ export function BulkFulfillRequestsPage() {
             presentationName: item.presentationName,
             unitsPerPresentation: item.unitsPerPresentation,
             totalRequested: 0,
-            remaining: 0
+            remaining: 0,
+            requestedQuantity: 0,
+            remainingQuantity: 0
           })
         }
         const product = productsMap.get(key)
@@ -207,8 +215,14 @@ export function BulkFulfillRequestsPage() {
           ? Math.ceil(item.requestedQuantity / item.unitsPerPresentation)
           : item.presentationQuantity || item.requestedQuantity
         
+        const remainingPresentationQuantity = item.unitsPerPresentation && item.unitsPerPresentation > 0 
+          ? Math.ceil(item.remainingQuantity / item.unitsPerPresentation)
+          : item.presentationQuantity || item.remainingQuantity
+        
         product.totalRequested += presentationQuantity
-        product.remaining += presentationQuantity
+        product.remaining += remainingPresentationQuantity
+        product.requestedQuantity += item.requestedQuantity
+        product.remainingQuantity += item.remainingQuantity
       })
     })
     
@@ -238,61 +252,30 @@ export function BulkFulfillRequestsPage() {
     return 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' // Bueno
   }
 
-  const calculateAutoSelectQuantity = (product: typeof requestedProducts[0], batch: any) => {
-    const batchUnitsPerPresentation = parseInt(batch.unitsPerPresentation) || 1
-    const productUnitsPerPresentation = product.unitsPerPresentation || 1
-    
-    // Si el lote tiene la misma presentación que lo solicitado
-    if (batch.presentationId === product.presentationId) {
-      return Math.min(product.remaining, batch.quantity)
-    }
-    
-    // Si el lote es de unidades individuales (unitsPerPresentation === 1) y el producto tiene presentación empaquetada
-    if (batchUnitsPerPresentation === 1 && product.presentationId && productUnitsPerPresentation > 1) {
-      const unitsNeeded = product.remaining * productUnitsPerPresentation
-      return Math.min(unitsNeeded, batch.quantity)
-    }
-    
-    // Si el lote tiene presentación empaquetada y el producto solicita unidades individuales
-    if (batchUnitsPerPresentation > 1 && (!product.presentationId || productUnitsPerPresentation === 1)) {
-      const presentationsNeeded = Math.ceil(product.remaining / batchUnitsPerPresentation)
-      return Math.min(presentationsNeeded, batch.quantity)
-    }
-    
-    // Si el producto tiene presentación empaquetada y el lote es de unidades individuales
-    if (product.presentationId && productUnitsPerPresentation > 1 && batchUnitsPerPresentation === 1) {
-      const unitsNeeded = product.remaining * productUnitsPerPresentation
-      return Math.min(unitsNeeded, batch.quantity)
-    }
-    
-    // En otros casos, usar la lógica actual (mismas unidades)
-    return Math.min(product.remaining, batch.quantity)
+  const getBatchUnitsPerPresentation = (batch: Pick<StockBatch, 'unitsPerPresentation'>) => {
+    const v = Number(batch.unitsPerPresentation ?? 1)
+    return Number.isFinite(v) && v > 0 ? v : 1
   }
 
-  const getQuantityStatus = (product: typeof requestedProducts[0], batch: any) => {
-    const batchUnitsPerPresentation = parseInt(batch.unitsPerPresentation) || 1
-    const productUnitsPerPresentation = product.unitsPerPresentation || 1
-    
-    const calculatedQuantity = calculateAutoSelectQuantity(product, batch)
-    let requiredQuantity = product.remaining
-    
-    // Si el lote tiene presentación empaquetada y el producto solicita unidades individuales
-    if (batchUnitsPerPresentation > 1 && (!product.presentationId || productUnitsPerPresentation === 1)) {
-      requiredQuantity = Math.ceil(product.remaining / batchUnitsPerPresentation)
-    }
-    // Si el lote es de unidades individuales y el producto tiene presentación empaquetada
-    else if (batchUnitsPerPresentation === 1 && product.presentationId && productUnitsPerPresentation > 1) {
-      requiredQuantity = product.remaining * productUnitsPerPresentation
-    }
-    // Si el producto tiene presentación empaquetada y el lote es de unidades individuales
-    else if (product.presentationId && productUnitsPerPresentation > 1 && batchUnitsPerPresentation === 1) {
-      requiredQuantity = product.remaining * productUnitsPerPresentation
-    }
-    
-    if (calculatedQuantity < requiredQuantity) {
-      return 'insufficient' // No hay suficiente cantidad
-    }
-    return 'sufficient' // Hay suficiente cantidad
+  const getBatchMaxSelectable = (batch: StockBatch) => {
+    // El usuario selecciona en "unidades del lote":
+    // - Unidad => 1 selección = 1 unidad
+    // - Caja(10u) => 1 selección = 10 unidades
+    const unitsPer = getBatchUnitsPerPresentation(batch)
+    return Math.floor(Number(batch.quantity ?? 0) / unitsPer)
+  }
+
+  const calculateAutoSelectQuantity = (product: typeof requestedProducts[0], batch: StockBatch) => {
+    const unitsPer = getBatchUnitsPerPresentation(batch)
+    const remainingUnits = Number(product.remainingQuantity ?? 0)
+    const desiredCount = Math.ceil(remainingUnits / unitsPer)
+    return Math.min(desiredCount, getBatchMaxSelectable(batch))
+  }
+
+  const getQuantityStatus = (product: typeof requestedProducts[0], batch: StockBatch) => {
+    const unitsPer = getBatchUnitsPerPresentation(batch)
+    const requiredCount = Math.ceil(Number(product.remainingQuantity ?? 0) / unitsPer)
+    return getBatchMaxSelectable(batch) < requiredCount ? 'insufficient' : 'sufficient'
   }
 
   const isExactPresentationMatch = (product: typeof requestedProducts[0], batch: any) => {
@@ -322,80 +305,64 @@ export function BulkFulfillRequestsPage() {
     return false
   }
 
-  const convertQuantityToProductPresentation = (quantity: number, batch: any, product: typeof requestedProducts[0]) => {
-    const batchUnitsPerPresentation = parseInt(batch.unitsPerPresentation) || 1
-    const productUnitsPerPresentation = product.unitsPerPresentation || 1
-    
-    // Si el lote tiene la misma presentación que el producto
-    if (batch.presentationId === product.presentationId) {
-      return quantity
-    }
-    
-    // Si el lote es de unidades individuales y el producto tiene presentación empaquetada
-    if (batchUnitsPerPresentation === 1 && product.presentationId && productUnitsPerPresentation > 1) {
-      // Convertir unidades individuales a presentaciones empaquetadas
-      return quantity / productUnitsPerPresentation
-    }
-    
-    // Si el lote tiene presentación empaquetada y el producto solicita unidades individuales
-    if (batchUnitsPerPresentation > 1 && (!product.presentationId || productUnitsPerPresentation === 1)) {
-      // Convertir presentaciones empaquetadas a unidades individuales
-      return quantity * batchUnitsPerPresentation
-    }
-    
-    // Si el producto tiene presentación empaquetada y el lote es de unidades individuales
-    if (product.presentationId && productUnitsPerPresentation > 1 && batchUnitsPerPresentation === 1) {
-      // Convertir unidades individuales a presentaciones empaquetadas
-      return quantity / productUnitsPerPresentation
-    }
-    
-    // En otros casos, devolver la cantidad sin conversión
-    return quantity
+  const getSelectedUnitsForProduct = (product: typeof requestedProducts[0]) => {
+    return Object.entries(batchSelections).reduce((totalUnits, [balanceId, selectedCount]) => {
+      const batch = availableBatches.find((b) => b.id === balanceId)
+      if (!batch) return totalUnits
+      if (batch.productId !== product.productId) return totalUnits
+      const unitsPer = getBatchUnitsPerPresentation(batch)
+      return totalUnits + Number(selectedCount ?? 0) * unitsPer
+    }, 0)
   }
 
   const getProductFulfillmentStatus = (product: typeof requestedProducts[0]) => {
-    const selectedEquivalentQuantity = Object.entries(batchSelections).reduce((total, [batchId, quantity]) => {
-      const batch = availableBatches.find(b => b.id === batchId)
-      if (batch && batch.productId === product.productId) {
-        const convertedQuantity = convertQuantityToProductPresentation(quantity, batch, product)
-        return total + convertedQuantity
-      }
-      return total
-    }, 0)
-    
-    return selectedEquivalentQuantity >= product.remaining
+    const selectedUnits = getSelectedUnitsForProduct(product)
+    return selectedUnits >= Number(product.remainingQuantity ?? 0)
   }
 
   const queryClient = useQueryClient()
 
   const bulkFulfillMutation = useMutation({
-    mutationFn: async (data: { 
+    mutationFn: async (data: {
       fulfillments: Array<{
         requestId: string
         items: Array<{
+          requestItemId: string
           productId: string
           batchId: string
-          quantity: number
+          quantity: number // base units
         }>
       }>
       fromLocationId: string
       toLocationId: string
-      note?: string 
+      note?: string
     }) => {
-      return apiFetch('/api/v1/stock/movement-requests/bulk-fulfill', {
-        method: 'POST',
-        token: auth.accessToken!,
-        body: JSON.stringify(data),
-      })
+      return apiFetch<{ fulfilledRequestIds: string[]; touchedRequestIds: string[]; movementCount: number }>(
+        '/api/v1/stock/movement-requests/bulk-fulfill',
+        {
+          method: 'POST',
+          token: auth.accessToken!,
+          body: JSON.stringify(data),
+        },
+      )
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       // Refrescar las queries para mostrar los cambios
       queryClient.invalidateQueries({ queryKey: ['movement-requests'] })
+      queryClient.invalidateQueries({ queryKey: ['completed-movements'] })
+      
+      // TODO: Generar PDFs automáticamente cuando el backend proporcione los datos necesarios
+      console.log('Movimiento completado exitosamente. PDFs automáticos en desarrollo.')
+      
       // Limpiar la selección después del éxito
       setSelectedRequestIds([])
       setBatchSelections({})
       setNote('')
       setIsFulfillModalOpen(false)
+      
+      // Navegar automáticamente a "Realizados" y resaltar el registro
+      const highlightId = data?.touchedRequestIds?.[0] || data?.fulfilledRequestIds?.[0]
+      navigate(highlightId ? `/stock/completed-movements?highlight=${encodeURIComponent(highlightId)}` : '/stock/completed-movements')
     },
   })
 
@@ -450,6 +417,7 @@ export function BulkFulfillRequestsPage() {
                 onChange={(e) => {
                   setToWarehouseId(e.target.value)
                   setToLocationId('')
+                  setSelectedRequestIds([]) // Limpiar selección cuando cambia el destino
                 }}
                 options={[
                   { value: '', label: 'Selecciona almacén' },
@@ -528,12 +496,15 @@ export function BulkFulfillRequestsPage() {
                           </div>
                           <div className="flex-1 text-xs text-slate-600 dark:text-slate-400 ml-4">
                             {request.items.map((item: MovementRequestItem, index: number) => {
-                              const presentationQuantity = item.unitsPerPresentation && item.unitsPerPresentation > 0 
-                                ? Math.ceil(item.requestedQuantity / item.unitsPerPresentation)
-                                : item.presentationQuantity || item.requestedQuantity;
+                              const remainingPresentationQuantity = item.unitsPerPresentation && item.unitsPerPresentation > 0 
+                                ? Math.ceil(item.remainingQuantity / item.unitsPerPresentation)
+                                : item.presentationQuantity || item.remainingQuantity;
+                              
+                              const presentationText = item.presentationName || 'Sin presentación';
+                              
                               return (
-                                <div key={index} className="text-xs">
-                                  (<strong>{presentationQuantity}</strong>, {item.presentationName || 'Sin presentación'}{item.unitsPerPresentation ? ` (${item.unitsPerPresentation}u)` : ''} - {item.productName || 'Producto desconocido'})
+                                <div key={index} className={`text-xs ${item.remainingQuantity === 0 ? 'line-through text-slate-400 dark:text-slate-500' : ''}`}>
+                                  {remainingPresentationQuantity} {presentationText}{item.unitsPerPresentation ? ` (${item.unitsPerPresentation}u)` : ''} - {item.productName || 'Producto desconocido'}
                                 </div>
                               );
                             })}
@@ -620,7 +591,7 @@ export function BulkFulfillRequestsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {requestedProducts.map((product, index) => {
+                  {requestedProducts.filter(product => product.remainingQuantity > 0).map((product, index) => {
                     const isFulfilled = getProductFulfillmentStatus(product)
                     return (
                       <tr key={index} className="border-b border-slate-100 dark:border-slate-700">
@@ -646,7 +617,9 @@ export function BulkFulfillRequestsPage() {
                             : (product.presentationName || 'Sin presentación') + (product.unitsPerPresentation && product.unitsPerPresentation > 1 ? ` (${product.unitsPerPresentation}u)` : '')}
                         </td>
                         <td className="py-3 px-3">
-                          <strong className="text-slate-900 dark:text-slate-100">{product.remaining}</strong>
+                          <strong className={`text-slate-900 dark:text-slate-100 ${product.remainingQuantity === 0 ? 'line-through text-slate-400 dark:text-slate-500' : ''}`}>
+                            {product.remaining}
+                          </strong>
                         </td>
                       </tr>
                     )
@@ -671,7 +644,7 @@ export function BulkFulfillRequestsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {requestedProducts.map((product) => {
+                  {requestedProducts.filter(product => product.remainingQuantity > 0).map((product) => {
                     const productBatches = availableBatches.filter(batch => batch.productId === product.productId)
                     
                     return (
@@ -728,7 +701,7 @@ export function BulkFulfillRequestsPage() {
                                 </div>
                               </td>
                               <td className="py-3 px-3 text-slate-600 dark:text-slate-400">
-                                {productBatches[0].quantity}
+                                {getBatchMaxSelectable(productBatches[0])}
                               </td>
                               <td className="py-3 px-3">
                                 <div className="flex items-center gap-2">
@@ -758,12 +731,12 @@ export function BulkFulfillRequestsPage() {
                                       const value = parseInt(e.target.value) || 0
                                       setBatchSelections(prev => ({
                                         ...prev,
-                                        [productBatches[0].id]: Math.min(value, productBatches[0].quantity)
+                                        [productBatches[0].id]: Math.min(value, getBatchMaxSelectable(productBatches[0]))
                                       }))
                                     }}
                                     disabled={!batchSelections[productBatches[0].id]}
                                     min="0"
-                                    max={productBatches[0].quantity}
+                                    max={getBatchMaxSelectable(productBatches[0])}
                                     className="w-20"
                                     placeholder="0"
                                   />
@@ -800,7 +773,7 @@ export function BulkFulfillRequestsPage() {
                               </div>
                             </td>
                             <td className="py-3 px-3 text-slate-600 dark:text-slate-400">
-                              {batch.quantity}
+                              {getBatchMaxSelectable(batch)}
                             </td>
                             <td className="py-3 px-3">
                               <div className="flex items-center gap-2">
@@ -830,12 +803,12 @@ export function BulkFulfillRequestsPage() {
                                     const value = parseInt(e.target.value) || 0
                                     setBatchSelections(prev => ({
                                       ...prev,
-                                      [batch.id]: Math.min(value, batch.quantity)
+                                      [batch.id]: Math.min(value, getBatchMaxSelectable(batch))
                                     }))
                                   }}
                                   disabled={!batchSelections[batch.id]}
                                   min="0"
-                                  max={batch.quantity}
+                                  max={getBatchMaxSelectable(batch)}
                                   className="w-20"
                                   placeholder="0"
                                 />
@@ -865,52 +838,63 @@ export function BulkFulfillRequestsPage() {
           </Button>
           <Button 
             onClick={() => {
-              // Preparar los datos para el fulfillment parcial
+              // Preparar fulfillments en UNIDADES (base units) y asignarlos a las solicitudes seleccionadas
+              const selections = Object.entries(batchSelections)
+                .map(([balanceId, selectedCount]) => {
+                  const batch = availableBatches.find((b) => b.id === balanceId)
+                  if (!batch) return null
+                  const unitsPer = getBatchUnitsPerPresentation(batch)
+                  const count = Number(selectedCount ?? 0)
+                  if (!Number.isFinite(count) || count <= 0) return null
+                  return {
+                    productId: batch.productId,
+                    batchId: batch.batchId,
+                    remainingUnits: count * unitsPer,
+                  }
+                })
+                .filter(Boolean) as Array<{ productId: string; batchId: string; remainingUnits: number }>
+
+              const selectionsByProduct = new Map<string, Array<{ batchId: string; remainingUnits: number }>>()
+              for (const s of selections) {
+                const list = selectionsByProduct.get(s.productId) ?? []
+                list.push({ batchId: s.batchId, remainingUnits: s.remainingUnits })
+                selectionsByProduct.set(s.productId, list)
+              }
+
               const fulfillments: Array<{
                 requestId: string
-                items: Array<{
-                  productId: string
-                  batchId: string
-                  quantity: number
-                }>
+                items: Array<{ requestItemId: string; productId: string; batchId: string; quantity: number }>
               }> = []
 
-              // Agrupar las selecciones por solicitud
-              const selectionsByRequest: Record<string, Array<{
-                productId: string
-                batchId: string
-                quantity: number
-              }>> = {}
+              for (const req of selectedRequests) {
+                const items: Array<{ requestItemId: string; productId: string; batchId: string; quantity: number }> = []
 
-              Object.entries(batchSelections).forEach(([batchId, quantity]) => {
-                const batch = availableBatches.find(b => b.id === batchId)
-                if (batch && quantity > 0) {
-                  // Encontrar qué solicitud contiene este producto
-                  const request = movementRequestsQuery.data?.items.find(req => 
-                    req.items.some(item => item.productId === batch.productId)
-                  )
-                  
-                  if (request) {
-                    if (!selectionsByRequest[request.id]) {
-                      selectionsByRequest[request.id] = []
-                    }
-                    
-                    selectionsByRequest[request.id].push({
-                      productId: batch.productId,
-                      batchId: batch.id,
-                      quantity: quantity
+                for (const it of req.items) {
+                  let needUnits = Number(it.remainingQuantity ?? 0)
+                  if (!Number.isFinite(needUnits) || needUnits <= 0) continue
+
+                  const batchPool = selectionsByProduct.get(it.productId) ?? []
+                  for (const b of batchPool) {
+                    if (needUnits <= 0) break
+                    if (b.remainingUnits <= 0) continue
+                    const take = Math.min(needUnits, b.remainingUnits)
+                    if (take <= 0) continue
+
+                    items.push({
+                      requestItemId: it.id,
+                      productId: it.productId,
+                      batchId: b.batchId,
+                      quantity: take,
                     })
+                    b.remainingUnits -= take
+                    needUnits -= take
                   }
                 }
-              })
 
-              // Convertir a formato de fulfillments
-              Object.entries(selectionsByRequest).forEach(([requestId, items]) => {
-                fulfillments.push({
-                  requestId,
-                  items
-                })
-              })
+                if (items.length > 0) {
+                  fulfillments.push({ requestId: req.id, items })
+                }
+              }
 
               bulkFulfillMutation.mutate({
                 fulfillments,

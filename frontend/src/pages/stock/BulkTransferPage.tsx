@@ -3,9 +3,12 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { apiFetch } from '../../lib/api'
 import { getProductLabel } from '../../lib/productName'
 import { useAuth } from '../../providers/AuthProvider'
+import { useTenant } from '../../providers/TenantProvider'
+import { usePermissions } from '../../hooks/usePermissions'
 import { useNavigation } from '../../hooks'
-import { MainLayout, PageContainer, Table, Loading, ErrorState, EmptyState, Button, Input, Select } from '../../components'
+import { MainLayout, PageContainer, Table, Loading, ErrorState, EmptyState, Button, Input, Select, Modal } from '../../components'
 import { MovementQuickActions } from '../../components/MovementQuickActions'
+import { exportPickingToPdf, exportLabelToPdf } from '../../lib/movementRequestDocsPdf'
 
 type WarehouseListItem = { id: string; code: string; name: string; city?: string | null; isActive: boolean }
 
@@ -56,6 +59,8 @@ async function fetchWarehouseStock(token: string, warehouseId: string): Promise<
 
 export function BulkTransferPage() {
   const auth = useAuth()
+  const tenant = useTenant()
+  const permissions = usePermissions()
   const navGroups = useNavigation()
 
   const [fromWarehouseId, setFromWarehouseId] = useState('')
@@ -68,6 +73,10 @@ export function BulkTransferPage() {
   const [submitError, setSubmitError] = useState('')
   const [submitSuccess, setSubmitSuccess] = useState<null | { referenceId: string }>(null)
   const [productFilter, setProductFilter] = useState('')
+  const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false)
+  const [labelBultos, setLabelBultos] = useState('')
+  const [labelResponsable, setLabelResponsable] = useState('')
+  const [labelObservaciones, setLabelObservaciones] = useState('')
 
   const warehousesQuery = useQuery({
     queryKey: ['warehouses', 'bulkTransfer'],
@@ -170,6 +179,62 @@ export function BulkTransferPage() {
       setSubmitSuccess({ referenceId: data.referenceId })
       setSelectedRowIds({})
       setQtyByRowId({})
+      setIsConfirmModalOpen(false)
+
+      // Generate picking PDF
+      const fromWarehouse = activeWarehouses.find(w => w.id === fromWarehouseId)
+      const toWarehouse = activeWarehouses.find(w => w.id === toWarehouseId)
+      const fromLocation = fromLocationsQuery.data?.items.find(l => l.id === fromLocationId)
+      const toLocation = toLocationsQuery.data?.items.find(l => l.id === toLocationId)
+
+      exportPickingToPdf(
+        {
+          requestId: data.referenceId,
+          generatedAtIso: new Date().toISOString(),
+          fromWarehouseLabel: fromWarehouse ? `${fromWarehouse.code} - ${fromWarehouse.name}` : '—',
+          fromLocationCode: fromLocation?.code ?? '—',
+          toWarehouseLabel: toWarehouse ? `${toWarehouse.code} - ${toWarehouse.name}` : '—',
+          toLocationCode: toLocation?.code ?? '—',
+          requestedByName: permissions.user?.fullName ?? null,
+        },
+        [],
+        data.items.map((item: any) => {
+          const pres = parsePresentationFromBatchNumber(String(item.createdMovement.batch?.batchNumber ?? ''))
+          const presentationLabel = pres ? `${pres.name} (${pres.unitsPerPresentation}u)` : '—'
+          return {
+            locationCode: fromLocation?.code ?? '—',
+            productLabel: getProductLabel({
+              sku: item.createdMovement.product?.sku ?? '—',
+              name: item.createdMovement.product?.name ?? '—',
+              genericName: null,
+            }),
+            batchNumber: item.createdMovement.batch?.batchNumber ?? null,
+            expiresAt: item.createdMovement.batch?.expiresAt ?? null,
+            quantityUnits: Number(item.createdMovement.quantity ?? 0),
+            presentationLabel,
+          }
+        }),
+      )
+
+      // Generate label PDF
+      const country = tenant.branding?.country ?? 'BOLIVIA'
+      exportLabelToPdf({
+        requestId: data.referenceId,
+        generatedAtIso: new Date().toISOString(),
+        fromWarehouseLabel: fromWarehouse?.city ? `${fromWarehouse.city}, ${country}` : country,
+        fromLocationCode: fromLocation?.code ?? '—',
+        toWarehouseLabel: toWarehouse?.city ? `${toWarehouse.city}, ${country}` : country,
+        toLocationCode: toLocation?.code ?? '—',
+        requestedByName: permissions.user?.fullName ?? null,
+        bultos: labelBultos,
+        responsable: labelResponsable,
+        observaciones: labelObservaciones,
+      })
+
+      // Reset label fields
+      setLabelBultos('')
+      setLabelResponsable('')
+      setLabelObservaciones('')
 
       // Enviar notificaciones
       try {
@@ -193,6 +258,7 @@ export function BulkTransferPage() {
     },
     onError: (e: any) => {
       setSubmitError(e?.message || 'Error')
+      // Don't close modal on error so user can see the error and retry
     },
   })
 
@@ -275,7 +341,7 @@ export function BulkTransferPage() {
           </div>
 
           <div className="mt-4 flex gap-2">
-            <Button onClick={() => bulkTransferMutation.mutate()} disabled={!canSubmit} loading={bulkTransferMutation.isPending}>
+            <Button onClick={() => setIsConfirmModalOpen(true)} disabled={!canSubmit}>
               Crear transferencia masiva
             </Button>
             <Button
@@ -419,6 +485,66 @@ export function BulkTransferPage() {
           )}
         </div>
         </div>
+
+        <Modal isOpen={isConfirmModalOpen} onClose={() => setIsConfirmModalOpen(false)} title="Confirmar Transferencia" maxWidth="lg">
+          <div className="space-y-4">
+            <div className="rounded-md border border-slate-200 p-4 text-sm dark:border-slate-700">
+              <div className="mb-2 text-slate-900 dark:text-slate-100">
+                <span className="font-medium">Origen:</span>{' '}
+                {activeWarehouses.find(w => w.id === fromWarehouseId)?.name ?? '—'} ·{' '}
+                {fromLocationsQuery.data?.items.find(l => l.id === fromLocationId)?.code ?? '—'}
+              </div>
+              <div className="mb-2 text-slate-700 dark:text-slate-300">
+                <span className="font-medium">Destino:</span>{' '}
+                {activeWarehouses.find(w => w.id === toWarehouseId)?.name ?? '—'} ·{' '}
+                {toLocationsQuery.data?.items.find(l => l.id === toLocationId)?.code ?? '—'}
+              </div>
+              <div className="text-slate-700 dark:text-slate-300">
+                <span className="font-medium">Productos seleccionados:</span> {selectedCount}
+              </div>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-2">
+              <Input label="Bultos" value={labelBultos} onChange={(e) => setLabelBultos(e.target.value)} placeholder="Ej: 3" />
+              <Input
+                label="Responsable"
+                value={labelResponsable}
+                onChange={(e) => setLabelResponsable(e.target.value)}
+                placeholder="Ej: Juan Pérez"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Observaciones</label>
+              <textarea
+                className="w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
+                rows={3}
+                value={labelObservaciones}
+                onChange={(e) => setLabelObservaciones(e.target.value)}
+                placeholder="Opcional"
+              />
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <Button
+                onClick={() => bulkTransferMutation.mutate()}
+                loading={bulkTransferMutation.isPending}
+                disabled={!labelResponsable.trim()}
+              >
+                Confirmar transferencia
+              </Button>
+              <Button variant="secondary" onClick={() => setIsConfirmModalOpen(false)} disabled={bulkTransferMutation.isPending}>
+                Cancelar
+              </Button>
+            </div>
+
+            {submitError && (
+              <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-200">
+                {submitError}
+              </div>
+            )}
+          </div>
+        </Modal>
       </PageContainer>
     </MainLayout>
   )
