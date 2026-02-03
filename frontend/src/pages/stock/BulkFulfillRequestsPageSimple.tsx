@@ -369,7 +369,19 @@ export function BulkFulfillRequestsPage() {
   const queryClient = useQueryClient()
 
   const bulkFulfillMutation = useMutation({
-    mutationFn: async (data: { requestIds: string[]; fromLocationId: string; toLocationId: string; note?: string }) => {
+    mutationFn: async (data: { 
+      fulfillments: Array<{
+        requestId: string
+        items: Array<{
+          productId: string
+          batchId: string
+          quantity: number
+        }>
+      }>
+      fromLocationId: string
+      toLocationId: string
+      note?: string 
+    }) => {
       return apiFetch('/api/v1/stock/movement-requests/bulk-fulfill', {
         method: 'POST',
         token: auth.accessToken!,
@@ -381,7 +393,9 @@ export function BulkFulfillRequestsPage() {
       queryClient.invalidateQueries({ queryKey: ['movement-requests'] })
       // Limpiar la selección después del éxito
       setSelectedRequestIds([])
+      setBatchSelections({})
       setNote('')
+      setIsFulfillModalOpen(false)
     },
   })
 
@@ -851,13 +865,63 @@ export function BulkFulfillRequestsPage() {
           </Button>
           <Button 
             onClick={() => {
-              // Aquí irá la lógica para procesar la transferencia
-              console.log('Batch selections:', batchSelections)
-              setIsFulfillModalOpen(false)
+              // Preparar los datos para el fulfillment parcial
+              const fulfillments: Array<{
+                requestId: string
+                items: Array<{
+                  productId: string
+                  batchId: string
+                  quantity: number
+                }>
+              }> = []
+
+              // Agrupar las selecciones por solicitud
+              const selectionsByRequest: Record<string, Array<{
+                productId: string
+                batchId: string
+                quantity: number
+              }>> = {}
+
+              Object.entries(batchSelections).forEach(([batchId, quantity]) => {
+                const batch = availableBatches.find(b => b.id === batchId)
+                if (batch && quantity > 0) {
+                  // Encontrar qué solicitud contiene este producto
+                  const request = movementRequestsQuery.data?.items.find(req => 
+                    req.items.some(item => item.productId === batch.productId)
+                  )
+                  
+                  if (request) {
+                    if (!selectionsByRequest[request.id]) {
+                      selectionsByRequest[request.id] = []
+                    }
+                    
+                    selectionsByRequest[request.id].push({
+                      productId: batch.productId,
+                      batchId: batch.id,
+                      quantity: quantity
+                    })
+                  }
+                }
+              })
+
+              // Convertir a formato de fulfillments
+              Object.entries(selectionsByRequest).forEach(([requestId, items]) => {
+                fulfillments.push({
+                  requestId,
+                  items
+                })
+              })
+
+              bulkFulfillMutation.mutate({
+                fulfillments,
+                fromLocationId,
+                toLocationId,
+                note
+              })
             }}
-            disabled={Object.keys(batchSelections).length === 0}
+            disabled={Object.keys(batchSelections).length === 0 || bulkFulfillMutation.isPending}
           >
-            Confirmar Transferencia
+            {bulkFulfillMutation.isPending ? 'Procesando...' : 'Confirmar Transferencia'}
           </Button>
         </div>
       </Modal>

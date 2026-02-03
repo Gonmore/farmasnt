@@ -221,25 +221,41 @@ export function BulkFulfillRequestsPage() {
                       columns={[
                         {
                           header: 'Producto',
-                          accessor: (it) => getProductLabel({
-                            sku: it.productSku ?? '—',
-                            name: it.productName ?? '—',
-                            genericName: it.genericName ?? null,
-                          }),
+                          accessor: (it) => (
+                            <span className={it.remainingQuantity < it.requestedQuantity ? 'line-through text-slate-400 dark:text-slate-500' : ''}>
+                              {getProductLabel({
+                                sku: it.productSku ?? '—',
+                                name: it.productName ?? '—',
+                                genericName: it.genericName ?? null,
+                              })}
+                            </span>
+                          ),
                         },
                         {
                           header: 'Presentación',
-                          accessor: (it) => formatPresentationLabel(it.presentation ? { name: it.presentation.name, unitsPerPresentation: it.presentation.unitsPerPresentation } : null),
+                          accessor: (it) => (
+                            <span className={it.remainingQuantity < it.requestedQuantity ? 'line-through text-slate-400 dark:text-slate-500' : ''}>
+                              {formatPresentationLabel(it.presentation ? { name: it.presentation.name, unitsPerPresentation: it.presentation.unitsPerPresentation } : null)}
+                            </span>
+                          ),
                         },
                         {
                           header: 'Solicitado (u)',
                           className: 'w-32',
-                          accessor: (it) => String(Number(it.requestedQuantity ?? 0)),
+                          accessor: (it) => (
+                            <span className={it.remainingQuantity < it.requestedQuantity ? 'line-through text-slate-400 dark:text-slate-500' : ''}>
+                              {String(Number(it.requestedQuantity ?? 0))}
+                            </span>
+                          ),
                         },
                         {
                           header: 'Pendiente (u)',
                           className: 'w-32',
-                          accessor: (it) => String(Number(it.remainingQuantity ?? 0)),
+                          accessor: (it) => (
+                            <span className={it.remainingQuantity < it.requestedQuantity ? 'line-through text-slate-400 dark:text-slate-500' : ''}>
+                              {String(Number(it.remainingQuantity ?? 0))}
+                            </span>
+                          ),
                         },
                       ]}
                     />
