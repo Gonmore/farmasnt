@@ -239,38 +239,70 @@ export function BulkFulfillRequestsPage() {
   }
 
   const calculateAutoSelectQuantity = (product: typeof requestedProducts[0], batch: any) => {
+    const batchUnitsPerPresentation = parseInt(batch.unitsPerPresentation) || 1
+    const productUnitsPerPresentation = product.unitsPerPresentation || 1
+    
+    console.log('calculateAutoSelectQuantity:', {
+      product: {
+        remaining: product.remaining,
+        presentationId: product.presentationId,
+        unitsPerPresentation: productUnitsPerPresentation
+      },
+      batch: {
+        unitsPerPresentation: batchUnitsPerPresentation,
+        quantity: batch.quantity
+      }
+    })
+    
     // Si el lote tiene la misma presentación que lo solicitado
     if (batch.presentationId === product.presentationId) {
       return Math.min(product.remaining, batch.quantity)
     }
     
     // Si el lote es de unidades individuales (unitsPerPresentation === 1) y el producto tiene presentación empaquetada
-    if (batch.unitsPerPresentation === 1 && product.presentationId && product.unitsPerPresentation && product.unitsPerPresentation > 1) {
-      const unitsNeeded = product.remaining * product.unitsPerPresentation
+    if (batchUnitsPerPresentation === 1 && product.presentationId && productUnitsPerPresentation > 1) {
+      const unitsNeeded = product.remaining * productUnitsPerPresentation
+      console.log('Case 1: unitsNeeded =', unitsNeeded)
       return Math.min(unitsNeeded, batch.quantity)
     }
     
     // Si el lote tiene presentación empaquetada y el producto solicita unidades individuales
-    if (batch.unitsPerPresentation && batch.unitsPerPresentation > 1 && (!product.presentationId || product.unitsPerPresentation === 1)) {
-      const presentationsNeeded = Math.ceil(product.remaining / batch.unitsPerPresentation)
+    if (batchUnitsPerPresentation > 1 && (!product.presentationId || productUnitsPerPresentation === 1)) {
+      const presentationsNeeded = Math.ceil(product.remaining / batchUnitsPerPresentation)
+      console.log('Case 2: presentationsNeeded =', presentationsNeeded)
       return Math.min(presentationsNeeded, batch.quantity)
     }
     
+    // Si el producto tiene presentación empaquetada y el lote es de unidades individuales
+    if (product.presentationId && productUnitsPerPresentation > 1 && batchUnitsPerPresentation === 1) {
+      const unitsNeeded = product.remaining * productUnitsPerPresentation
+      console.log('Case 3: unitsNeeded =', unitsNeeded)
+      return Math.min(unitsNeeded, batch.quantity)
+    }
+    
     // En otros casos, usar la lógica actual (mismas unidades)
+    console.log('Default case: using product.remaining =', product.remaining)
     return Math.min(product.remaining, batch.quantity)
   }
 
   const getQuantityStatus = (product: typeof requestedProducts[0], batch: any) => {
+    const batchUnitsPerPresentation = parseInt(batch.unitsPerPresentation) || 1
+    const productUnitsPerPresentation = product.unitsPerPresentation || 1
+    
     const calculatedQuantity = calculateAutoSelectQuantity(product, batch)
     let requiredQuantity = product.remaining
     
     // Si el lote tiene presentación empaquetada y el producto solicita unidades individuales
-    if (batch.unitsPerPresentation && batch.unitsPerPresentation > 1 && (!product.presentationId || product.unitsPerPresentation === 1)) {
-      requiredQuantity = Math.ceil(product.remaining / batch.unitsPerPresentation)
+    if (batchUnitsPerPresentation > 1 && (!product.presentationId || productUnitsPerPresentation === 1)) {
+      requiredQuantity = Math.ceil(product.remaining / batchUnitsPerPresentation)
     }
     // Si el lote es de unidades individuales y el producto tiene presentación empaquetada
-    else if (batch.unitsPerPresentation === 1 && product.presentationId && product.unitsPerPresentation && product.unitsPerPresentation > 1) {
-      requiredQuantity = product.remaining * product.unitsPerPresentation
+    else if (batchUnitsPerPresentation === 1 && product.presentationId && productUnitsPerPresentation > 1) {
+      requiredQuantity = product.remaining * productUnitsPerPresentation
+    }
+    // Si el producto tiene presentación empaquetada y el lote es de unidades individuales
+    else if (product.presentationId && productUnitsPerPresentation > 1 && batchUnitsPerPresentation === 1) {
+      requiredQuantity = product.remaining * productUnitsPerPresentation
     }
     
     if (calculatedQuantity < requiredQuantity) {
@@ -280,39 +312,85 @@ export function BulkFulfillRequestsPage() {
   }
 
   const isExactPresentationMatch = (product: typeof requestedProducts[0], batch: any) => {
+    const batchUnitsPerPresentation = parseInt(batch.unitsPerPresentation) || 1
+    const productUnitsPerPresentation = product.unitsPerPresentation || 1
+    
     // Misma presentación exacta
     if (batch.presentationId === product.presentationId) {
       return true
     }
     
     // Si se solicita unidades individuales y el lote las tiene
-    if ((!product.presentationId || product.unitsPerPresentation === 1) && batch.unitsPerPresentation === 1) {
+    if ((!product.presentationId || productUnitsPerPresentation === 1) && batchUnitsPerPresentation === 1) {
       return true
     }
     
     // Si se solicitan unidades empaquetadas y el lote tiene unidades individuales
-    if (product.presentationId && product.unitsPerPresentation && product.unitsPerPresentation > 1 && batch.unitsPerPresentation === 1) {
+    if (product.presentationId && productUnitsPerPresentation > 1 && batchUnitsPerPresentation === 1) {
       return false // No es match exacto, pero sí convertible
     }
     
     // Si se solicita unidades individuales y el lote tiene presentación empaquetada
-    if ((!product.presentationId || product.unitsPerPresentation === 1) && batch.unitsPerPresentation && batch.unitsPerPresentation > 1) {
+    if ((!product.presentationId || productUnitsPerPresentation === 1) && batchUnitsPerPresentation > 1) {
       return false // No es match exacto, pero sí convertible
     }
     
     return false
   }
 
+  const convertQuantityToProductPresentation = (quantity: number, batch: any, product: typeof requestedProducts[0]) => {
+    const batchUnitsPerPresentation = parseInt(batch.unitsPerPresentation) || 1
+    const productUnitsPerPresentation = product.unitsPerPresentation || 1
+    
+    // Si el lote tiene la misma presentación que el producto
+    if (batch.presentationId === product.presentationId) {
+      return quantity
+    }
+    
+    // Si el lote es de unidades individuales y el producto tiene presentación empaquetada
+    if (batchUnitsPerPresentation === 1 && product.presentationId && productUnitsPerPresentation > 1) {
+      // Convertir unidades individuales a presentaciones empaquetadas
+      return quantity / productUnitsPerPresentation
+    }
+    
+    // Si el lote tiene presentación empaquetada y el producto solicita unidades individuales
+    if (batchUnitsPerPresentation > 1 && (!product.presentationId || productUnitsPerPresentation === 1)) {
+      // Convertir presentaciones empaquetadas a unidades individuales
+      return quantity * batchUnitsPerPresentation
+    }
+    
+    // Si el producto tiene presentación empaquetada y el lote es de unidades individuales
+    if (product.presentationId && productUnitsPerPresentation > 1 && batchUnitsPerPresentation === 1) {
+      // Convertir unidades individuales a presentaciones empaquetadas
+      return quantity / productUnitsPerPresentation
+    }
+    
+    // En otros casos, devolver la cantidad sin conversión
+    return quantity
+  }
+
   const getProductFulfillmentStatus = (product: typeof requestedProducts[0]) => {
-    const selectedQuantity = Object.entries(batchSelections).reduce((total, [batchId, quantity]) => {
+    const selectedEquivalentQuantity = Object.entries(batchSelections).reduce((total, [batchId, quantity]) => {
       const batch = availableBatches.find(b => b.id === batchId)
       if (batch && batch.productId === product.productId) {
-        return total + quantity
+        const convertedQuantity = convertQuantityToProductPresentation(quantity, batch, product)
+        console.log('Converting quantity:', quantity, 'from batch presentation to product presentation:', convertedQuantity, {
+          batch: { unitsPerPresentation: batch.unitsPerPresentation, presentationId: batch.presentationId },
+          product: { unitsPerPresentation: product.unitsPerPresentation, presentationId: product.presentationId }
+        })
+        return total + convertedQuantity
       }
       return total
     }, 0)
     
-    return selectedQuantity >= product.remaining
+    console.log('Product fulfillment check:', {
+      productName: product.productName,
+      selectedEquivalentQuantity,
+      productRemaining: product.remaining,
+      isFulfilled: selectedEquivalentQuantity >= product.remaining
+    })
+    
+    return selectedEquivalentQuantity >= product.remaining
   }
 
   const queryClient = useQueryClient()
@@ -576,7 +654,9 @@ export function BulkFulfillRequestsPage() {
                           </span>
                         </td>
                         <td className="py-3 px-3 text-slate-600 dark:text-slate-400">
-                          {product.presentationName || 'Sin presentación'}{product.unitsPerPresentation ? ` (${product.unitsPerPresentation}u)` : ''}
+                          {product.unitsPerPresentation === 1 
+                            ? 'Unidad' 
+                            : (product.presentationName || 'Sin presentación') + (product.unitsPerPresentation && product.unitsPerPresentation > 1 ? ` (${product.unitsPerPresentation}u)` : '')}
                         </td>
                         <td className="py-3 px-3">
                           <strong className="text-slate-900 dark:text-slate-100">{product.remaining}</strong>
@@ -650,13 +730,13 @@ export function BulkFulfillRequestsPage() {
                               <td className="py-3 px-3">
                                 <div className="text-xs text-slate-700 dark:text-slate-300">
                                   {productBatches[0].unitsPerPresentation === 1 
-                                    ? 'unidad' 
+                                    ? 'Unidad' 
                                     : (productBatches[0].presentationName || 'Sin presentación') + (productBatches[0].unitsPerPresentation && productBatches[0].unitsPerPresentation > 1 ? ` (${productBatches[0].unitsPerPresentation}u)` : '')}
                                   {isExactPresentationMatch(product, productBatches[0]) && (
                                     <span className="ml-1 text-yellow-500">⭐</span>
                                   )}
                                   {getQuantityStatus(product, productBatches[0]) === 'insufficient' && (
-                                    <span className="ml-1 text-red-500 text-xs">⚠️</span>
+                                    <span className="ml-1 text-red-500 text-xs" title="Cantidad insuficiente">⚠️</span>
                                   )}
                                 </div>
                               </td>
@@ -722,13 +802,13 @@ export function BulkFulfillRequestsPage() {
                             <td className="py-3 px-3">
                               <div className="text-xs text-slate-700 dark:text-slate-300">
                                   {batch.unitsPerPresentation === 1 
-                                    ? 'unidad' 
+                                    ? 'Unidad' 
                                     : (batch.presentationName || 'Sin presentación') + (batch.unitsPerPresentation && batch.unitsPerPresentation > 1 ? ` (${batch.unitsPerPresentation}u)` : '')}
                                 {isExactPresentationMatch(product, batch) && (
                                   <span className="ml-1 text-yellow-500">⭐</span>
                                 )}
                                 {getQuantityStatus(product, batch) === 'insufficient' && (
-                                  <span className="ml-1 text-red-500 text-xs">⚠️</span>
+                                  <span className="ml-1 text-red-500 text-xs" title="Cantidad insuficiente">⚠️</span>
                                 )}
                               </div>
                             </td>
