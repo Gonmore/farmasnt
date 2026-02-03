@@ -238,6 +238,71 @@ export function BulkFulfillRequestsPage() {
     return 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' // Bueno
   }
 
+  const calculateAutoSelectQuantity = (product: typeof requestedProducts[0], batch: any) => {
+    // Si el lote tiene la misma presentación que lo solicitado
+    if (batch.presentationId === product.presentationId) {
+      return Math.min(product.remaining, batch.quantity)
+    }
+    
+    // Si el lote es de unidades individuales (unitsPerPresentation === 1) y el producto tiene presentación empaquetada
+    if (batch.unitsPerPresentation === 1 && product.presentationId && product.unitsPerPresentation && product.unitsPerPresentation > 1) {
+      const unitsNeeded = product.remaining * product.unitsPerPresentation
+      return Math.min(unitsNeeded, batch.quantity)
+    }
+    
+    // Si el lote tiene presentación empaquetada y el producto solicita unidades individuales
+    if (batch.unitsPerPresentation && batch.unitsPerPresentation > 1 && (!product.presentationId || product.unitsPerPresentation === 1)) {
+      const presentationsNeeded = Math.ceil(product.remaining / batch.unitsPerPresentation)
+      return Math.min(presentationsNeeded, batch.quantity)
+    }
+    
+    // En otros casos, usar la lógica actual (mismas unidades)
+    return Math.min(product.remaining, batch.quantity)
+  }
+
+  const getQuantityStatus = (product: typeof requestedProducts[0], batch: any) => {
+    const calculatedQuantity = calculateAutoSelectQuantity(product, batch)
+    let requiredQuantity = product.remaining
+    
+    // Si el lote tiene presentación empaquetada y el producto solicita unidades individuales
+    if (batch.unitsPerPresentation && batch.unitsPerPresentation > 1 && (!product.presentationId || product.unitsPerPresentation === 1)) {
+      requiredQuantity = Math.ceil(product.remaining / batch.unitsPerPresentation)
+    }
+    // Si el lote es de unidades individuales y el producto tiene presentación empaquetada
+    else if (batch.unitsPerPresentation === 1 && product.presentationId && product.unitsPerPresentation && product.unitsPerPresentation > 1) {
+      requiredQuantity = product.remaining * product.unitsPerPresentation
+    }
+    
+    if (calculatedQuantity < requiredQuantity) {
+      return 'insufficient' // No hay suficiente cantidad
+    }
+    return 'sufficient' // Hay suficiente cantidad
+  }
+
+  const isExactPresentationMatch = (product: typeof requestedProducts[0], batch: any) => {
+    // Misma presentación exacta
+    if (batch.presentationId === product.presentationId) {
+      return true
+    }
+    
+    // Si se solicita unidades individuales y el lote las tiene
+    if ((!product.presentationId || product.unitsPerPresentation === 1) && batch.unitsPerPresentation === 1) {
+      return true
+    }
+    
+    // Si se solicitan unidades empaquetadas y el lote tiene unidades individuales
+    if (product.presentationId && product.unitsPerPresentation && product.unitsPerPresentation > 1 && batch.unitsPerPresentation === 1) {
+      return false // No es match exacto, pero sí convertible
+    }
+    
+    // Si se solicita unidades individuales y el lote tiene presentación empaquetada
+    if ((!product.presentationId || product.unitsPerPresentation === 1) && batch.unitsPerPresentation && batch.unitsPerPresentation > 1) {
+      return false // No es match exacto, pero sí convertible
+    }
+    
+    return false
+  }
+
   const getProductFulfillmentStatus = (product: typeof requestedProducts[0]) => {
     const selectedQuantity = Object.entries(batchSelections).reduce((total, [batchId, quantity]) => {
       const batch = availableBatches.find(b => b.id === batchId)
@@ -539,7 +604,7 @@ export function BulkFulfillRequestsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {requestedProducts.map((product, index) => {
+                  {requestedProducts.map((product) => {
                     const productBatches = availableBatches.filter(batch => batch.productId === product.productId)
                     
                     return (
@@ -584,7 +649,15 @@ export function BulkFulfillRequestsPage() {
                               </td>
                               <td className="py-3 px-3">
                                 <div className="text-xs text-slate-700 dark:text-slate-300">
-                                  {productBatches[0].presentationName || 'Sin presentación'}{productBatches[0].unitsPerPresentation ? ` (${productBatches[0].unitsPerPresentation}u)` : ''}
+                                  {productBatches[0].unitsPerPresentation === 1 
+                                    ? 'unidad' 
+                                    : (productBatches[0].presentationName || 'Sin presentación') + (productBatches[0].unitsPerPresentation && productBatches[0].unitsPerPresentation > 1 ? ` (${productBatches[0].unitsPerPresentation}u)` : '')}
+                                  {isExactPresentationMatch(product, productBatches[0]) && (
+                                    <span className="ml-1 text-yellow-500">⭐</span>
+                                  )}
+                                  {getQuantityStatus(product, productBatches[0]) === 'insufficient' && (
+                                    <span className="ml-1 text-red-500 text-xs">⚠️</span>
+                                  )}
                                 </div>
                               </td>
                               <td className="py-3 px-3 text-slate-600 dark:text-slate-400">
@@ -599,7 +672,7 @@ export function BulkFulfillRequestsPage() {
                                       if (e.target.checked) {
                                         setBatchSelections(prev => ({
                                           ...prev,
-                                          [productBatches[0].id]: Math.min(product.remaining, productBatches[0].quantity)
+                                          [productBatches[0].id]: calculateAutoSelectQuantity(product, productBatches[0])
                                         }))
                                       } else {
                                         setBatchSelections(prev => {
@@ -648,7 +721,15 @@ export function BulkFulfillRequestsPage() {
                             </td>
                             <td className="py-3 px-3">
                               <div className="text-xs text-slate-700 dark:text-slate-300">
-                                {batch.presentationName || 'Sin presentación'}{batch.unitsPerPresentation ? ` (${batch.unitsPerPresentation}u)` : ''}
+                                  {batch.unitsPerPresentation === 1 
+                                    ? 'unidad' 
+                                    : (batch.presentationName || 'Sin presentación') + (batch.unitsPerPresentation && batch.unitsPerPresentation > 1 ? ` (${batch.unitsPerPresentation}u)` : '')}
+                                {isExactPresentationMatch(product, batch) && (
+                                  <span className="ml-1 text-yellow-500">⭐</span>
+                                )}
+                                {getQuantityStatus(product, batch) === 'insufficient' && (
+                                  <span className="ml-1 text-red-500 text-xs">⚠️</span>
+                                )}
                               </div>
                             </td>
                             <td className="py-3 px-3 text-slate-600 dark:text-slate-400">
@@ -663,7 +744,7 @@ export function BulkFulfillRequestsPage() {
                                     if (e.target.checked) {
                                       setBatchSelections(prev => ({
                                         ...prev,
-                                        [batch.id]: Math.min(product.remaining, batch.quantity)
+                                        [batch.id]: calculateAutoSelectQuantity(product, batch)
                                       }))
                                     } else {
                                       setBatchSelections(prev => {
