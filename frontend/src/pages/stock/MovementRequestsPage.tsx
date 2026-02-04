@@ -275,7 +275,7 @@ export function MovementRequestsPage() {
       requestedCity: r.requestedCity,
       requestedByName: r.requestedByName ?? '-',
       itemsCount: r.items?.length ?? 0,
-      createdAtLabel: r.createdAt ? new Date(r.createdAt).toLocaleString() : '-',
+      createdAtLabel: r.status === 'FULFILLED' && r.fulfilledAt ? new Date(r.fulfilledAt).toLocaleString() : (r.createdAt ? new Date(r.createdAt).toLocaleString() : '-'),
     }))
   }, [movementRequestsQuery.data])
 
@@ -300,7 +300,7 @@ export function MovementRequestsPage() {
       { header: 'Ciudad', width: '130px', accessor: (r: MovementRequestRow) => (r.requestedCity ? r.requestedCity.toUpperCase() : '-') },
       { header: 'Solicitado por', width: '240px', accessor: (r: MovementRequestRow) => r.requestedByName },
       { header: 'Items', width: '90px', accessor: (r: MovementRequestRow) => String(r.itemsCount) },
-      { header: 'Creado', width: '200px', accessor: (r: MovementRequestRow) => r.createdAtLabel },
+      { header: 'Fecha', width: '200px', accessor: (r: MovementRequestRow) => r.createdAtLabel },
     ],
     [],
   )

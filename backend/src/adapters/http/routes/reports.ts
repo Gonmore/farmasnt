@@ -1578,8 +1578,8 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
           WHERE smr."tenantId" = ${tenantId}
             AND smr.status = 'FULFILLED'::"StockMovementRequestStatus"
             AND smr."fulfilledAt" IS NOT NULL
-            AND (${from ?? null}::timestamptz IS NULL OR smr."createdAt" >= ${from ?? null})
-            AND (${to ?? null}::timestamptz IS NULL OR smr."createdAt" < ${to ?? null})
+            AND (${from ?? null}::timestamptz IS NULL OR smr."fulfilledAt" >= ${from ?? null})
+            AND (${to ?? null}::timestamptz IS NULL OR smr."fulfilledAt" < ${to ?? null})
             AND (${branchCity ?? null}::text IS NULL OR upper(coalesce(smr."requestedCity", '')) = upper(${branchCity ?? null}))
           ORDER BY smr."fulfilledAt" DESC
           LIMIT ${take}
