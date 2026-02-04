@@ -263,7 +263,8 @@ export function MovementRequestsPage() {
     requestedCity: string
     requestedByName: string
     itemsCount: number
-    createdAtLabel: string
+    createdAt: string | null
+    fulfilledAt: string | null
   }
 
   const rows = useMemo<MovementRequestRow[]>(() => {
@@ -275,7 +276,8 @@ export function MovementRequestsPage() {
       requestedCity: r.requestedCity,
       requestedByName: r.requestedByName ?? '-',
       itemsCount: r.items?.length ?? 0,
-      createdAtLabel: r.status === 'FULFILLED' && r.fulfilledAt ? new Date(r.fulfilledAt).toLocaleString() : (r.createdAt ? new Date(r.createdAt).toLocaleString() : '-'),
+      createdAt: r.createdAt,
+      fulfilledAt: r.fulfilledAt,
     }))
   }, [movementRequestsQuery.data])
 
@@ -300,7 +302,17 @@ export function MovementRequestsPage() {
       { header: 'Ciudad', width: '130px', accessor: (r: MovementRequestRow) => (r.requestedCity ? r.requestedCity.toUpperCase() : '-') },
       { header: 'Solicitado por', width: '240px', accessor: (r: MovementRequestRow) => r.requestedByName },
       { header: 'Items', width: '90px', accessor: (r: MovementRequestRow) => String(r.itemsCount) },
-      { header: 'Fecha', width: '200px', accessor: (r: MovementRequestRow) => r.createdAtLabel },
+      { header: 'Fecha', width: '200px', accessor: (r: MovementRequestRow) => {
+        if (r.status === 'FULFILLED' && r.fulfilledAt) {
+          return (
+            <div className="text-xs">
+              <div className="text-slate-600">Solicitado: {r.createdAt ? new Date(r.createdAt).toLocaleString() : '-'}</div>
+              <div className="text-slate-900 font-medium">Atendido: {new Date(r.fulfilledAt).toLocaleString()}</div>
+            </div>
+          )
+        }
+        return r.createdAt ? new Date(r.createdAt).toLocaleString() : '-'
+      } },
     ],
     [],
   )
