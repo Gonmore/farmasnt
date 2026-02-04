@@ -203,7 +203,7 @@ export function QuotesPage() {
                   { header: 'Fecha', accessor: (q) => new Date(q.createdAt).toLocaleString('es-ES', { timeZone: 'America/La_Paz' }) },
                   {
                     header: 'TOTAL(BOB)',
-                    accessor: (q) => q.total.toLocaleString('es-BO', { minimumFractionDigits: 2 })
+                    accessor: (q) => q.total.toLocaleString('es-BO', { style: 'currency', currency: 'BOB', minimumFractionDigits: 2 })
                   },
                   {
                     header: 'Acciones',
