@@ -24,6 +24,7 @@ import { registerPlatformRoutes } from './routes/platform.js'
 import { registerContactRoutes } from './routes/contact.js'
 import { registerWellKnownRoutes } from './routes/wellKnown.js'
 import { registerDashboardRoutes } from './routes/dashboards.js'
+import { registerLaboratoryRoutes } from './routes/laboratory.js'
 
 export async function createHttpServer() {
   const env = getEnv()
@@ -161,6 +162,7 @@ export async function createHttpServer() {
   await registerPlatformRoutes(app)
   await registerContactRoutes(app)
   await registerDashboardRoutes(app)
+  await registerLaboratoryRoutes(app)
 
   return app
 }

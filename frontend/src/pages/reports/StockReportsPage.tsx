@@ -480,19 +480,19 @@ export function StockReportsPage() {
 
   const movementRequestsByCityQuery = useQuery({
     queryKey: ['reports', 'stock', 'movementRequestsByCity', { from, to }],
-    queryFn: () => fetchMovementRequestsByCity(auth.accessToken!, { from, to, take: 200 }),
+    queryFn: () => fetchMovementRequestsByCity(auth.accessToken!, { from, to, take: 100 }),
     enabled: !!auth.accessToken && tab === 'OPS',
   })
 
   const movementRequestFlowsQuery = useQuery({
     queryKey: ['reports', 'stock', 'movementRequestFlows', { from, to }],
-    queryFn: () => fetchMovementRequestFlows(auth.accessToken!, { from, to, take: 200 }),
+    queryFn: () => fetchMovementRequestFlows(auth.accessToken!, { from, to, take: 100 }),
     enabled: !!auth.accessToken && tab === 'OPS',
   })
 
   const fulfilledMovementRequestsQuery = useQuery({
     queryKey: ['reports', 'stock', 'movementRequestsFulfilled', { from, to }],
-    queryFn: () => fetchFulfilledMovementRequests(auth.accessToken!, { from, to, take: 200 }),
+    queryFn: () => fetchFulfilledMovementRequests(auth.accessToken!, { from, to, take: 100 }),
     enabled: !!auth.accessToken && tab === 'OPS',
   })
 

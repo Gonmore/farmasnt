@@ -84,7 +84,7 @@ async function listWarehouses(token: string): Promise<{ items: WarehouseListItem
 }
 
 async function listLocations(token: string, warehouseId: string): Promise<{ items: LocationListItem[] }> {
-  return apiFetch(`/api/v1/warehouses/${encodeURIComponent(warehouseId)}/locations?take=200`, { token })
+  return apiFetch(`/api/v1/warehouses/${encodeURIComponent(warehouseId)}/locations?take=100`, { token })
 }
 
 async function fetchProducts(token: string): Promise<{ items: ProductListItem[] }> {

@@ -1,6 +1,6 @@
 import type { Prisma } from '../../generated/prisma/client.js'
 
-export type SequenceKey = 'MS' | 'OP' | 'LI' | 'OA' | 'OC' | 'OV' | 'LOT' | 'COT'
+export type SequenceKey = 'MS' | 'OP' | 'LI' | 'OA' | 'OC' | 'OV' | 'LOT' | 'COT' | 'SM' | 'SPL' | 'SRC'
 
 function padLeft(value: number, length: number): string {
   return String(value).padStart(length, '0')

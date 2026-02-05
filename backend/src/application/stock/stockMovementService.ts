@@ -63,9 +63,20 @@ export async function createStockMovementTx(
   if (decreasesStock && batchId) {
     const batch = await tx.batch.findFirst({
       where: { id: batchId, tenantId, productId: input.productId },
-      select: { id: true, expiresAt: true, batchNumber: true },
+      select: { id: true, expiresAt: true, batchNumber: true, status: true },
     })
     if (!batch) throw Object.assign(new Error('Batch not found'), { statusCode: 404 })
+
+    // Quarantine rule: never allow decreasing stock from non-released batches.
+    // This is a safety net in case some read path forgets to filter by status.
+    if (batch.status !== 'RELEASED') {
+      const err = new Error('Batch is in quarantine') as Error & { statusCode?: number; code?: string; meta?: any }
+      err.statusCode = 409
+      err.code = 'BATCH_QUARANTINE'
+      err.meta = { batchId: batch.id, batchNumber: batch.batchNumber, status: batch.status }
+      throw err
+    }
+
     if (batch.expiresAt && batch.expiresAt < todayUtc) {
       const err = new Error('Batch is expired') as Error & { statusCode?: number; code?: string; meta?: any }
       err.statusCode = 409

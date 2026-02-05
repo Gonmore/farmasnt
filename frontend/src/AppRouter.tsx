@@ -35,6 +35,21 @@ import {
   BrandingPage,
   TenantsPage,
   ContactSettingsPage,
+  LaboratoriesPage,
+  LabSuppliesPage,
+  LabMaintenanceSuppliesPage,
+  LabPurchaseListsPage,
+  LabPurchaseListDetailPage,
+  LabReceiptsPage,
+  LabReceiptDetailPage,
+  LabRecipesPage,
+  LabRecipeDetailPage,
+  LabProductionRequestsPage,
+  LabProductionRequestDetailPage,
+  LabProductionRunsPage,
+  LabProductionRunDetailPage,
+  LabWipPage,
+  LabQCQuarantineBatchesPage,
 } from './pages'
 import { ButtonStylesDemo } from './pages/demo/ButtonStylesDemo'
 
@@ -259,6 +274,132 @@ export function AppRouter() {
           element={
             <ProtectedRoute requiredPermissions={['sales:order:read']}>
               <PaymentsPage />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Laboratory routes */}
+        <Route
+          path="/laboratory/labs"
+          element={
+            <ProtectedRoute requiredPermissions={['stock:read']}>
+              <LaboratoriesPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/laboratory/supplies"
+          element={
+            <ProtectedRoute requiredPermissions={['stock:read']}>
+              <LabSuppliesPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/laboratory/maintenance-supplies"
+          element={
+            <ProtectedRoute requiredPermissions={['stock:read']}>
+              <LabMaintenanceSuppliesPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/laboratory/purchase-lists"
+          element={
+            <ProtectedRoute requiredPermissions={['stock:read']}>
+              <LabPurchaseListsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/laboratory/purchase-lists/:id"
+          element={
+            <ProtectedRoute requiredPermissions={['stock:read']}>
+              <LabPurchaseListDetailPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/laboratory/receipts"
+          element={
+            <ProtectedRoute requiredPermissions={['stock:read']}>
+              <LabReceiptsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/laboratory/receipts/:id"
+          element={
+            <ProtectedRoute requiredPermissions={['stock:read']}>
+              <LabReceiptDetailPage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/laboratory/recipes"
+          element={
+            <ProtectedRoute requiredPermissions={['stock:read']}>
+              <LabRecipesPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/laboratory/recipes/:id"
+          element={
+            <ProtectedRoute requiredPermissions={['stock:read']}>
+              <LabRecipeDetailPage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/laboratory/production-requests"
+          element={
+            <ProtectedRoute requiredPermissions={['stock:read']}>
+              <LabProductionRequestsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/laboratory/production-requests/:id"
+          element={
+            <ProtectedRoute requiredPermissions={['stock:read']}>
+              <LabProductionRequestDetailPage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/laboratory/production-runs"
+          element={
+            <ProtectedRoute requiredPermissions={['stock:read']}>
+              <LabProductionRunsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/laboratory/wip"
+          element={
+            <ProtectedRoute requiredPermissions={['stock:read']}>
+              <LabWipPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/laboratory/production-runs/:id"
+          element={
+            <ProtectedRoute requiredPermissions={['stock:read']}>
+              <LabProductionRunDetailPage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/laboratory/qc"
+          element={
+            <ProtectedRoute requiredPermissions={['stock:read']}>
+              <LabQCQuarantineBatchesPage />
             </ProtectedRoute>
           }
         />
