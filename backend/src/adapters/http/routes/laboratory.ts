@@ -28,8 +28,12 @@ const createLaboratorySchema = z.object({
   warehouseId: z.string().uuid(),
   name: z.string().trim().min(1).max(200),
   city: z.string().trim().min(1).max(120).optional().nullable(),
-  outputWarehouseId: z.string().uuid().optional().nullable(),
+  isActive: z.boolean().optional(),
+  rawMaterialsLocationId: z.string().uuid().optional().nullable(),
+  wipLocationId: z.string().uuid().optional().nullable(),
+  maintenanceLocationId: z.string().uuid().optional().nullable(),
   quarantineLocationId: z.string().uuid().optional().nullable(),
+  outputWarehouseId: z.string().uuid().optional().nullable(),
 })
 
 const supplyCategorySchema = z.enum(['RAW_MATERIAL', 'MAINTENANCE'])
@@ -42,6 +46,8 @@ const createSupplySchema = z.object({
   name: z.string().trim().min(1).max(200),
   category: supplyCategorySchema.optional(),
   baseUnit: z.string().trim().min(1).max(32),
+  initialStock: z.number().min(0).optional(),
+  locationId: z.string().uuid().optional(),
 })
 
 const updateSupplySchema = z.object({
@@ -296,9 +302,24 @@ export async function registerLaboratoryRoutes(app: FastifyInstance): Promise<vo
         if (!q) throw Object.assign(new Error('Quarantine location not found'), { statusCode: 404 })
       }
 
-      const rawLoc = await ensureLocationByCode(tx, { tenantId, userId, warehouseId: warehouse.id, code: 'MP-01' })
-      const wipLoc = await ensureLocationByCode(tx, { tenantId, userId, warehouseId: warehouse.id, code: 'PROC-01' })
-      const maintLoc = await ensureLocationByCode(tx, { tenantId, userId, warehouseId: warehouse.id, code: 'REP-01' })
+      if (parsed.data.rawMaterialsLocationId) {
+        const r = await tx.location.findFirst({ where: { tenantId, id: parsed.data.rawMaterialsLocationId, isActive: true }, select: { id: true } })
+        if (!r) throw Object.assign(new Error('Raw materials location not found'), { statusCode: 404 })
+      }
+
+      if (parsed.data.wipLocationId) {
+        const w = await tx.location.findFirst({ where: { tenantId, id: parsed.data.wipLocationId, isActive: true }, select: { id: true } })
+        if (!w) throw Object.assign(new Error('WIP location not found'), { statusCode: 404 })
+      }
+
+      if (parsed.data.maintenanceLocationId) {
+        const m = await tx.location.findFirst({ where: { tenantId, id: parsed.data.maintenanceLocationId, isActive: true }, select: { id: true } })
+        if (!m) throw Object.assign(new Error('Maintenance location not found'), { statusCode: 404 })
+      }
+
+      const rawLoc = parsed.data.rawMaterialsLocationId ? await tx.location.findUnique({ where: { id: parsed.data.rawMaterialsLocationId } })! : await ensureLocationByCode(tx, { tenantId, userId, warehouseId: warehouse.id, code: 'MP-01' })
+      const wipLoc = parsed.data.wipLocationId ? await tx.location.findUnique({ where: { id: parsed.data.wipLocationId } })! : await ensureLocationByCode(tx, { tenantId, userId, warehouseId: warehouse.id, code: 'PROC-01' })
+      const maintLoc = parsed.data.maintenanceLocationId ? await tx.location.findUnique({ where: { id: parsed.data.maintenanceLocationId } })! : await ensureLocationByCode(tx, { tenantId, userId, warehouseId: warehouse.id, code: 'REP-01' })
 
       try {
         const lab = await tx.laboratory.create({
@@ -307,7 +328,7 @@ export async function registerLaboratoryRoutes(app: FastifyInstance): Promise<vo
             warehouseId: warehouse.id,
             name: parsed.data.name,
             city: parsed.data.city ?? null,
-            isActive: true,
+            isActive: parsed.data.isActive ?? true,
             defaultLocationId: rawLoc.id,
             rawMaterialsLocationId: rawLoc.id,
             wipLocationId: wipLoc.id,
@@ -379,8 +400,20 @@ export async function registerLaboratoryRoutes(app: FastifyInstance): Promise<vo
       select: { id: true, code: true, name: true, category: true, baseUnit: true, isActive: true, version: true, updatedAt: true },
     })
 
+    // Calculate stock for each supply
+    const suppliesWithStock = await Promise.all(
+      items.map(async (supply) => {
+        const stockResult = await db.supplyInventoryBalance.aggregate({
+          where: { tenantId, supplyId: supply.id },
+          _sum: { quantity: true },
+        })
+        const totalStock = stockResult._sum.quantity || 0
+        return { ...supply, totalStock: Number(totalStock) }
+      })
+    )
+
     const nextCursor = items.length === parsed.data.take ? items[items.length - 1]!.id : null
-    return reply.send({ items, nextCursor })
+    return reply.send({ items: suppliesWithStock, nextCursor })
   })
 
   // Supply balances (for lot selection / consumption)
@@ -418,6 +451,18 @@ export async function registerLaboratoryRoutes(app: FastifyInstance): Promise<vo
     const tenantId = request.auth!.tenantId
     const category = parsed.data.category ?? 'RAW_MATERIAL'
 
+    // Get default location if not provided and initial stock is specified
+    let locationId = parsed.data.locationId
+    if (parsed.data.initialStock && parsed.data.initialStock > 0 && !locationId) {
+      const defaultLocation = await db.location.findFirst({
+        where: { tenantId, isDefault: true },
+        select: { id: true },
+      })
+      if (defaultLocation) {
+        locationId = defaultLocation.id
+      }
+    }
+
     const created = await db.supply.create({
       data: {
         tenantId,
@@ -429,6 +474,32 @@ export async function registerLaboratoryRoutes(app: FastifyInstance): Promise<vo
       },
       select: { id: true },
     })
+
+    // Create initial stock if specified
+    if (parsed.data.initialStock && parsed.data.initialStock > 0 && locationId) {
+      await db.supplyInventoryBalance.create({
+        data: {
+          tenantId,
+          locationId,
+          supplyId: created.id,
+          quantity: parsed.data.initialStock,
+          createdBy: request.auth!.userId,
+        },
+      })
+
+      // Create stock movement record
+      await db.supplyStockMovement.create({
+        data: {
+          tenantId,
+          supplyId: created.id,
+          type: 'IN',
+          quantity: parsed.data.initialStock,
+          locationId,
+          notes: 'Stock inicial al crear insumo',
+          createdBy: request.auth!.userId,
+        },
+      })
+    }
 
     return reply.status(201).send({ id: created.id })
   })
@@ -1014,6 +1085,26 @@ export async function registerLaboratoryRoutes(app: FastifyInstance): Promise<vo
     })
 
     return reply.send({ ok: true, id: updated.id })
+  })
+
+  app.delete('/api/v1/laboratory/recipes/:id', { preHandler: writeGuard }, async (request, reply) => {
+    const id = (request.params as any).id as string
+    const tenantId = request.auth!.tenantId
+
+    // Check if recipe exists and belongs to tenant
+    const existing = await db.labRecipe.findFirst({
+      where: { tenantId, id },
+      select: { id: true },
+    })
+
+    if (!existing) return reply.status(404).send({ message: 'Recipe not found' })
+
+    // Delete recipe (cascade will handle recipe items)
+    await db.labRecipe.delete({
+      where: { tenantId, id },
+    })
+
+    return reply.send({ ok: true })
   })
 
   // Production requests

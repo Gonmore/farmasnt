@@ -4,10 +4,23 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { apiFetch } from '../../lib/api'
 import { useAuth } from '../../providers/AuthProvider'
 import { useNavigation, usePermissions } from '../../hooks'
-import { MainLayout, PageContainer, Loading, ErrorState, Button, Input, Select } from '../../components'
+import { MainLayout, PageContainer, Loading, ErrorState, Button, Input, Select, Modal } from '../../components'
 import { ProductSelector, type ProductSelectorItem } from '../../components/ProductSelector'
+import { PlusIcon } from '@heroicons/react/24/outline'
 
-type SupplyItem = { id: string; code: string | null; name: string; baseUnit: string; isActive: boolean }
+type SupplyItem = { id: string; code: string | null; name: string; baseUnit: string; isActive: boolean; totalStock: number }
+
+type ProductPresentation = {
+  id: string
+  name: string
+  unitsPerPresentation: string
+  priceOverride?: string | null
+  isDefault: boolean
+  sortOrder: number
+  version: number
+  updatedAt: string
+  isActive?: boolean
+}
 
 type RecipeItem = {
   id: string
@@ -37,6 +50,10 @@ async function listSupplies(token: string): Promise<{ items: SupplyItem[]; nextC
   const params = new URLSearchParams({ take: '100' })
   params.set('category', 'RAW_MATERIAL')
   return apiFetch(`/api/v1/laboratory/supplies?${params}`, { token })
+}
+
+async function fetchProductPresentations(token: string, productId: string): Promise<{ items: ProductPresentation[] }> {
+  return apiFetch(`/api/v1/products/${productId}/presentations`, { token })
 }
 
 async function fetchRecipe(token: string, id: string): Promise<{ item: Recipe }> {
@@ -70,6 +87,28 @@ async function updateRecipe(
   return apiFetch(`/api/v1/laboratory/recipes/${encodeURIComponent(id)}`, { token, method: 'PATCH', body: JSON.stringify(body) })
 }
 
+async function createSupply(
+  token: string,
+  body: {
+    name: string
+    baseUnit: string
+    code?: string | null
+    category?: 'RAW_MATERIAL' | 'MAINTENANCE'
+    initialStock?: number
+    locationId?: string
+  },
+): Promise<{ id: string }> {
+  return apiFetch('/api/v1/laboratory/supplies', { token, method: 'POST', body: JSON.stringify(body) })
+}
+
+function presentationLabel(pres: ProductPresentation | null | undefined): string {
+  if (!pres) return 'Unidad'
+  const name = String(pres.name ?? '').trim()
+  const units = Number(pres.unitsPerPresentation) || 0
+  if (!name || name.toLowerCase() === 'unidad' || !units || units <= 1) return 'Unidad'
+  return `${name} (${Math.trunc(units)}u)`
+}
+
 export function LabRecipeDetailPage() {
   const auth = useAuth()
   const navGroups = useNavigation()
@@ -83,6 +122,21 @@ export function LabRecipeDetailPage() {
 
   const canWrite = perms.hasPermission('stock:manage')
 
+  const [product, setProduct] = useState<ProductSelectorItem | null>(null)
+  const [name, setName] = useState('')
+  const [outputQuantity, setOutputQuantity] = useState('')
+  const [outputUnit, setOutputUnit] = useState('')
+  const [outputUnitCustom, setOutputUnitCustom] = useState('')
+  const [isActive, setIsActive] = useState(true)
+  const [items, setItems] = useState<RecipeItemDraft[]>([{ supplyId: '', quantity: '1', unit: 'UN', note: '' }])
+
+  // Supply creation modal state
+  const [showCreateSupplyModal, setShowCreateSupplyModal] = useState(false)
+  const [newSupplyName, setNewSupplyName] = useState('')
+  const [newSupplyCode, setNewSupplyCode] = useState('')
+  const [newSupplyBaseUnit, setNewSupplyBaseUnit] = useState('')
+  const [newSupplyInitialStock, setNewSupplyInitialStock] = useState('')
+
   const suppliesQuery = useQuery({
     queryKey: ['laboratory', 'supplies', { take: 100, cursor: undefined }],
     queryFn: () => listSupplies(auth.accessToken!),
@@ -95,14 +149,30 @@ export function LabRecipeDetailPage() {
     enabled: !!auth.accessToken && !isNew && !!recipeId,
   })
 
+  const presentationsQuery = useQuery({
+    queryKey: ['productPresentations', product?.id],
+    queryFn: () => fetchProductPresentations(auth.accessToken!, product!.id),
+    enabled: !!auth.accessToken && !!product?.id,
+  })
+
   const supplies = useMemo(() => (suppliesQuery.data?.items ?? []).filter((s) => s.isActive), [suppliesQuery.data])
 
-  const [product, setProduct] = useState<ProductSelectorItem | null>(null)
-  const [name, setName] = useState('')
-  const [outputQuantity, setOutputQuantity] = useState('')
-  const [outputUnit, setOutputUnit] = useState('')
-  const [isActive, setIsActive] = useState(true)
-  const [items, setItems] = useState<RecipeItemDraft[]>([{ supplyId: '', quantity: '1', unit: 'UN', note: '' }])
+  const activePresentations = useMemo(
+    () => (presentationsQuery.data?.items ?? []).filter((p) => p.isActive !== false),
+    [presentationsQuery.data]
+  )
+
+  const outputUnitOptions = useMemo(() => {
+    const options = activePresentations.map((p) => ({
+      value: p.id,
+      label: presentationLabel(p),
+    }))
+    options.push({ value: 'other', label: 'Otro' })
+    return options
+  }, [activePresentations])
+
+  const selectedPresentation = activePresentations.find((p) => p.id === outputUnit)
+  const isCustomUnit = outputUnit === 'other'
 
   useEffect(() => {
     if (!recipeQuery.data?.item) return
@@ -110,7 +180,15 @@ export function LabRecipeDetailPage() {
     setProduct({ id: r.productId, sku: r.product.sku, name: r.product.name })
     setName(r.name)
     setOutputQuantity(r.outputQuantity ? String(r.outputQuantity) : '')
-    setOutputUnit(r.outputUnit ?? '')
+    // Handle output unit - check if it matches any presentation or set as custom
+    if (r.outputUnit) {
+      // We'll set this after presentations are loaded
+      setOutputUnit('') // Reset first
+      setOutputUnitCustom(r.outputUnit)
+    } else {
+      setOutputUnit('')
+      setOutputUnitCustom('')
+    }
     setIsActive(r.isActive)
     setItems(
       (r.items ?? []).map((it) => ({
@@ -121,6 +199,28 @@ export function LabRecipeDetailPage() {
       })),
     )
   }, [recipeQuery.data])
+
+  useEffect(() => {
+    // When product changes, reset output unit selections
+    if (product) {
+      setOutputUnit('')
+      setOutputUnitCustom('')
+    }
+  }, [product])
+
+  useEffect(() => {
+    // When presentations load and we have an existing outputUnit, try to match it
+    if (activePresentations.length > 0 && outputUnitCustom && !outputUnit) {
+      const matchingPresentation = activePresentations.find(p => presentationLabel(p) === outputUnitCustom)
+      if (matchingPresentation) {
+        setOutputUnit(matchingPresentation.id)
+        setOutputUnitCustom('')
+      } else {
+        setOutputUnit('other')
+        // Keep outputUnitCustom as is
+      }
+    }
+  }, [activePresentations, outputUnitCustom, outputUnit])
 
   const addLine = () => setItems((prev) => [...prev, { supplyId: '', quantity: '1', unit: 'UN', note: '' }])
   const removeLine = (idx: number) => setItems((prev) => prev.filter((_, i) => i !== idx))
@@ -140,7 +240,11 @@ export function LabRecipeDetailPage() {
       if (!mappedItems.length) throw new Error('Agregá al menos un insumo con cantidad válida')
 
       const outQty = outputQuantity.trim() ? Number(outputQuantity) : null
-      const outUnit = outputUnit.trim() ? outputUnit.trim() : null
+      const outUnit = isCustomUnit
+        ? (outputUnitCustom.trim() || null)
+        : selectedPresentation
+        ? presentationLabel(selectedPresentation)
+        : outputUnit.trim() || null
 
       if (isNew) {
         if (!product?.id) throw new Error('Seleccioná un producto')
@@ -168,6 +272,37 @@ export function LabRecipeDetailPage() {
       } else {
         await qc.invalidateQueries({ queryKey: ['laboratory', 'recipe', recipeId] })
       }
+    },
+  })
+
+  const createSupplyMutation = useMutation({
+    mutationFn: async () => {
+      if (!newSupplyName.trim() || !newSupplyBaseUnit.trim()) {
+        throw new Error('Nombre y unidad base son requeridos')
+      }
+
+      const initialStock = newSupplyInitialStock.trim() ? Number(newSupplyInitialStock) : undefined
+      if (initialStock !== undefined && (isNaN(initialStock) || initialStock < 0)) {
+        throw new Error('Stock inicial debe ser un número positivo')
+      }
+
+      return createSupply(auth.accessToken!, {
+        name: newSupplyName.trim(),
+        baseUnit: newSupplyBaseUnit.trim(),
+        code: newSupplyCode.trim() || undefined,
+        category: 'RAW_MATERIAL',
+        initialStock,
+      })
+    },
+    onSuccess: async () => {
+      // Refresh supplies list
+      await qc.invalidateQueries({ queryKey: ['laboratory', 'supplies'] })
+      // Reset modal state
+      setNewSupplyName('')
+      setNewSupplyCode('')
+      setNewSupplyBaseUnit('')
+      setNewSupplyInitialStock('')
+      setShowCreateSupplyModal(false)
     },
   })
 
@@ -217,7 +352,27 @@ export function LabRecipeDetailPage() {
                 onChange={(e) => setOutputQuantity(e.target.value)}
                 disabled={!canWrite}
               />
-              <Input label="Unidad salida (opcional)" value={outputUnit} onChange={(e) => setOutputUnit(e.target.value)} disabled={!canWrite} />
+              <Select
+                label="Unidad salida (opcional)"
+                value={outputUnit}
+                onChange={(e) => {
+                  setOutputUnit(e.target.value)
+                  if (e.target.value !== 'other') {
+                    setOutputUnitCustom('')
+                  }
+                }}
+                disabled={!canWrite || !product}
+                options={outputUnitOptions}
+              />
+              {isCustomUnit && (
+                <Input
+                  label="Unidad personalizada"
+                  value={outputUnitCustom}
+                  onChange={(e) => setOutputUnitCustom(e.target.value)}
+                  disabled={!canWrite}
+                  placeholder="Ej: Caja, Blíster, etc."
+                />
+              )}
               {!isNew ? (
                 <Select
                   label="Activa"
@@ -235,8 +390,8 @@ export function LabRecipeDetailPage() {
             <div className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
               <div className="mb-2 flex items-center justify-between">
                 <div className="text-sm font-medium text-slate-800 dark:text-slate-100">Insumos</div>
-                <Button type="button" variant="secondary" size="sm" onClick={addLine} disabled={!canWrite}>
-                  + Agregar
+                <Button type="button" variant="ghost" size="sm" icon={<PlusIcon />} onClick={addLine} disabled={!canWrite}>
+                  Agregar
                 </Button>
               </div>
 
@@ -252,13 +407,22 @@ export function LabRecipeDetailPage() {
                         <Select
                           label={idx === 0 ? 'Insumo' : undefined}
                           value={it.supplyId}
-                          onChange={(e) => setItems((prev) => prev.map((x, i) => (i === idx ? { ...x, supplyId: e.target.value } : x)))}
+                          onChange={(e) => {
+                            if (e.target.value === '__create_new__') {
+                              // Reset the select value and open modal
+                              setItems((prev) => prev.map((x, i) => (i === idx ? { ...x, supplyId: '' } : x)))
+                              setShowCreateSupplyModal(true)
+                            } else {
+                              setItems((prev) => prev.map((x, i) => (i === idx ? { ...x, supplyId: e.target.value } : x)))
+                            }
+                          }}
                           disabled={!canWrite}
                           options={[
                             { value: '', label: 'Seleccionar…' },
+                            { value: '__create_new__', label: '+ Nuevo insumo' },
                             ...supplies.map((s) => ({
                               value: s.id,
-                              label: `${s.name}${s.code ? ` (${s.code})` : ''} — ${s.baseUnit}`,
+                              label: `${s.name}${s.code ? ` (${s.code})` : ''} — ${s.baseUnit} (Stock: ${s.totalStock})`,
                             })),
                           ]}
                         />
@@ -309,6 +473,66 @@ export function LabRecipeDetailPage() {
           </div>
         )}
       </PageContainer>
+
+      <Modal
+        isOpen={showCreateSupplyModal}
+        onClose={() => setShowCreateSupplyModal(false)}
+        title="Crear nuevo insumo"
+      >
+        <div className="space-y-4">
+          <Input
+            label="Nombre"
+            value={newSupplyName}
+            onChange={(e) => setNewSupplyName(e.target.value)}
+            placeholder="Ej: Paracetamol 500mg"
+            required
+          />
+          <Input
+            label="Código (opcional)"
+            value={newSupplyCode}
+            onChange={(e) => setNewSupplyCode(e.target.value)}
+            placeholder="Ej: PARA500"
+          />
+          <Input
+            label="Unidad base"
+            value={newSupplyBaseUnit}
+            onChange={(e) => setNewSupplyBaseUnit(e.target.value)}
+            placeholder="Ej: UN, KG, L, MG"
+            required
+          />
+          <Input
+            label="Stock inicial (opcional)"
+            type="number"
+            min={0}
+            step={0.01}
+            value={newSupplyInitialStock}
+            onChange={(e) => setNewSupplyInitialStock(e.target.value)}
+            placeholder="Cantidad inicial en inventario"
+          />
+
+          {createSupplyMutation.error ? (
+            <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-200">
+              {(createSupplyMutation.error as any)?.message ?? 'Error al crear insumo'}
+            </div>
+          ) : null}
+
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="secondary"
+              onClick={() => setShowCreateSupplyModal(false)}
+              disabled={createSupplyMutation.isPending}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={() => createSupplyMutation.mutate()}
+              disabled={createSupplyMutation.isPending}
+            >
+              {createSupplyMutation.isPending ? 'Creando…' : 'Crear insumo'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </MainLayout>
   )
 }

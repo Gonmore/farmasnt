@@ -1,4 +1,5 @@
 export { LaboratoriesPage } from './LaboratoriesPage'
+export { LabProductionPage } from './LabProductionPage'
 export { LabSuppliesPage } from './LabSuppliesPage'
 export { LabMaintenanceSuppliesPage } from './LabMaintenanceSuppliesPage'
 export { LabPurchaseListsPage } from './LabPurchaseListsPage'

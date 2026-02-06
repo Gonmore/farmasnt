@@ -36,6 +36,7 @@ import {
   TenantsPage,
   ContactSettingsPage,
   LaboratoriesPage,
+  LabProductionPage,
   LabSuppliesPage,
   LabMaintenanceSuppliesPage,
   LabPurchaseListsPage,
@@ -284,6 +285,14 @@ export function AppRouter() {
           element={
             <ProtectedRoute requiredPermissions={['stock:read']}>
               <LaboratoriesPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/laboratory/production"
+          element={
+            <ProtectedRoute requiredPermissions={['stock:read']}>
+              <LabProductionPage />
             </ProtectedRoute>
           }
         />

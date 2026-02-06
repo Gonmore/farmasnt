@@ -1,9 +1,12 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useLocation } from 'react-router-dom'
 import { apiFetch } from '../../lib/api'
 import { useAuth } from '../../providers/AuthProvider'
 import { usePermissions, useNavigation } from '../../hooks'
 import { MainLayout, PageContainer, Table, Loading, ErrorState, PaginationCursor, Button, Modal, Input, Select } from '../../components'
+import { LabProductionQuickActions } from '../../components/LabProductionQuickActions'
+import { PlusIcon, PencilIcon } from '@heroicons/react/24/outline'
 
 type SupplyItem = {
   id: string
@@ -46,6 +49,7 @@ export function LabSuppliesPage() {
   const navGroups = useNavigation()
   const perms = usePermissions()
   const queryClient = useQueryClient()
+  const location = useLocation()
 
   const canWrite = perms.hasPermission('stock:manage')
 
@@ -120,7 +124,7 @@ export function LabSuppliesPage() {
         header: 'Acciones',
         accessor: (s: SupplyItem) => (
           <div className="flex gap-2">
-            <Button variant="secondary" size="sm" onClick={() => openEdit(s)} disabled={!canWrite}>
+            <Button variant="ghost" size="sm" icon={<PencilIcon />} onClick={() => openEdit(s)} disabled={!canWrite}>
               Editar
             </Button>
           </div>
@@ -133,9 +137,11 @@ export function LabSuppliesPage() {
   return (
     <MainLayout navGroups={navGroups}>
       <PageContainer title="🧪 Laboratorio — Materia prima">
+        <LabProductionQuickActions currentPath={location.pathname} />
+
         <div className="mb-3 flex items-center justify-between gap-2">
           <div className="text-sm text-slate-600 dark:text-slate-300">Catálogo de materia prima del laboratorio.</div>
-          <Button onClick={() => setShowCreate(true)} disabled={!canWrite}>
+          <Button variant="primary" icon={<PlusIcon />} onClick={() => setShowCreate(true)} disabled={!canWrite}>
             Nueva materia prima
           </Button>
         </div>

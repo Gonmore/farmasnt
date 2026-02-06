@@ -1,11 +1,13 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { apiFetch } from '../../lib/api'
 import { useAuth } from '../../providers/AuthProvider'
 import { useNavigation, usePermissions } from '../../hooks'
 import { MainLayout, PageContainer, Table, Loading, ErrorState, PaginationCursor, Button, Modal, Input, Select } from '../../components'
 import { ProductSelector, type ProductSelectorItem } from '../../components/ProductSelector'
+import { LabProductionQuickActions } from '../../components/LabProductionQuickActions'
+import { PlusIcon, EyeIcon } from '@heroicons/react/24/outline'
 
 type LabItem = { id: string; name: string; city: string | null; isActive: boolean }
 
@@ -73,6 +75,7 @@ export function LabProductionRequestsPage() {
   const perms = usePermissions()
   const qc = useQueryClient()
   const navigate = useNavigate()
+  const location = useLocation()
 
   const canWrite = perms.hasPermission('stock:manage')
 
@@ -161,7 +164,7 @@ export function LabProductionRequestsPage() {
         header: 'Acciones',
         accessor: (r: RequestListItem) => (
           <div className="flex gap-2">
-            <Button variant="secondary" size="sm" onClick={() => navigate(`/laboratory/production-requests/${encodeURIComponent(r.id)}`)}>
+            <Button variant="ghost" size="sm" icon={<EyeIcon />} onClick={() => navigate(`/laboratory/production-requests/${encodeURIComponent(r.id)}`)}>
               Ver
             </Button>
           </div>
@@ -174,9 +177,11 @@ export function LabProductionRequestsPage() {
   return (
     <MainLayout navGroups={navGroups}>
       <PageContainer title="🧪 Laboratorio — Plan de produc">
+        <LabProductionQuickActions currentPath={location.pathname} />
+
         <div className="mb-3 flex items-center justify-between gap-2">
           <div className="text-sm text-slate-600 dark:text-slate-300">DRAFT → APPROVED → IN_PROGRESS → COMPLETED.</div>
-          <Button onClick={() => setShowCreate(true)} disabled={!canWrite}>
+          <Button variant="primary" icon={<PlusIcon />} onClick={() => setShowCreate(true)} disabled={!canWrite}>
             Nueva solicitud
           </Button>
         </div>

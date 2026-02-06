@@ -89,12 +89,9 @@ export function useNavigation(): NavGroup[] {
   if (hasPermission('stock:read')) {
     const labItems = [] as Array<{ to: string; label: string }>
     labItems.push({ to: '/laboratory/labs', label: '🧪 Configuración' })
-    labItems.push({ to: '/laboratory/supplies', label: '🧫 Materia prima' })
+    labItems.push({ to: '/laboratory/production', label: '🏭 Producción' })
     labItems.push({ to: '/laboratory/maintenance-supplies', label: '🧫 Repuestos y materiales' })
-    labItems.push({ to: '/laboratory/purchase-lists', label: '🧾 Listas de compra' })
     labItems.push({ to: '/laboratory/receipts', label: '📥 Recepciones' })
-    labItems.push({ to: '/laboratory/recipes', label: '📘 Recetas' })
-    labItems.push({ to: '/laboratory/production-requests', label: '🧩 Plan de produc' })
     labItems.push({ to: '/laboratory/wip', label: '🧪 Producto en proceso' })
     labItems.push({ to: '/laboratory/production-runs', label: '🏭 Corridas' })
     labItems.push({ to: '/laboratory/qc', label: '✅ QC (Cuarentena)' })

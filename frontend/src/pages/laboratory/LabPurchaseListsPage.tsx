@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { apiFetch } from '../../lib/api'
 import { useAuth } from '../../providers/AuthProvider'
 import { useNavigation, usePermissions } from '../../hooks'
@@ -16,6 +16,8 @@ import {
   Input,
   Select,
 } from '../../components'
+import { LabProductionQuickActions } from '../../components/LabProductionQuickActions'
+import { PlusIcon, EyeIcon } from '@heroicons/react/24/outline'
 
 type LabItem = { id: string; name: string; city: string | null; isActive: boolean }
 
@@ -89,6 +91,7 @@ export function LabPurchaseListsPage() {
   const perms = usePermissions()
   const queryClient = useQueryClient()
   const navigate = useNavigate()
+  const location = useLocation()
 
   const canWrite = perms.hasPermission('stock:manage')
 
@@ -167,7 +170,7 @@ export function LabPurchaseListsPage() {
         header: 'Acciones',
         accessor: (p: PurchaseListListItem) => (
           <div className="flex gap-2">
-            <Button variant="secondary" size="sm" onClick={() => navigate(`/laboratory/purchase-lists/${encodeURIComponent(p.id)}`)}>
+            <Button variant="ghost" size="sm" icon={<EyeIcon />} onClick={() => navigate(`/laboratory/purchase-lists/${encodeURIComponent(p.id)}`)}>
               Ver
             </Button>
           </div>
@@ -180,9 +183,11 @@ export function LabPurchaseListsPage() {
   return (
     <MainLayout navGroups={navGroups}>
       <PageContainer title="🧪 Laboratorio — Listas de compra">
+        <LabProductionQuickActions currentPath={location.pathname} />
+
         <div className="mb-3 flex items-center justify-between gap-2">
           <div className="text-sm text-slate-600 dark:text-slate-300">Listas de compra de insumos (SPL).</div>
-          <Button onClick={() => setShowCreate(true)} disabled={!canWrite}>
+          <Button variant="primary" icon={<PlusIcon />} onClick={() => setShowCreate(true)} disabled={!canWrite}>
             Nueva lista
           </Button>
         </div>
