@@ -95,6 +95,7 @@ const stockReturnsOpsQuerySchema = dateRangeQuerySchema.extend({
 type StockMovementRequestsSummaryRow = {
   total: bigint
   open: bigint
+  sent: bigint
   fulfilled: bigint
   cancelled: bigint
   pending: bigint
@@ -106,6 +107,7 @@ type StockMovementRequestsByCityRow = {
   city: string | null
   total: bigint
   open: bigint
+  sent: bigint
   fulfilled: bigint
   cancelled: bigint
   pending: bigint
@@ -1344,6 +1346,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
         SELECT
           count(*) as total,
           count(*) FILTER (WHERE smr.status = 'OPEN'::"StockMovementRequestStatus") as open,
+          count(*) FILTER (WHERE smr.status = 'SENT'::"StockMovementRequestStatus") as sent,
           count(*) FILTER (WHERE smr.status = 'FULFILLED'::"StockMovementRequestStatus") as fulfilled,
           count(*) FILTER (WHERE smr.status = 'CANCELLED'::"StockMovementRequestStatus") as cancelled,
           count(*) FILTER (WHERE smr."confirmationStatus" = 'PENDING'::"StockMovementRequestConfirmationStatus") as pending,
@@ -1397,6 +1400,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
           smr."requestedCity" as city,
           count(*) as total,
           count(*) FILTER (WHERE smr.status = 'OPEN'::"StockMovementRequestStatus") as open,
+          count(*) FILTER (WHERE smr.status = 'SENT'::"StockMovementRequestStatus") as sent,
           count(*) FILTER (WHERE smr.status = 'FULFILLED'::"StockMovementRequestStatus") as fulfilled,
           count(*) FILTER (WHERE smr.status = 'CANCELLED'::"StockMovementRequestStatus") as cancelled,
           count(*) FILTER (WHERE smr."confirmationStatus" = 'PENDING'::"StockMovementRequestConfirmationStatus") as pending,

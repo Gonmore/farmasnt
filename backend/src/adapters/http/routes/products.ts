@@ -190,7 +190,7 @@ const batchCreateSchema = z.object({
   batchNumber: z.string().trim().min(1).max(80).optional(),
   manufacturingDate: z.string().datetime().optional(),
   expiresAt: z.string().datetime().optional(),
-  status: z.string().trim().min(1).max(32).optional(),
+  status: z.enum(['RELEASED', 'QUARANTINE']).optional(),
   initialStock: z
     .object({
       // New preferred input: choose only warehouse; backend resolves an active location.

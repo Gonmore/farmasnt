@@ -25,7 +25,7 @@ type MovementRequestItem = {
 
 type MovementRequest = {
   id: string
-  status: 'OPEN' | 'FULFILLED' | 'CANCELLED'
+  status: 'OPEN' | 'SENT' | 'FULFILLED' | 'CANCELLED'
   requestedCity: string
   requestedByName: string | null
   createdAt: string

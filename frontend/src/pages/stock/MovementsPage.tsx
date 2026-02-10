@@ -25,7 +25,7 @@ type MovementRequestItem = {
 
 type MovementRequest = {
   id: string
-  status: 'OPEN' | 'FULFILLED' | 'CANCELLED'
+  status: 'OPEN' | 'SENT' | 'FULFILLED' | 'CANCELLED'
   requestedCity: string
   warehouseId?: string | null
   note?: string | null
@@ -1634,6 +1634,7 @@ export function MovementsPage() {
                       )
                     }
 
+                    if (r.status === 'SENT') return '📤 Enviada'
                     if (r.status === 'FULFILLED') return '✅ Atendida'
                     return '⛔ Cancelada'
                   },
@@ -1715,7 +1716,9 @@ export function MovementsPage() {
                   },
                 },
               ]}
-              data={movementRequestsQuery.data.items}
+              data={[...movementRequestsQuery.data.items].sort(
+                (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+              )}
               keyExtractor={(r) => r.id}
             />
           )}

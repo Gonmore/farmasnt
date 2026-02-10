@@ -147,6 +147,25 @@ Se incorporaron endpoints read-only de reportes para acelerar dashboards y panta
 
 ---
 
+## **[10 Feb 2026] Stock: Envío y recepción de solicitudes (SENT → FULFILLED)**
+
+### Estado intermedio `SENT`
+- Se agregó el estado `SENT` para representar solicitudes **enviadas** pero aún **no recepcionadas** en destino.
+
+### Backend (rutas + trazabilidad)
+- `POST /api/v1/stock/movement-requests/bulk-fulfill` genera el **envío** creando movimientos `OUT` asociados a la solicitud (`referenceType: MOVEMENT_REQUEST`, `referenceId = requestId`) y marca la solicitud como `SENT`.
+- `POST /api/v1/stock/movement-requests/:id/receive` confirma la **recepción**: crea movimientos `IN` hacia el `toLocationId` de los `OUT` enviados, marca la solicitud como `FULFILLED` y setea `confirmedAt/confirmedBy`.
+- `GET /api/v1/stock/movement-requests` se amplió para exponer:
+  - `originWarehouse` (derivado desde `OUT.fromLocationId → Location → Warehouse`, que representa el origen real del envío)
+  - `fulfilledByName` / `confirmedByName`
+  - `movements[]` con detalle por producto/lote/vencimiento y `fromLocation`
+- Se agregó soporte de logs opcionales para depuración: `DEBUG_STOCK_MOVEMENT_REQUESTS=1`.
+- Fix en “Movimientos realizados” (`/stock/completed-movements`): el almacén de origen se deriva del último movimiento `OUT` (el último movimiento global puede ser un `IN` de recepción con `fromLocationId=null`).
+
+### Frontend (Recepciones)
+- La pantalla `/stock/returns` ahora incluye pestaña **Recepciones** (solicitudes `SENT`) y muestra **origen real** + **persona que envía**, además del detalle por lote/vencimiento.
+- Se ajustó el ordenamiento para mostrar lo más reciente primero en tablas relacionadas a solicitudes/recepciones.
+
 ## **[02 Feb 2026] Stock: Atender solicitudes + Reportes OPS (flujos y trazabilidad)**
 
 ### Operación: Atender solicitudes (1 solicitud, múltiples ítems)

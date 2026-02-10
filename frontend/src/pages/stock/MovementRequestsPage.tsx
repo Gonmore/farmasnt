@@ -23,7 +23,7 @@ type MovementRequestItem = {
 
 type MovementRequest = {
   id: string
-  status: 'OPEN' | 'FULFILLED' | 'CANCELLED'
+  status: 'OPEN' | 'SENT' | 'FULFILLED' | 'CANCELLED'
   confirmationStatus?: 'PENDING' | 'ACCEPTED' | 'REJECTED'
   requestedCity: string
   requestedByName: string | null
@@ -269,7 +269,9 @@ export function MovementRequestsPage() {
 
   const rows = useMemo<MovementRequestRow[]>(() => {
     const items = movementRequestsQuery.data?.items ?? []
-    return items.map((r) => ({
+    return [...items]
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .map((r) => ({
       id: r.id,
       status: r.status,
       confirmationStatus: (r.confirmationStatus ?? 'PENDING') as any,
@@ -288,7 +290,12 @@ export function MovementRequestsPage() {
 
   const columns = useMemo(
     () => [
-      { header: 'Estado', width: '130px', accessor: (r: MovementRequestRow) => r.status },
+      { header: 'Estado', width: '130px', accessor: (r: MovementRequestRow) => {
+        if (r.status === 'OPEN') return '🟡 Pendiente'
+        if (r.status === 'SENT') return '📤 Enviada'
+        if (r.status === 'FULFILLED') return '✅ Atendida'
+        return '⛔ Cancelada'
+      } },
       {
         header: 'Confirmación',
         width: '140px',

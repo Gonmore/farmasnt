@@ -27,7 +27,7 @@ type MovementRequestItem = {
 
 type MovementRequest = {
   id: string
-  status: 'OPEN' | 'FULFILLED' | 'CANCELLED'
+  status: 'OPEN' | 'SENT' | 'FULFILLED' | 'CANCELLED'
   confirmationStatus?: 'PENDING' | 'ACCEPTED' | 'REJECTED'
   requestedCity: string
   requestedByName: string | null
@@ -337,7 +337,7 @@ export function BulkFulfillRequestsPage() {
       toLocationId: string
       note?: string
     }) => {
-      return apiFetch<{ fulfilledRequestIds: string[]; touchedRequestIds: string[]; movementCount: number }>(
+      return apiFetch<{ sentRequestIds: string[]; touchedRequestIds: string[]; movementCount: number }>(
         '/api/v1/stock/movement-requests/bulk-fulfill',
         {
           method: 'POST',
@@ -361,7 +361,7 @@ export function BulkFulfillRequestsPage() {
       setIsFulfillModalOpen(false)
       
       // Navegar automáticamente a "Realizados" y resaltar el registro
-      const highlightId = data?.touchedRequestIds?.[0] || data?.fulfilledRequestIds?.[0]
+      const highlightId = data?.touchedRequestIds?.[0] || data?.sentRequestIds?.[0]
       navigate(highlightId ? `/stock/completed-movements?highlight=${encodeURIComponent(highlightId)}` : '/stock/completed-movements')
     },
   })
@@ -369,7 +369,7 @@ export function BulkFulfillRequestsPage() {
   console.log('BulkFulfillRequestsPage loaded')
   return (
     <MainLayout navGroups={navGroups}>
-      <PageContainer title="✅ Atender solicitudes">
+      <PageContainer title="✅ Enviar solicitudes">
         <MovementQuickActions currentPath="/stock/fulfill-requests" />
         <div className="mb-4 text-sm text-slate-700 dark:text-slate-300">Envía stock a solicitudes OPEN desde un almacén origen a un almacén destino.</div>
 

@@ -36,6 +36,7 @@ enum StockMovementType {
 
 enum StockMovementRequestStatus {
   OPEN
+  SENT // New status for sent but not received requests
   FULFILLED
   CANCELLED
 }

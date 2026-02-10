@@ -63,8 +63,8 @@ export function MovementQuickActions({ currentPath }: { currentPath: string }) {
         <QuickActionCard
           to="/stock/returns"
           icon="↩️"
-          title="Devoluciones"
-          subtitle="Registrar devoluciones con evidencia"
+          title="Recepción/Devolución"
+          subtitle="Recepción de envíos y devoluciones con evidencia"
           isActive={currentPath === '/stock/returns'}
         />
       </div>

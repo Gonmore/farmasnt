@@ -1071,7 +1071,7 @@ Requiere permiso: `stock:read`.
 
 Query
 - `take` (1..100, default 50)
-- `status` (opcional): `OPEN` | `FULFILLED` | `CANCELLED`
+- `status` (opcional): `OPEN` | `SENT` | `FULFILLED` | `CANCELLED`
 - `city` (opcional): ciudad (string)
 - `warehouseId` (opcional): id de sucursal/almacén destino
 
@@ -1088,6 +1088,7 @@ Response 200
       "confirmationStatus": "PENDING",
       "warehouseId": "...",
       "warehouse": { "id": "...", "code": "SCZ", "name": "Sucursal SCZ", "city": "SANTA CRUZ" },
+      "originWarehouse": { "id": "...", "code": "CEN", "name": "Central", "city": "SANTA CRUZ" },
       "requestedCity": "SANTA CRUZ",
       "quoteId": null,
       "note": null,
@@ -1095,8 +1096,10 @@ Response 200
       "requestedByName": "Juan Pérez",
       "fulfilledAt": null,
       "fulfilledBy": null,
+      "fulfilledByName": null,
       "confirmedAt": null,
       "confirmedBy": null,
+      "confirmedByName": null,
       "confirmationNote": null,
       "createdAt": "2026-01-01T00:00:00.000Z",
       "items": [
@@ -1113,6 +1116,29 @@ Response 200
           "presentation": { "id": "...", "name": "Caja", "unitsPerPresentation": "10" },
           "presentationName": "Caja",
           "unitsPerPresentation": "10"
+        }
+      ],
+      "movements": [
+        {
+          "id": "...",
+          "type": "OUT",
+          "quantity": 100,
+          "presentationQuantity": 10,
+          "productId": "...",
+          "productSku": "...",
+          "productName": "...",
+          "genericName": "...",
+          "presentationId": "...",
+          "presentation": { "id": "...", "name": "Caja", "unitsPerPresentation": 10 },
+          "batchId": "...",
+          "batch": { "id": "...", "batchNumber": "L-0001", "expiresAt": "2026-06-01T00:00:00.000Z" },
+          "fromLocationId": "...",
+          "fromLocation": {
+            "id": "...",
+            "code": "A1",
+            "warehouse": { "id": "...", "code": "CEN", "name": "Central", "city": "SANTA CRUZ" }
+          },
+          "createdAt": "2026-01-01T00:00:00.000Z"
         }
       ]
     }
@@ -1288,8 +1314,9 @@ Body
 
 Notas
 - Solo permite atender solicitudes `OPEN` de la ciudad de la sucursal destino.
-- Crea movimientos `TRANSFER` con `referenceType: "REQUEST_BULK_FULFILL"` y asigna cantidades únicamente a las solicitudes listadas (decrementa `remainingQuantity`).
-- Cuando una solicitud queda con `remainingQuantity` total = 0, se marca `FULFILLED` (y luego la sucursal puede `ACCEPT/REJECT`).
+- Crea movimientos `OUT` con `referenceType: "MOVEMENT_REQUEST"` y `referenceId = <requestId>` (envío/embarque hacia la sucursal destino).
+- Cuando una solicitud queda con `remainingQuantity` total = 0, se marca `SENT` (pendiente de recepción en destino).
+- La recepción se confirma vía `POST /api/v1/stock/movement-requests/:id/receive` (crea `IN` y marca `FULFILLED`).
 
 Response 201
 ```json
@@ -1298,8 +1325,23 @@ Response 201
   "referenceId": "...",
   "destinationCity": "SANTA CRUZ",
   "createdMovements": [{ "createdMovement": { "id": "..." } }],
-  "fulfilledRequestIds": ["..."]
+  "sentRequestIds": ["..."]
 }
+```
+
+### POST /api/v1/stock/movement-requests/:id/receive
+Requiere permiso: `stock:move`.
+
+Confirma la **recepción** de un envío de una solicitud en estado `SENT`.
+
+Notas
+- Busca los movimientos `OUT` con `referenceType: "MOVEMENT_REQUEST"` y `referenceId = <requestId>`.
+- Por cada `OUT` crea el movimiento `IN` correspondiente hacia el `toLocationId` del `OUT`.
+- Marca la solicitud como `FULFILLED` y setea `confirmedAt/confirmedBy`.
+
+Response 200
+```json
+{ "message": "Recepción confirmada exitosamente" }
 ```
 
 ---

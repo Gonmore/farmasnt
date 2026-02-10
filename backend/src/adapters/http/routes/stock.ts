@@ -276,7 +276,7 @@ const fefoSuggestionsQuerySchema = z.object({
 
 const movementRequestsListQuerySchema = z.object({
   take: z.coerce.number().int().min(1).max(100).default(50),
-  status: z.enum(['OPEN', 'FULFILLED', 'CANCELLED']).optional(),
+  status: z.enum(['OPEN', 'SENT', 'FULFILLED', 'CANCELLED']).optional(),
   city: z.string().trim().max(80).optional(),
   warehouseId: z.string().uuid().optional(),
 })
@@ -753,6 +753,7 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
     async (request, reply) => {
       const tenantId = request.auth!.tenantId
       const branchCity = branchCityOf(request)
+      const debugMovementRequests = process.env.DEBUG_STOCK_MOVEMENT_REQUESTS === '1'
 
       if (branchCity === '__MISSING__') {
         return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
@@ -791,7 +792,7 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
       const rows = await db.stockMovementRequest.findMany({
         where,
         take: parsed.data.take,
-        orderBy: [{ status: 'asc' }, { createdAt: 'desc' }],
+        orderBy: [{ createdAt: 'desc' }],
         include: {
           warehouse: { select: { id: true, code: true, name: true, city: true } },
           items: {
@@ -804,10 +805,17 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
         },
       })
 
-      const userIds = [...new Set(rows.map((r) => r.requestedBy).filter(Boolean).filter(id => {
-        // Check if it looks like a UUID (manual requests have names, quote requests have user IDs)
-        return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
-      }))]
+      const isUuid = (value: unknown) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value))
+
+      const userIds = [
+        ...new Set(
+          rows
+            .flatMap((r) => [r.requestedBy, r.fulfilledBy, (r as any).confirmedBy])
+            .filter(Boolean)
+            .filter(isUuid)
+            .map((v) => String(v)),
+        ),
+      ]
       const users = userIds.length
         ? await db.user.findMany({ where: { tenantId, id: { in: userIds } }, select: { id: true, email: true, fullName: true } })
         : []
@@ -819,6 +827,92 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
           userMap.set(r.requestedBy, r.requestedBy)
         }
       })
+
+      // Get movements for all requests
+      const requestIds = rows.map(r => r.id)
+      const movements = requestIds.length > 0 ? await db.stockMovement.findMany({
+        where: {
+          tenantId,
+          type: 'OUT',
+          referenceType: 'MOVEMENT_REQUEST',
+          referenceId: { in: requestIds },
+        },
+        include: {
+          batch: { select: { id: true, batchNumber: true, expiresAt: true } },
+          product: { select: { id: true, sku: true, name: true, genericName: true } },
+          presentation: { select: { id: true, name: true, unitsPerPresentation: true } },
+        },
+        orderBy: { createdAt: 'asc' }
+      }) : []
+
+      // Group movements by requestId
+      const movementsByRequest = new Map<string, typeof movements>()
+      movements.forEach(m => {
+        const requestId = m.referenceId!
+        if (!movementsByRequest.has(requestId)) {
+          movementsByRequest.set(requestId, [])
+        }
+        movementsByRequest.get(requestId)!.push(m)
+      })
+
+      const fromLocationIds = [
+        ...new Set(
+          movements
+            .map((m: any) => m.fromLocationId)
+            .filter(Boolean)
+            .map((v: any) => String(v)),
+        ),
+      ]
+      const fromLocations = fromLocationIds.length
+        ? await db.location.findMany({
+            where: { tenantId, id: { in: fromLocationIds } },
+            select: {
+              id: true,
+              code: true,
+              warehouse: { select: { id: true, code: true, name: true, city: true } },
+            },
+          })
+        : []
+      const fromLocationMap = new Map(fromLocations.map((l) => [l.id, l]))
+
+      const originWarehouseByRequest = new Map<string, { id: string; code: string; name: string; city: string | null }>()
+      const ambiguousOriginRequestIds: string[] = []
+      for (const [reqId, ms] of movementsByRequest.entries()) {
+        const whMap = new Map<string, { id: string; code: string; name: string; city: string | null }>()
+        for (const m of ms as any[]) {
+          const locId = m.fromLocationId ? String(m.fromLocationId) : null
+          const loc = locId ? fromLocationMap.get(locId) : null
+          if (loc?.warehouse?.id) {
+            whMap.set(loc.warehouse.id, {
+              id: loc.warehouse.id,
+              code: loc.warehouse.code,
+              name: loc.warehouse.name,
+              city: loc.warehouse.city ?? null,
+            })
+          }
+        }
+        if (whMap.size === 1) {
+          const onlyWarehouse = whMap.values().next().value
+          if (onlyWarehouse) originWarehouseByRequest.set(reqId, onlyWarehouse)
+        } else if (whMap.size > 1) {
+          ambiguousOriginRequestIds.push(reqId)
+        }
+      }
+
+      if (debugMovementRequests) {
+        request.log.info(
+          {
+            tenantId,
+            branchCity,
+            status: parsed.data.status ?? null,
+            rowCount: rows.length,
+            movementCount: movements.length,
+            fromLocationCount: fromLocationIds.length,
+            ambiguousOriginCount: ambiguousOriginRequestIds.length,
+          },
+          'stock.movement-requests.list',
+        )
+      }
 
       return reply.send({
         items: rows.map((r) => ({
@@ -841,10 +935,13 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
           requestedByName: userMap.get(r.requestedBy) || null,
           fulfilledAt: r.fulfilledAt ? r.fulfilledAt.toISOString() : null,
           fulfilledBy: r.fulfilledBy,
+          fulfilledByName: r.fulfilledBy ? (userMap.get(r.fulfilledBy) || r.fulfilledBy) : null,
           confirmedAt: (r as any).confirmedAt ? (r as any).confirmedAt.toISOString() : null,
           confirmedBy: (r as any).confirmedBy ?? null,
+          confirmedByName: (r as any).confirmedBy ? (userMap.get((r as any).confirmedBy) || (r as any).confirmedBy) : null,
           confirmationNote: (r as any).confirmationNote ?? null,
           createdAt: r.createdAt.toISOString(),
+          originWarehouse: originWarehouseByRequest.get(r.id) ?? null,
           items: r.items.map((it) => ({
             id: it.id,
             productId: it.productId,
@@ -860,6 +957,38 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
               : null,
             presentationName: it.presentation?.name ?? null,
             unitsPerPresentation: it.presentation?.unitsPerPresentation ?? null,
+          })),
+          movements: (movementsByRequest.get(r.id) || []).map((m) => ({
+            id: m.id,
+            type: m.type,
+            quantity: Number(m.quantity),
+            presentationQuantity: m.presentationQuantity ? Number(m.presentationQuantity) : null,
+            productId: m.productId,
+            productSku: m.product?.sku ?? null,
+            productName: m.product?.name ?? null,
+            genericName: m.product?.genericName ?? null,
+            presentationId: m.presentationId,
+            presentation: m.presentation
+              ? { id: m.presentation.id, name: m.presentation.name, unitsPerPresentation: m.presentation.unitsPerPresentation }
+              : null,
+            batchId: m.batchId,
+            batch: m.batch
+              ? { id: m.batch.id, batchNumber: m.batch.batchNumber, expiresAt: m.batch.expiresAt?.toISOString() ?? null }
+              : null,
+            fromLocationId: (m as any).fromLocationId ?? null,
+            fromLocation: (m as any).fromLocationId
+              ? (() => {
+                  const loc = fromLocationMap.get(String((m as any).fromLocationId))
+                  return loc
+                    ? {
+                        id: loc.id,
+                        code: loc.code,
+                        warehouse: loc.warehouse,
+                      }
+                    : null
+                })()
+              : null,
+            createdAt: m.createdAt.toISOString(),
           })),
         })),
       })
@@ -2794,15 +2923,15 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
                 throw Object.assign(new Error(`Insufficient stock for batch ${item.batchId}. Available: ${availableStock}, Required: ${item.quantity}`), { statusCode: 409 })
               }
 
-              // Create the transfer movement
+              // Create the shipment movement (OUT)
               const movementResult = await createStockMovementTx(tx, {
                 tenantId,
                 userId,
-                type: 'TRANSFER',
+                type: 'OUT',
                 productId: item.productId,
                 batchId: item.batchId,
                 fromLocationId: input.fromLocationId,
-                toLocationId: input.toLocationId,
+                toLocationId: input.toLocationId, // Store destination for later reception
                 quantity: item.quantity,
                 presentationId: batch.presentationId ?? requestItem.presentationId,
                 presentationQuantity: (() => {
@@ -2827,8 +2956,8 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
             }
           }
 
-          // Check which requests are now fully fulfilled
-          const fulfilledRequestIds: string[] = []
+          // Check which requests are now fully sent
+          const sentRequestIds: string[] = []
           for (const requestId of touchedRequestIds) {
             const agg = await tx.stockMovementRequestItem.aggregate({
               where: { tenantId, requestId },
@@ -2838,13 +2967,13 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
             if (sumRemaining <= 1e-9) {
               await tx.stockMovementRequest.update({
                 where: { id: requestId },
-                data: { status: 'FULFILLED', fulfilledAt: new Date(), fulfilledBy: userId },
+                data: { status: 'SENT', fulfilledAt: new Date(), fulfilledBy: userId },
               })
-              fulfilledRequestIds.push(requestId)
+              sentRequestIds.push(requestId)
             }
           }
 
-          return { createdMovements, fulfilledRequestIds, touchedRequestIds: Array.from(touchedRequestIds) }
+          return { createdMovements, sentRequestIds, touchedRequestIds: Array.from(touchedRequestIds) }
         })
 
         // Audit the operation
@@ -2856,7 +2985,7 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
           entityId: null,
           after: {
             fulfillments: input.fulfillments.map(f => ({ requestId: f.requestId, itemCount: f.items.length })),
-            fulfilledRequestIds: result.fulfilledRequestIds,
+            sentRequestIds: result.sentRequestIds,
             movementCount: result.createdMovements.length,
           },
         })
@@ -2870,7 +2999,7 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
         }
 
         // Emit request status updates
-        for (const requestId of result.fulfilledRequestIds) {
+        for (const requestId of result.sentRequestIds) {
           const updatedReq = await db.stockMovementRequest.findFirst({
             where: { tenantId, id: requestId },
             select: { id: true, requestedCity: true, status: true },
@@ -2885,11 +3014,142 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
         }
 
         return reply.send({
-          message: 'Solicitudes atendidas exitosamente',
-          fulfilledRequestIds: result.fulfilledRequestIds,
+          message: 'Solicitudes enviadas exitosamente',
+          sentRequestIds: result.sentRequestIds,
           touchedRequestIds: result.touchedRequestIds,
           movementCount: result.createdMovements.length,
         })
+      } catch (e: any) {
+        if (e.statusCode) return reply.status(e.statusCode).send({ message: e.message })
+        throw e
+      }
+    },
+  )
+
+  app.post(
+    '/api/v1/stock/movement-requests/:id/receive',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.StockMove)],
+    },
+    async (request, reply) => {
+      const { id } = request.params as { id: string }
+      const tenantId = request.auth!.tenantId
+      const userId = request.auth!.userId
+      const debugMovementRequests = process.env.DEBUG_STOCK_MOVEMENT_REQUESTS === '1'
+
+      try {
+        const result = await db.$transaction(async (tx) => {
+          // Validate request exists and is SENT
+          const req = await tx.stockMovementRequest.findFirst({
+            where: { tenantId, id, status: 'SENT' },
+            select: { id: true, status: true },
+          })
+          if (!req) throw Object.assign(new Error('Request not found or not SENT'), { statusCode: 404 })
+
+          // Find all OUT movements for this request
+          const outMovements = await tx.stockMovement.findMany({
+            where: {
+              tenantId,
+              type: 'OUT',
+              referenceType: 'MOVEMENT_REQUEST',
+              referenceId: id,
+            },
+            select: {
+              id: true,
+              productId: true,
+              batchId: true,
+              fromLocationId: true,
+              quantity: true,
+              toLocationId: true,
+              presentationId: true,
+              presentationQuantity: true,
+            },
+          })
+
+          const createdMovements: any[] = []
+
+          for (const outMovement of outMovements) {
+            // Create IN movement
+            const inMovementResult = await createStockMovementTx(tx, {
+              tenantId,
+              userId,
+              type: 'IN',
+              productId: outMovement.productId,
+              batchId: outMovement.batchId,
+              fromLocationId: null,
+              toLocationId: outMovement.toLocationId,
+              quantity: Number(outMovement.quantity),
+              presentationId: outMovement.presentationId,
+              presentationQuantity: outMovement.presentationQuantity ? Number(outMovement.presentationQuantity) : null,
+              referenceType: 'MOVEMENT_REQUEST',
+              referenceId: id,
+              note: 'Recepción de envío',
+            })
+
+            createdMovements.push(inMovementResult)
+          }
+
+          // Mark request as FULFILLED
+          await tx.stockMovementRequest.update({
+            where: { id },
+            data: { status: 'FULFILLED', confirmedAt: new Date(), confirmedBy: userId },
+          })
+
+          return {
+            createdMovements,
+            outMovementCount: outMovements.length,
+            fromLocationCount: new Set(outMovements.map((m) => m.fromLocationId).filter(Boolean)).size,
+          }
+        })
+
+        if (debugMovementRequests) {
+          request.log.info(
+            {
+              tenantId,
+              requestId: id,
+              actorUserId: userId,
+              outMovementCount: (result as any).outMovementCount,
+              createdMovementCount: result.createdMovements.length,
+              fromLocationCount: (result as any).fromLocationCount,
+            },
+            'stock.movement-requests.receive',
+          )
+        }
+
+        // Audit the operation
+        await audit.append({
+          tenantId,
+          actorUserId: userId,
+          action: 'stock.movement-request.receive',
+          entityType: 'StockMovementRequest',
+          entityId: id,
+          after: {
+            movementCount: result.createdMovements.length,
+          },
+        })
+
+        // Emit socket events
+        const room = `tenant:${tenantId}`
+        for (const movement of result.createdMovements) {
+          app.io?.to(room).emit('stock.movement.created', movement.createdMovement)
+          if (movement.fromBalance) app.io?.to(room).emit('stock.balance.changed', movement.fromBalance)
+          if (movement.toBalance) app.io?.to(room).emit('stock.balance.changed', movement.toBalance)
+        }
+
+        // Emit request status update
+        const updatedReq = await db.stockMovementRequest.findFirst({
+          where: { tenantId, id },
+          select: { id: true, requestedCity: true, status: true },
+        })
+        if (updatedReq) {
+          app.io?.to(room).emit('stock.movement_request.updated', {
+            id: updatedReq.id,
+            status: updatedReq.status,
+            requestedCity: updatedReq.requestedCity,
+          })
+        }
+
+        return reply.send({ message: 'Recepción confirmada exitosamente' })
       } catch (e: any) {
         if (e.statusCode) return reply.status(e.statusCode).send({ message: e.message })
         throw e
@@ -3145,20 +3405,23 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
                 warehouse: { select: { id: true, name: true, code: true } },
               },
             })
-            if (!req) return null
+            if (!req || req.status !== 'FULFILLED') return null
 
-            const lastMovement = await db.stockMovement.findFirst({
-              where: { tenantId, referenceType: 'MOVEMENT_REQUEST', referenceId: requestId },
+            // IMPORTANT: When a request is later received, it creates IN movements with fromLocationId=null.
+            // For the origin warehouse, we must look at the shipment OUT movements.
+            const lastOutMovement = await db.stockMovement.findFirst({
+              where: { tenantId, referenceType: 'MOVEMENT_REQUEST', referenceId: requestId, type: 'OUT' },
               orderBy: { createdAt: 'desc' },
               select: { createdAt: true, createdBy: true, fromLocationId: true, toLocationId: true },
             })
 
             const [fromLocation, toLocation] = await Promise.all([
-              lastMovement?.fromLocationId
-                ? db.location.findFirst({ where: { tenantId, id: lastMovement.fromLocationId }, include: { warehouse: true } })
+              lastOutMovement?.fromLocationId
+                ? db.location.findFirst({ where: { tenantId, id: lastOutMovement.fromLocationId }, include: { warehouse: true } })
                 : Promise.resolve(null),
-              lastMovement?.toLocationId
-                ? db.location.findFirst({ where: { tenantId, id: lastMovement.toLocationId }, include: { warehouse: true } })
+              // Destination can be derived from the request warehouse, but keep this as a fallback.
+              lastOutMovement?.toLocationId
+                ? db.location.findFirst({ where: { tenantId, id: lastOutMovement.toLocationId }, include: { warehouse: true } })
                 : Promise.resolve(null),
             ])
 
@@ -3170,8 +3433,8 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
             const fulfilledByUser = req.fulfilledBy
               ? await db.user.findFirst({ where: { tenantId, id: req.fulfilledBy }, select: { fullName: true, email: true } })
               : null
-            const createdByUser = !req.fulfilledBy && lastMovement?.createdBy
-              ? await db.user.findFirst({ where: { tenantId, id: lastMovement.createdBy }, select: { fullName: true, email: true } })
+            const createdByUser = !req.fulfilledBy && lastOutMovement?.createdBy
+              ? await db.user.findFirst({ where: { tenantId, id: lastOutMovement.createdBy }, select: { fullName: true, email: true } })
               : null
             const fulfilledByName = fulfilledByUser?.fullName || fulfilledByUser?.email || createdByUser?.fullName || createdByUser?.email || null
 

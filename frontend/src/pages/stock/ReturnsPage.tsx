@@ -6,6 +6,7 @@ import { MainLayout, PageContainer, Table, Button, Modal, Input, Select, Loading
 import { useNavigation } from '../../hooks'
 import { getProductLabel } from '../../lib/productName'
 import { MovementQuickActions } from '../../components/MovementQuickActions'
+import { EyeIcon } from '@heroicons/react/24/outline'
 
 type WarehouseListItem = {
   id: string
@@ -75,6 +76,11 @@ type StockReturn = {
   items: StockReturnItem[]
 }
 
+async function listSentMovementRequests(token: string): Promise<{ items: any[] }> {
+  const params = new URLSearchParams({ take: '50', status: 'SENT' })
+  return apiFetch(`/api/v1/stock/movement-requests?${params.toString()}`, { token })
+}
+
 async function listReturns(token: string): Promise<{ items: StockReturn[] }> {
   return apiFetch('/api/v1/stock/returns?take=50', { token })
 }
@@ -116,6 +122,13 @@ async function uploadToPresignedUrl(uploadUrl: string, file: File, contentType: 
   if (!res.ok) throw new Error('No se pudo subir la foto')
 }
 
+async function confirmReception(token: string, requestId: string): Promise<{ message: string }> {
+  return apiFetch(`/api/v1/stock/movement-requests/${encodeURIComponent(requestId)}/receive`, {
+    token,
+    method: 'POST',
+  })
+}
+
 async function createReturn(
   token: string,
   input: {
@@ -146,6 +159,13 @@ export function ReturnsPage() {
     refetchInterval: 15_000,
   })
 
+  const sentRequestsQuery = useQuery({
+    queryKey: ['sentMovementRequests'],
+    queryFn: () => listSentMovementRequests(auth.accessToken!),
+    enabled: !!auth.accessToken,
+    refetchInterval: 15_000,
+  })
+
   const warehousesQuery = useQuery({
     queryKey: ['warehouses', 'forReturns'],
     queryFn: () => listWarehouses(auth.accessToken!),
@@ -160,6 +180,23 @@ export function ReturnsPage() {
 
   const activeWarehouses = useMemo(() => (warehousesQuery.data?.items ?? []).filter((w) => w.isActive), [warehousesQuery.data])
   const activeProducts = useMemo(() => (productsQuery.data?.items ?? []).filter((p) => p.isActive), [productsQuery.data])
+
+  const [activeTab, setActiveTab] = useState<'returns' | 'receptions'>('receptions')
+
+  const [selectedRequest, setSelectedRequest] = useState<any>(null)
+
+  const sortedReturns = useMemo(() => {
+    const items = returnsQuery.data?.items ?? []
+    return [...items].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+  }, [returnsQuery.data?.items])
+
+  const sortedSentRequests = useMemo(() => {
+    const items = sentRequestsQuery.data?.items ?? []
+    return [...items].sort(
+      (a, b) =>
+        new Date(b.fulfilledAt || b.createdAt).getTime() - new Date(a.fulfilledAt || a.createdAt).getTime(),
+    )
+  }, [sentRequestsQuery.data?.items])
 
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
@@ -196,6 +233,21 @@ export function ReturnsPage() {
     queryFn: () => fetchProductBatches(auth.accessToken!, itemProductId),
     enabled: !!auth.accessToken && !!itemProductId,
   })
+
+  const abbreviateCity = (city: string) => {
+    if (!city) return '—'
+    const upper = city.toUpperCase()
+    if (upper.includes('COCHABAMBA')) return 'CBBA'
+    if (upper.includes('LA PAZ')) return 'LPZ'
+    if (upper.includes('SANTA CRUZ')) return 'SCZ'
+    if (upper.includes('ORURO')) return 'ORU'
+    if (upper.includes('POTOSI')) return 'PTS'
+    if (upper.includes('SUCRE')) return 'SCR'
+    if (upper.includes('TARIJA')) return 'TJA'
+    if (upper.includes('PANDO')) return 'PND'
+    if (upper.includes('BENI')) return 'BNI'
+    return upper.slice(0, 3)
+  }
 
   const activeItemPresentations = useMemo(
     () => (itemPresentationsQuery.data?.items ?? []).filter((p) => (p.isActive ?? true) === true),
@@ -309,6 +361,14 @@ export function ReturnsPage() {
     },
   })
 
+  const confirmReceptionMutation = useMutation({
+    mutationFn: (requestId: string) => confirmReception(auth.accessToken!, requestId),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['sentMovementRequests'] })
+      await queryClient.invalidateQueries({ queryKey: ['movement-requests'] })
+    },
+  })
+
   const columns = useMemo(
     () => [
       { header: 'Fecha', width: '170px', accessor: (r: any) => new Date(r.createdAt).toLocaleString() },
@@ -331,6 +391,86 @@ export function ReturnsPage() {
     ],
     [],
   )
+
+  const receptionModal = selectedRequest ? (
+    <Modal
+      isOpen={!!selectedRequest}
+      onClose={() => setSelectedRequest(null)}
+      title="📦 Detalle del envío"
+      maxWidth="lg"
+    >
+      <div className="space-y-4">
+        <div className="grid grid-cols-2 gap-4 text-sm">
+          <div>
+            <div className="font-medium text-slate-900 dark:text-slate-100">Origen</div>
+            <div className="text-slate-600 dark:text-slate-400">
+              {selectedRequest.originWarehouse?.city
+                ? abbreviateCity(selectedRequest.originWarehouse.city)
+                : selectedRequest.originWarehouse?.code?.replace(/^SUC-/, '') ?? '-'}
+            </div>
+          </div>
+          <div>
+            <div className="font-medium text-slate-900 dark:text-slate-100">Destino</div>
+            <div className="text-slate-600 dark:text-slate-400">
+              {selectedRequest.warehouse?.city
+                ? abbreviateCity(selectedRequest.warehouse.city)
+                : selectedRequest.requestedCity
+                  ? abbreviateCity(selectedRequest.requestedCity)
+                  : selectedRequest.warehouse?.code?.replace(/^SUC-/, '') ?? '-'}
+            </div>
+          </div>
+          <div>
+            <div className="font-medium text-slate-900 dark:text-slate-100">Solicitante</div>
+            <div className="text-slate-600 dark:text-slate-400">{selectedRequest.requestedByName ?? '-'}</div>
+          </div>
+          <div>
+            <div className="font-medium text-slate-900 dark:text-slate-100">Enviado por</div>
+            <div className="text-slate-600 dark:text-slate-400">{selectedRequest.fulfilledByName ?? '-'}</div>
+          </div>
+          <div>
+            <div className="font-medium text-slate-900 dark:text-slate-100">Fecha envío</div>
+            <div className="text-slate-600 dark:text-slate-400">{new Date(selectedRequest.fulfilledAt || selectedRequest.createdAt).toLocaleString()}</div>
+          </div>
+        </div>
+
+        <div>
+          <div className="font-medium text-slate-900 dark:text-slate-100 mb-2">Productos enviados</div>
+          <div className="space-y-2 max-h-60 overflow-y-auto">
+            {selectedRequest.movements?.map((movement: any, idx: number) => (
+              <div key={idx} className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800 rounded">
+                <div className="flex-1">
+                  <div className="font-medium">{getProductLabel(movement)}</div>
+                  <div className="text-sm text-slate-600 dark:text-slate-400 grid grid-cols-2 gap-2 mt-1">
+                    <div><strong>Presentación:</strong> {movement.presentation?.name ?? '-'}</div>
+                    <div><strong>Cantidad:</strong> {movement.quantity}</div>
+                    <div><strong>Lote:</strong> {movement.batch?.batchNumber ?? '-'}</div>
+                    <div><strong>Vencimiento:</strong> {movement.batch?.expiresAt ? new Date(movement.batch.expiresAt).toLocaleDateString() : '-'}</div>
+                  </div>
+                </div>
+              </div>
+            )) || (
+              <div className="text-sm text-slate-500">No hay información detallada de envío disponible</div>
+            )}
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-2 pt-4 border-t">
+          <Button variant="outline" onClick={() => setSelectedRequest(null)}>
+            Cerrar
+          </Button>
+          <Button 
+            onClick={() => {
+              confirmReceptionMutation.mutate(selectedRequest.id)
+              setSelectedRequest(null)
+            }} 
+            disabled={confirmReceptionMutation.isPending}
+          >
+            {confirmReceptionMutation.isPending ? 'Confirmando…' : '✅ Confirmar recepción'}
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  ) : null
 
   const createModal = (
     <Modal
@@ -485,22 +625,104 @@ export function ReturnsPage() {
 
   return (
     <MainLayout navGroups={navGroups}>
-      <PageContainer title="↩️ Devoluciones">
+      <PageContainer title="↩️ Recepción/Devolución">
         <MovementQuickActions currentPath="/stock/returns" />
         <div className="mb-3 flex items-center justify-between">
-          <div className="text-sm text-slate-600 dark:text-slate-400">Devoluciones con motivo y evidencia (foto).</div>
+          <div className="text-sm text-slate-600 dark:text-slate-400">Recepción de envíos y devoluciones con evidencia.</div>
           <Button onClick={() => setShowCreateModal(true)}>➕ Nueva devolución</Button>
         </div>
 
-        {returnsQuery.isLoading && <Loading />}
-        {returnsQuery.isError && <ErrorState message={(returnsQuery.error as any)?.message ?? 'Error cargando devoluciones'} />}
-        {!returnsQuery.isLoading && !returnsQuery.isError && (returnsQuery.data?.items?.length ?? 0) === 0 && (
-          <EmptyState message="No hay devoluciones registradas." />
-        )}
-        {!returnsQuery.isLoading && !returnsQuery.isError && (returnsQuery.data?.items?.length ?? 0) > 0 && (
-          <Table columns={columns as any} data={returnsQuery.data?.items ?? []} keyExtractor={(r) => r.id} />
+        <div className="mb-4 border-b border-slate-200 dark:border-slate-700">
+          <nav className="-mb-px flex space-x-8">
+            <button
+              onClick={() => setActiveTab('returns')}
+              className={`border-b-2 py-2 px-1 text-sm font-medium ${
+                activeTab === 'returns'
+                  ? 'border-blue-500 text-blue-600 dark:border-blue-400 dark:text-blue-400'
+                  : 'border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700 dark:text-slate-400 dark:hover:border-slate-600 dark:hover:text-slate-300'
+              }`}
+            >
+              Devoluciones
+            </button>
+            <button
+              onClick={() => setActiveTab('receptions')}
+              className={`border-b-2 py-2 px-1 text-sm font-medium ${
+                activeTab === 'receptions'
+                  ? 'border-blue-500 text-blue-600 dark:border-blue-400 dark:text-blue-400'
+                  : 'border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700 dark:text-slate-400 dark:hover:border-slate-600 dark:hover:text-slate-300'
+              }`}
+            >
+              Recepciones
+            </button>
+          </nav>
+        </div>
+
+        {activeTab === 'returns' && (
+          <>
+            {returnsQuery.isLoading && <Loading />}
+            {returnsQuery.isError && <ErrorState message={(returnsQuery.error as any)?.message ?? 'Error cargando devoluciones'} />}
+            {!returnsQuery.isLoading && !returnsQuery.isError && (returnsQuery.data?.items?.length ?? 0) === 0 && (
+              <EmptyState message="No hay devoluciones registradas." />
+            )}
+            {!returnsQuery.isLoading && !returnsQuery.isError && (returnsQuery.data?.items?.length ?? 0) > 0 && (
+              <Table columns={columns as any} data={sortedReturns} keyExtractor={(r: StockReturn) => r.id} />
+            )}
+          </>
         )}
 
+        {activeTab === 'receptions' && (
+          <>
+            {sentRequestsQuery.isLoading && <Loading />}
+            {sentRequestsQuery.isError && <ErrorState message={(sentRequestsQuery.error as any)?.message ?? 'Error cargando recepciones'} />}
+            {!sentRequestsQuery.isLoading && !sentRequestsQuery.isError && (sentRequestsQuery.data?.items?.length ?? 0) === 0 && (
+              <EmptyState message="No hay envíos pendientes de recepción." />
+            )}
+            {!sentRequestsQuery.isLoading && !sentRequestsQuery.isError && (sentRequestsQuery.data?.items?.length ?? 0) > 0 && (
+              <Table
+                columns={[
+                  { header: 'Fecha envío', width: '170px', accessor: (r: any) => new Date(r.fulfilledAt || r.createdAt).toLocaleString() },
+                  { 
+                    header: 'Origen → Destino', 
+                    accessor: (r: any) => {
+                      const fromCode = r.originWarehouse?.city
+                        ? abbreviateCity(r.originWarehouse.city)
+                        : r.originWarehouse?.code?.replace(/^SUC-/, '') ?? '—'
+
+                      const toCode = r.warehouse?.city
+                        ? abbreviateCity(r.warehouse.city)
+                        : r.requestedCity
+                          ? abbreviateCity(r.requestedCity)
+                          : r.warehouse?.code?.replace(/^SUC-/, '') ?? '—'
+
+                      return `${fromCode} → ${toCode}`
+                    }
+                  },
+                  { header: 'Solicitante', accessor: (r: any) => r.requestedByName },
+                  { header: 'Enviado por', accessor: (r: any) => r.fulfilledByName ?? '-' },
+                  { header: 'Ítems', width: '80px', accessor: (r: any) => (r.movements?.length ?? r.items?.length ?? 0) },
+                  {
+                    header: 'Acciones',
+                    width: '120px',
+                    accessor: (r: any) => (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        icon={<EyeIcon className="w-4 h-4" />}
+                        onClick={() => setSelectedRequest(r)}
+                      >
+                        Ver
+                      </Button>
+                    ),
+                  },
+                ]}
+                data={sortedSentRequests}
+                keyExtractor={(r) => r.id}
+              />
+            )}
+          </>
+        )}
+
+        {receptionModal}
         {createModal}
       </PageContainer>
     </MainLayout>
