@@ -336,6 +336,13 @@ async function main() {
     select: { id: true },
   })
 
+  const branchSellerRole = await db.role.upsert({
+    where: { tenantId_code: { tenantId: demoTenant.id, code: 'BRANCH_SELLER' } },
+    update: { name: 'Vendedor de Sucursal' },
+    create: { tenantId: demoTenant.id, code: 'BRANCH_SELLER', name: 'Vendedor de Sucursal', isSystem: true, createdBy: null },
+    select: { id: true },
+  })
+
   const permIdByCode = new Map(perms.map((p) => [p.code, p.id] as const))
 
   const ventasPerms: string[] = [
@@ -357,7 +364,8 @@ async function main() {
     Permissions.ReportStockRead,
   ]
 
-  const branchAdminPerms: string[] = [
+  // BRANCH_SELLER: copy of the current BRANCH_ADMIN permissions (kept stable for now).
+  const branchSellerPerms: string[] = [
     Permissions.ScopeBranch,
     Permissions.CatalogRead,
     Permissions.StockRead,
@@ -368,6 +376,9 @@ async function main() {
     Permissions.SalesDeliveryWrite,
     Permissions.ReportSalesRead,
   ]
+
+  // BRANCH_ADMIN: must be able to request/ship/receive stock movements for its own branch.
+  const branchAdminPerms: string[] = [...branchSellerPerms, Permissions.StockMove]
 
   for (const code of ventasPerms) {
     const permissionId = permIdByCode.get(code)
@@ -396,6 +407,16 @@ async function main() {
       where: { roleId_permissionId: { roleId: branchAdminRole.id, permissionId } },
       update: {},
       create: { roleId: branchAdminRole.id, permissionId },
+    })
+  }
+
+  for (const code of branchSellerPerms) {
+    const permissionId = permIdByCode.get(code)
+    if (!permissionId) continue
+    await db.rolePermission.upsert({
+      where: { roleId_permissionId: { roleId: branchSellerRole.id, permissionId } },
+      update: {},
+      create: { roleId: branchSellerRole.id, permissionId },
     })
   }
 

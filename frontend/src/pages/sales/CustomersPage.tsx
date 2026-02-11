@@ -3,9 +3,9 @@ import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { apiFetch } from '../../lib/api'
 import { useAuth } from '../../providers/AuthProvider'
-import { MainLayout, PageContainer, Button, Table, Loading, ErrorState, EmptyState, PaginationCursor } from '../../components'
+import { MainLayout, PageContainer, Button, Table, Loading, ErrorState, EmptyState, PaginationCursor, Input } from '../../components'
 import { useNavigation } from '../../hooks'
-import { EyeIcon, PlusIcon } from '@heroicons/react/24/outline'
+import { EyeIcon, PlusIcon, MagnifyingGlassIcon, XMarkIcon } from '@heroicons/react/24/outline'
 
 type CustomerListItem = {
   id: string
@@ -19,12 +19,15 @@ type CustomerListItem = {
 
 type ListResponse = { items: CustomerListItem[]; nextCursor: string | null }
 
-async function fetchCustomers(token: string, take: number, cursor?: string, cities?: string[]): Promise<ListResponse> {
+async function fetchCustomers(token: string, take: number, cursor?: string, cities?: string[], q?: string): Promise<ListResponse> {
   const params = new URLSearchParams({ take: String(take) })
   if (cursor) params.append('cursor', cursor)
   if (cities && cities.length > 0) {
     // Enviar como string separado por comas
     params.append('cities', cities.join(','))
+  }
+  if (q && q.trim()) {
+    params.append('q', q.trim())
   }
   return apiFetch(`/api/v1/customers?${params}`, { token })
 }
@@ -35,11 +38,13 @@ export function CustomersPage() {
   const navGroups = useNavigation()
   const [cursor, setCursor] = useState<string | undefined>()
   const [selectedCities, setSelectedCities] = useState<string[]>([])
+  const [searchQuery, setSearchQuery] = useState('')
+  const [appliedSearch, setAppliedSearch] = useState('')
   const take = 20
 
   const customersQuery = useQuery({
-    queryKey: ['customers', take, cursor, selectedCities],
-    queryFn: () => fetchCustomers(auth.accessToken!, take, cursor, selectedCities.length > 0 ? selectedCities : undefined),
+    queryKey: ['customers', take, cursor, selectedCities, appliedSearch],
+    queryFn: () => fetchCustomers(auth.accessToken!, take, cursor, selectedCities.length > 0 ? selectedCities : undefined, appliedSearch || undefined),
     enabled: !!auth.accessToken,
   })
 
@@ -63,6 +68,65 @@ export function CustomersPage() {
         title="👥 Clientes"
         actions={<Button variant="primary" icon={<PlusIcon />} onClick={() => navigate('/sales/customers/new')}>Crear Cliente</Button>}
       >
+        {/* Buscador de clientes */}
+        <div className="mb-4">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              setAppliedSearch(searchQuery.trim())
+              setCursor(undefined) // Reset pagination on new search
+            }}
+            className="flex gap-2"
+          >
+            <div className="relative flex-1">
+              <Input
+                placeholder="Buscar clientes por nombre..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pr-10"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchQuery('')
+                    setAppliedSearch('')
+                    setCursor(undefined)
+                  }}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
+                >
+                  <XMarkIcon className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+            <Button variant="outline" icon={<MagnifyingGlassIcon />} type="submit" disabled={searchQuery.length === 0}>
+              Buscar
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setSearchQuery('')
+                setAppliedSearch('')
+                setCursor(undefined)
+              }}
+              disabled={!appliedSearch}
+            >
+              Limpiar
+            </Button>
+          </form>
+          {appliedSearch && (
+            <div className="mt-2 text-sm text-slate-600 dark:text-slate-400">
+              {customersQuery.isLoading && 'Buscando...'}
+              {customersQuery.error && (
+                <span className="text-red-600 dark:text-red-400">
+                  Error en la búsqueda: {customersQuery.error instanceof Error ? customersQuery.error.message : 'Error desconocido'}
+                </span>
+              )}
+              {customersQuery.data && `Encontrados ${customersQuery.data.items.length} clientes`}
+            </div>
+          )}
+        </div>
+
         {/* Filtro de ciudades - Chips simples */}
         {availableCities.length > 0 && (
           <div className="mb-4">

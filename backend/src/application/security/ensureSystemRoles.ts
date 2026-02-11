@@ -62,6 +62,13 @@ export async function ensureSystemRoles(db: PrismaClient): Promise<void> {
       select: { id: true },
     })
 
+    const branchSellerRole = await db.role.upsert({
+      where: { tenantId_code: { tenantId: tenant.id, code: 'BRANCH_SELLER' } },
+      update: { name: 'Vendedor de Sucursal' },
+      create: { tenantId: tenant.id, code: 'BRANCH_SELLER', name: 'Vendedor de Sucursal', isSystem: true, createdBy: null },
+      select: { id: true },
+    })
+
     // TENANT_ADMIN: keep in sync with full-permissions set (except platform permission is allowed only for platform tenant).
     const tenantAdminRole = await db.role.findUnique({
       where: { tenantId_code: { tenantId: tenant.id, code: 'TENANT_ADMIN' } },
@@ -87,7 +94,8 @@ export async function ensureSystemRoles(db: PrismaClient): Promise<void> {
       Permissions.ReportStockRead,
     ]
 
-    const branchAdminPerms: string[] = [
+    // BRANCH_SELLER: copy of the current BRANCH_ADMIN permissions (kept stable for now).
+    const branchSellerPerms: string[] = [
       Permissions.ScopeBranch,
       Permissions.CatalogRead,
       Permissions.StockRead,
@@ -97,6 +105,12 @@ export async function ensureSystemRoles(db: PrismaClient): Promise<void> {
       Permissions.SalesDeliveryRead,
       Permissions.SalesDeliveryWrite,
       Permissions.ReportSalesRead,
+    ]
+
+    // BRANCH_ADMIN: must be able to request/ship/receive stock movements for its own branch.
+    const branchAdminPerms: string[] = [
+      ...branchSellerPerms,
+      Permissions.StockMove,
     ]
 
     const tenantAdminPerms: string[] = [
@@ -144,6 +158,16 @@ export async function ensureSystemRoles(db: PrismaClient): Promise<void> {
         where: { roleId_permissionId: { roleId: branchAdminRole.id, permissionId } },
         update: {},
         create: { roleId: branchAdminRole.id, permissionId },
+      })
+    }
+
+    for (const code of branchSellerPerms) {
+      const permissionId = permIdByCode.get(code)
+      if (!permissionId) continue
+      await db.rolePermission.upsert({
+        where: { roleId_permissionId: { roleId: branchSellerRole.id, permissionId } },
+        update: {},
+        create: { roleId: branchSellerRole.id, permissionId },
       })
     }
 

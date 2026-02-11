@@ -4,6 +4,7 @@ import { usePermissions } from './usePermissions';
 export function useNavigation(): NavGroup[] {
   const { isPlatformAdmin, isTenantAdmin, roles, hasPermission, isLoading } = usePermissions();
   const isLogistica = roles.some((r) => r.code === 'LOGISTICA')
+  const isBranchAdmin = roles.some((r) => r.code === 'BRANCH_ADMIN')
 
   // Mientras carga, mostrar navegación mínima
   if (isLoading) {
@@ -71,8 +72,8 @@ export function useNavigation(): NavGroup[] {
       warehouseItems.push({ to: '/warehouse/warehouses', label: '🏬 Sucursales' })
     }
 
-    // Movimientos: solo admin
-    if (isTenantAdmin || hasPermission('stock:manage')) {
+    // Movimientos: tenant admin + stock manage + admin de sucursal
+    if (isTenantAdmin || hasPermission('stock:manage') || isBranchAdmin) {
       warehouseItems.push({ to: '/stock/movements', label: '🚚 Movimientos' })
     }
 
