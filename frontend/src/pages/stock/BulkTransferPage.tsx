@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { apiFetch } from '../../lib/api'
 import { getProductLabel } from '../../lib/productName'
@@ -106,6 +106,17 @@ export function BulkTransferPage() {
     () => (warehousesQuery.data?.items ?? []).filter((w) => w.isActive),
     [warehousesQuery.data?.items],
   )
+
+  const isBranchScoped = permissions.hasPermission('scope:branch')
+
+  useEffect(() => {
+    const wid = permissions.user?.warehouseId ?? ''
+    if (!wid) return
+    if (fromWarehouseId) return
+    if (!activeWarehouses.some((w) => w.id === wid)) return
+    setFromWarehouseId(wid)
+    setFromLocationId('')
+  }, [permissions.user?.warehouseId, activeWarehouses, fromWarehouseId])
 
   const filteredStock = useMemo(() => {
     const items = stockQuery.data?.items ?? []
@@ -286,7 +297,7 @@ export function BulkTransferPage() {
                 { value: '', label: 'Selecciona almacén' },
                 ...activeWarehouses.map((w) => ({ value: w.id, label: `${w.code} - ${w.name}` })),
               ]}
-              disabled={warehousesQuery.isLoading}
+              disabled={warehousesQuery.isLoading || isBranchScoped}
             />
 
             <Select

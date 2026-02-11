@@ -1,10 +1,11 @@
-import React, { useState, useMemo } from 'react'
+import React, { useEffect, useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { MainLayout, PageContainer, Select, Input, Button, Modal } from '../../components'
 import { MovementQuickActions } from '../../components/MovementQuickActions'
 import { useNavigation } from '../../hooks'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../providers/AuthProvider'
+import { usePermissions } from '../../hooks/usePermissions'
 import { apiFetch } from '../../lib/api'
 
 type WarehouseListItem = { id: string; code: string; name: string; city?: string | null; isActive: boolean }
@@ -96,8 +97,8 @@ async function listLocationStock(token: string, locationId: string): Promise<{ i
 
 async function listMovementRequests(token: string, city?: string): Promise<{ items: MovementRequest[] }> {
   const url = city 
-    ? `/api/v1/stock/movement-requests?take=50&city=${encodeURIComponent(city)}`
-    : '/api/v1/stock/movement-requests?take=50'
+    ? `/api/v1/stock/movement-requests?take=50&status=OPEN&city=${encodeURIComponent(city)}`
+    : '/api/v1/stock/movement-requests?take=50&status=OPEN'
   const response = await apiFetch<{ items: any[] }>(url, { token })
   return {
     items: response.items.map((req: any) => ({
@@ -123,6 +124,7 @@ async function listMovementRequests(token: string, city?: string): Promise<{ ite
 
 export function BulkFulfillRequestsPage() {
   const auth = useAuth()
+  const permissions = usePermissions()
   const navGroups = useNavigation()
   const navigate = useNavigate()
 
@@ -172,6 +174,22 @@ export function BulkFulfillRequestsPage() {
     () => (warehousesQuery.data?.items ?? []).filter((w) => w.isActive),
     [warehousesQuery.data?.items],
   )
+
+  const isBranchScoped = permissions.hasPermission('scope:branch')
+
+  useEffect(() => {
+    const wid = permissions.user?.warehouseId ?? ''
+    if (!wid) return
+    if (fromWarehouseId) return
+    if (!activeWarehouses.some((w) => w.id === wid)) return
+    setFromWarehouseId(wid)
+    setFromLocationId('')
+    // Si el destino era el mismo que el origen, lo limpiamos
+    if (toWarehouseId === wid) {
+      setToWarehouseId('')
+      setToLocationId('')
+    }
+  }, [permissions.user?.warehouseId, activeWarehouses, fromWarehouseId, toWarehouseId])
 
   const availableFromWarehouses = activeWarehouses
   const availableToWarehouses = activeWarehouses.filter((w) => w.id !== fromWarehouseId)
@@ -395,7 +413,7 @@ export function BulkFulfillRequestsPage() {
                     label: `${w.code} - ${w.name}${w.city ? ` (${w.city})` : ''}`,
                   })),
                 ]}
-                disabled={warehousesQuery.isLoading}
+                disabled={warehousesQuery.isLoading || isBranchScoped}
               />
 
               <Select

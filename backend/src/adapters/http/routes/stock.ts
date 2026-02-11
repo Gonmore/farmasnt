@@ -415,6 +415,14 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
     return city ? city.toUpperCase() : '__MISSING__'
   }
 
+  function branchWarehouseIdOf(request: any): string | null {
+    if (request.auth?.isTenantAdmin) return null
+    const scoped = !!request.auth?.permissions?.has(Permissions.ScopeBranch)
+    if (!scoped) return null
+    const wid = String(request.auth?.warehouseId ?? '').trim()
+    return wid ? wid : '__MISSING__'
+  }
+
   app.post(
     '/api/v1/stock/returns/photo-upload',
     {
@@ -625,8 +633,8 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
 
       const tenantId = request.auth!.tenantId
       const userId = request.auth!.userId
-      const branchCity = branchCityOf(request)
-      if (branchCity === '__MISSING__') {
+      const branchWarehouseId = branchWarehouseIdOf(request)
+      if (branchWarehouseId === '__MISSING__') {
         return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
       }
 
@@ -644,18 +652,10 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
             throw err
           }
 
-          if (branchCity) {
-            const city = String(toLoc.warehouse?.city ?? '').trim()
-            if (!city) {
-              const err = new Error('Destination warehouse has no city') as Error & { statusCode?: number }
-              err.statusCode = 409
-              throw err
-            }
-            if (city.toUpperCase() !== branchCity.toUpperCase()) {
-              const err = new Error('Forbidden for this branch') as Error & { statusCode?: number }
-              err.statusCode = 403
-              throw err
-            }
+          if (branchWarehouseId && toLoc.warehouse?.id !== branchWarehouseId) {
+            const err = new Error('Forbidden for this branch') as Error & { statusCode?: number }
+            err.statusCode = 403
+            throw err
           }
 
           const createdReturn = await tx.stockReturn.create({
@@ -782,7 +782,15 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
         Object.assign(
           where,
           branchCity
-            ? { requestedCity: { equals: branchCity, mode: 'insensitive' as const } }
+            ? {
+                requestedCity: {
+                  equals:
+                    parsed.data.status === 'OPEN' && parsed.data.city
+                      ? parsed.data.city
+                      : branchCity,
+                  mode: 'insensitive' as const,
+                },
+              }
             : parsed.data.city
               ? { requestedCity: { equals: parsed.data.city, mode: 'insensitive' as const } }
               : {},
@@ -1675,8 +1683,8 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
     async (request, reply) => {
       const tenantId = request.auth!.tenantId
       const userId = request.auth!.userId
-      const branchCity = branchCityOf(request)
-      if (branchCity === '__MISSING__') {
+      const branchWarehouseId = branchWarehouseIdOf(request)
+      if (branchWarehouseId === '__MISSING__') {
         return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
       }
 
@@ -1696,7 +1704,6 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
               tenantId,
               id,
               status: 'OPEN',
-              ...(branchCity ? { requestedCity: { equals: branchCity, mode: 'insensitive' as const } } : {}),
             },
             include: {
               warehouse: { select: { id: true, code: true, name: true, city: true } },
@@ -1725,6 +1732,10 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
           ])
           if (!fromLoc) throw Object.assign(new Error('fromLocationId not found'), { statusCode: 404 })
           if (!toLoc) throw Object.assign(new Error('toLocationId not found'), { statusCode: 404 })
+
+          if (branchWarehouseId && fromLoc.warehouse?.id !== branchWarehouseId) {
+            throw Object.assign(new Error('Solo puede atender solicitudes desde su sucursal'), { statusCode: 403 })
+          }
 
           // Enforce destination consistency when request has warehouseId.
           const reqWarehouseId = (req as any).warehouseId ?? null
@@ -2538,6 +2549,11 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
       const userId = request.auth!.userId
       const input = parsed.data
 
+      const branchWarehouseId = branchWarehouseIdOf(request)
+      if (branchWarehouseId === '__MISSING__') {
+        return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+      }
+
       const referenceType = 'BULK_TRANSFER'
       const referenceId = randomUUID()
 
@@ -2550,6 +2566,10 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
           ])
           if (!baseFromLoc) throw Object.assign(new Error('fromLocationId not found'), { statusCode: 404 })
           if (!baseToLoc) throw Object.assign(new Error('toLocationId not found'), { statusCode: 404 })
+
+          if (branchWarehouseId && baseFromLoc.warehouseId !== branchWarehouseId) {
+            throw Object.assign(new Error('Solo puede transferir desde su sucursal'), { statusCode: 403 })
+          }
 
           if (input.fromWarehouseId && input.fromWarehouseId !== baseFromLoc.warehouseId) {
             throw Object.assign(new Error('fromLocationId does not belong to fromWarehouseId'), { statusCode: 400 })
@@ -2817,9 +2837,9 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
       const tenantId = request.auth!.tenantId
       const userId = request.auth!.userId
       const input = parsed.data
-      const branchCity = branchCityOf(request)
+      const branchWarehouseId = branchWarehouseIdOf(request)
 
-      if (branchCity === '__MISSING__') {
+      if (branchWarehouseId === '__MISSING__') {
         return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
       }
 
@@ -2838,6 +2858,10 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
           ])
           if (!fromLoc) throw Object.assign(new Error('fromLocationId not found'), { statusCode: 404 })
           if (!toLoc) throw Object.assign(new Error('toLocationId not found'), { statusCode: 404 })
+
+          if (branchWarehouseId && fromLoc.warehouse?.id !== branchWarehouseId) {
+            throw Object.assign(new Error('Solo puede enviar stock desde su sucursal'), { statusCode: 403 })
+          }
 
           const createdMovements: any[] = []
           const touchedRequestIds = new Set<string>()
@@ -2867,11 +2891,7 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
             })
             if (!req) throw Object.assign(new Error(`Request ${requestId} not found or not OPEN`), { statusCode: 404 })
 
-            // Check branch city permissions
             const reqCity = String(req.requestedCity ?? '').trim().toUpperCase()
-            if (branchCity && reqCity !== branchCity) {
-              throw Object.assign(new Error('Solo puede atender solicitudes de su sucursal'), { statusCode: 403 })
-            }
 
             // Check destination consistency
             if (req.warehouseId && toLoc.warehouse?.id !== req.warehouseId) {
@@ -3166,6 +3186,20 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
     async (request, reply) => {
       const tenantId = request.auth!.tenantId
 
+      const branchWarehouseId = branchWarehouseIdOf(request)
+      if (branchWarehouseId === '__MISSING__') {
+        return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+      }
+
+      const branchLocationIds = branchWarehouseId
+        ? (
+            await db.location.findMany({
+              where: { tenantId, warehouseId: branchWarehouseId },
+              select: { id: true },
+            })
+          ).map((l) => l.id)
+        : null
+
       try {
         // Get fulfillments of movement requests (includes partials)
         const movementRequestGroups = await db.stockMovement.groupBy({
@@ -3174,6 +3208,9 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
             tenantId,
             referenceType: 'MOVEMENT_REQUEST',
             referenceId: { not: null },
+            ...(branchLocationIds
+              ? { OR: [{ fromLocationId: { in: branchLocationIds } }, { toLocationId: { in: branchLocationIds } }] }
+              : {}),
           },
           _max: { createdAt: true },
           _count: { id: true },
@@ -3188,6 +3225,9 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
           where: {
             tenantId,
             referenceType: 'BULK_TRANSFER',
+            ...(branchLocationIds
+              ? { OR: [{ fromLocationId: { in: branchLocationIds } }, { toLocationId: { in: branchLocationIds } }] }
+              : {}),
           },
           _max: {
             createdAt: true,
@@ -3270,6 +3310,9 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
             type: {
               not: 'IN',
             },
+            ...(branchLocationIds
+              ? { OR: [{ fromLocationId: { in: branchLocationIds } }, { toLocationId: { in: branchLocationIds } }] }
+              : {}),
           },
           orderBy: {
             createdAt: 'desc',
@@ -3337,6 +3380,7 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
         const returns = await db.stockReturn.findMany({
           where: {
             tenantId,
+            ...(branchWarehouseId ? { toLocation: { warehouseId: branchWarehouseId } } : {}),
           },
           include: {
             items: {

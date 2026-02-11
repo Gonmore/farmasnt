@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { PencilSquareIcon, TrashIcon } from '@heroicons/react/24/outline'
 import { apiFetch } from '../../lib/api'
 import { getProductLabel } from '../../lib/productName'
@@ -340,6 +340,18 @@ export function MovementsPage() {
     queryFn: () => listWarehouses(auth.accessToken!),
     enabled: !!auth.accessToken,
   })
+
+  // Preseleccionar sucursal para administradores de sucursal
+  useEffect(() => {
+    if (!showCreateRequestModal || editingRequestId) return
+    const isBranchScoped = permissions.hasPermission('scope:branch')
+    if (!isBranchScoped) return
+    const wid = permissions.user?.warehouseId ?? ''
+    if (!wid) return
+    if (requestWarehouseId) return
+    if (!requestWarehousesQuery.data?.items.some((w) => w.id === wid)) return
+    setRequestWarehouseId(wid)
+  }, [showCreateRequestModal, editingRequestId, permissions, requestWarehousesQuery.data, requestWarehouseId])
 
   // Filtrar productos para el selector con búsqueda
   const filteredProducts = React.useMemo(() => {
@@ -1758,7 +1770,7 @@ export function MovementsPage() {
                 .filter((w) => w.isActive)
                 .map((w) => ({ value: w.id, label: `${w.code} - ${w.name}` })),
             ]}
-            disabled={requestWarehousesQuery.isLoading || permissions.roles.some(r => r.code === 'BRANCH_ADMIN')}
+            disabled={requestWarehousesQuery.isLoading || permissions.hasPermission('scope:branch')}
             required
           />
 
