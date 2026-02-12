@@ -105,7 +105,7 @@ async function listWarehouseLocations(token: string, warehouseId: string): Promi
 }
 
 async function listClients(token: string): Promise<{ items: ClientListItem[] }> {
-  return apiFetch(`/api/v1/customers?take=100`, { token })
+  return apiFetch(`/api/v1/customers?take=50`, { token })
 }
 
 async function fetchProductPresentations(token: string, productId: string): Promise<{ items: ProductPresentation[] }> {
