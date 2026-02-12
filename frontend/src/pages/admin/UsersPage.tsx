@@ -13,6 +13,7 @@ type AdminUserListItem = {
   isActive: boolean
   createdAt: string
   roleIds?: string[]
+  roles?: Array<{ id: string; code: string; name: string }>
 }
 
 type RolesResponse = { items: Array<{ id: string; code: string; name: string }> }
@@ -138,7 +139,7 @@ export function UsersPage() {
                 { header: 'Email', accessor: (u) => u.email },
                 { header: 'Nombre', accessor: (u) => u.fullName || '-' },
                 { header: 'Estado', accessor: (u) => (u.isActive ? 'Activo' : 'Inactivo') },
-                { header: 'Creado', accessor: (u) => new Date(u.createdAt).toLocaleDateString() },
+                { header: 'Rol', accessor: (u) => (u.roles?.[0]?.name ?? (u.roleIds && u.roleIds.length > 0 ? 'Asignado' : '-')) },
                 {
                   header: 'Acciones',
                   className: 'text-center w-auto',
