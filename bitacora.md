@@ -749,3 +749,24 @@ Tenant Admin (Clientes)
   - Agregada columna "Presentación" en tabla de stock origen para mostrar la presentación del lote.
   - Modificada columna "Lote" para mostrar fecha de vencimiento debajo en formato pill (rectángulo curvo con background sólido, letra pequeña).
 
+### **[12 Feb 2026]** — UI Admin Users + Backdated OUT Movements + RBAC Origin Selection
+
+- **UI Admin Users**:
+  - Se reemplazó la columna "Creado" por "Rol" en `/admin/users` para mostrar el rol actual del usuario (primero de la lista o "Asignado" si tiene roles asignados).
+
+- **Backdated OUT Movements (Tenant Admin only)**:
+  - Tenant admins pueden registrar movimientos de salida (ventas/desechos) con fecha pasada en `/stock/movements`.
+  - Campo "Fecha del movimiento" (date picker nativo) solo visible para tenant admin.
+  - Backend valida que solo tenant admin puede setear `createdAt`, y que no sea futuro.
+  - Afecta cálculo de expiración (relativo a fecha backdated), secuencia de numeración (año de fecha backdated), y timestamps de movimiento/batch.
+
+- **RBAC Origin Selection in Bulk Flows**:
+  - Branch admins (con `scope:branch`) no pueden elegir warehouse/location de origen en transferencias masivas y atención de solicitudes.
+  - Tenant admin mantiene control total sobre origen (no restringido por scope branch).
+  - Aplicado en `BulkTransferPage` y `BulkFulfillRequestsPageSimple`.
+
+- **Fix Client Dropdown in OUT Movements**:
+  - Corregido endpoint de API: `/api/v1/clients` → `/api/v1/customers`.
+  - Ajustado parámetro `take=100` → `take=50` (límite backend).
+  - Actualizado tipo `ClientListItem` para usar `name` en lugar de `commercialName/fiscalName`.
+
