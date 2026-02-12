@@ -1,8 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import React, { useEffect, useState } from 'react'
 import { PencilSquareIcon, TrashIcon } from '@heroicons/react/24/outline'
-import DatePicker from 'react-datepicker'
-import 'react-datepicker/dist/react-datepicker.css'
 import { apiFetch } from '../../lib/api'
 import { getProductLabel } from '../../lib/productName'
 import { useAuth } from '../../providers/AuthProvider'
@@ -249,7 +247,7 @@ export function MovementsPage() {
   const [clientId, setClientId] = useState('')
   const [discardReason, setDiscardReason] = useState('')
   const [outError, setOutError] = useState('')
-  const [outOccurredDate, setOutOccurredDate] = useState<Date>(() => new Date())
+  const [outOccurredDate, setOutOccurredDate] = useState<string>(() => new Date().toISOString().slice(0, 10))
 
   // Estados para AJUSTE (ADJUSTMENT)
   const [adjustedQuantity, setAdjustedQuantity] = useState('')
@@ -388,7 +386,7 @@ export function MovementsPage() {
       }
 
       if (permissions.isTenantAdmin && outOccurredDate) {
-        payload.createdAt = outOccurredDate.toISOString()
+        payload.createdAt = new Date(`${outOccurredDate}T12:00:00.000Z`).toISOString()
       }
 
       return apiFetch(`/api/v1/stock/movements`, {
@@ -1480,18 +1478,13 @@ export function MovementsPage() {
                     )}
 
                     {permissions.isTenantAdmin && (
-                      <div>
-                        <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
-                          Fecha del movimiento
-                        </label>
-                        <DatePicker
-                          selected={outOccurredDate}
-                          onChange={(date: Date | null) => setOutOccurredDate(date || new Date())}
-                          dateFormat="yyyy-MM-dd"
-                          className="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-[var(--pf-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--pf-primary)] disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:disabled:bg-slate-900"
-                          maxDate={new Date()}
-                        />
-                      </div>
+                      <Input
+                        label="Fecha del movimiento"
+                        type="date"
+                        value={outOccurredDate}
+                        onChange={(e) => setOutOccurredDate(e.target.value)}
+                        max={new Date().toISOString().slice(0, 10)}
+                      />
                     )}
 
                     <div>
