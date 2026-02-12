@@ -83,8 +83,7 @@ type ProductPresentation = {
 
 type ClientListItem = {
   id: string
-  commercialName: string
-  fiscalName: string
+  name: string
   isActive: boolean
 }
 
@@ -106,7 +105,7 @@ async function listWarehouseLocations(token: string, warehouseId: string): Promi
 }
 
 async function listClients(token: string): Promise<{ items: ClientListItem[] }> {
-  return apiFetch(`/api/v1/clients?take=100`, { token })
+  return apiFetch(`/api/v1/customers?take=100`, { token })
 }
 
 async function fetchProductPresentations(token: string, productId: string): Promise<{ items: ProductPresentation[] }> {
@@ -1528,7 +1527,7 @@ export function MovementsPage() {
                           { value: '', label: 'Selecciona cliente' },
                           ...(clientsQuery.data?.items ?? [])
                             .filter((c) => c.isActive)
-                            .map((c) => ({ value: c.id, label: c.commercialName || c.fiscalName })),
+                            .map((c) => ({ value: c.id, label: c.name })),
                         ]}
                         disabled={clientsQuery.isLoading}
                       />
