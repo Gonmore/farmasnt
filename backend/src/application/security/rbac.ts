@@ -2,7 +2,7 @@ import type { FastifyRequest } from 'fastify'
 import type { PrismaClient } from '../../generated/prisma/client.js'
 import type { PermissionCode } from './permissions.js'
 
-export type ModuleCode = 'WAREHOUSE' | 'SALES' | 'PRODUCTION' | 'DISTRIBUTION' | 'RND'
+export type ModuleCode = 'WAREHOUSE' | 'SALES' | 'PRODUCTION' | 'DISTRIBUTION' | 'RND' | 'LABORATORY'
 
 export type AuthContext = {
   userId: string

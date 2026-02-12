@@ -19,6 +19,7 @@ enum ModuleCode {
   PRODUCTION
   DISTRIBUTION
   RND
+  LABORATORY
 }
 
 enum LocationType {
@@ -69,10 +70,54 @@ enum ReportScheduleType {
   STOCK
 }
 
+enum SupplyCategory {
+  RAW_MATERIAL
+  MAINTENANCE
+}
+
 enum ReportFrequency {
   DAILY
   WEEKLY
   MONTHLY
+}
+
+enum BatchStatus {
+  RELEASED
+  QUARANTINE
+}
+
+enum SupplyStockMovementType {
+  IN
+  OUT
+  TRANSFER
+  ADJUSTMENT
+}
+
+enum SupplyPurchaseListStatus {
+  DRAFT
+  CLOSED
+  CANCELLED
+}
+
+enum SupplyReceiptStatus {
+  DRAFT
+  POSTED
+  CANCELLED
+}
+
+enum LabProductionRequestStatus {
+  DRAFT
+  APPROVED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum LabProductionRunStatus {
+  DRAFT
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
 }
 
 model Tenant {
@@ -314,6 +359,9 @@ model Product {
   quoteLines      QuoteLine[]
   stockMovementRequestItems StockMovementRequestItem[]
   stockReturnItems StockReturnItem[] @relation("StockReturnItemProduct")
+  labRecipes LabRecipe[]
+  labProductionRequests LabProductionRequest[]
+  labProductionRuns LabProductionRun[]
 
   @@unique([tenantId, sku])
   @@index([tenantId])
@@ -399,7 +447,15 @@ model Batch {
   manufacturingDate DateTime?
   expiresAt        DateTime?
   presentationId   String?
-  status           String   @default("RELEASED")
+  status           BatchStatus   @default(RELEASED)
+  quarantineUntil  DateTime?
+  qcReleasedAt     DateTime?
+  qcReleasedBy     String?
+  qcRejectedAt     DateTime?
+  qcRejectedBy     String?
+  qcNote           String?
+  sourceType       String?
+  sourceId         String?
   openedAt         DateTime?
   openedBy         String?
   version          Int      @default(1)
@@ -414,10 +470,13 @@ model Batch {
   stockMovements StockMovement[]
   salesOrderLines SalesOrderLine[]
   stockReturnItems StockReturnItem[] @relation("StockReturnItemBatch")
+  labProductionRunOutputs LabProductionRunOutput[]
 
   @@unique([tenantId, productId, batchNumber])
   @@index([tenantId])
   @@index([tenantId, productId])
+  @@index([status])
+  @@index([quarantineUntil])
   @@index([expiresAt])
   @@index([presentationId])
   @@index([openedAt])
@@ -436,7 +495,8 @@ model Warehouse {
   createdBy String?
 
   locations Location[]
-  laboratories Laboratory[]
+  laboratories Laboratory[] @relation("LaboratoryWarehouse")
+  outputLaboratories Laboratory[] @relation("LaboratoryOutputWarehouse")
   users     User[]
   stockMovementRequests StockMovementRequest[]
 
@@ -449,19 +509,42 @@ model Laboratory {
   tenantId          String
   warehouseId       String
   name              String
+  city              String?
   isActive          Boolean  @default(true)
   defaultLocationId String?
+  rawMaterialsLocationId String?
+  wipLocationId     String?
+  maintenanceLocationId String?
+  outputWarehouseId String?
+  quarantineLocationId String?
   version           Int      @default(1)
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
   createdBy         String?
 
-  warehouse       Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  warehouse       Warehouse @relation("LaboratoryWarehouse", fields: [warehouseId], references: [id], onDelete: Cascade)
   defaultLocation Location? @relation("LaboratoryDefaultLocation", fields: [defaultLocationId], references: [id], onDelete: SetNull)
+  rawMaterialsLocation Location? @relation("LaboratoryRawMaterialsLocation", fields: [rawMaterialsLocationId], references: [id], onDelete: SetNull)
+  wipLocation Location? @relation("LaboratoryWipLocation", fields: [wipLocationId], references: [id], onDelete: SetNull)
+  maintenanceLocation Location? @relation("LaboratoryMaintenanceLocation", fields: [maintenanceLocationId], references: [id], onDelete: SetNull)
+  outputWarehouse Warehouse? @relation("LaboratoryOutputWarehouse", fields: [outputWarehouseId], references: [id], onDelete: SetNull)
+  quarantineLocation Location? @relation("LaboratoryQuarantineLocation", fields: [quarantineLocationId], references: [id], onDelete: SetNull)
+
+  supplyPurchaseLists SupplyPurchaseList[]
+  supplyReceipts SupplyReceipt[]
+  labProductionRequests LabProductionRequest[]
+  labProductionRuns LabProductionRun[]
 
   @@unique([tenantId, warehouseId])
+  @@unique([tenantId, city])
   @@index([tenantId])
   @@index([warehouseId])
+  @@index([city])
+  @@index([rawMaterialsLocationId])
+  @@index([wipLocationId])
+  @@index([maintenanceLocationId])
+  @@index([outputWarehouseId])
+  @@index([quarantineLocationId])
 }
 
 model Location {
@@ -478,7 +561,12 @@ model Location {
 
   warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
   balances  InventoryBalance[]
+  supplyBalances SupplyInventoryBalance[]
   laboratoryDefaultFor Laboratory[] @relation("LaboratoryDefaultLocation")
+  laboratoryRawMaterialsFor Laboratory[] @relation("LaboratoryRawMaterialsLocation")
+  laboratoryWipFor Laboratory[] @relation("LaboratoryWipLocation")
+  laboratoryMaintenanceFor Laboratory[] @relation("LaboratoryMaintenanceLocation")
+  laboratoryQuarantineFor Laboratory[] @relation("LaboratoryQuarantineLocation")
   stockReturns StockReturn[] @relation("StockReturnToLocation")
 
   @@unique([tenantId, warehouseId, code])
@@ -876,4 +964,431 @@ model AuditEvent {
   @@index([actorUserId])
   @@index([entityType])
   @@index([createdAt])
+}
+
+model Supply {
+  id        String   @id @default(uuid())
+  tenantId  String
+  code      String?
+  name      String
+  category  SupplyCategory @default(RAW_MATERIAL)
+  baseUnit  String
+  isActive  Boolean  @default(true)
+  version   Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  createdBy String?
+
+  presentations SupplyPresentation[]
+  lots          SupplyLot[]
+  balances      SupplyInventoryBalance[]
+  movements     SupplyStockMovement[]
+  purchaseListLines SupplyPurchaseListLine[]
+  receiptLines  SupplyReceiptLine[]
+  recipeItems   LabRecipeItem[]
+  runInputs     LabProductionRunInput[]
+  runWaste      LabProductionRunWaste[]
+
+  @@unique([tenantId, category, name])
+  @@index([tenantId])
+  @@index([tenantId, isActive])
+  @@index([tenantId, code])
+  @@index([tenantId, category])
+}
+
+model SupplyPresentation {
+  id         String   @id @default(uuid())
+  tenantId   String
+  supplyId   String
+  name       String
+  multiplier Decimal  @default(1)
+  isActive   Boolean  @default(true)
+  version    Int      @default(1)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  createdBy  String?
+
+  supply     Supply   @relation(fields: [supplyId], references: [id], onDelete: Cascade)
+  movements  SupplyStockMovement[]
+  receiptLines SupplyReceiptLine[]
+
+  @@unique([tenantId, supplyId, name])
+  @@index([tenantId])
+  @@index([supplyId])
+}
+
+model SupplyLot {
+  id         String   @id @default(uuid())
+  tenantId   String
+  supplyId   String
+  lotNumber  String
+  expiresAt  DateTime?
+  receivedAt DateTime?
+  vendorName String?
+  note       String?
+  version    Int      @default(1)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  createdBy  String?
+
+  supply     Supply   @relation(fields: [supplyId], references: [id], onDelete: Restrict)
+  balances   SupplyInventoryBalance[]
+  movements  SupplyStockMovement[]
+  receiptLines SupplyReceiptLine[]
+  runInputs  LabProductionRunInput[]
+  runWaste   LabProductionRunWaste[]
+
+  @@unique([tenantId, supplyId, lotNumber])
+  @@index([tenantId])
+  @@index([supplyId])
+  @@index([expiresAt])
+}
+
+model SupplyInventoryBalance {
+  id         String   @id @default(uuid())
+  tenantId   String
+  locationId String
+  supplyId   String
+  lotId      String?
+  quantity   Decimal  @default(0)
+  reservedQuantity Decimal @default(0)
+  version    Int      @default(1)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  createdBy  String?
+
+  location Location @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  supply   Supply   @relation(fields: [supplyId], references: [id], onDelete: Restrict)
+  lot      SupplyLot? @relation(fields: [lotId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, locationId, supplyId, lotId])
+  @@index([tenantId])
+  @@index([locationId])
+  @@index([supplyId])
+  @@index([lotId])
+}
+
+model SupplyStockMovement {
+  id             String                 @id @default(uuid())
+  tenantId       String
+  number         String
+  numberYear     Int
+  type           SupplyStockMovementType
+  supplyId       String
+  lotId          String?
+  fromLocationId String?
+  toLocationId   String?
+  quantity       Decimal
+  presentationId String?
+  presentationQuantity Decimal?
+  referenceType  String?
+  referenceId    String?
+  note           String?
+  version        Int      @default(1)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  createdBy      String?
+
+  supply       Supply @relation(fields: [supplyId], references: [id], onDelete: Restrict)
+  lot          SupplyLot? @relation(fields: [lotId], references: [id], onDelete: Restrict)
+  presentation SupplyPresentation? @relation(fields: [presentationId], references: [id], onDelete: SetNull)
+
+  @@unique([tenantId, number])
+  @@index([tenantId])
+  @@index([supplyId])
+  @@index([lotId])
+  @@index([createdAt])
+}
+
+model SupplyPurchaseList {
+  id           String                 @id @default(uuid())
+  tenantId     String
+  laboratoryId String?
+  city         String?
+  number       String
+  numberYear   Int
+  status       SupplyPurchaseListStatus @default(DRAFT)
+  note         String?
+  closedAt     DateTime?
+  cancelledAt  DateTime?
+  cancelledBy  String?
+  version      Int      @default(1)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  createdBy    String?
+
+  laboratory Laboratory? @relation(fields: [laboratoryId], references: [id], onDelete: SetNull)
+  lines       SupplyPurchaseListLine[]
+  receipts    SupplyReceipt[]
+
+  @@unique([tenantId, number])
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([tenantId, city])
+  @@index([laboratoryId])
+  @@index([createdAt])
+}
+
+model SupplyPurchaseListLine {
+  id            String   @id @default(uuid())
+  tenantId      String
+  purchaseListId String
+  supplyId      String
+  requestedQuantity Decimal
+  unit          String
+  vendorName    String?
+  sortOrder     Int      @default(0)
+  note          String?
+  version       Int      @default(1)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  createdBy     String?
+
+  purchaseList SupplyPurchaseList @relation(fields: [purchaseListId], references: [id], onDelete: Cascade)
+  supply       Supply            @relation(fields: [supplyId], references: [id], onDelete: Restrict)
+  receiptLines SupplyReceiptLine[]
+
+  @@index([tenantId])
+  @@index([purchaseListId])
+  @@index([supplyId])
+}
+
+model SupplyReceipt {
+  id           String            @id @default(uuid())
+  tenantId     String
+  laboratoryId String?
+  purchaseListId String?
+  number       String?
+  numberYear   Int?
+  status       SupplyReceiptStatus @default(DRAFT)
+  vendorName   String?
+  vendorDocument String?
+  receivedAt   DateTime?
+  postedAt     DateTime?
+  note         String?
+  cancelledAt  DateTime?
+  cancelledBy  String?
+  version      Int      @default(1)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  createdBy    String?
+
+  laboratory Laboratory? @relation(fields: [laboratoryId], references: [id], onDelete: SetNull)
+  purchaseList SupplyPurchaseList? @relation(fields: [purchaseListId], references: [id], onDelete: SetNull)
+  lines       SupplyReceiptLine[]
+
+  @@index([tenantId])
+  @@index([laboratoryId])
+  @@index([purchaseListId])
+  @@index([tenantId, status])
+  @@index([receivedAt])
+  @@index([postedAt])
+}
+
+model SupplyReceiptLine {
+  id            String   @id @default(uuid())
+  tenantId      String
+  receiptId     String
+  supplyId      String
+  purchaseListLineId String?
+  lotId         String?
+  quantity      Decimal
+  unit          String
+  presentationId String?
+  presentationQuantity Decimal?
+  lotNumber     String?
+  expiresAt     DateTime?
+  note          String?
+  createdAt     DateTime @default(now())
+  createdBy     String?
+
+  receipt       SupplyReceipt @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  supply        Supply        @relation(fields: [supplyId], references: [id], onDelete: Restrict)
+  purchaseListLine SupplyPurchaseListLine? @relation(fields: [purchaseListLineId], references: [id], onDelete: SetNull)
+  lot           SupplyLot?     @relation(fields: [lotId], references: [id], onDelete: SetNull)
+  presentation  SupplyPresentation? @relation(fields: [presentationId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([receiptId])
+  @@index([supplyId])
+  @@index([purchaseListLineId])
+  @@index([lotId])
+}
+
+model LabRecipe {
+  id             String   @id @default(uuid())
+  tenantId       String
+  productId      String
+  name           String
+  outputQuantity Decimal?
+  outputUnit     String?
+  estimatedDurationHours Int?
+  isActive       Boolean  @default(true)
+  version        Int      @default(1)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  createdBy      String?
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  items   LabRecipeItem[]
+  productionRequests LabProductionRequest[]
+  productionRuns LabProductionRun[]
+
+  @@unique([tenantId, productId])
+  @@index([tenantId])
+  @@index([productId])
+  @@index([tenantId, isActive])
+}
+
+model LabRecipeItem {
+  id        String   @id @default(uuid())
+  tenantId  String
+  recipeId  String
+  supplyId  String
+  quantity  Decimal
+  unit      String
+  sortOrder Int      @default(0)
+  note      String?
+  version   Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  createdBy String?
+
+  recipe LabRecipe @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  supply Supply    @relation(fields: [supplyId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId])
+  @@index([recipeId])
+  @@index([supplyId])
+}
+
+model LabProductionRequest {
+  id          String                    @id @default(uuid())
+  tenantId    String
+  laboratoryId String
+  productId   String
+  recipeId    String
+  requestedOutputQuantity Decimal
+  outputUnit  String
+  status      LabProductionRequestStatus @default(DRAFT)
+  neededBy    DateTime?
+  note        String?
+  cancelledAt DateTime?
+  cancelledBy String?
+  version     Int      @default(1)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdBy   String?
+
+  laboratory Laboratory @relation(fields: [laboratoryId], references: [id], onDelete: Restrict)
+  product    Product    @relation(fields: [productId], references: [id], onDelete: Restrict)
+  recipe     LabRecipe  @relation(fields: [recipeId], references: [id], onDelete: Restrict)
+  runs       LabProductionRun[]
+
+  @@index([tenantId])
+  @@index([laboratoryId])
+  @@index([productId])
+  @@index([recipeId])
+  @@index([tenantId, status])
+  @@index([createdAt])
+}
+
+model LabProductionRun {
+  id          String                @id @default(uuid())
+  tenantId    String
+  laboratoryId String
+  requestId   String?
+  recipeId    String
+  productId   String
+  plannedOutputQuantity Decimal?
+  outputUnit  String?
+  actualOutputQuantity Decimal?
+  status      LabProductionRunStatus @default(DRAFT)
+  startedAt   DateTime?
+  estimatedCompleteAt DateTime?
+  completedAt DateTime?
+  note        String?
+  cancelledAt DateTime?
+  cancelledBy String?
+  version     Int      @default(1)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdBy   String?
+
+  laboratory Laboratory @relation(fields: [laboratoryId], references: [id], onDelete: Restrict)
+  request    LabProductionRequest? @relation(fields: [requestId], references: [id], onDelete: SetNull)
+  recipe     LabRecipe @relation(fields: [recipeId], references: [id], onDelete: Restrict)
+  product    Product   @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  inputs  LabProductionRunInput[]
+  outputs LabProductionRunOutput[]
+  waste   LabProductionRunWaste[]
+
+  @@index([tenantId])
+  @@index([laboratoryId])
+  @@index([requestId])
+  @@index([tenantId, status])
+  @@index([createdAt])
+}
+
+model LabProductionRunInput {
+  id        String   @id @default(uuid())
+  tenantId  String
+  runId     String
+  supplyId  String
+  lotId     String?
+  quantity  Decimal
+  unit      String
+  note      String?
+  createdAt DateTime @default(now())
+  createdBy String?
+
+  run    LabProductionRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  supply Supply           @relation(fields: [supplyId], references: [id], onDelete: Restrict)
+  lot    SupplyLot?        @relation(fields: [lotId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([runId])
+  @@index([supplyId])
+  @@index([lotId])
+}
+
+model LabProductionRunOutput {
+  id        String   @id @default(uuid())
+  tenantId  String
+  runId     String
+  batchId   String
+  quantity  Decimal
+  unit      String
+  createdAt DateTime @default(now())
+  createdBy String?
+
+  run   LabProductionRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  batch Batch            @relation(fields: [batchId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId])
+  @@index([runId])
+  @@index([batchId])
+}
+
+model LabProductionRunWaste {
+  id        String   @id @default(uuid())
+  tenantId  String
+  runId     String
+  supplyId  String?
+  lotId     String?
+  quantity  Decimal
+  unit      String
+  reason    String?
+  createdAt DateTime @default(now())
+  createdBy String?
+
+  run    LabProductionRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  supply Supply?          @relation(fields: [supplyId], references: [id], onDelete: SetNull)
+  lot    SupplyLot?        @relation(fields: [lotId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([runId])
+  @@index([supplyId])
+  @@index([lotId])
 }

@@ -147,6 +147,28 @@ Se incorporaron endpoints read-only de reportes para acelerar dashboards y panta
 
 ---
 
+## **[12 Feb 2026] Laboratorio: módulo completo + RBAC provisioning + fix roles de usuario**
+
+### Módulo Laboratorio (UI completa)
+- Se integró el módulo completo de **Laboratorio** en el frontend (rutas `/laboratory/*` + navegación).
+- Acceso controlado por permisos existentes: lectura por `stock:read` y acciones de escritura por `stock:manage`.
+
+### Backend: habilitación por módulo + compatibilidad Prisma
+- Se habilitó el módulo `LABORATORY` a nivel tenant (guard por módulo) y se incluyó como módulo default al crear nuevos tenants.
+- Se corrigieron inconsistencias con el schema actual de Prisma en rutas de laboratorio:
+  - Eliminado uso de `Location.isDefault` (no existe en el modelo).
+  - Movimientos de insumos usan `fromLocationId/toLocationId` (en vez de `locationId`) y se apoyan en el service transaccional para numeración/balances.
+
+### RBAC: roles del sistema por tenant (incluye nuevos roles)
+- Se refactorizó el provisioning para soportar **provisión por tenant** y reutilizarlo durante la creación de tenants (transacción segura).
+- Se aseguraron roles/módulos para tenants existentes y nuevos, incluyendo:
+  - `BRANCH_ADMIN` y `BRANCH_SELLER` (sucursal)
+  - `LABORATORIO` (laboratorio)
+
+### Admin: reemplazo de roles de usuario
+- Fix del endpoint `PUT /api/v1/admin/users/:id/roles` que devolvía `500` por desalineación con el schema de respuesta.
+- La respuesta ahora vuelve a un shape consistente para el listado de usuarios (incluye `roleIds` y `roles` en formato plano).
+
 ## **[10 Feb 2026] Stock: Envío y recepción de solicitudes (SENT → FULFILLED)**
 
 ### Estado intermedio `SENT`

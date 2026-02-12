@@ -26,7 +26,7 @@ function createDb(): PrismaClient {
   })
 }
 
-const DEFAULT_MODULES = ['WAREHOUSE', 'SALES'] as const
+const DEFAULT_MODULES = ['WAREHOUSE', 'SALES', 'LABORATORY'] as const
 
 function startOfTodayUtc(): Date {
   const now = new Date()
@@ -999,6 +999,143 @@ async function main() {
       createdBy: demoAdminUser.id,
     },
   })
+
+  // ============= LABORATORIO (Demo Tenant) =============
+  // Crear un almacén de laboratorio con 3 secciones (MP / Proceso / Repuestos), y algunos datos para probar WIP.
+  const whLab = await db.warehouse.upsert({
+    where: { tenantId_code: { tenantId: demoTenant.id, code: 'LAB-01' } },
+    update: { name: 'Laboratorio La Paz', city: 'La Paz' },
+    create: { tenantId: demoTenant.id, code: 'LAB-01', name: 'Laboratorio La Paz', city: 'La Paz', createdBy: demoAdminUser.id },
+    select: { id: true },
+  })
+
+  const labMp = await db.location.upsert({
+    where: { tenantId_warehouseId_code: { tenantId: demoTenant.id, warehouseId: whLab.id, code: 'MP-01' } },
+    update: { isActive: true },
+    create: { tenantId: demoTenant.id, warehouseId: whLab.id, code: 'MP-01', type: 'BIN', createdBy: demoAdminUser.id },
+    select: { id: true },
+  })
+  const labProc = await db.location.upsert({
+    where: { tenantId_warehouseId_code: { tenantId: demoTenant.id, warehouseId: whLab.id, code: 'PROC-01' } },
+    update: { isActive: true },
+    create: { tenantId: demoTenant.id, warehouseId: whLab.id, code: 'PROC-01', type: 'BIN', createdBy: demoAdminUser.id },
+    select: { id: true },
+  })
+  const labRep = await db.location.upsert({
+    where: { tenantId_warehouseId_code: { tenantId: demoTenant.id, warehouseId: whLab.id, code: 'REP-01' } },
+    update: { isActive: true },
+    create: { tenantId: demoTenant.id, warehouseId: whLab.id, code: 'REP-01', type: 'BIN', createdBy: demoAdminUser.id },
+    select: { id: true },
+  })
+
+  const quarantineLoc = await db.location.upsert({
+    where: { tenantId_warehouseId_code: { tenantId: demoTenant.id, warehouseId: wh.id, code: 'QUAR-01' } },
+    update: { isActive: true },
+    create: { tenantId: demoTenant.id, warehouseId: wh.id, code: 'QUAR-01', type: 'BIN', createdBy: demoAdminUser.id },
+    select: { id: true },
+  })
+
+  const lab = await db.laboratory.upsert({
+    where: { tenantId_warehouseId: { tenantId: demoTenant.id, warehouseId: whLab.id } },
+    update: {
+      name: 'Laboratorio La Paz',
+      city: 'La Paz',
+      isActive: true,
+      defaultLocationId: labMp.id,
+      rawMaterialsLocationId: labMp.id,
+      wipLocationId: labProc.id,
+      maintenanceLocationId: labRep.id,
+      outputWarehouseId: wh.id,
+      quarantineLocationId: quarantineLoc.id,
+    },
+    create: {
+      tenantId: demoTenant.id,
+      warehouseId: whLab.id,
+      name: 'Laboratorio La Paz',
+      city: 'La Paz',
+      isActive: true,
+      defaultLocationId: labMp.id,
+      rawMaterialsLocationId: labMp.id,
+      wipLocationId: labProc.id,
+      maintenanceLocationId: labRep.id,
+      outputWarehouseId: wh.id,
+      quarantineLocationId: quarantineLoc.id,
+      createdBy: demoAdminUser.id,
+    },
+    select: { id: true },
+  })
+
+  const rmAlcohol = await db.supply.upsert({
+    where: { tenantId_category_name: { tenantId: demoTenant.id, category: 'RAW_MATERIAL', name: 'Alcohol etílico 96%' } },
+    update: { baseUnit: 'L', isActive: true },
+    create: { tenantId: demoTenant.id, category: 'RAW_MATERIAL', name: 'Alcohol etílico 96%', baseUnit: 'L', createdBy: demoAdminUser.id },
+    select: { id: true },
+  })
+  const rmGlicerina = await db.supply.upsert({
+    where: { tenantId_category_name: { tenantId: demoTenant.id, category: 'RAW_MATERIAL', name: 'Glicerina' } },
+    update: { baseUnit: 'L', isActive: true },
+    create: { tenantId: demoTenant.id, category: 'RAW_MATERIAL', name: 'Glicerina', baseUnit: 'L', createdBy: demoAdminUser.id },
+    select: { id: true },
+  })
+  const mntGuantes = await db.supply.upsert({
+    where: { tenantId_category_name: { tenantId: demoTenant.id, category: 'MAINTENANCE', name: 'Guantes de nitrilo' } },
+    update: { baseUnit: 'PAR', isActive: true },
+    create: { tenantId: demoTenant.id, category: 'MAINTENANCE', name: 'Guantes de nitrilo', baseUnit: 'PAR', createdBy: demoAdminUser.id },
+    select: { id: true },
+  })
+  const mntDesinfectante = await db.supply.upsert({
+    where: { tenantId_category_name: { tenantId: demoTenant.id, category: 'MAINTENANCE', name: 'Desinfectante de superficies' } },
+    update: { baseUnit: 'L', isActive: true },
+    create: { tenantId: demoTenant.id, category: 'MAINTENANCE', name: 'Desinfectante de superficies', baseUnit: 'L', createdBy: demoAdminUser.id },
+    select: { id: true },
+  })
+
+  const labRecipe = await db.labRecipe.upsert({
+    where: { tenantId_productId: { tenantId: demoTenant.id, productId: productIbuprofeno.id } },
+    update: { name: 'Ibuprofeno 400mg (demo)', estimatedDurationHours: 6, isActive: true },
+    create: {
+      tenantId: demoTenant.id,
+      productId: productIbuprofeno.id,
+      name: 'Ibuprofeno 400mg (demo)',
+      outputQuantity: '100',
+      outputUnit: 'UN',
+      estimatedDurationHours: 6,
+      createdBy: demoAdminUser.id,
+      items: {
+        create: [
+          { tenantId: demoTenant.id, supplyId: rmAlcohol.id, quantity: '2', unit: 'L', sortOrder: 10, createdBy: demoAdminUser.id },
+          { tenantId: demoTenant.id, supplyId: rmGlicerina.id, quantity: '1', unit: 'L', sortOrder: 20, createdBy: demoAdminUser.id },
+        ],
+      },
+    },
+    select: { id: true },
+  })
+
+  // Corrida en curso para alimentar la vista "Producto en proceso"
+  const runStartedAt = addDaysUtc(todayUtc, 0)
+  const runEta = new Date(runStartedAt.getTime() + 6 * 3600_000)
+
+  await db.labProductionRun.create({
+    data: {
+      tenantId: demoTenant.id,
+      laboratoryId: lab.id,
+      requestId: null,
+      recipeId: labRecipe.id,
+      productId: productIbuprofeno.id,
+      plannedOutputQuantity: '100',
+      outputUnit: 'UN',
+      status: 'IN_PROGRESS',
+      startedAt: runStartedAt,
+      estimatedCompleteAt: runEta,
+      note: 'Corrida demo en progreso (seed)',
+      createdBy: demoAdminUser.id,
+    },
+    select: { id: true },
+  })
+
+  // También dejamos algunos repuestos/materiales en catálogo
+  void mntGuantes
+  void mntDesinfectante
 
   // Amoxicilina: La Paz (12), Cochabamba (8), Santa Cruz (18)
   const amoxicilinaLaPaz =

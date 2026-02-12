@@ -7,6 +7,7 @@ import { prisma } from '../../db/prisma.js'
 import { requireAuth, requirePermission } from '../../../application/security/rbac.js'
 import { Permissions } from '../../../application/security/permissions.js'
 import { AuditService } from '../../../application/audit/auditService.js'
+import { ensureSystemRolesForTenant } from '../../../application/security/ensureSystemRoles.js'
 
 const uuidLike = z
   .string()
@@ -266,7 +267,7 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
         })
 
         // Enable default modules
-        for (const module of ['WAREHOUSE', 'SALES'] as const) {
+        for (const module of ['WAREHOUSE', 'SALES', 'LABORATORY'] as const) {
           await tx.tenantModule.create({
             data: { tenantId: t.id, module, enabled: true, createdBy: actor.userId },
           })
@@ -309,6 +310,10 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
         for (const p of perms) {
           await tx.rolePermission.create({ data: { roleId: role.id, permissionId: p.id } })
         }
+
+        // Ensure all current system roles exist for this tenant (idempotent).
+        // This avoids "missing roles" for newly created tenants until backend restart.
+        await ensureSystemRolesForTenant(tx, t.id)
 
         // Create required roles: Ventas + Logística
         const ventasRole = await tx.role.create({

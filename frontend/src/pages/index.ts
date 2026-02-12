@@ -11,6 +11,9 @@ export * from './warehouse'
 // Stock
 export * from './stock'
 
+// Laboratory
+export * from './laboratory'
+
 // Sales
 export * from './sales'
 

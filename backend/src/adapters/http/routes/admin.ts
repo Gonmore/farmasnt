@@ -791,45 +791,68 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
       },
     },
     async (request, reply) => {
-    const id = (request.params as any).id as string
-    const parsed = userRolesReplaceSchema.safeParse(request.body)
-    if (!parsed.success) return reply.status(400).send({ message: 'Invalid request', issues: parsed.error.issues })
+      const id = (request.params as any).id as string
+      const parsed = userRolesReplaceSchema.safeParse(request.body)
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid request', issues: parsed.error.issues })
 
-    const tenantId = request.auth!.tenantId
-    const actorUserId = request.auth!.userId
+      const tenantId = request.auth!.tenantId
+      const actorUserId = request.auth!.userId
 
-    const user = await db.user.findFirst({ where: { id, tenantId }, select: { id: true, email: true } })
-    if (!user) return reply.status(404).send({ message: 'User not found' })
+      const user = await db.user.findFirst({ where: { id, tenantId }, select: { id: true, email: true } })
+      if (!user) return reply.status(404).send({ message: 'User not found' })
 
-    const updated = await db.$transaction(async (tx) => {
-      const roles = await tx.role.findMany({ where: { id: { in: parsed.data.roleIds }, tenantId }, select: { id: true } })
-      if (roles.length !== parsed.data.roleIds.length) {
-        const err = new Error('One or more roles not found') as Error & { statusCode?: number }
-        err.statusCode = 400
-        throw err
-      }
+      const updated = await db.$transaction(async (tx) => {
+        const roles = await tx.role.findMany({
+          where: { id: { in: parsed.data.roleIds }, tenantId },
+          select: { id: true },
+        })
+        if (roles.length !== parsed.data.roleIds.length) {
+          const err = new Error('One or more roles not found') as Error & { statusCode?: number }
+          err.statusCode = 400
+          throw err
+        }
 
-      await tx.userRole.deleteMany({ where: { userId: id } })
-      if (parsed.data.roleIds.length > 0) {
-        await tx.userRole.createMany({ data: parsed.data.roleIds.map((rid) => ({ userId: id, roleId: rid })) })
-      }
+        await tx.userRole.deleteMany({ where: { userId: id } })
+        if (parsed.data.roleIds.length > 0) {
+          await tx.userRole.createMany({ data: parsed.data.roleIds.map((rid) => ({ userId: id, roleId: rid })) })
+        }
 
-      return tx.user.findFirst({
-        where: { id, tenantId },
-        select: { id: true, email: true, fullName: true, isActive: true, roles: { select: { role: { select: { id: true, code: true } } } } },
+        return tx.user.findFirst({
+          where: { id, tenantId },
+          select: {
+            id: true,
+            email: true,
+            fullName: true,
+            isActive: true,
+            createdAt: true,
+            roles: { select: { roleId: true, role: { select: { id: true, code: true, name: true } } } },
+          },
+        })
       })
-    })
 
-    await audit.append({
-      tenantId,
-      actorUserId,
-      action: 'admin.user.roles.replace',
-      entityType: 'User',
-      entityId: id,
-      after: { userId: id, roleIds: parsed.data.roleIds },
-    })
+      if (!updated) return reply.status(404).send({ message: 'User not found' })
 
-    return reply.send(updated)
+      const roleIds = updated.roles.map((r) => r.roleId)
+      const roles = updated.roles.map((r) => r.role)
+
+      await audit.append({
+        tenantId,
+        actorUserId,
+        action: 'admin.user.roles.replace',
+        entityType: 'User',
+        entityId: id,
+        after: { userId: id, roleIds: parsed.data.roleIds },
+      })
+
+      return reply.send({
+        id: updated.id,
+        email: updated.email,
+        fullName: updated.fullName,
+        isActive: updated.isActive,
+        createdAt: updated.createdAt,
+        roleIds,
+        roles,
+      })
     },
   )
 
@@ -865,6 +888,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
     },
     async (request, reply) => {
       const tenantId = request.auth!.tenantId
+
       const tenant = await db.tenant.findFirst({
         where: { id: tenantId },
         select: {
@@ -880,12 +904,14 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
           updatedAt: true,
         },
       })
+
       if (!tenant) {
         const err = new Error('Tenant not found') as Error & { statusCode?: number }
         err.statusCode = 404
         throw err
       }
-      return {
+
+      return reply.send({
         tenantId: tenant.id,
         tenantName: tenant.name,
         logoUrl: tenant.logoUrl,
@@ -896,7 +922,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
         currency: tenant.currency,
         version: tenant.version,
         updatedAt: tenant.updatedAt.toISOString(),
-      }
+      })
     },
   )
 
