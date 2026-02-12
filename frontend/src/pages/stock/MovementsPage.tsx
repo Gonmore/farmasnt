@@ -247,6 +247,7 @@ export function MovementsPage() {
   const [clientId, setClientId] = useState('')
   const [discardReason, setDiscardReason] = useState('')
   const [outError, setOutError] = useState('')
+  const [outOccurredDate, setOutOccurredDate] = useState<string>(() => new Date().toISOString().slice(0, 10))
 
   // Estados para AJUSTE (ADJUSTMENT)
   const [adjustedQuantity, setAdjustedQuantity] = useState('')
@@ -344,7 +345,7 @@ export function MovementsPage() {
   // Preseleccionar sucursal para administradores de sucursal
   useEffect(() => {
     if (!showCreateRequestModal || editingRequestId) return
-    const isBranchScoped = permissions.hasPermission('scope:branch')
+    const isBranchScoped = permissions.hasPermission('scope:branch') && !permissions.isTenantAdmin
     if (!isBranchScoped) return
     const wid = permissions.user?.warehouseId ?? ''
     if (!wid) return
@@ -352,6 +353,65 @@ export function MovementsPage() {
     if (!requestWarehousesQuery.data?.items.some((w) => w.id === wid)) return
     setRequestWarehouseId(wid)
   }, [showCreateRequestModal, editingRequestId, permissions, requestWarehousesQuery.data, requestWarehouseId])
+
+  const outMutation = useMutation({
+    mutationFn: async () => {
+      setOutError('')
+      const selectedRow = stockRows.find((r) => r.id === selectedStockKey)
+      if (!selectedRow) throw new Error('Seleccioná un lote/ubicación')
+
+      const qtyNum = moveAllStock ? Number(selectedRow.availableQuantity || '0') : Number(quantity)
+      if (!Number.isFinite(qtyNum) || qtyNum <= 0) throw new Error('Ingresá una cantidad válida (mayor a 0)')
+
+      const available = Number(selectedRow.availableQuantity || '0')
+      if (qtyNum > available + 1e-9) throw new Error(`No podés sacar más de lo disponible (${available}).`)
+
+      if (!outReasonType) throw new Error('Seleccioná el tipo de salida')
+      if (outReasonType === 'SALE' && !clientId) throw new Error('Seleccioná un cliente')
+      if (outReasonType === 'DISCARD' && !discardReason.trim()) throw new Error('Ingresá el motivo de la baja')
+
+      const baseNote = outReasonType === 'DISCARD' ? `Baja: ${discardReason.trim()}` : undefined
+      const referenceType = outReasonType === 'SALE' ? 'MANUAL_SALE' : 'MANUAL_DISCARD'
+      const referenceId = outReasonType === 'SALE' ? clientId : undefined
+
+      const payload: any = {
+        type: 'OUT',
+        productId,
+        batchId: selectedRow.batchId,
+        fromLocationId: selectedRow.locationId,
+        quantity: qtyNum,
+        referenceType,
+        referenceId,
+        note: baseNote,
+      }
+
+      if (permissions.isTenantAdmin && outOccurredDate) {
+        payload.createdAt = new Date(`${outOccurredDate}T12:00:00.000Z`).toISOString()
+      }
+
+      return apiFetch(`/api/v1/stock/movements`, {
+        token: auth.accessToken,
+        method: 'POST',
+        body: JSON.stringify(payload),
+      })
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['productBatches', 'forMovements', productId] })
+      await queryClient.invalidateQueries({ queryKey: ['balances'] })
+      setSelectedStockKey('')
+      setQuantity('')
+      setMoveAllStock(true)
+      setOutReasonType('')
+      setClientId('')
+      setDiscardReason('')
+      setOutError('')
+      alert('Salida registrada exitosamente')
+    },
+    onError: (err: any) => {
+      const msg = err instanceof Error ? err.message : 'Error registrando salida'
+      setOutError(msg)
+    },
+  })
 
   // Filtrar productos para el selector con búsqueda
   const filteredProducts = React.useMemo(() => {
@@ -1417,6 +1477,15 @@ export function MovementsPage() {
                       />
                     )}
 
+                    {permissions.isTenantAdmin && (
+                      <Input
+                        label="Fecha del movimiento"
+                        type="date"
+                        value={outOccurredDate}
+                        onChange={(e) => setOutOccurredDate(e.target.value)}
+                      />
+                    )}
+
                     <div>
                       <label className="mb-2 block text-sm font-medium text-slate-900 dark:text-slate-100">
                         Tipo de Salida
@@ -1482,7 +1551,13 @@ export function MovementsPage() {
                     )}
 
                     {((outReasonType === 'SALE' && clientId) || (outReasonType === 'DISCARD' && discardReason)) && (
-                      <Button type="button" className="w-full">
+                      <Button
+                        type="button"
+                        className="w-full"
+                        onClick={() => outMutation.mutate()}
+                        loading={outMutation.isPending}
+                        disabled={outMutation.isPending}
+                      >
                         Registrar Salida
                       </Button>
                     )}
@@ -1770,7 +1845,7 @@ export function MovementsPage() {
                 .filter((w) => w.isActive)
                 .map((w) => ({ value: w.id, label: `${w.code} - ${w.name}` })),
             ]}
-            disabled={requestWarehousesQuery.isLoading || permissions.hasPermission('scope:branch')}
+            disabled={requestWarehousesQuery.isLoading || (permissions.hasPermission('scope:branch') && !permissions.isTenantAdmin)}
             required
           />
 

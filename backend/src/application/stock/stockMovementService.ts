@@ -1,5 +1,5 @@
 import type { Prisma } from '../../generated/prisma/client.js'
-import { currentYearUtc, nextSequence } from '../shared/sequence.js'
+import { nextSequence } from '../shared/sequence.js'
 
 export type StockMovementCreateInput = {
   tenantId: string
@@ -15,6 +15,7 @@ export type StockMovementCreateInput = {
   referenceType?: string | null
   referenceId?: string | null
   note?: string | null
+  createdAt?: Date
 }
 
 type LockedBalanceRow = {
@@ -31,6 +32,10 @@ function startOfTodayUtc(): Date {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0))
 }
 
+function startOfDayUtc(date: Date): Date {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 0, 0, 0, 0))
+}
+
 export async function createStockMovementTx(
   tx: Prisma.TransactionClient,
   input: StockMovementCreateInput,
@@ -39,7 +44,8 @@ export async function createStockMovementTx(
   const userId = input.userId
   const batchId = input.batchId ?? null
 
-  const todayUtc = startOfTodayUtc()
+  const effectiveCreatedAt = input.createdAt ?? new Date()
+  const todayUtc = startOfDayUtc(effectiveCreatedAt)
 
   // Validate location rules
   if (input.type === 'IN' && !input.toLocationId) throw Object.assign(new Error('toLocationId is required'), { statusCode: 400 })
@@ -177,11 +183,11 @@ export async function createStockMovementTx(
   if ((input.type === 'OUT' || input.type === 'TRANSFER') && batchId) {
     await tx.batch.updateMany({
       where: { tenantId, id: batchId, openedAt: null },
-      data: { openedAt: new Date(), openedBy: userId, version: { increment: 1 } },
+      data: { openedAt: effectiveCreatedAt, openedBy: userId, version: { increment: 1 } },
     })
   }
 
-  const year = currentYearUtc()
+  const year = effectiveCreatedAt.getUTCFullYear()
   const seq = await nextSequence(tx, { tenantId, year, key: 'MS' })
 
   const createdMovement = await tx.stockMovement.create({
@@ -200,6 +206,7 @@ export async function createStockMovementTx(
       referenceType: input.referenceType ?? null,
       referenceId: input.referenceId ?? null,
       note: input.note ?? null,
+      createdAt: effectiveCreatedAt,
       createdBy: userId,
     },
     select: {

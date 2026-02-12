@@ -175,7 +175,7 @@ export function BulkFulfillRequestsPage() {
     [warehousesQuery.data?.items],
   )
 
-  const isBranchScoped = permissions.hasPermission('scope:branch')
+  const isBranchScoped = permissions.hasPermission('scope:branch') && !permissions.isTenantAdmin
 
   useEffect(() => {
     const wid = permissions.user?.warehouseId ?? ''

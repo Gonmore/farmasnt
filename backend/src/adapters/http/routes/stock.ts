@@ -16,6 +16,8 @@ const movementCreateSchema = z.object({
   batchId: z.string().uuid().nullable().optional(),
   fromLocationId: z.string().uuid().nullable().optional(),
   toLocationId: z.string().uuid().nullable().optional(),
+  // Allows tenant admins to backdate movements (stored as createdAt).
+  createdAt: z.string().datetime().optional(),
   // Base quantity (units). If presentationId/presentationQuantity is provided, backend derives this.
   quantity: z.coerce.number().positive().optional(),
   presentationId: z.string().uuid().optional(),
@@ -2353,6 +2355,20 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
       const input = parsed.data
       const resolved = mustResolveMovementQuantity(input)
 
+      const createdAt = input.createdAt ? new Date(input.createdAt) : null
+      if (createdAt) {
+        if (!request.auth?.isTenantAdmin) {
+          return reply.status(403).send({ message: 'Only tenant admin can set movement date' })
+        }
+        if (!Number.isFinite(createdAt.getTime())) {
+          return reply.status(400).send({ message: 'Invalid createdAt' })
+        }
+        const now = Date.now()
+        if (createdAt.getTime() > now + 5 * 60_000) {
+          return reply.status(400).send({ message: 'createdAt cannot be in the future' })
+        }
+      }
+
       try {
         const result = await db.$transaction(async (tx) => {
           let baseQty = resolved.baseQuantity
@@ -2424,6 +2440,7 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
             referenceType: input.referenceType ?? null,
             referenceId: input.referenceId ?? null,
             note: input.note ?? null,
+            ...(createdAt ? { createdAt } : {}),
           })
         })
 
