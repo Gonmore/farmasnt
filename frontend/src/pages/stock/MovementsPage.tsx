@@ -1483,6 +1483,7 @@ export function MovementsPage() {
                         type="date"
                         value={outOccurredDate}
                         onChange={(e) => setOutOccurredDate(e.target.value)}
+                        max={new Date().toISOString().slice(0, 10)}
                       />
                     )}
 
