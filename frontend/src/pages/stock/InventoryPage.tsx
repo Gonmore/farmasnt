@@ -16,7 +16,7 @@ import {
   Input,
   Select,
 } from '../../components'
-import { useNavigation } from '../../hooks'
+import { useNavigation, usePermissions } from '../../hooks'
 import type { ExpiryStatus } from '../../components/common/ExpiryBadge'
 import { ArchiveBoxIcon, ArrowPathIcon, BeakerIcon, DocumentArrowDownIcon } from '@heroicons/react/24/outline'
 
@@ -375,6 +375,7 @@ function formatProductTitle(p: {
 export function InventoryPage() {
   const auth = useAuth()
   const navGroups = useNavigation()
+  const perms = usePermissions()
   const queryClient = useQueryClient()
 
   const [groupBy, setGroupBy] = useState<'product' | 'warehouse'>('product')
@@ -957,25 +958,27 @@ export function InventoryPage() {
                                 className: 'text-center',
                                 accessor: (b) => (
                                   <div className="flex gap-2">
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      icon={<ArrowPathIcon className="h-4 w-4" />}
-                                      onClick={() =>
-                                        setMovingItem({
-                                          productId: pg.productId,
-                                          productName: formatProductTitle(pg),
-                                          batchId: b.batchId,
-                                          batchNumber: b.batchNumber,
-                                          fromLocationId: b.locationId,
-                                          fromWarehouseCode: b.warehouseCode,
-                                          fromLocationCode: b.locationCode,
-                                          availableQty: formatQtyByBatchPresentation(Number(b.availableQuantity), b),
-                                        })
-                                      }
-                                    >
-                                      Mover
-                                    </Button>
+                                    {perms.hasPermission('stock:move') && (
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        icon={<ArrowPathIcon className="h-4 w-4" />}
+                                        onClick={() =>
+                                          setMovingItem({
+                                            productId: pg.productId,
+                                            productName: formatProductTitle(pg),
+                                            batchId: b.batchId,
+                                            batchNumber: b.batchNumber,
+                                            fromLocationId: b.locationId,
+                                            fromWarehouseCode: b.warehouseCode,
+                                            fromLocationCode: b.locationCode,
+                                            availableQty: formatQtyByBatchPresentation(Number(b.availableQuantity), b),
+                                          })
+                                        }
+                                      >
+                                        Mover
+                                      </Button>
+                                    )}
                                     <Button
                                       variant="ghost"
                                       size="sm"
@@ -1140,25 +1143,27 @@ export function InventoryPage() {
                                 className: 'text-center',
                                 accessor: (b) => (
                                   <div className="flex gap-2">
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      icon={<ArrowPathIcon className="w-4 h-4" />}
-                                      onClick={() =>
-                                        setMovingItem({
-                                          productId: prod.productId,
-                                          productName: formatProductTitle(prod),
-                                          batchId: b.batchId,
-                                          batchNumber: b.batchNumber,
-                                          fromLocationId: b.locationId,
-                                          fromWarehouseCode: wg.warehouseCode,
-                                          fromLocationCode: b.locationCode,
-                                          availableQty: formatQtyByBatchPresentation(Number(b.availableQuantity), b),
-                                        })
-                                      }
-                                    >
-                                      Mover
-                                    </Button>
+                                    {perms.hasPermission('stock:move') && (
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        icon={<ArrowPathIcon className="w-4 h-4" />}
+                                        onClick={() =>
+                                          setMovingItem({
+                                            productId: prod.productId,
+                                            productName: formatProductTitle(prod),
+                                            batchId: b.batchId,
+                                            batchNumber: b.batchNumber,
+                                            fromLocationId: b.locationId,
+                                            fromWarehouseCode: wg.warehouseCode,
+                                            fromLocationCode: b.locationCode,
+                                            availableQty: formatQtyByBatchPresentation(Number(b.availableQuantity), b),
+                                          })
+                                        }
+                                      >
+                                        Mover
+                                      </Button>
+                                    )}
                                     <Button
                                       variant="ghost"
                                       size="sm"

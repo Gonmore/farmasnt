@@ -795,3 +795,16 @@ Tenant Admin (Clientes)
   - Sincronizada lógica de permisos entre backend guards, frontend navigation, y frontend routing.
   - Branch admins ven reportes de stock pero no el módulo laboratory completo.
 
+### **[18 Feb 2026]** — Branch Seller Access Control: LABORATORY Module & Inventory Actions
+
+- **LABORATORY Module Restriction for Branch Sellers**:
+  - Branch sellers (BRANCH_SELLER) completamente excluidos del módulo LABORATORY.
+  - Actualizada navegación para ocultar "🧪 Laboratorio" tanto para BRANCH_ADMIN como BRANCH_SELLER.
+  - Backend guards ya protegen correctamente (BRANCH_SELLER no tiene StockMove).
+
+- **Inventory Move Button Restriction**:
+  - Botón "Mover" en inventario condicionado por permiso `stock:move`.
+  - BRANCH_SELLER no ve el botón "Mover" (no tiene `stock:move`).
+  - BRANCH_ADMIN mantiene acceso al botón "Mover" (tiene `stock:move`).
+  - Tenant admin mantiene control total.
+
