@@ -375,6 +375,7 @@ async function main() {
     Permissions.SalesDeliveryRead,
     Permissions.SalesDeliveryWrite,
     Permissions.ReportSalesRead,
+    Permissions.ReportStockRead,
   ]
 
   // BRANCH_ADMIN: must be able to request/ship/receive stock movements for its own branch.
