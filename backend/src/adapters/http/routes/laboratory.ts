@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../db/prisma.js'
-import { requireAuth, requireModuleEnabled, requirePermission } from '../../../application/security/rbac.js'
+import { requireAuth, requireModuleEnabled, requireNotBranchAdmin, requirePermission } from '../../../application/security/rbac.js'
 import { Permissions } from '../../../application/security/permissions.js'
 import { currentYearUtc, nextSequence } from '../../../application/shared/sequence.js'
 import { createSupplyStockMovementTx } from '../../../application/laboratory/supplyStockMovementService.js'
@@ -241,8 +241,8 @@ async function ensureLocationByCode(
 
 export async function registerLaboratoryRoutes(app: FastifyInstance): Promise<void> {
   const db = prisma()
-  const readGuard = [requireAuth(), requireModuleEnabled(db, 'LABORATORY'), requirePermission(Permissions.StockRead)]
-  const writeGuard = [requireAuth(), requireModuleEnabled(db, 'LABORATORY'), requirePermission(Permissions.StockManage)]
+  const readGuard = [requireAuth(), requireModuleEnabled(db, 'LABORATORY'), requireNotBranchAdmin(db), requirePermission(Permissions.StockRead)]
+  const writeGuard = [requireAuth(), requireModuleEnabled(db, 'LABORATORY'), requireNotBranchAdmin(db), requirePermission(Permissions.StockManage)]
 
   // Laboratories
   app.get('/api/v1/laboratories', { preHandler: readGuard }, async (request, reply) => {

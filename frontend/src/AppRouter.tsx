@@ -425,7 +425,7 @@ export function AppRouter() {
         <Route
           path="/reports/stock"
           element={
-            <ProtectedRoute requiredPermissions={['report:stock:read']}>
+            <ProtectedRoute requiredPermissions={['report:stock:read', 'stock:read']} requireAll={false}>
               <StockReportsPage />
             </ProtectedRoute>
           }

@@ -777,3 +777,21 @@ Tenant Admin (Clientes)
   - Agregado guard personalizado `requireStockReportAccess()` que permite acceso con `ReportStockRead` O (`ScopeBranch` + `StockRead`).
   - Agregado filtrado por sucursal: usuarios con scope branch solo ven inventario de warehouses de su ciudad.
 
+### **[18 Feb 2026]** — Branch Admin Access Control: Stock Reports vs LABORATORY Module
+
+- **Stock Reports Access for Branch Admins**:
+  - Branch admins ahora pueden acceder a reportes de stock (`/reports/stock`) manteniendo el filtrado por sucursal.
+  - Backend: Guard personalizado `requireStockReportOrBranchAccess()` permite acceso con `ReportStockRead` O (`ScopeBranch` + `StockRead`).
+  - Frontend: Actualizada navegación para mostrar "📦 Stock" en reportes cuando branch admin tiene `stock:read`.
+  - Frontend: Modificada ruta `/reports/stock` para permitir acceso con `report:stock:read` O `stock:read`.
+
+- **LABORATORY Module Restriction for Branch Admins**:
+  - Branch admins completamente excluidos del módulo LABORATORY.
+  - Backend: Nuevo guard `requireNotBranchAdmin()` bloquea acceso a todas las rutas de laboratory para usuarios con rol BRANCH_ADMIN.
+  - Frontend: Ocultado módulo "🧪 Laboratorio" del menú lateral para branch admins.
+  - Mantiene acceso para usuarios con roles superiores (TENANT_ADMIN, etc.).
+
+- **Navigation & Permissions Alignment**:
+  - Sincronizada lógica de permisos entre backend guards, frontend navigation, y frontend routing.
+  - Branch admins ven reportes de stock pero no el módulo laboratory completo.
+

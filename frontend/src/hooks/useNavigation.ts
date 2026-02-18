@@ -86,8 +86,8 @@ export function useNavigation(): NavGroup[] {
     });
   }
 
-  // Laboratorio (MVP: reutiliza permisos de stock)
-  if (hasPermission('stock:read')) {
+  // Laboratorio (MVP: reutiliza permisos de stock, pero excluir branch admins)
+  if (hasPermission('stock:read') && !isBranchAdmin) {
     const labItems = [] as Array<{ to: string; label: string }>
     labItems.push({ to: '/laboratory/labs', label: '🧪 Configuración' })
     labItems.push({ to: '/laboratory/production', label: '🏭 Producción' })
@@ -133,7 +133,7 @@ export function useNavigation(): NavGroup[] {
   // Reportes (según permisos)
   const reportItems = [] as Array<{ to: string; label: string }>
   if (hasPermission('report:sales:read')) reportItems.push({ to: '/reports/sales', label: '💵 Ventas' })
-  if (hasPermission('report:stock:read')) reportItems.push({ to: '/reports/stock', label: '📦 Stock' })
+  if (hasPermission('report:stock:read') || (isBranchAdmin && hasPermission('stock:read'))) reportItems.push({ to: '/reports/stock', label: '📦 Stock' })
   if (reportItems.length > 0) {
     groups.push({ title: '📈 Reportes', items: reportItems })
   }

@@ -6,7 +6,7 @@ import { Permissions } from '../../../application/security/permissions.js'
 import { getMailer } from '../../../shared/mailer.js'
 import { computeNextRunAt } from '../../../application/reports/reportScheduler.js'
 
-function requireStockReportAccess() {
+function requireStockReportOrBranchAccess() {
   return async function (request: any): Promise<void> {
     const perms = request.auth?.permissions
     if (!request.auth) {
@@ -674,7 +674,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
   app.get(
     '/api/v1/reports/stock/low-stock',
     {
-      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.ReportStockRead)],
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requireStockReportOrBranchAccess()],
     },
     async (request, reply) => {
       const parsed = z.object({ take: z.coerce.number().int().min(1).max(200).default(50) }).safeParse(request.query)
@@ -749,7 +749,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
   app.get(
     '/api/v1/reports/stock/expiry-alerts',
     {
-      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.ReportStockRead)],
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requireStockReportOrBranchAccess()],
     },
     async (request, reply) => {
       const parsed = z
@@ -809,7 +809,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
   app.get(
     '/api/v1/reports/stock/rotation',
     {
-      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.ReportStockRead)],
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requireStockReportOrBranchAccess()],
     },
     async (request, reply) => {
       const parsed = dateRangeQuerySchema.extend({ take: z.coerce.number().int().min(1).max(200).default(50) }).safeParse(request.query)
@@ -1199,7 +1199,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
   app.get(
     '/api/v1/reports/stock/balances-expanded',
     {
-      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requireStockReportAccess()],
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requireStockReportOrBranchAccess()],
     },
     async (request, reply) => {
       const parsed = stockBalancesExpandedQuerySchema.safeParse(request.query)
@@ -1290,7 +1290,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
   app.get(
     '/api/v1/reports/stock/inputs-by-product',
     {
-      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.ReportStockRead)],
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requireStockReportOrBranchAccess()],
     },
     async (request, reply) => {
       const parsed = stockInputsByProductQuerySchema.safeParse(request.query)
@@ -1333,7 +1333,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
   app.get(
     '/api/v1/reports/stock/transfers-between-warehouses',
     {
-      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.ReportStockRead)],
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requireStockReportOrBranchAccess()],
     },
     async (request, reply) => {
       const parsed = stockTransfersBetweenWarehousesQuerySchema.safeParse(request.query)
@@ -1383,7 +1383,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
   app.get(
     '/api/v1/reports/stock/movement-requests/summary',
     {
-      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.ReportStockRead)],
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requireStockReportOrBranchAccess()],
     },
     async (request, reply) => {
       const parsed = dateRangeQuerySchema.safeParse(request.query)
@@ -1436,7 +1436,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
   app.get(
     '/api/v1/reports/stock/movement-requests/by-city',
     {
-      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.ReportStockRead)],
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requireStockReportOrBranchAccess()],
     },
     async (request, reply) => {
       const parsed = stockMovementRequestsOpsQuerySchema.safeParse(request.query)
@@ -1486,7 +1486,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
   app.get(
     '/api/v1/reports/stock/movement-requests/flows',
     {
-      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.ReportStockRead)],
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requireStockReportOrBranchAccess()],
     },
     async (request, reply) => {
       const parsed = stockMovementRequestsFulfilledQuerySchema.safeParse(request.query)
@@ -1603,7 +1603,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
   app.get(
     '/api/v1/reports/stock/movement-requests/fulfilled',
     {
-      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.ReportStockRead)],
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requireStockReportOrBranchAccess()],
     },
     async (request, reply) => {
       const parsed = stockMovementRequestsFulfilledQuerySchema.safeParse(request.query)
@@ -1709,7 +1709,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
   app.get(
     '/api/v1/reports/stock/movement-requests/:id/trace',
     {
-      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.ReportStockRead)],
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requireStockReportOrBranchAccess()],
     },
     async (request, reply) => {
       const tenantId = request.auth!.tenantId
@@ -1875,7 +1875,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
   app.get(
     '/api/v1/reports/stock/returns/summary',
     {
-      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.ReportStockRead)],
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requireStockReportOrBranchAccess()],
     },
     async (request, reply) => {
       const parsed = dateRangeQuerySchema.safeParse(request.query)
@@ -1913,7 +1913,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
   app.get(
     '/api/v1/reports/stock/returns/by-warehouse',
     {
-      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.ReportStockRead)],
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requireStockReportOrBranchAccess()],
     },
     async (request, reply) => {
       const parsed = stockReturnsOpsQuerySchema.safeParse(request.query)
@@ -1960,7 +1960,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
   app.post(
     '/api/v1/reports/stock/email',
     {
-      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.ReportStockRead)],
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requireStockReportOrBranchAccess()],
     },
     async (request, reply) => {
       const parsed = reportEmailBodySchema.safeParse(request.body)
@@ -1987,7 +1987,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
   app.get(
     '/api/v1/reports/stock/schedules',
     {
-      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.ReportStockRead)],
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requireStockReportOrBranchAccess()],
     },
     async (request, reply) => {
       const tenantId = request.auth!.tenantId
@@ -2018,7 +2018,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
   app.post(
     '/api/v1/reports/stock/schedules',
     {
-      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.ReportStockRead)],
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requireStockReportOrBranchAccess()],
     },
     async (request, reply) => {
       const parsed = reportScheduleBodySchema.safeParse(request.body)
@@ -2074,7 +2074,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
   app.patch(
     '/api/v1/reports/stock/schedules/:id',
     {
-      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.ReportStockRead)],
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requireStockReportOrBranchAccess()],
     },
     async (request, reply) => {
       const id = String((request.params as any)?.id ?? '')
@@ -2136,7 +2136,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
   app.delete(
     '/api/v1/reports/stock/schedules/:id',
     {
-      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.ReportStockRead)],
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requireStockReportOrBranchAccess()],
     },
     async (request, reply) => {
       const id = String((request.params as any)?.id ?? '')
@@ -2151,7 +2151,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
   app.get(
     '/api/v1/reports/stock/movements-expanded',
     {
-      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.ReportStockRead)],
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requireStockReportOrBranchAccess()],
     },
     async (request, reply) => {
       const parsed = stockMovementsExpandedQuerySchema.safeParse(request.query)

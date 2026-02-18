@@ -90,3 +90,25 @@ export function requireModuleEnabled(prisma: PrismaClient, module: ModuleCode) {
     }
   }
 }
+
+export function requireNotBranchAdmin(prisma: PrismaClient) {
+  return async function (request: FastifyRequest): Promise<void> {
+    const userId = request.auth?.userId
+    if (!userId) {
+      const err = new Error('Unauthorized') as Error & { statusCode?: number }
+      err.statusCode = 401
+      throw err
+    }
+
+    const hasBranchAdminRole = await prisma.userRole.findFirst({
+      where: { userId, role: { code: 'BRANCH_ADMIN' } },
+      select: { roleId: true },
+    })
+
+    if (hasBranchAdminRole) {
+      const err = new Error('Access denied for branch administrators') as Error & { statusCode?: number }
+      err.statusCode = 403
+      throw err
+    }
+  }
+}
