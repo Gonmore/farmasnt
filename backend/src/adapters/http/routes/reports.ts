@@ -6,6 +6,28 @@ import { Permissions } from '../../../application/security/permissions.js'
 import { getMailer } from '../../../shared/mailer.js'
 import { computeNextRunAt } from '../../../application/reports/reportScheduler.js'
 
+function requireStockReportAccess() {
+  return async function (request: any): Promise<void> {
+    const perms = request.auth?.permissions
+    if (!request.auth) {
+      const err = new Error('Unauthorized') as Error & { statusCode?: number }
+      err.statusCode = 401
+      throw err
+    }
+
+    // Allow if user has ReportStockRead permission OR has scope:branch + stock:read
+    const hasReportStockRead = perms?.has(Permissions.ReportStockRead)
+    const hasScopeBranch = perms?.has(Permissions.ScopeBranch)
+    const hasStockRead = perms?.has(Permissions.StockRead)
+
+    if (!hasReportStockRead && !(hasScopeBranch && hasStockRead)) {
+      const err = new Error('Forbidden') as Error & { statusCode?: number }
+      err.statusCode = 403
+      throw err
+    }
+  }
+}
+
 const dateRangeQuerySchema = z.object({
   from: z.coerce.date().optional(),
   to: z.coerce.date().optional(),
@@ -1177,14 +1199,38 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
   app.get(
     '/api/v1/reports/stock/balances-expanded',
     {
-      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.ReportStockRead)],
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requireStockReportAccess()],
     },
     async (request, reply) => {
       const parsed = stockBalancesExpandedQuerySchema.safeParse(request.query)
       if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
 
       const tenantId = request.auth!.tenantId
+      const branchCity = branchCityOf(request)
       const { warehouseId, locationId, productId, take } = parsed.data
+
+      // For branch-scoped users, restrict to their branch warehouses unless a specific warehouse is requested
+      let allowedWarehouseIds: string[] | undefined
+      if (branchCity && !request.auth?.isTenantAdmin) {
+        if (warehouseId) {
+          // Verify the requested warehouse belongs to their branch
+          const wh = await db.warehouse.findFirst({
+            where: { tenantId, id: warehouseId },
+            select: { city: true },
+          })
+          const whCity = String(wh?.city ?? '').trim().toUpperCase()
+          if (!whCity || whCity !== branchCity) {
+            return reply.status(403).send({ message: 'Solo puede ver inventario de su sucursal' })
+          }
+        } else {
+          // Get warehouses for their branch
+          const branchWarehouses = await db.warehouse.findMany({
+            where: { tenantId, city: { equals: branchCity, mode: 'insensitive' as const } },
+            select: { id: true },
+          })
+          allowedWarehouseIds = branchWarehouses.map(w => w.id)
+        }
+      }
 
       const items = await db.inventoryBalance.findMany({
         where: {
@@ -1197,7 +1243,13 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
                   warehouseId,
                 },
               }
-            : {}),
+            : allowedWarehouseIds
+              ? {
+                  location: {
+                    warehouseId: { in: allowedWarehouseIds },
+                  },
+                }
+              : {}),
         },
         take,
         orderBy: [{ updatedAt: 'desc' }],
