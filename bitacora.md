@@ -770,3 +770,10 @@ Tenant Admin (Clientes)
   - Ajustado parámetro `take=100` → `take=50` (límite backend).
   - Actualizado tipo `ClientListItem` para usar `name` en lugar de `commercialName/fiscalName`.
 
+### **[18 Feb 2026]** — Fix Branch Admin Access to Inventory Reports
+
+- **Stock Reports Access**:
+  - Branch admins ahora pueden acceder a `/stock/inventory` (balances-expanded endpoint).
+  - Agregado guard personalizado `requireStockReportAccess()` que permite acceso con `ReportStockRead` O (`ScopeBranch` + `StockRead`).
+  - Agregado filtrado por sucursal: usuarios con scope branch solo ven inventario de warehouses de su ciudad.
+
