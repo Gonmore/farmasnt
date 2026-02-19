@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useMemo, useState, type ReactElement } from 'react'
+import { useMemo, useState, type ReactElement, type ReactNode } from 'react'
 import { apiFetch } from '../../lib/api'
 import { exportToXlsx } from '../../lib/exportXlsx'
 import { getProductLabel } from '../../lib/productName'
@@ -361,16 +361,6 @@ function formatPresentation(p: {
   return parts.length ? parts.join(' ') : null
 }
 
-function formatProductTitle(p: {
-  name: string
-  sku: string
-  presentationWrapper?: string | null
-  presentationQuantity?: any
-  presentationFormat?: string | null
-}): string {
-  const pres = formatPresentation(p)
-  return `${p.name}${pres ? ` - ${pres}` : ''} | ${p.sku}`
-}
 
 export function InventoryPage() {
   const auth = useAuth()
@@ -498,6 +488,221 @@ export function InventoryPage() {
       alert(err instanceof Error ? err.message : 'Error al cambiar estado')
     },
   })
+
+  // Column definitions for tables
+  const productExpandedColumns = useMemo(() => {
+    const baseColumns: Array<{
+      header: string | ReactElement
+      accessor: (b: any, _index: number) => ReactNode
+      width?: string
+    }> = [
+      {
+        header: 'Sucursal',
+        accessor: (b, _index) => (
+          <div>
+            <div className="font-mono text-sm text-slate-800 dark:text-slate-200">{b.warehouseCode}</div>
+            <div className="text-xs text-slate-500 dark:text-slate-400">{b.warehouseName}</div>
+          </div>
+        ),
+        width: '160px',
+      },
+      { header: 'Lote', accessor: (b, _index) => b.batchNumber, width: '140px' },
+      {
+        header: 'Presentación',
+        accessor: (b, _index) => {
+          const name = (b.presentationName ?? 'Unidad').trim() || 'Unidad'
+          const unitsPer = Number(b.unitsPerPresentation ?? 1)
+          const label = Number.isFinite(unitsPer) && unitsPer > 1 ? `${name} (${unitsPer.toFixed(0)}u)` : name
+          return (
+            <span className="text-sm text-slate-800 dark:text-slate-200">
+              {getPresentationEmoji(name)} {label}
+            </span>
+          )
+        },
+        width: '160px',
+      },
+      {
+        header: 'Total (Disp/Res)',
+        accessor: (b, _index) => {
+          const total = Number(b.quantity ?? 0)
+          const disp = Number(b.availableQuantity ?? 0)
+          const res = Number(b.reservedQuantity ?? 0)
+          return (
+            <div className="text-sm">
+              <div className="font-medium text-slate-800 dark:text-slate-200">
+                {formatQtyByBatchPresentation(total, b)}
+              </div>
+              <div className="text-xs text-slate-500 dark:text-slate-400">
+                {formatQtyByBatchPresentation(disp, b)} disp · {formatQtyByBatchPresentation(res, b)} res
+              </div>
+            </div>
+          )
+        },
+        width: '190px',
+      },
+      {
+        header: 'Vence',
+        accessor: (b, _index) => {
+          if (!b.expiresAt) return '-'
+          const expiryStatus = calculateExpiryStatus(b.expiresAt)
+          const colors = getExpiryColors(expiryStatus)
+          return (
+            <span className={`inline-block rounded-md border px-2 py-1 text-xs font-medium ${colors.bg} ${colors.border} ${colors.text}`}>
+              {new Date(b.expiresAt).toLocaleDateString()}
+            </span>
+          )
+        },
+        width: '120px',
+      },
+      {
+        header: 'Estado',
+        accessor: (b, _index) => {
+          const statusDisplay = getBatchStatusDisplay(b.status)
+          return <span className={`text-sm font-medium ${statusDisplay.color}`}>{statusDisplay.text}</span>
+        },
+        width: '120px',
+      },
+      {
+        header: 'Ubicación',
+        accessor: (b, _index) => b.locationCode,
+        width: '120px',
+      },
+    ]
+
+    // Add action column only if user has stock:move permission
+    if (perms.hasPermission('stock:move')) {
+      baseColumns.push({
+        header: 'Acción',
+        accessor: (b, _index) => (
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() =>
+                setMovingItem({
+                  productId: b.productId,
+                  productName: b.productName,
+                  batchId: b.batchId,
+                  batchNumber: b.batchNumber,
+                  fromLocationId: b.locationId,
+                  fromWarehouseCode: b.warehouseCode,
+                  fromLocationCode: b.locationCode,
+                  availableQty: String(b.availableQuantity),
+                })
+              }
+            >
+              Mover
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() =>
+                setStatusChangeItem({
+                  productId: b.productId,
+                  productName: b.productName,
+                  batchId: b.batchId,
+                  batchNumber: b.batchNumber,
+                  currentStatus: b.status,
+                  version: b.version,
+                })
+              }
+            >
+              Estado
+            </Button>
+          </div>
+        ),
+        width: '200px',
+      })
+    }
+
+    return baseColumns
+  }, [perms])
+
+  const warehouseColumns = useMemo(() => {
+    const baseColumns: Array<{
+      header: string | ReactElement
+      accessor: (b: any, _index: number) => ReactNode
+      width?: string
+    }> = [
+      { header: '🏷️ Lote', accessor: (b, _index) => b.batchNumber },
+      {
+        header: '📅 Vence',
+        accessor: (b, _index) => {
+          if (!b.expiresAt) return '-'
+          const expiryStatus = calculateExpiryStatus(b.expiresAt)
+          const colors = getExpiryColors(expiryStatus)
+          return (
+            <span className={`inline-block px-2 py-1 rounded-md border text-xs font-medium ${colors.bg} ${colors.border} ${colors.text}`}>
+              {new Date(b.expiresAt).toLocaleDateString()}
+            </span>
+          )
+        },
+      },
+      {
+        header: '🔒 Estado',
+        accessor: (b, _index) => {
+          const statusDisplay = getBatchStatusDisplay(b.status)
+          return (
+            <span className={`text-sm font-medium ${statusDisplay.color}`}>
+              {statusDisplay.text}
+            </span>
+          )
+        },
+      },
+      { header: '📍 Ubicación', accessor: (b, _index) => b.locationCode },
+      { header: '📊 Total', accessor: (b, _index) => formatQtyByBatchPresentation(Number(b.quantity), b) },
+      {
+        header: '🧷 Reservado',
+        accessor: (b, _index) => {
+          const reserved = Number(b.reservedQuantity ?? '0')
+          if (reserved > 0) {
+            return (
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => openReservationsModal(b.id)}
+                loading={loadingReservations}
+              >
+                {formatQtyByBatchPresentation(reserved, b)}
+              </Button>
+            )
+          }
+          return formatQtyByBatchPresentation(reserved, b)
+        },
+      },
+      { header: '✅ Disponible', accessor: (b, _index) => formatQtyByBatchPresentation(Number(b.availableQuantity), b) },
+    ]
+
+    // Add action column only if user has stock:move permission
+    if (perms.hasPermission('stock:move')) {
+      baseColumns.push({
+        header: '🚀 Acción',
+        accessor: (b, _index) => (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() =>
+              setMovingItem({
+                productId: b.productId,
+                productName: b.productName,
+                batchId: b.batchId,
+                batchNumber: b.batchNumber,
+                fromLocationId: b.locationId,
+                fromWarehouseCode: b.warehouseCode,
+                fromLocationCode: b.locationCode,
+                availableQty: String(b.availableQuantity),
+              })
+            }
+          >
+            Mover
+          </Button>
+        ),
+        width: '120px',
+      })
+    }
+
+    return baseColumns
+  }, [perms, loadingReservations])
 
   const productGroups = useMemo<ProductGroup[]>(() => {
     if (!balancesQuery.data?.items) return []
@@ -886,123 +1091,7 @@ export function InventoryPage() {
 
                         return (
                           <Table
-                            columns={[
-                              {
-                                header: 'Sucursal',
-                                accessor: (b) => (
-                                  <div>
-                                    <div className="font-mono text-sm text-slate-800 dark:text-slate-200">{b.warehouseCode}</div>
-                                    <div className="text-xs text-slate-500 dark:text-slate-400">{b.warehouseName}</div>
-                                  </div>
-                                ),
-                                width: '160px',
-                              },
-                              { header: 'Lote', accessor: (b) => b.batchNumber, width: '140px' },
-                              {
-                                header: 'Presentación',
-                                accessor: (b) => {
-                                  const name = (b.presentationName ?? 'Unidad').trim() || 'Unidad'
-                                  const unitsPer = Number(b.unitsPerPresentation ?? 1)
-                                  const label = Number.isFinite(unitsPer) && unitsPer > 1 ? `${name} (${unitsPer.toFixed(0)}u)` : name
-                                  return (
-                                    <span className="text-sm text-slate-800 dark:text-slate-200">
-                                      {getPresentationEmoji(name)} {label}
-                                    </span>
-                                  )
-                                },
-                                width: '160px',
-                              },
-                              {
-                                header: 'Total (Disp/Res)',
-                                accessor: (b) => {
-                                  const total = Number(b.quantity ?? 0)
-                                  const disp = Number(b.availableQuantity ?? 0)
-                                  const res = Number(b.reservedQuantity ?? 0)
-                                  return (
-                                    <div className="text-sm">
-                                      <div className="font-medium text-slate-800 dark:text-slate-200">
-                                        {formatQtyByBatchPresentation(total, b)}
-                                      </div>
-                                      <div className="text-xs text-slate-500 dark:text-slate-400">
-                                        {formatQtyByBatchPresentation(disp, b)} disp · {formatQtyByBatchPresentation(res, b)} res
-                                      </div>
-                                    </div>
-                                  )
-                                },
-                                width: '190px',
-                              },
-                              {
-                                header: 'Vence',
-                                accessor: (b) => {
-                                  if (!b.expiresAt) return '-'
-                                  const expiryStatus = calculateExpiryStatus(b.expiresAt)
-                                  const colors = getExpiryColors(expiryStatus)
-                                  return (
-                                    <span className={`inline-block rounded-md border px-2 py-1 text-xs font-medium ${colors.bg} ${colors.border} ${colors.text}`}>
-                                      {new Date(b.expiresAt).toLocaleDateString()}
-                                    </span>
-                                  )
-                                },
-                                width: '120px',
-                              },
-                              {
-                                header: 'Estado',
-                                accessor: (b) => {
-                                  const statusDisplay = getBatchStatusDisplay(b.status)
-                                  return <span className={`text-sm font-medium ${statusDisplay.color}`}>{statusDisplay.text}</span>
-                                },
-                                width: '120px',
-                              },
-                              {
-                                header: 'Acción',
-                                className: 'text-center',
-                                accessor: (b) => (
-                                  <div className="flex gap-2">
-                                    {perms.hasPermission('stock:move') && (
-                                      <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        icon={<ArrowPathIcon className="h-4 w-4" />}
-                                        onClick={() =>
-                                          setMovingItem({
-                                            productId: pg.productId,
-                                            productName: formatProductTitle(pg),
-                                            batchId: b.batchId,
-                                            batchNumber: b.batchNumber,
-                                            fromLocationId: b.locationId,
-                                            fromWarehouseCode: b.warehouseCode,
-                                            fromLocationCode: b.locationCode,
-                                            availableQty: formatQtyByBatchPresentation(Number(b.availableQuantity), b),
-                                          })
-                                        }
-                                      >
-                                        Mover
-                                      </Button>
-                                    )}
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      icon={<ArrowPathIcon className="h-4 w-4" />}
-                                      onClick={() => {
-                                        if (!b.batchId) return
-                                        setStatusChangeItem({
-                                          productId: pg.productId,
-                                          productName: formatProductTitle(pg),
-                                          batchId: b.batchId,
-                                          batchNumber: b.batchNumber,
-                                          currentStatus: b.status,
-                                          version: b.version,
-                                        })
-                                        setNewStatus(b.status === 'QUARANTINE' ? 'RELEASED' : 'QUARANTINE')
-                                      }}
-                                    >
-                                      Estado
-                                    </Button>
-                                  </div>
-                                ),
-                                width: '200px',
-                              },
-                            ]}
+                            columns={productExpandedColumns}
                             data={rows}
                             keyExtractor={(b: any) => `${b.batchId ?? 'null'}-${b.locationId}`}
                           />
@@ -1090,102 +1179,7 @@ export function InventoryPage() {
                           </div>
 
                           <Table
-                            columns={[
-                              { header: '🏷️ Lote', accessor: (b) => b.batchNumber },
-                              {
-                                header: '📅 Vence',
-                                accessor: (b) => {
-                                  if (!b.expiresAt) return '-'
-                                  const expiryStatus = calculateExpiryStatus(b.expiresAt)
-                                  const colors = getExpiryColors(expiryStatus)
-                                  return (
-                                    <span className={`inline-block px-2 py-1 rounded-md border text-xs font-medium ${colors.bg} ${colors.border} ${colors.text}`}>
-                                      {new Date(b.expiresAt).toLocaleDateString()}
-                                    </span>
-                                  )
-                                },
-                              },
-                              {
-                                header: '🔒 Estado',
-                                accessor: (b) => {
-                                  const statusDisplay = getBatchStatusDisplay(b.status)
-                                  return (
-                                    <span className={`text-sm font-medium ${statusDisplay.color}`}>
-                                      {statusDisplay.text}
-                                    </span>
-                                  )
-                                },
-                              },
-                              { header: '📍 Ubicación', accessor: (b) => b.locationCode },
-                              { header: '📊 Total', accessor: (b) => formatQtyByBatchPresentation(Number(b.quantity), b) },
-                              {
-                                header: '🧷 Reservado',
-                                accessor: (b) => {
-                                  const reserved = Number(b.reservedQuantity ?? '0')
-                                  if (reserved > 0) {
-                                    return (
-                                      <Button
-                                        size="sm"
-                                        variant="secondary"
-                                        onClick={() => openReservationsModal(b.id)}
-                                        loading={loadingReservations}
-                                      >
-                                        {formatQtyByBatchPresentation(reserved, b)}
-                                      </Button>
-                                    )
-                                  }
-                                  return formatQtyByBatchPresentation(reserved, b)
-                                },
-                              },
-                              { header: '✅ Disponible', accessor: (b) => formatQtyByBatchPresentation(Number(b.availableQuantity), b) },
-                              {
-                                header: 'Acción',
-                                className: 'text-center',
-                                accessor: (b) => (
-                                  <div className="flex gap-2">
-                                    {perms.hasPermission('stock:move') && (
-                                      <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        icon={<ArrowPathIcon className="w-4 h-4" />}
-                                        onClick={() =>
-                                          setMovingItem({
-                                            productId: prod.productId,
-                                            productName: formatProductTitle(prod),
-                                            batchId: b.batchId,
-                                            batchNumber: b.batchNumber,
-                                            fromLocationId: b.locationId,
-                                            fromWarehouseCode: wg.warehouseCode,
-                                            fromLocationCode: b.locationCode,
-                                            availableQty: formatQtyByBatchPresentation(Number(b.availableQuantity), b),
-                                          })
-                                        }
-                                      >
-                                        Mover
-                                      </Button>
-                                    )}
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      icon={<ArrowPathIcon className="w-4 h-4" />}
-                                      onClick={() => {
-                                        setStatusChangeItem({
-                                          productId: prod.productId,
-                                          productName: formatProductTitle(prod),
-                                          batchId: b.batchId!,
-                                          batchNumber: b.batchNumber,
-                                          currentStatus: b.status,
-                                          version: b.version,
-                                        })
-                                        setNewStatus(b.status === 'QUARANTINE' ? 'RELEASED' : 'QUARANTINE')
-                                      }}
-                                    >
-                                      Estado
-                                    </Button>
-                                  </div>
-                                ),
-                              },
-                            ]}
+                            columns={warehouseColumns}
                             data={prod.batches}
                             keyExtractor={(b) => `${b.batchId ?? 'null'}-${b.locationId}`}
                           />

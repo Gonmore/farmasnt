@@ -756,6 +756,10 @@ model SalesOrder {
   deliveredAt DateTime?
   paidAt      DateTime?
   paidBy      String?
+  paymentReceiptType String?
+  paymentReceiptRef String?
+  paymentReceiptPhotoUrl String?
+  paymentReceiptPhotoKey String?
   note       String?
   deliveryDate DateTime?
   deliveryCity String?

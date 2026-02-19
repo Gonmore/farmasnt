@@ -570,6 +570,8 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
       }
       const statuses = parsed.data.status === 'DELIVERED' ? (['FULFILLED'] as const) : parsed.data.status === 'ALL' ? (['DRAFT', 'CONFIRMED', 'FULFILLED'] as const) : (['DRAFT', 'CONFIRMED'] as const)
       const cities = branchCity ? [branchCity] : parsed.data.cities ? parsed.data.cities.split(',').map(c => c.toUpperCase().trim()).filter(c => c) : undefined
+      const cityDeliveryFilters = cities?.map((city) => ({ deliveryCity: { equals: city, mode: 'insensitive' as const } }))
+      const cityCustomerFilters = cities?.map((city) => ({ customer: { city: { equals: city, mode: 'insensitive' as const } } }))
 
       const items = await db.salesOrder.findMany({
         where: {
@@ -579,8 +581,8 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
             ? {
                 // Keep in sync with reports/sales/by-city logic: prefer order.deliveryCity, fallback to customer.city.
                 OR: [
-                  { deliveryCity: { in: cities } },
-                  { AND: [{ OR: [{ deliveryCity: null }, { deliveryCity: '' }] }, { customer: { city: { in: cities } } }] },
+                  { OR: cityDeliveryFilters ?? [] },
+                  { AND: [{ OR: [{ deliveryCity: null }, { deliveryCity: '' }] }, { OR: cityCustomerFilters ?? [] }] },
                 ],
               }
             : {}),
@@ -675,6 +677,11 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
       if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
 
       const tenantId = request.auth!.tenantId
+      const branchCity = branchCityOf(request)
+
+      if (branchCity === '__MISSING__') {
+        return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+      }
 
       const where: any = { tenantId, ...(parsed.data.status ? { status: parsed.data.status } : {}) }
       if (parsed.data.customerId) {
@@ -718,6 +725,17 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
         where.createdAt = {}
         if (parsed.data.from) where.createdAt.gte = parsed.data.from
         if (parsed.data.to) where.createdAt.lt = parsed.data.to
+      }
+      if (branchCity) {
+        where.AND = [
+          ...(where.AND ?? []),
+          {
+            OR: [
+              { deliveryCity: { equals: branchCity, mode: 'insensitive' as const } },
+              { AND: [{ OR: [{ deliveryCity: null }, { deliveryCity: '' }] }, { customer: { city: { equals: branchCity, mode: 'insensitive' as const } } }] },
+            ],
+          },
+        ]
       }
 
       const items = await db.salesOrder.findMany({
@@ -795,9 +813,25 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
     async (request, reply) => {
       const id = (request.params as any).id as string
       const tenantId = request.auth!.tenantId
+      const branchCity = branchCityOf(request)
+
+      if (branchCity === '__MISSING__') {
+        return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+      }
 
       const order = await db.salesOrder.findFirst({
-        where: { id, tenantId },
+        where: {
+          id,
+          tenantId,
+          ...(branchCity
+            ? {
+                OR: [
+                  { deliveryCity: { equals: branchCity, mode: 'insensitive' as const } },
+                  { AND: [{ OR: [{ deliveryCity: null }, { deliveryCity: '' }] }, { customer: { city: { equals: branchCity, mode: 'insensitive' as const } } }] },
+                ],
+              }
+            : {}),
+        },
         select: {
           id: true,
           number: true,
@@ -878,8 +912,27 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
     async (request, reply) => {
       const id = (request.params as any).id as string
       const tenantId = request.auth!.tenantId
+      const branchCity = branchCityOf(request)
 
-      const order = await db.salesOrder.findFirst({ where: { id, tenantId }, select: { id: true, number: true, createdAt: true, deliveredAt: true, status: true } })
+      if (branchCity === '__MISSING__') {
+        return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+      }
+
+      const order = await db.salesOrder.findFirst({
+        where: {
+          id,
+          tenantId,
+          ...(branchCity
+            ? {
+                OR: [
+                  { deliveryCity: { equals: branchCity, mode: 'insensitive' as const } },
+                  { AND: [{ OR: [{ deliveryCity: null }, { deliveryCity: '' }] }, { customer: { city: { equals: branchCity, mode: 'insensitive' as const } } }] },
+                ],
+              }
+            : {}),
+        },
+        select: { id: true, number: true, createdAt: true, deliveredAt: true, status: true },
+      })
       if (!order) return reply.status(404).send({ message: 'Not found' })
 
       try {

@@ -1,10 +1,11 @@
 import { useQuery } from '@tanstack/react-query'
-import { useState, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { apiFetch } from '../../lib/api'
 import { useAuth } from '../../providers/AuthProvider'
 import { MainLayout, PageContainer, Button, Table, Loading, ErrorState, EmptyState, PaginationCursor, Input } from '../../components'
 import { useNavigation } from '../../hooks'
+import { usePermissions } from '../../hooks/usePermissions'
 import { EyeIcon, PlusIcon, MagnifyingGlassIcon, XMarkIcon } from '@heroicons/react/24/outline'
 
 type CustomerListItem = {
@@ -36,11 +37,21 @@ export function CustomersPage() {
   const auth = useAuth()
   const navigate = useNavigate()
   const navGroups = useNavigation()
+  const permissions = usePermissions()
   const [cursor, setCursor] = useState<string | undefined>()
   const [selectedCities, setSelectedCities] = useState<string[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [appliedSearch, setAppliedSearch] = useState('')
   const take = 20
+  const isBranchScoped = permissions.hasPermission('scope:branch') && !permissions.isTenantAdmin
+  const branchCity = (permissions.user?.warehouse?.city ?? '').trim().toUpperCase()
+
+  useEffect(() => {
+    if (!isBranchScoped || !branchCity) return
+    if (selectedCities.length === 1 && selectedCities[0] === branchCity) return
+    setSelectedCities([branchCity])
+    setCursor(undefined)
+  }, [isBranchScoped, branchCity, selectedCities])
 
   const customersQuery = useQuery({
     queryKey: ['customers', take, cursor, selectedCities, appliedSearch],
@@ -128,7 +139,14 @@ export function CustomersPage() {
         </div>
 
         {/* Filtro de ciudades - Chips simples */}
-        {availableCities.length > 0 && (
+        {isBranchScoped && branchCity ? (
+          <div className="mb-4 flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+            <span className="font-medium">Ciudad:</span>
+            <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+              {branchCity}
+            </span>
+          </div>
+        ) : availableCities.length > 0 ? (
           <div className="mb-4">
             <div className="flex flex-wrap gap-2 items-center">
               <span className="text-sm font-medium text-slate-700 dark:text-slate-300 mr-2">Filtrar por ciudad:</span>
@@ -166,7 +184,7 @@ export function CustomersPage() {
               })}
             </div>
           </div>
-        )}
+        ) : null}
 
         <div className="rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
           {customersQuery.isLoading && <Loading />}

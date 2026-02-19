@@ -430,12 +430,31 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
 
       const { take, cursor, customerSearch } = parsed.data
       const tenantId = request.auth!.tenantId
+      const branchCity = branchCityOf(request)
+
+      if (branchCity === '__MISSING__') {
+        return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+      }
 
       const where: any = { tenantId, isActive: true }
       if (customerSearch) {
         where.customer = {
           name: { contains: customerSearch, mode: 'insensitive' },
         }
+      }
+      if (branchCity) {
+        const cities = [branchCity]
+        const cityDeliveryFilters = cities.map((city) => ({ deliveryCity: { equals: city, mode: 'insensitive' as const } }))
+        const cityCustomerFilters = cities.map((city) => ({ customer: { city: { equals: city, mode: 'insensitive' as const } } }))
+        where.AND = [
+          ...(where.AND ?? []),
+          {
+            OR: [
+              { OR: cityDeliveryFilters },
+              { AND: [{ OR: [{ deliveryCity: null }, { deliveryCity: '' }] }, { OR: cityCustomerFilters }] },
+            ],
+          },
+        ]
       }
 
       const quotes = await db.quote.findMany({
@@ -1147,9 +1166,25 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
 
       const { id } = paramsParsed.data
       const tenantId = request.auth!.tenantId
+      const branchCity = branchCityOf(request)
+
+      if (branchCity === '__MISSING__') {
+        return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+      }
 
       const quote = await db.quote.findFirst({
-        where: { id, tenantId },
+        where: {
+          id,
+          tenantId,
+          ...(branchCity
+            ? {
+                OR: [
+                  { deliveryCity: { equals: branchCity, mode: 'insensitive' as const } },
+                  { AND: [{ OR: [{ deliveryCity: null }, { deliveryCity: '' }] }, { customer: { city: { equals: branchCity, mode: 'insensitive' as const } } }] },
+                ],
+              }
+            : {}),
+        },
         include: {
           customer: { select: { name: true, businessName: true, address: true, phone: true } },
           lines: {

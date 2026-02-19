@@ -1,6 +1,6 @@
 import { exportDeliveryNoteToPDF } from '../../lib/quotePdf'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Badge,
@@ -139,6 +139,8 @@ export function DeliveriesPage() {
   const [status, setStatus] = useState<DeliverStatusFilter>('PENDING')
   const [cursor, setCursor] = useState<string | undefined>()
   const [selectedCities, setSelectedCities] = useState<string[]>([])
+  const isBranchScoped = perms.hasPermission('scope:branch') && !perms.isTenantAdmin
+  const branchCity = (perms.user?.warehouse?.city ?? '').trim().toUpperCase()
 
   const [deliverLocationModalOpen, setDeliverLocationModalOpen] = useState(false)
   const [deliverTarget, setDeliverTarget] = useState<{ orderId: string; version: number; number: string } | null>(null)
@@ -155,6 +157,13 @@ export function DeliveriesPage() {
     queryFn: () => fetchDeliveries(auth.accessToken!, 50, status, cursor, selectedCities.length > 0 ? selectedCities : undefined),
     enabled: !!auth.accessToken,
   })
+
+  useEffect(() => {
+    if (!isBranchScoped || !branchCity) return
+    if (selectedCities.length === 1 && selectedCities[0] === branchCity) return
+    setSelectedCities([branchCity])
+    setCursor(undefined)
+  }, [isBranchScoped, branchCity, selectedCities])
 
   const availableCities = useMemo((): string[] => {
     if (!deliveriesQuery.data?.items) return []
@@ -241,7 +250,14 @@ export function DeliveriesPage() {
           </Button>
         </div>
         {/* Filtro de ciudades - Chips simples */}
-        {availableCities.length > 0 && (
+        {isBranchScoped && branchCity ? (
+          <div className="mb-4 flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+            <span className="font-medium">Ciudad:</span>
+            <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+              {branchCity}
+            </span>
+          </div>
+        ) : availableCities.length > 0 ? (
           <div className="mb-4">
             <div className="flex flex-wrap gap-2 items-center">
               <span className="text-sm font-medium text-slate-700 dark:text-slate-300 mr-2">Filtrar por ciudad:</span>
@@ -279,7 +295,7 @@ export function DeliveriesPage() {
               })}
             </div>
           </div>
-        )}
+        ) : null}
 
         <div className="rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
           {deliveriesQuery.isLoading && <Loading />}

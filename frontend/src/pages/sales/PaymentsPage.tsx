@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { MainLayout, PageContainer, Button, Table, Loading, ErrorState, EmptyState, Badge } from '../../components'
+import { MainLayout, PageContainer, Button, Table, Loading, ErrorState, EmptyState, Badge, Modal, Input, Select, ImageUpload } from '../../components'
 import { apiFetch } from '../../lib/api'
 import { useNavigation } from '../../hooks'
 import { useAuth } from '../../providers/AuthProvider'
@@ -25,6 +25,9 @@ type PaymentListItem = {
 }
 
 type ListResponse = { items: PaymentListItem[] }
+
+type PaymentReceiptType = 'CASH' | 'TRANSFER_QR'
+type PaymentProofUpload = { uploadUrl: string; publicUrl: string; key: string; method?: string }
 
 function money(n: number): string {
   if (!Number.isFinite(n)) return '0.00'
@@ -50,11 +53,35 @@ async function fetchPayments(token: string, status: PaymentStatus): Promise<List
   return apiFetch(`/api/v1/sales/payments?${params}`, { token })
 }
 
-async function markPaid(token: string, id: string, version: number): Promise<void> {
-  await apiFetch(`/api/v1/sales/payments/${encodeURIComponent(id)}/pay`, {
+async function markPaid(
+  token: string,
+  input: {
+    id: string
+    version: number
+    paymentReceiptType: PaymentReceiptType
+    paymentReceiptRef?: string
+    paymentReceiptPhotoUrl?: string
+    paymentReceiptPhotoKey?: string
+  },
+): Promise<void> {
+  await apiFetch(`/api/v1/sales/payments/${encodeURIComponent(input.id)}/pay`, {
     token,
     method: 'POST',
-    body: JSON.stringify({ version }),
+    body: JSON.stringify({
+      version: input.version,
+      paymentReceiptType: input.paymentReceiptType,
+      paymentReceiptRef: input.paymentReceiptRef,
+      paymentReceiptPhotoUrl: input.paymentReceiptPhotoUrl,
+      paymentReceiptPhotoKey: input.paymentReceiptPhotoKey,
+    }),
+  })
+}
+
+async function presignPaymentProof(token: string, file: File): Promise<PaymentProofUpload> {
+  return apiFetch('/api/v1/sales/payments/proof-upload', {
+    token,
+    method: 'POST',
+    body: JSON.stringify({ fileName: file.name, contentType: file.type }),
   })
 }
 
@@ -68,6 +95,13 @@ export function PaymentsPage() {
   const queryClient = useQueryClient()
 
   const [status, setStatus] = useState<PaymentStatus>('DUE')
+  const [payModalOpen, setPayModalOpen] = useState(false)
+  const [payTarget, setPayTarget] = useState<PaymentListItem | null>(null)
+  const [receiptType, setReceiptType] = useState<PaymentReceiptType>('CASH')
+  const [receiptRef, setReceiptRef] = useState('')
+  const [receiptPhoto, setReceiptPhoto] = useState<{ url: string; key: string } | null>(null)
+  const [receiptError, setReceiptError] = useState('')
+  const [uploadingProof, setUploadingProof] = useState(false)
 
   const paymentsQuery = useQuery({
     queryKey: ['payments', status],
@@ -76,20 +110,62 @@ export function PaymentsPage() {
   })
 
   const payMutation = useMutation({
-    mutationFn: (vars: { id: string; version: number }) => markPaid(auth.accessToken!, vars.id, vars.version),
+    mutationFn: (vars: {
+      id: string
+      version: number
+      paymentReceiptType: PaymentReceiptType
+      paymentReceiptRef?: string
+      paymentReceiptPhotoUrl?: string
+      paymentReceiptPhotoKey?: string
+    }) => markPaid(auth.accessToken!, vars),
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['payments'] }),
         queryClient.invalidateQueries({ queryKey: ['orders'] }),
       ])
+      setPayModalOpen(false)
+      setPayTarget(null)
+      setReceiptType('CASH')
+      setReceiptRef('')
+      setReceiptPhoto(null)
+      setReceiptError('')
     },
     onError: (err: any) => {
       const msg = (err?.message as string | undefined) ?? 'No se pudo marcar como pagado'
-      window.alert(msg)
+      setReceiptError(msg)
     },
   })
 
   const items = paymentsQuery.data?.items ?? []
+
+  const handleOpenPayModal = (p: PaymentListItem) => {
+    setPayTarget(p)
+    setReceiptType('CASH')
+    setReceiptRef('')
+    setReceiptPhoto(null)
+    setReceiptError('')
+    setPayModalOpen(true)
+  }
+
+  const handleUploadProof = async (file: File) => {
+    if (!auth.accessToken) return
+    setUploadingProof(true)
+    setReceiptError('')
+    try {
+      const presign = await presignPaymentProof(auth.accessToken, file)
+      const res = await fetch(presign.uploadUrl, {
+        method: presign.method ?? 'PUT',
+        body: file,
+        headers: { 'Content-Type': file.type },
+      })
+      if (!res.ok) throw new Error('No se pudo subir la imagen')
+      setReceiptPhoto({ url: presign.publicUrl, key: presign.key })
+    } catch (err: any) {
+      setReceiptError(err?.message ?? 'No se pudo subir la imagen')
+    } finally {
+      setUploadingProof(false)
+    }
+  }
 
   return (
     <MainLayout navGroups={navGroups}>
@@ -178,9 +254,7 @@ export function PaymentsPage() {
                           icon={<CheckCircleIcon className="w-4 h-4" />}
                           disabled={payMutation.isPending}
                           onClick={() => {
-                            const ok = window.confirm(`¿Marcar como pagada la orden ${p.number}?`)
-                            if (!ok) return
-                            payMutation.mutate({ id: p.id, version: p.version })
+                            handleOpenPayModal(p)
                           }}
                           className="!border-green-600 !text-green-700 hover:!bg-green-50 dark:!border-green-500 dark:!text-green-400 dark:hover:!bg-green-900/20"
                         >
@@ -196,6 +270,110 @@ export function PaymentsPage() {
             />
           )}
         </div>
+
+        <Modal
+          isOpen={payModalOpen}
+          onClose={() => {
+            if (payMutation.isPending) return
+            setPayModalOpen(false)
+            setPayTarget(null)
+            setReceiptType('CASH')
+            setReceiptRef('')
+            setReceiptPhoto(null)
+            setReceiptError('')
+          }}
+          title={payTarget ? `Confirmar pago de ${payTarget.number}` : 'Confirmar pago'}
+          maxWidth="lg"
+        >
+          <div className="space-y-4">
+            <Select
+              label="Tipo de pago"
+              value={receiptType}
+              onChange={(e) => setReceiptType(e.target.value as PaymentReceiptType)}
+              options={[
+                { value: 'CASH', label: 'Al contado' },
+                { value: 'TRANSFER_QR', label: 'Transferencia/QR' },
+              ]}
+              disabled={payMutation.isPending}
+            />
+
+            {receiptType === 'TRANSFER_QR' && (
+              <div className="space-y-3">
+                <Input
+                  label="Numero de transaccion (opcional)"
+                  value={receiptRef}
+                  onChange={(e) => setReceiptRef(e.target.value)}
+                  placeholder="Ej: 123456789"
+                  disabled={payMutation.isPending}
+                />
+                <div>
+                  <div className="mb-2 text-sm font-medium text-slate-700 dark:text-slate-300">Foto o captura (opcional)</div>
+                  <ImageUpload
+                    mode="select"
+                    currentImageUrl={receiptPhoto?.url ?? null}
+                    onImageSelect={handleUploadProof}
+                    onImageRemove={() => setReceiptPhoto(null)}
+                    loading={uploadingProof}
+                    disabled={payMutation.isPending || uploadingProof}
+                  />
+                </div>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Debe ingresar numero de transaccion o subir una imagen.
+                </p>
+              </div>
+            )}
+
+            {receiptError && (
+              <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-900/20 dark:text-red-200">
+                {receiptError}
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-2">
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  if (payMutation.isPending) return
+                  setPayModalOpen(false)
+                  setPayTarget(null)
+                  setReceiptType('CASH')
+                  setReceiptRef('')
+                  setReceiptPhoto(null)
+                  setReceiptError('')
+                }}
+                disabled={payMutation.isPending}
+              >
+                Cancelar
+              </Button>
+              <Button
+                variant="primary"
+                loading={payMutation.isPending}
+                disabled={!payTarget || uploadingProof || payMutation.isPending}
+                onClick={() => {
+                  if (!payTarget) return
+                  const needsProof = receiptType === 'TRANSFER_QR'
+                  const hasRef = receiptRef.trim().length > 0
+                  const hasPhoto = !!receiptPhoto?.url
+                  if (needsProof && !hasRef && !hasPhoto) {
+                    setReceiptError('Ingrese numero de transaccion o suba una imagen.')
+                    return
+                  }
+
+                  payMutation.mutate({
+                    id: payTarget.id,
+                    version: payTarget.version,
+                    paymentReceiptType: receiptType,
+                    paymentReceiptRef: receiptRef.trim() || undefined,
+                    paymentReceiptPhotoUrl: receiptPhoto?.url ?? undefined,
+                    paymentReceiptPhotoKey: receiptPhoto?.key ?? undefined,
+                  })
+                }}
+              >
+                Confirmar pago
+              </Button>
+            </div>
+          </div>
+        </Modal>
       </PageContainer>
     </MainLayout>
   )

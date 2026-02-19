@@ -10,10 +10,29 @@ ensure_dev_dependencies() {
       npm ci --include=dev
     fi
 
-    # If code is bind-mounted, generated Prisma client may not exist yet.
-    if [ ! -d src/generated/prisma ]; then
+    # If code is bind-mounted, generated Prisma client can be stale when schema changes.
+    # Regenerate when the schema hash changes (keeps dev containers consistent without manual steps).
+    schema_hash_file="node_modules/.prisma_schema.sha1"
+    current_schema_hash=""
+    if [ -f prisma/schema.prisma ]; then
+      current_schema_hash="$(node -e "const fs=require('fs');const crypto=require('crypto');const p='prisma/schema.prisma';const b=fs.readFileSync(p);process.stdout.write(crypto.createHash('sha1').update(b).digest('hex'));" 2>/dev/null || true)"
+    fi
+
+    previous_schema_hash=""
+    if [ -f "$schema_hash_file" ]; then
+      previous_schema_hash="$(cat "$schema_hash_file" 2>/dev/null || true)"
+    fi
+
+    if [ -n "$current_schema_hash" ] && [ "$current_schema_hash" != "$previous_schema_hash" ]; then
+      echo "[backend] Prisma schema changed; generating client..."
+      npm run prisma:generate
+      echo "$current_schema_hash" > "$schema_hash_file"
+    elif [ ! -d src/generated/prisma ]; then
       echo "[backend] Prisma client missing; generating..."
       npm run prisma:generate
+      if [ -n "$current_schema_hash" ]; then
+        echo "$current_schema_hash" > "$schema_hash_file"
+      fi
     fi
   fi
 }
