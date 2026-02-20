@@ -116,7 +116,7 @@ async function createBatch(
   token: string,
   productId: string,
   data: {
-    batchNumber?: string
+    batchNumber: string
     expiresAt?: string
     manufacturingDate?: string
     status: string
@@ -233,6 +233,7 @@ export function MovementsPage() {
   const [type, setType] = useState('')
   const [productId, setProductId] = useState('')
   const [selectedStockKey, setSelectedStockKey] = useState('')
+  const [batchNumber, setBatchNumber] = useState('')
   const [quantity, setQuantity] = useState('')
   const [manufacturingDate, setManufacturingDate] = useState('')
   const [expirationDate, setExpirationDate] = useState('')
@@ -440,13 +441,14 @@ export function MovementsPage() {
 
   const batchMutation = useMutation({
     mutationFn: (data: {
-      batchNumber?: string
+      batchNumber: string
       expiresAt?: string
       manufacturingDate?: string
       status: string
       initialStock?: { warehouseId: string; quantity: number; note?: string }
     }) => createBatch(auth.accessToken!, productId, data),
     onSuccess: () => {
+      setBatchNumber('')
       setQuantity('')
       setManufacturingDate('')
       setExpirationDate('')
@@ -500,6 +502,7 @@ export function MovementsPage() {
     setType(nextType)
     setProductId('')
     setSelectedStockKey('')
+    setBatchNumber('')
     setQuantity('')
     setManufacturingDate('')
     setExpirationDate('')
@@ -525,6 +528,7 @@ export function MovementsPage() {
   const handleProductChange = (nextProductId: string) => {
     setProductId(nextProductId)
     setSelectedStockKey('')
+    setBatchNumber('')
     setQuantity('')
 
     setRepackSourcePresentationId('')
@@ -813,24 +817,15 @@ export function MovementsPage() {
     return true
   })()
 
-  // Calcular el próximo número de lote
-  const nextBatchNumber = (() => {
-    if (!productBatchesQuery.data?.items) return '001'
-    const batches = productBatchesQuery.data.items
-    if (batches.length === 0) return '001'
-    const numbers = batches
-      .map((b) => {
-        const match = b.batchNumber.match(/(\d+)$/)
-        return match ? parseInt(match[1], 10) : 0
-      })
-      .filter((n) => n > 0)
-    const maxNumber = Math.max(...numbers, 0)
-    return String(maxNumber + 1).padStart(3, '0')
-  })()
-
   const handleCreateBatch = (e: React.FormEvent) => {
     e.preventDefault()
     setCreateBatchError('')
+
+    const trimmedBatchNumber = batchNumber.trim()
+    if (!trimmedBatchNumber) {
+      setCreateBatchError('Ingresá el código de lote.')
+      return
+    }
 
     const qty = Number(quantity)
     if (!Number.isFinite(qty) || qty <= 0) {
@@ -859,6 +854,7 @@ export function MovementsPage() {
     }
 
     const payload: any = {
+      batchNumber: trimmedBatchNumber,
       status: 'RELEASED',
       expiresAt: dateOnlyToUtcIso(expirationDate),
       manufacturingDate: dateOnlyToUtcIso(manufacturingDate),
@@ -949,11 +945,14 @@ export function MovementsPage() {
                 {/* Campos de entrada para nuevo lote */}
                 {productId && (
                   <form onSubmit={handleCreateBatch} className="space-y-4">
-                    <div className="rounded-md border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/50">
-                      <p className="text-sm text-slate-600 dark:text-slate-400">
-                        Próximo lote: <span className="font-semibold text-slate-900 dark:text-slate-100">{nextBatchNumber}</span>
-                      </p>
-                    </div>
+                    <Input
+                      label="Código de lote"
+                      value={batchNumber}
+                      onChange={(e) => setBatchNumber(e.target.value)}
+                      placeholder="Ej: LOT-2026-001"
+                      required
+                      disabled={batchMutation.isPending}
+                    />
 
                     <Input
                       label="Cantidad"

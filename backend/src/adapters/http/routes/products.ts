@@ -187,7 +187,7 @@ async function ensureCorePresentationsTx(
 }
 
 const batchCreateSchema = z.object({
-  batchNumber: z.string().trim().min(1).max(80).optional(),
+  batchNumber: z.string().trim().min(1).max(80),
   manufacturingDate: z.string().datetime().optional(),
   expiresAt: z.string().datetime().optional(),
   status: z.enum(['RELEASED', 'QUARANTINE']).optional(),
@@ -229,6 +229,29 @@ const batchCreateSchema = z.object({
 
 const batchUpdateStatusSchema = z.object({
   status: z.enum(['RELEASED', 'QUARANTINE']),
+  version: z.number().int().min(1),
+})
+
+const batchUpdateSchema = z
+  .object({
+    version: z.number().int().min(1),
+    batchNumber: z.string().trim().min(1).max(80).optional(),
+    manufacturingDate: z.string().datetime().optional().nullable(),
+    expiresAt: z.string().datetime().optional().nullable(),
+    presentationId: z.string().uuid().optional().nullable(),
+  })
+  .superRefine((v, ctx) => {
+    const hasAny =
+      v.batchNumber !== undefined ||
+      v.manufacturingDate !== undefined ||
+      v.expiresAt !== undefined ||
+      v.presentationId !== undefined
+    if (!hasAny) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'No fields to update' })
+    }
+  })
+
+const batchDeleteSchema = z.object({
   version: z.number().int().min(1),
 })
 
@@ -1073,6 +1096,7 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
       if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
 
       const tenantId = request.auth!.tenantId
+      const userId = request.auth!.userId
       const hasStockRead = request.auth!.permissions.has(Permissions.StockRead)
 
       const product = await db.product.findFirst({ where: { id: productId, tenantId }, select: { id: true } })
@@ -1087,10 +1111,12 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
           batchNumber: true,
           manufacturingDate: true,
           expiresAt: true,
+          presentationId: true,
           status: true,
           version: true,
           createdAt: true,
           updatedAt: true,
+          createdBy: true,
         },
       })
 
@@ -1128,6 +1154,7 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
         const totalAvailable = Math.max(0, total - totalReserved)
         return {
           ...b,
+          canManage: !!b.createdBy && b.createdBy === userId,
           totalQuantity: hasStockRead ? String(total) : null,
           totalReservedQuantity: hasStockRead ? String(totalReserved) : null,
           totalAvailableQuantity: hasStockRead ? String(totalAvailable) : null,
@@ -1254,15 +1281,11 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
         const manufacturingDate = parsed.data.manufacturingDate ? new Date(parsed.data.manufacturingDate) : null
         const expiresAt = parsed.data.expiresAt ? new Date(parsed.data.expiresAt) : null
         const created = await db.$transaction(async (tx) => {
-          const batchNumber = parsed.data.batchNumber
-            ? parsed.data.batchNumber
-            : (await nextSequence(tx, { tenantId, year: currentYearUtc(), key: 'LOT' })).number
-
           const batch = await tx.batch.create({
             data: {
               tenantId,
               productId,
-              batchNumber,
+              batchNumber: parsed.data.batchNumber,
               manufacturingDate,
               expiresAt,
               status: parsed.data.status ?? 'RELEASED',
@@ -1451,6 +1474,159 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
       })
 
       return reply.send(updated)
+    },
+  )
+
+  // Update batch metadata (creator only)
+  app.patch(
+    '/api/v1/products/:productId/batches/:batchId',
+    {
+      preHandler: [requireAuth(), requirePermission(Permissions.CatalogWrite)],
+    },
+    async (request, reply) => {
+      const productId = (request.params as any).productId as string
+      const batchId = (request.params as any).batchId as string
+      const parsed = batchUpdateSchema.safeParse(request.body)
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid request', issues: parsed.error.issues })
+
+      const tenantId = request.auth!.tenantId
+      const userId = request.auth!.userId
+
+      const batch = await db.batch.findFirst({
+        where: { id: batchId, productId, tenantId },
+        select: {
+          id: true,
+          batchNumber: true,
+          manufacturingDate: true,
+          expiresAt: true,
+          presentationId: true,
+          version: true,
+          createdBy: true,
+        },
+      })
+      if (!batch) return reply.status(404).send({ message: 'Batch not found' })
+
+      if (!batch.createdBy || batch.createdBy !== userId) {
+        return reply.status(403).send({ message: 'Only the batch creator can edit this batch' })
+      }
+
+      if (batch.version !== parsed.data.version) {
+        return reply.status(409).send({ message: 'Version conflict' })
+      }
+
+      try {
+        const updated = await db.batch.update({
+          where: { id: batchId },
+          data: {
+            ...(parsed.data.batchNumber !== undefined ? { batchNumber: parsed.data.batchNumber } : {}),
+            ...(parsed.data.manufacturingDate !== undefined
+              ? { manufacturingDate: parsed.data.manufacturingDate ? new Date(parsed.data.manufacturingDate) : null }
+              : {}),
+            ...(parsed.data.expiresAt !== undefined ? { expiresAt: parsed.data.expiresAt ? new Date(parsed.data.expiresAt) : null } : {}),
+            ...(parsed.data.presentationId !== undefined ? { presentationId: parsed.data.presentationId ?? null } : {}),
+            version: { increment: 1 },
+            updatedAt: new Date(),
+          },
+          select: {
+            id: true,
+            batchNumber: true,
+            manufacturingDate: true,
+            expiresAt: true,
+            presentationId: true,
+            status: true,
+            version: true,
+            updatedAt: true,
+          },
+        })
+
+        await audit.append({
+          tenantId,
+          actorUserId: userId,
+          action: 'batch.update',
+          entityType: 'Batch',
+          entityId: batchId,
+          before: {
+            batchNumber: batch.batchNumber,
+            manufacturingDate: batch.manufacturingDate,
+            expiresAt: batch.expiresAt,
+            presentationId: batch.presentationId,
+            version: batch.version,
+          },
+          after: {
+            batchNumber: updated.batchNumber,
+            manufacturingDate: updated.manufacturingDate,
+            expiresAt: updated.expiresAt,
+            presentationId: updated.presentationId,
+            version: updated.version,
+          },
+        })
+
+        return reply.send(updated)
+      } catch (e: any) {
+        if (typeof e?.code === 'string' && e.code === 'P2002') {
+          return reply.status(409).send({ message: 'Batch number already exists for product' })
+        }
+        throw e
+      }
+    },
+  )
+
+  // Delete batch (creator only). Only allowed when there are no references.
+  app.delete(
+    '/api/v1/products/:productId/batches/:batchId',
+    {
+      preHandler: [requireAuth(), requirePermission(Permissions.CatalogWrite)],
+    },
+    async (request, reply) => {
+      const productId = (request.params as any).productId as string
+      const batchId = (request.params as any).batchId as string
+      const parsed = batchDeleteSchema.safeParse(request.body)
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid request', issues: parsed.error.issues })
+
+      const tenantId = request.auth!.tenantId
+      const userId = request.auth!.userId
+
+      const batch = await db.batch.findFirst({
+        where: { id: batchId, productId, tenantId },
+        select: { id: true, batchNumber: true, version: true, createdBy: true },
+      })
+      if (!batch) return reply.status(404).send({ message: 'Batch not found' })
+
+      if (!batch.createdBy || batch.createdBy !== userId) {
+        return reply.status(403).send({ message: 'Only the batch creator can delete this batch' })
+      }
+
+      if (batch.version !== parsed.data.version) {
+        return reply.status(409).send({ message: 'Version conflict' })
+      }
+
+      const [balancesCount, movementsCount, salesLinesCount, returnsCount, labOutputsCount] = await Promise.all([
+        db.inventoryBalance.count({ where: { tenantId, productId, batchId } }),
+        db.stockMovement.count({ where: { tenantId, productId, batchId } }),
+        db.salesOrderLine.count({ where: { tenantId, productId, batchId } }),
+        db.stockReturnItem.count({ where: { tenantId, productId, batchId } }),
+        db.labProductionRunOutput.count({ where: { tenantId, batchId } }),
+      ])
+
+      const totalRefs = balancesCount + movementsCount + salesLinesCount + returnsCount + labOutputsCount
+      if (totalRefs > 0) {
+        return reply.status(409).send({
+          message: 'Batch cannot be deleted because it is referenced by stock/sales/returns/lab records',
+        })
+      }
+
+      await db.batch.delete({ where: { id: batchId } })
+
+      await audit.append({
+        tenantId,
+        actorUserId: userId,
+        action: 'batch.delete',
+        entityType: 'Batch',
+        entityId: batchId,
+        before: { id: batch.id, batchNumber: batch.batchNumber, version: batch.version },
+      })
+
+      return reply.send({ ok: true })
     },
   )
 }

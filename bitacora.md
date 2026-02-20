@@ -147,6 +147,29 @@ Se incorporaron endpoints read-only de reportes para acelerar dashboards y panta
 
 ---
 
+## **[20 Feb 2026] Ventas: pagos parciales + Lotes: gobernanza + UX en detalle de producto**
+
+### Ventas: Cuentas por cobrar (Pago TOTAL vs PARCIAL)
+- Se incorporó soporte de **pago total o parcial** en el flujo de cobros.
+- Persistencia: nuevo acumulador `SalesOrder.paidAmount` (migración Prisma) para reflejar pagos parciales.
+- Regla de negocio: `paidAt` se setea **solo** cuando la orden queda totalmente pagada; el evento realtime `sales.order.paid` se emite únicamente al completarse el total.
+- Frontend:
+  - Modal de pago pregunta **TOTAL/PARCIAL**; parcial requiere monto.
+  - Tabla de cobros muestra **Pagado / Debe** e indicador de pago parcial.
+
+### Lotes (Batches): reglas + permisos
+- Catálogo (no laboratorio): el `batchNumber` **ya no se autogenera**; el usuario debe ingresarlo al crear un lote.
+- Laboratorio: cuando se generan lotes desde producción, el `batchNumber` puede quedar vacío y el backend lo autogenera (si aplica), manteniéndolo **editable**.
+- Se reforzó unicidad: el código de lote es único por producto (`tenantId + productId + batchNumber`).
+- Seguridad: **solo el creador** del lote puede editar/eliminar metadata; el backend expone `canManage` para habilitar/deshabilitar acciones en UI.
+
+### Catálogo: detalle de producto (lotes)
+- La lista de lotes muestra también la **presentación** asociada.
+- La edición permite cambiar `presentationId` del lote y ajustar cantidad por ubicación usando movimientos `ADJUSTMENT` (delta hacia el total deseado).
+
+### Operación / despliegue
+- Se verificó que el despliegue contemple aplicar migraciones Prisma (necesario para cambios como `paidAmount`).
+
 ## **[12 Feb 2026] Laboratorio: módulo completo + RBAC provisioning + fix roles de usuario**
 
 ### Módulo Laboratorio (UI completa)

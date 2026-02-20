@@ -204,7 +204,7 @@ const completeRunSchema = z.object({
   outputs: z
     .array(
       z.object({
-        batchNumber: z.string().trim().min(1).max(120),
+        batchNumber: z.string().trim().max(120).optional().nullable(),
         quantity: z.coerce.number().positive(),
         unit: z.string().trim().min(1).max(32),
         manufacturingDate: z.coerce.date().optional().nullable(),
@@ -1595,11 +1595,18 @@ export async function registerLaboratoryRoutes(app: FastifyInstance): Promise<vo
 
         // Create output batches in QUARANTINE and stock them into quarantine location.
         for (const out of parsed.data.outputs) {
+          let resolvedBatchNumber = String(out.batchNumber ?? '').trim()
+          if (!resolvedBatchNumber) {
+            const year = currentYearUtc()
+            const seq = await nextSequence(tx as any, { tenantId, year, key: 'LOT' })
+            resolvedBatchNumber = seq.number
+          }
+
           const batch = await tx.batch.create({
             data: {
               tenantId,
               productId: run.productId,
-              batchNumber: out.batchNumber,
+              batchNumber: resolvedBatchNumber,
               manufacturingDate: out.manufacturingDate ?? new Date(),
               expiresAt: out.expiresAt ?? null,
               presentationId: out.presentationId ?? null,

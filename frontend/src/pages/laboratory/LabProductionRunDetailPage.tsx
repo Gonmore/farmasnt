@@ -62,7 +62,7 @@ async function completeRun(
     note?: string | null
     inputs?: Array<{ supplyId: string; lotId?: string | null; fromLocationId?: string | null; quantity: number; unit: string; note?: string | null }>
     waste?: Array<{ supplyId?: string | null; lotId?: string | null; fromLocationId?: string | null; quantity: number; unit: string; reason?: string | null }>
-    outputs: Array<{ batchNumber: string; quantity: number; unit: string; manufacturingDate?: string | null; expiresAt?: string | null }>
+    outputs: Array<{ batchNumber?: string | null; quantity: number; unit: string; manufacturingDate?: string | null; expiresAt?: string | null }>
   },
 ): Promise<any> {
   return apiFetch(`/api/v1/laboratory/production-runs/${encodeURIComponent(id)}/complete`, { token, method: 'POST', body: JSON.stringify(body) })
@@ -197,15 +197,15 @@ export function LabProductionRunDetailPage() {
 
       const mappedOutputs = outputs
         .map((o) => ({
-          batchNumber: o.batchNumber.trim(),
+          batchNumber: o.batchNumber.trim() ? o.batchNumber.trim() : null,
           quantity: Number(o.quantity),
           unit: o.unit.trim() || (item.outputUnit ?? 'UN'),
           manufacturingDate: o.manufacturingDate.trim() ? new Date(o.manufacturingDate).toISOString() : null,
           expiresAt: o.expiresAt.trim() ? new Date(o.expiresAt).toISOString() : null,
         }))
-        .filter((o) => o.batchNumber && Number.isFinite(o.quantity) && o.quantity > 0)
+        .filter((o) => Number.isFinite(o.quantity) && o.quantity > 0)
 
-      if (!mappedOutputs.length) throw new Error('Agregá al menos un output válido (lote + cantidad)')
+      if (!mappedOutputs.length) throw new Error('Agregá al menos un output válido (cantidad)')
 
       const fromLocationId = consumeFromLocationId.trim() ? consumeFromLocationId.trim() : null
 
@@ -549,7 +549,7 @@ export function LabProductionRunDetailPage() {
                             label={idx === 0 ? 'Lote / Batch' : undefined}
                             value={o.batchNumber}
                             onChange={(e) => setOutputs((prev) => prev.map((x, j) => (j === idx ? { ...x, batchNumber: e.target.value } : x)))}
-                            placeholder="Ej: LAB-2026-001"
+                            placeholder="(Opcional) Dejar vacío para autogenerar"
                           />
                         </div>
                         <div className="md:col-span-2">

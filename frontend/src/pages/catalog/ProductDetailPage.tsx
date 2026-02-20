@@ -5,9 +5,9 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { apiFetch, getApiBaseUrl } from '../../lib/api'
 import { getProductDisplayName } from '../../lib/productName'
 import { useAuth } from '../../providers/AuthProvider'
-import { MainLayout, PageContainer, Button, Input, Select, Loading, ErrorState, ImageUpload, Table } from '../../components'
+import { MainLayout, PageContainer, Button, Input, Select, Loading, ErrorState, ImageUpload, Table, Modal } from '../../components'
 import { useNavigation } from '../../hooks'
-import { PlusIcon, CheckIcon, ArrowLeftIcon, TrashIcon, PowerIcon } from '@heroicons/react/24/outline'
+import { PlusIcon, CheckIcon, ArrowLeftIcon, TrashIcon, PowerIcon, PencilSquareIcon } from '@heroicons/react/24/outline'
 
 type Product = {
   id: string
@@ -62,10 +62,12 @@ type ProductBatchListItem = {
   batchNumber: string
   manufacturingDate: string | null
   expiresAt: string | null
+  presentationId?: string | null
   status: string
   version: number
   createdAt: string
   updatedAt: string
+  canManage?: boolean
   totalQuantity: string | null
   totalReservedQuantity?: string | null
   totalAvailableQuantity?: string | null
@@ -258,7 +260,7 @@ async function createBatch(
   token: string,
   productId: string,
   data: {
-    batchNumber?: string
+    batchNumber: string
     expiresAt?: string
     manufacturingDate?: string
     status: string
@@ -275,6 +277,33 @@ async function createBatch(
     method: 'POST',
     token,
     body: JSON.stringify(data),
+  })
+}
+
+async function updateBatch(
+  token: string,
+  productId: string,
+  batchId: string,
+  data: {
+    version: number
+    batchNumber?: string
+    manufacturingDate?: string | null
+    expiresAt?: string | null
+    presentationId?: string | null
+  },
+): Promise<any> {
+  return apiFetch(`/api/v1/products/${productId}/batches/${batchId}`, {
+    method: 'PATCH',
+    token,
+    body: JSON.stringify(data),
+  })
+}
+
+async function deleteBatch(token: string, productId: string, batchId: string, version: number): Promise<any> {
+  return apiFetch(`/api/v1/products/${productId}/batches/${batchId}`, {
+    method: 'DELETE',
+    token,
+    body: JSON.stringify({ version }),
   })
 }
 
@@ -424,6 +453,7 @@ export function ProductDetailPage() {
   }
 
   // Batch form state
+  const [batchNumber, setBatchNumber] = useState('')
   const [expiresAt, setExpiresAt] = useState('')
   const [manufacturingDate, setManufacturingDate] = useState('')
   const [batchStatus, setBatchStatus] = useState('RELEASED')
@@ -432,6 +462,37 @@ export function ProductDetailPage() {
   const [batchFormError, setBatchFormError] = useState<string>('')
 
   const [selectedBatchId, setSelectedBatchId] = useState<string>('')
+
+  // Batch edit/delete (creator only)
+  const [editingBatchId, setEditingBatchId] = useState<string | null>(null)
+  const [editingBatchVersion, setEditingBatchVersion] = useState<number>(1)
+  const [editingBatchNumber, setEditingBatchNumber] = useState<string>('')
+  const [editingManufacturingDate, setEditingManufacturingDate] = useState<string>('')
+  const [editingExpiresAt, setEditingExpiresAt] = useState<string>('')
+  const [editingPresentationId, setEditingPresentationId] = useState<string>('')
+  const [editingAdjustLocationId, setEditingAdjustLocationId] = useState<string>('')
+  const [editingAdjustTotalQty, setEditingAdjustTotalQty] = useState<string>('')
+  const [editingAdjustNote, setEditingAdjustNote] = useState<string>('')
+  const [batchManageError, setBatchManageError] = useState<string>('')
+
+  const openEditBatch = (b: ProductBatchListItem) => {
+    setBatchManageError('')
+    setEditingBatchId(b.id)
+    setEditingBatchVersion(b.version)
+    setEditingBatchNumber(b.batchNumber)
+    setEditingManufacturingDate(b.manufacturingDate ? String(b.manufacturingDate).slice(0, 10) : '')
+    setEditingExpiresAt(b.expiresAt ? String(b.expiresAt).slice(0, 10) : '')
+
+    // Presentation is optional on batch; default to product default presentation if possible.
+    const presId = b.presentationId ?? ''
+    setEditingPresentationId(presId)
+
+    // Quantity editing is per-location; default to the first location.
+    const pickLoc = b.locations?.[0]
+    setEditingAdjustLocationId(pickLoc?.locationId ?? '')
+    setEditingAdjustTotalQty(pickLoc?.quantity ?? '')
+    setEditingAdjustNote('')
+  }
 
   // Reempaque (calculadora por lote)
   const [repackLocationId, setRepackLocationId] = useState<string>('')
@@ -711,6 +772,7 @@ export function ProductDetailPage() {
 
   const batchMutation = useMutation({
     mutationFn: (data: {
+      batchNumber: string
       expiresAt?: string
       manufacturingDate?: string
       status: string
@@ -724,6 +786,7 @@ export function ProductDetailPage() {
     }) =>
       createBatch(auth.accessToken!, id!, data),
     onSuccess: () => {
+      setBatchNumber('')
       setExpiresAt('')
       setManufacturingDate('')
       setBatchStatus('RELEASED')
@@ -736,6 +799,66 @@ export function ProductDetailPage() {
       setInitialStockNote('')
       queryClient.invalidateQueries({ queryKey: ['productBatches', id] })
       alert('Lote creado exitosamente')
+    },
+  })
+
+  const updateBatchMutation = useMutation({
+    mutationFn: async (args: {
+      batchId: string
+      data: {
+        version: number
+        batchNumber: string
+        manufacturingDate: string | null
+        expiresAt: string | null
+        presentationId: string | null
+      }
+      adjust?: { locationId: string; deltaQty: number; note?: string }
+    }) => {
+      if (args.adjust && Math.abs(args.adjust.deltaQty) > 1e-9) {
+        const delta = args.adjust.deltaQty
+        const payload: any = {
+          type: 'ADJUSTMENT',
+          productId: id!,
+          batchId: args.batchId,
+          quantity: Math.abs(delta),
+          note: args.adjust.note ?? 'Ajuste por edición de lote',
+        }
+
+        if (delta > 0) payload.toLocationId = args.adjust.locationId
+        else payload.fromLocationId = args.adjust.locationId
+
+        await apiFetch(`/api/v1/stock/movements`, {
+          token: auth.accessToken,
+          method: 'POST',
+          body: JSON.stringify(payload),
+        })
+      }
+
+      return updateBatch(auth.accessToken!, id!, args.batchId, args.data)
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['productBatches', id] })
+      await queryClient.invalidateQueries({ queryKey: ['batchMovements', id, selectedBatchId] })
+      setEditingBatchId(null)
+      setBatchManageError('')
+      alert('Lote actualizado')
+    },
+    onError: (e: any) => {
+      setBatchManageError(e instanceof Error ? e.message : 'Error actualizando lote')
+    },
+  })
+
+  const deleteBatchMutation = useMutation({
+    mutationFn: async (args: { batchId: string; version: number }) => {
+      return deleteBatch(auth.accessToken!, id!, args.batchId, args.version)
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['productBatches', id] })
+      setBatchManageError('')
+      alert('Lote eliminado')
+    },
+    onError: (e: any) => {
+      setBatchManageError(e instanceof Error ? e.message : 'Error eliminando lote')
     },
   })
 
@@ -1012,7 +1135,13 @@ export function ProductDetailPage() {
     e.preventDefault()
     setBatchFormError('')
 
-    const payload: any = { status: batchStatus }
+    const trimmedBatchNumber = batchNumber.trim()
+    if (!trimmedBatchNumber) {
+      setBatchFormError('Ingresá el código de lote.')
+      return
+    }
+
+    const payload: any = { batchNumber: trimmedBatchNumber, status: batchStatus }
 
     if (expiresAt) payload.expiresAt = dateOnlyToUtcIso(expiresAt)
     if (manufacturingDate) payload.manufacturingDate = dateOnlyToUtcIso(manufacturingDate)
@@ -1042,6 +1171,72 @@ export function ProductDetailPage() {
 
     batchMutation.mutate({
       ...payload,
+    })
+  }
+
+  const handleUpdateBatchSubmit = (e: FormEvent) => {
+    e.preventDefault()
+    setBatchManageError('')
+    if (!editingBatchId) return
+
+    const trimmed = editingBatchNumber.trim()
+    if (!trimmed) {
+      setBatchManageError('Ingresá el código de lote.')
+      return
+    }
+
+    const presId = editingPresentationId.trim() ? editingPresentationId.trim() : null
+
+    // Optional quantity adjustment (only if we have stock read + a location selected)
+    let adjust: { locationId: string; deltaQty: number; note?: string } | undefined = undefined
+    if (productBatchesQuery.data?.hasStockRead && editingAdjustLocationId.trim()) {
+      const desired = editingAdjustTotalQty.trim()
+      if (desired) {
+        const desiredNum = Number(desired)
+        if (!Number.isFinite(desiredNum) || desiredNum < 0) {
+          setBatchManageError('La cantidad debe ser un número válido (>= 0).')
+          return
+        }
+
+        const currentBatch = (productBatchesQuery.data?.items ?? []).find((x) => x.id === editingBatchId) ?? null
+        const loc = currentBatch?.locations?.find((l) => l.locationId === editingAdjustLocationId) ?? null
+        const currentNum = Number(loc?.quantity ?? '0')
+        const reservedNum = Number(loc?.reservedQuantity ?? '0')
+
+        if (!Number.isFinite(currentNum)) {
+          setBatchManageError('No se pudo leer la cantidad actual de la ubicación seleccionada.')
+          return
+        }
+        if (!Number.isFinite(reservedNum)) {
+          setBatchManageError('No se pudo leer la cantidad reservada de la ubicación seleccionada.')
+          return
+        }
+        if (desiredNum + 1e-9 < reservedNum) {
+          setBatchManageError(`La cantidad total no puede ser menor a lo reservado (${reservedNum}).`)
+          return
+        }
+
+        const deltaQty = desiredNum - currentNum
+        if (Math.abs(deltaQty) > 1e-9) {
+          adjust = {
+            locationId: editingAdjustLocationId,
+            deltaQty,
+            note: editingAdjustNote.trim() ? editingAdjustNote.trim() : undefined,
+          }
+        }
+      }
+    }
+
+    updateBatchMutation.mutate({
+      batchId: editingBatchId,
+      data: {
+        version: editingBatchVersion,
+        batchNumber: trimmed,
+        manufacturingDate: editingManufacturingDate.trim() ? dateOnlyToUtcIso(editingManufacturingDate) : null,
+        expiresAt: editingExpiresAt.trim() ? dateOnlyToUtcIso(editingExpiresAt) : null,
+        presentationId: presId,
+      },
+      adjust,
     })
   }
 
@@ -1686,33 +1881,66 @@ export function ProductDetailPage() {
 
                       {productBatchesQuery.data.items.map((b) => (
                         <div key={b.id} className="rounded-md border border-slate-200 p-3 dark:border-slate-700">
-                          <div className="flex items-start justify-between gap-3">
-                            <button
-                              type="button"
-                              className="text-left"
-                              onClick={() => setSelectedBatchId((prev) => (prev === b.id ? '' : b.id))}
-                            >
-                              <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                                {b.batchNumber}
-                              </div>
-                              <div className="text-xs text-slate-600 dark:text-slate-400">
-                                Estado: {b.status}
-                                {b.expiresAt ? ` · Vence: ${new Date(b.expiresAt).toLocaleDateString()}` : ''}
-                              </div>
-                            </button>
+                              <div className="flex items-start gap-3">
+                                <button
+                                  type="button"
+                                  className="min-w-0 flex-1 text-left"
+                                  onClick={() => setSelectedBatchId((prev) => (prev === b.id ? '' : b.id))}
+                                >
+                                  <div className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">{b.batchNumber}</div>
 
-                            <div className="text-right">
-                                <div className="text-sm font-medium text-slate-900 dark:text-slate-100">
-                                  {(() => {
-                                    const availUnits = getBatchAvailableUnits(b)
-                                    return availUnits !== null ? availUnits : '-'
-                                  })()}
+                                  <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-slate-600 dark:text-slate-400">
+                                    <span>Estado: {b.status}</span>
+                                    {b.expiresAt ? <span>· Vence: {new Date(b.expiresAt).toLocaleDateString()}</span> : null}
+                                  </div>
+
+                                  <div className="mt-0.5 text-xs text-slate-600 dark:text-slate-400">
+                                    {(() => {
+                                      const pres = activePresentations.find((p) => p.id === (b.presentationId ?? ''))
+                                      return pres ? `Presentación: ${pres.name} · ${pres.unitsPerPresentation} u.` : 'Presentación: —'
+                                    })()}
+                                  </div>
+                                </button>
+
+                                <div className="shrink-0 text-right">
+                                  {b.canManage ? (
+                                    <div className="mb-2 flex items-center justify-end gap-2">
+                                      <Button
+                                        size="sm"
+                                        variant="secondary"
+                                        icon={<PencilSquareIcon className="h-4 w-4" />}
+                                        onClick={() => openEditBatch(b)}
+                                        disabled={deleteBatchMutation.isPending || updateBatchMutation.isPending}
+                                      >
+                                        Editar
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        variant="secondary"
+                                        icon={<TrashIcon className="h-4 w-4" />}
+                                        onClick={() => {
+                                          const ok = confirm(`Eliminar lote ${b.batchNumber}? Esta acción no se puede deshacer.`)
+                                          if (!ok) return
+                                          deleteBatchMutation.mutate({ batchId: b.id, version: b.version })
+                                        }}
+                                        disabled={deleteBatchMutation.isPending || updateBatchMutation.isPending}
+                                      >
+                                        Eliminar
+                                      </Button>
+                                    </div>
+                                  ) : null}
+
+                                  <div className="text-sm font-medium text-slate-900 dark:text-slate-100">
+                                    {(() => {
+                                      const availUnits = getBatchAvailableUnits(b)
+                                      return availUnits !== null ? availUnits : '-'
+                                    })()}
+                                  </div>
+                                  <div className="text-xs text-slate-600 dark:text-slate-400">
+                                    Unidad · {b.totalReservedQuantity ?? '0'} res. · {b.totalQuantity ?? '-'} total
+                                  </div>
                                 </div>
-                                <div className="text-xs text-slate-600 dark:text-slate-400">
-                                  Unidad · {b.totalReservedQuantity ?? '0'} res. · {b.totalQuantity ?? '-'} total
-                                </div>
-                            </div>
-                          </div>
+                              </div>
 
                           {b.locations.length > 0 && (
                             <div className="mt-2 space-y-1">
@@ -2015,6 +2243,17 @@ export function ProductDetailPage() {
               {showBatchForm && (
                 <form onSubmit={handleBatchSubmit} className="space-y-4">
                   <Input
+                    label="Código de lote"
+                    value={batchNumber}
+                    onChange={(e) => {
+                      setBatchNumber(e.target.value)
+                      if (batchFormError) setBatchFormError('')
+                    }}
+                    required
+                    disabled={batchMutation.isPending}
+                    placeholder="Ej: LOT-2026-001"
+                  />
+                  <Input
                     label="Fecha de Vencimiento"
                     type="date"
                     value={expiresAt}
@@ -2142,6 +2381,134 @@ export function ProductDetailPage() {
                     <p className="text-sm text-red-600">{batchFormError}</p>
                   )}
                 </form>
+              )}
+
+              <Modal
+                isOpen={!!editingBatchId}
+                onClose={() => {
+                  if (updateBatchMutation.isPending) return
+                  setEditingBatchId(null)
+                  setBatchManageError('')
+                }}
+                title="Editar lote"
+                maxWidth="md"
+              >
+                <form onSubmit={handleUpdateBatchSubmit} className="space-y-4">
+                  <Input
+                    label="Código de lote"
+                    value={editingBatchNumber}
+                    onChange={(e) => setEditingBatchNumber(e.target.value)}
+                    required
+                    disabled={updateBatchMutation.isPending}
+                  />
+
+                  <Select
+                    label="Presentación"
+                    value={editingPresentationId}
+                    onChange={(e) => setEditingPresentationId(e.target.value)}
+                    disabled={updateBatchMutation.isPending}
+                    options={[
+                      { value: '', label: 'Sin presentación' },
+                      ...activePresentations.map((p) => ({
+                        value: p.id,
+                        label: `${p.name} · ${p.unitsPerPresentation} u.`,
+                      })),
+                    ]}
+                  />
+
+                  <Input
+                    label="Fecha de Fabricación"
+                    type="date"
+                    value={editingManufacturingDate}
+                    onChange={(e) => setEditingManufacturingDate(e.target.value)}
+                    disabled={updateBatchMutation.isPending}
+                  />
+                  <Input
+                    label="Fecha de Vencimiento"
+                    type="date"
+                    value={editingExpiresAt}
+                    onChange={(e) => setEditingExpiresAt(e.target.value)}
+                    disabled={updateBatchMutation.isPending}
+                  />
+
+                  {productBatchesQuery.data?.hasStockRead ? (
+                    <div className="rounded-md border border-slate-200 p-3 dark:border-slate-700">
+                      <div className="mb-2 text-sm font-semibold text-slate-900 dark:text-slate-100">Cantidad (ajuste)</div>
+                      <p className="mb-3 text-xs text-slate-600 dark:text-slate-400">
+                        Cambia la cantidad total de una ubicación. Esto registra un movimiento tipo “Ajuste”.
+                      </p>
+
+                      {(() => {
+                        const currentBatch = (productBatchesQuery.data?.items ?? []).find((x) => x.id === editingBatchId) ?? null
+                        const locs = currentBatch?.locations ?? []
+                        return (
+                          <div className="grid gap-3 md:grid-cols-2">
+                            <Select
+                              label="Ubicación"
+                              value={editingAdjustLocationId}
+                              onChange={(e) => {
+                                const next = e.target.value
+                                setEditingAdjustLocationId(next)
+                                const l = locs.find((x) => x.locationId === next)
+                                setEditingAdjustTotalQty(l?.quantity ?? '')
+                              }}
+                              disabled={updateBatchMutation.isPending || locs.length === 0}
+                              options={locs.map((l) => ({
+                                value: l.locationId,
+                                label: `${l.warehouseCode} · ${l.locationCode} (total: ${l.quantity})`,
+                              }))}
+                            />
+
+                            <Input
+                              label="Cantidad total (unidades)"
+                              value={editingAdjustTotalQty}
+                              onChange={(e) => setEditingAdjustTotalQty(e.target.value)}
+                              disabled={updateBatchMutation.isPending || !editingAdjustLocationId}
+                            />
+
+                            <div className="md:col-span-2">
+                              <Input
+                                label="Nota (opcional)"
+                                value={editingAdjustNote}
+                                onChange={(e) => setEditingAdjustNote(e.target.value)}
+                                disabled={updateBatchMutation.isPending}
+                              />
+                            </div>
+                          </div>
+                        )
+                      })()}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-600 dark:text-slate-400">
+                      No tenés permiso `stock:read`, por eso no se puede editar cantidad desde aquí.
+                    </p>
+                  )}
+
+                  {(batchManageError || updateBatchMutation.error) && (
+                    <p className="text-sm text-red-600">
+                      {batchManageError || (updateBatchMutation.error instanceof Error ? updateBatchMutation.error.message : 'Error')}
+                    </p>
+                  )}
+
+                  <div className="flex gap-2">
+                    <Button type="submit" size="sm" loading={updateBatchMutation.isPending}>
+                      Guardar
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => setEditingBatchId(null)}
+                      disabled={updateBatchMutation.isPending}
+                    >
+                      Cancelar
+                    </Button>
+                  </div>
+                </form>
+              </Modal>
+
+              {batchManageError && !editingBatchId && (
+                <p className="mt-2 text-sm text-red-600">{batchManageError}</p>
               )}
               {!showBatchForm && (
                 <p className="text-sm text-slate-600 dark:text-slate-400">

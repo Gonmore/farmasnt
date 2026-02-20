@@ -638,7 +638,7 @@ Response 204
 ---
 
 ## Batches
-Requiere permiso `catalog:write`.
+Requiere permiso: `catalog:read` (listar) y `catalog:write` (crear/editar/eliminar).
 
 ### GET /api/v1/products/:id/batches
 Requiere permiso: `catalog:read`.
@@ -656,11 +656,15 @@ Response 200
       "batchNumber": "LOT-2026-0001",
       "manufacturingDate": "2026-01-01T00:00:00.000Z",
       "expiresAt": "2027-01-01T00:00:00.000Z",
+      "presentationId": "...",
       "status": "RELEASED",
       "version": 1,
       "createdAt": "2026-01-05T00:00:00.000Z",
       "updatedAt": "2026-01-05T00:00:00.000Z",
+      "canManage": true,
       "totalQuantity": "30",
+      "totalReservedQuantity": "0",
+      "totalAvailableQuantity": "30",
       "locations": [
         {
           "warehouseId": "...",
@@ -668,7 +672,9 @@ Response 200
           "warehouseName": "Almacén",
           "locationId": "...",
           "locationCode": "BIN-01",
-          "quantity": "30"
+          "quantity": "30",
+          "reservedQuantity": "0",
+          "availableQuantity": "30"
         }
       ]
     }
@@ -678,11 +684,13 @@ Response 200
 
 Notas
 - `hasStockRead=false` si el usuario no tiene `stock:read`; en ese caso `totalQuantity` es `null` y `locations` viene vacío.
+- `canManage=true` solo si el lote fue creado por el usuario actual (habilita editar/eliminar metadata).
 
 ### POST /api/v1/products/:id/batches
 Body
 ```json
 {
+  "batchNumber": "LOT-2025-0001",
   "manufacturingDate": "2025-01-01T00:00:00.000Z",
   "expiresAt": "2026-01-01T00:00:00.000Z",
   "status": "RELEASED",
@@ -708,11 +716,25 @@ Response 201
 ```
 
 Notas
-- El `batchNumber` se autogenera si no se envía.
+- `batchNumber` es requerido (en catálogo no se autogenera).
 - `409` si el `batchNumber` ya existe para el producto.
 - Si se envía `initialStock`, se crea además un `StockMovement` tipo `IN` (numerado `MSYYYY-N`) y se actualiza `InventoryBalance`.
   - Si se envía `warehouseId`, el backend resuelve automáticamente una ubicación activa dentro del almacén.
   - También se acepta `toLocationId` (compatibilidad), pero la UI usa `warehouseId`.
+  - `initialStock` acepta **cantidad base** (`quantity`) o **cantidad por presentación** (`presentationId` + `presentationQuantity`).
+
+Ejemplo: ingreso inicial por presentación
+```json
+{
+  "batchNumber": "LOT-2025-0001",
+  "initialStock": {
+    "warehouseId": "<uuid>",
+    "presentationId": "<uuid>",
+    "presentationQuantity": 2,
+    "note": "Ingreso inicial"
+  }
+}
+```
 
 ### PATCH /api/v1/products/:productId/batches/:batchId/status
 Requiere permiso: `catalog:write`.
@@ -755,6 +777,9 @@ Response 200
       "createdAt": "2026-01-05T00:00:00.000Z",
       "type": "IN",
       "quantity": "30",
+      "presentationId": "...",
+      "presentationQuantity": "2",
+      "presentation": { "id": "...", "name": "Caja", "unitsPerPresentation": "15" },
       "referenceType": null,
       "referenceId": null,
       "note": "Ingreso inicial",
@@ -767,6 +792,57 @@ Response 200
     }
   ]
 }
+```
+
+### PATCH /api/v1/products/:productId/batches/:batchId
+Requiere permiso: `catalog:write`.
+
+Notas
+- **Solo el creador** del lote puede editar (`403` si no coincide).
+- Usa control de concurrencia optimista con `version` (`409` si no coincide).
+- `409` si el `batchNumber` ya existe para el producto.
+
+Body
+```json
+{
+  "version": 1,
+  "batchNumber": "LOT-2026-0002",
+  "manufacturingDate": "2026-01-01T00:00:00.000Z",
+  "expiresAt": "2027-01-01T00:00:00.000Z",
+  "presentationId": "<uuid>"
+}
+```
+
+Response 200
+```json
+{
+  "id": "...",
+  "batchNumber": "LOT-2026-0002",
+  "manufacturingDate": "2026-01-01T00:00:00.000Z",
+  "expiresAt": "2027-01-01T00:00:00.000Z",
+  "presentationId": "...",
+  "status": "RELEASED",
+  "version": 2,
+  "updatedAt": "2026-01-05T00:00:00.000Z"
+}
+```
+
+### DELETE /api/v1/products/:productId/batches/:batchId
+Requiere permiso: `catalog:write`.
+
+Notas
+- **Solo el creador** del lote puede eliminar (`403` si no coincide).
+- Usa control de concurrencia optimista con `version` (`409` si no coincide).
+- `409` si el lote tiene referencias (stock/sales/devoluciones/lab).
+
+Body
+```json
+{ "version": 1 }
+```
+
+Response 200
+```json
+{ "ok": true }
 ```
 
 ---
@@ -1853,6 +1929,99 @@ Response 200
 ```json
 { "order": { "id": "...", "number": "...", "status": "FULFILLED", "version": 3, "updatedAt": "..." } }
 ```
+
+---
+
+## Sales Payments (Cobros)
+Requiere: módulo `SALES`.
+
+### POST /api/v1/sales/payments/proof-upload
+Requiere permiso: `sales:order:write`.
+
+Body
+```json
+{ "fileName": "comprobante.jpg", "contentType": "image/jpeg" }
+```
+
+Notas
+- `contentType` soportado: `image/png`, `image/jpeg`, `image/webp`.
+- Requiere S3-compatible configurado (`S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_PUBLIC_BASE_URL`).
+
+Response 200
+```json
+{
+  "uploadUrl": "https://...",
+  "publicUrl": "https://...",
+  "key": "tenants/.../sales-payments/proof-...jpg",
+  "expiresInSeconds": 300,
+  "method": "PUT"
+}
+```
+
+### GET /api/v1/sales/payments
+Requiere permiso: `sales:order:read`.
+
+Query
+- `status` (`DUE`|`PAID`|`ALL`, default `DUE`)
+- `take` (1..200, default 100)
+
+Response 200
+```json
+{
+  "items": [
+    {
+      "id": "...",
+      "number": "SO-YYYYMMDD-0000",
+      "version": 3,
+      "customerId": "...",
+      "customerName": "Cliente ...",
+      "paymentMode": "CASH",
+      "deliveryDate": "2026-02-20T00:00:00.000Z",
+      "deliveredAt": "2026-02-20T12:00:00.000Z",
+      "dueAt": "2026-02-20T12:00:00.000Z",
+      "total": 150.5,
+      "paidAmount": 50,
+      "remaining": 100.5,
+      "paidAt": null
+    }
+  ]
+}
+```
+
+Notas
+- Solo incluye órdenes `FULFILLED`.
+- Si el usuario está scopeado por sucursal y no tiene sucursal seleccionada, responde `409`.
+
+### POST /api/v1/sales/payments/:id/pay
+Requiere permiso: `sales:order:write`.
+
+Body
+```json
+{
+  "version": 3,
+  "paymentAmountType": "PARTIAL",
+  "amount": 50,
+  "paymentReceiptType": "TRANSFER_QR",
+  "paymentReceiptRef": "TRX-123",
+  "paymentReceiptPhotoUrl": "https://...",
+  "paymentReceiptPhotoKey": "tenants/.../sales-payments/proof-...jpg"
+}
+```
+
+Notas
+- `paymentAmountType`: `TOTAL` (default) paga el **restante**; `PARTIAL` requiere `amount`.
+- `amount` no puede exceder el saldo restante.
+- Solo puede pagarse si la orden está `FULFILLED` y **no** está totalmente pagada (`paidAt=null`).
+- Para `TRANSFER_QR` se requiere `paymentReceiptRef` o `paymentReceiptPhotoUrl`.
+- `paymentReceiptPhotoUrl` y `paymentReceiptPhotoKey` deben enviarse juntos.
+
+Response 200
+```json
+{ "order": { "id": "...", "number": "...", "status": "FULFILLED", "version": 4, "paidAt": null } }
+```
+
+Realtime emit
+- `sales.order.paid` **solo** cuando el pago completa el total (cuando se setea `paidAt`).
 
 ---
 

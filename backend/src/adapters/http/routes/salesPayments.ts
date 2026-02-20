@@ -21,6 +21,8 @@ const paymentProofPresignSchema = z.object({
 
 const markPaidSchema = z.object({
   version: z.number().int().positive(),
+  paymentAmountType: z.enum(['TOTAL', 'PARTIAL']).optional(),
+  amount: z.coerce.number().positive().optional(),
   paymentReceiptType: z.enum(['CASH', 'TRANSFER_QR']).optional(),
   paymentReceiptRef: z.string().trim().max(120).optional(),
   paymentReceiptPhotoUrl: z.string().trim().max(2000).optional(),
@@ -178,6 +180,7 @@ export function registerSalesPaymentRoutes(app: FastifyInstance) {
           deliveryDate: true,
           deliveredAt: true,
           paidAt: true,
+          paidAmount: true,
           customer: { select: { id: true, name: true } },
           lines: { select: { quantity: true, unitPrice: true } },
         },
@@ -188,6 +191,8 @@ export function registerSalesPaymentRoutes(app: FastifyInstance) {
         const creditDays = parseCreditDays(o.paymentMode)
         const dueAt = addDaysUtc(base, creditDays)
         const total = o.lines.reduce((sum, l) => sum + toNumber(l.quantity) * toNumber(l.unitPrice), 0)
+        const paidAmount = toNumber(o.paidAmount)
+        const remaining = Math.max(0, total - paidAmount)
 
         return {
           id: o.id,
@@ -200,6 +205,8 @@ export function registerSalesPaymentRoutes(app: FastifyInstance) {
           deliveredAt: o.deliveredAt ? o.deliveredAt.toISOString() : null,
           dueAt: dueAt.toISOString(),
           total,
+          paidAmount,
+          remaining,
           paidAt: o.paidAt ? o.paidAt.toISOString() : null,
         }
       })
@@ -227,6 +234,7 @@ export function registerSalesPaymentRoutes(app: FastifyInstance) {
       }
 
       const receiptType = (parsed.data.paymentReceiptType ?? 'CASH').toUpperCase() as 'CASH' | 'TRANSFER_QR'
+      const paymentAmountType = (parsed.data.paymentAmountType ?? 'TOTAL').toUpperCase() as 'TOTAL' | 'PARTIAL'
       const receiptRef = parsed.data.paymentReceiptRef?.trim() || null
       const receiptPhotoUrl = parsed.data.paymentReceiptPhotoUrl ?? null
       const receiptPhotoKey = parsed.data.paymentReceiptPhotoKey ?? null
@@ -252,20 +260,53 @@ export function registerSalesPaymentRoutes(app: FastifyInstance) {
               }
             : {}),
         },
-        select: { id: true, number: true, status: true, version: true, paidAt: true, customerId: true },
+        select: {
+          id: true,
+          number: true,
+          status: true,
+          version: true,
+          paidAt: true,
+          paidAmount: true,
+          customerId: true,
+          lines: { select: { quantity: true, unitPrice: true } },
+        },
       })
       if (!order) return reply.status(404).send({ message: 'Not found' })
       if (order.version !== parsed.data.version) return reply.status(409).send({ message: 'Version conflict' })
       if (order.status !== 'FULFILLED') return reply.status(409).send({ message: 'Only delivered orders can be paid' })
       if (order.paidAt) return reply.status(409).send({ message: 'Order already paid' })
 
+      const total = order.lines.reduce((sum, l) => sum + toNumber(l.quantity) * toNumber(l.unitPrice), 0)
+      const alreadyPaid = Math.max(0, toNumber(order.paidAmount))
+      const remaining = Math.max(0, total - alreadyPaid)
+
+      let payAmount: number
+      if (paymentAmountType === 'TOTAL') {
+        payAmount = remaining
+      } else {
+        if (parsed.data.amount === undefined || parsed.data.amount === null) {
+          return reply.status(400).send({ message: 'amount is required when paymentAmountType is PARTIAL' })
+        }
+        payAmount = Number(parsed.data.amount)
+        if (!Number.isFinite(payAmount) || payAmount <= 0) return reply.status(400).send({ message: 'Invalid amount' })
+        if (payAmount > remaining + 1e-9) return reply.status(400).send({ message: 'amount exceeds remaining balance' })
+      }
+
+      if (!Number.isFinite(payAmount) || payAmount <= 0) {
+        return reply.status(409).send({ message: 'Nothing to pay' })
+      }
+
+      const nextPaidAmount = alreadyPaid + payAmount
+      const fullyPaid = nextPaidAmount >= total - 1e-9
+
       let updated: { id: string; number: string; status: string; version: number; paidAt: Date | null }
       try {
         updated = await db.salesOrder.update({
           where: { id: order.id },
           data: {
-            paidAt: new Date(),
+            ...(fullyPaid ? { paidAt: new Date() } : {}),
             paidBy: userId,
+            paidAmount: String(nextPaidAmount),
             version: { increment: 1 },
             createdBy: userId,
             paymentReceiptType: receiptType,
@@ -285,6 +326,8 @@ export function registerSalesPaymentRoutes(app: FastifyInstance) {
           before: order,
           after: updated,
           metadata: {
+            paymentAmountType,
+            amount: payAmount,
             paymentReceiptType: receiptType,
             paymentReceiptRef: receiptRef,
             paymentReceiptPhotoUrl: receiptPhotoUrl,
@@ -295,12 +338,14 @@ export function registerSalesPaymentRoutes(app: FastifyInstance) {
         return reply.status(500).send({ message: err?.message ?? 'Internal error' })
       }
 
-      const room = `tenant:${tenantId}`
-      app.io?.to(room).emit('sales.order.paid', {
-        id: updated.id,
-        number: updated.number,
-        paidAt: updated.paidAt?.toISOString() ?? null,
-      })
+      if (fullyPaid) {
+        const room = `tenant:${tenantId}`
+        app.io?.to(room).emit('sales.order.paid', {
+          id: updated.id,
+          number: updated.number,
+          paidAt: updated.paidAt?.toISOString() ?? null,
+        })
+      }
 
       return reply.send({ order: updated })
     },

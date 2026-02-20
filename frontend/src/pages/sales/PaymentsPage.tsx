@@ -21,6 +21,8 @@ type PaymentListItem = {
   deliveredAt: string | null
   dueAt: string
   total: number
+  paidAmount: number
+  remaining: number
   paidAt: string | null
 }
 
@@ -58,6 +60,8 @@ async function markPaid(
   input: {
     id: string
     version: number
+    paymentAmountType: 'TOTAL' | 'PARTIAL'
+    amount?: number
     paymentReceiptType: PaymentReceiptType
     paymentReceiptRef?: string
     paymentReceiptPhotoUrl?: string
@@ -69,6 +73,8 @@ async function markPaid(
     method: 'POST',
     body: JSON.stringify({
       version: input.version,
+      paymentAmountType: input.paymentAmountType,
+      amount: input.amount,
       paymentReceiptType: input.paymentReceiptType,
       paymentReceiptRef: input.paymentReceiptRef,
       paymentReceiptPhotoUrl: input.paymentReceiptPhotoUrl,
@@ -97,6 +103,8 @@ export function PaymentsPage() {
   const [status, setStatus] = useState<PaymentStatus>('DUE')
   const [payModalOpen, setPayModalOpen] = useState(false)
   const [payTarget, setPayTarget] = useState<PaymentListItem | null>(null)
+  const [amountType, setAmountType] = useState<'TOTAL' | 'PARTIAL'>('TOTAL')
+  const [partialAmount, setPartialAmount] = useState('')
   const [receiptType, setReceiptType] = useState<PaymentReceiptType>('CASH')
   const [receiptRef, setReceiptRef] = useState('')
   const [receiptPhoto, setReceiptPhoto] = useState<{ url: string; key: string } | null>(null)
@@ -113,6 +121,8 @@ export function PaymentsPage() {
     mutationFn: (vars: {
       id: string
       version: number
+      paymentAmountType: 'TOTAL' | 'PARTIAL'
+      amount?: number
       paymentReceiptType: PaymentReceiptType
       paymentReceiptRef?: string
       paymentReceiptPhotoUrl?: string
@@ -125,6 +135,8 @@ export function PaymentsPage() {
       ])
       setPayModalOpen(false)
       setPayTarget(null)
+      setAmountType('TOTAL')
+      setPartialAmount('')
       setReceiptType('CASH')
       setReceiptRef('')
       setReceiptPhoto(null)
@@ -140,6 +152,8 @@ export function PaymentsPage() {
 
   const handleOpenPayModal = (p: PaymentListItem) => {
     setPayTarget(p)
+    setAmountType('TOTAL')
+    setPartialAmount('')
     setReceiptType('CASH')
     setReceiptRef('')
     setReceiptPhoto(null)
@@ -226,13 +240,24 @@ export function PaymentsPage() {
                     )
                   },
                 },
-                { header: `Total (${currency})`, accessor: (p) => money(p.total) },
                 {
-                  header: 'Estado',
-                  className: 'hidden md:table-cell',
-                  accessor: (p) => (
-                    <Badge variant={p.paidAt ? 'success' : 'warning'}>{p.paidAt ? 'COBRADA' : 'POR COBRAR'}</Badge>
-                  ),
+                  header: `Pagado / Debe (${currency})`,
+                  accessor: (p) => {
+                    const isPartial = p.paidAmount > 0 && p.remaining > 0
+                    return (
+                      <div className="space-y-1">
+                        <div className="text-sm">
+                          <span className="text-slate-600 dark:text-slate-400">Pagado:</span>{' '}
+                          <span className="font-medium text-slate-900 dark:text-slate-100">{money(p.paidAmount)}</span>
+                        </div>
+                        <div className="text-sm">
+                          <span className="text-slate-600 dark:text-slate-400">Debe:</span>{' '}
+                          <span className="font-medium text-slate-900 dark:text-slate-100">{money(p.remaining)}</span>
+                        </div>
+                        {isPartial && <Badge variant="warning">PARCIAL</Badge>}
+                      </div>
+                    )
+                  },
                 },
                 {
                   header: 'Acciones',
@@ -277,6 +302,8 @@ export function PaymentsPage() {
             if (payMutation.isPending) return
             setPayModalOpen(false)
             setPayTarget(null)
+            setAmountType('TOTAL')
+            setPartialAmount('')
             setReceiptType('CASH')
             setReceiptRef('')
             setReceiptPhoto(null)
@@ -286,6 +313,43 @@ export function PaymentsPage() {
           maxWidth="lg"
         >
           <div className="space-y-4">
+            {payTarget && (
+              <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-200">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>Total: <span className="font-semibold">{money(payTarget.total)} {currency}</span></div>
+                  <div>Pagado: <span className="font-semibold">{money(payTarget.paidAmount)} {currency}</span></div>
+                  <div>Pendiente: <span className="font-semibold">{money(payTarget.remaining)} {currency}</span></div>
+                </div>
+              </div>
+            )}
+
+            <Select
+              label="Monto a cobrar"
+              value={amountType}
+              onChange={(e) => {
+                const v = (e.target.value as any) as 'TOTAL' | 'PARTIAL'
+                setAmountType(v)
+                setReceiptError('')
+                if (v === 'TOTAL') setPartialAmount('')
+              }}
+              options={[
+                { value: 'TOTAL', label: 'Total' },
+                { value: 'PARTIAL', label: 'Parcial' },
+              ]}
+              disabled={payMutation.isPending}
+            />
+
+            {amountType === 'PARTIAL' && (
+              <Input
+                label="Monto parcial"
+                type="number"
+                value={partialAmount}
+                onChange={(e) => setPartialAmount(e.target.value)}
+                placeholder={payTarget ? `Máx: ${money(payTarget.remaining)}` : '0.00'}
+                disabled={payMutation.isPending}
+              />
+            )}
+
             <Select
               label="Tipo de pago"
               value={receiptType}
@@ -336,6 +400,8 @@ export function PaymentsPage() {
                   if (payMutation.isPending) return
                   setPayModalOpen(false)
                   setPayTarget(null)
+                  setAmountType('TOTAL')
+                  setPartialAmount('')
                   setReceiptType('CASH')
                   setReceiptRef('')
                   setReceiptPhoto(null)
@@ -351,6 +417,20 @@ export function PaymentsPage() {
                 disabled={!payTarget || uploadingProof || payMutation.isPending}
                 onClick={() => {
                   if (!payTarget) return
+
+                  const remaining = Number(payTarget.remaining)
+                  const resolvedAmount = amountType === 'TOTAL' ? remaining : Number(partialAmount)
+                  if (amountType === 'PARTIAL') {
+                    if (!Number.isFinite(resolvedAmount) || resolvedAmount <= 0) {
+                      setReceiptError('Ingresá un monto parcial válido.')
+                      return
+                    }
+                    if (resolvedAmount > remaining + 1e-9) {
+                      setReceiptError('El monto parcial excede el saldo pendiente.')
+                      return
+                    }
+                  }
+
                   const needsProof = receiptType === 'TRANSFER_QR'
                   const hasRef = receiptRef.trim().length > 0
                   const hasPhoto = !!receiptPhoto?.url
@@ -362,6 +442,8 @@ export function PaymentsPage() {
                   payMutation.mutate({
                     id: payTarget.id,
                     version: payTarget.version,
+                    paymentAmountType: amountType,
+                    ...(amountType === 'PARTIAL' ? { amount: resolvedAmount } : {}),
                     paymentReceiptType: receiptType,
                     paymentReceiptRef: receiptRef.trim() || undefined,
                     paymentReceiptPhotoUrl: receiptPhoto?.url ?? undefined,

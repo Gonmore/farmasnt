@@ -756,6 +756,7 @@ model SalesOrder {
   deliveredAt DateTime?
   paidAt      DateTime?
   paidBy      String?
+  paidAmount  Decimal         @default(0)
   paymentReceiptType String?
   paymentReceiptRef String?
   paymentReceiptPhotoUrl String?
