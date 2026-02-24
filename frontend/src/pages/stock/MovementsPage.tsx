@@ -120,7 +120,14 @@ async function createBatch(
     expiresAt?: string
     manufacturingDate?: string
     status: string
-    initialStock?: { warehouseId: string; quantity: number; note?: string }
+    initialStock?: {
+      warehouseId?: string
+      toLocationId?: string
+      quantity?: number
+      presentationId?: string
+      presentationQuantity?: number
+      note?: string
+    }
   },
 ): Promise<any> {
   return apiFetch(`/api/v1/products/${productId}/batches`, {
@@ -220,8 +227,9 @@ async function cancelMovementRequest(token: string, requestId: string): Promise<
 }
 
 function dateOnlyToUtcIso(dateString: string): string {
-  const [year, month, day] = dateString.split('-')
-  return new Date(parseInt(year), parseInt(month) - 1, parseInt(day)).toISOString().split('T')[0]
+  // Backend expects zod .datetime(); send a full ISO date-time in UTC.
+  // Using noon UTC avoids accidental date shifting when viewed/parsed in local timezones.
+  return new Date(`${dateString}T12:00:00.000Z`).toISOString()
 }
 
 export function MovementsPage() {
@@ -234,6 +242,7 @@ export function MovementsPage() {
   const [productId, setProductId] = useState('')
   const [selectedStockKey, setSelectedStockKey] = useState('')
   const [batchNumber, setBatchNumber] = useState('')
+  const [inPresentationId, setInPresentationId] = useState('')
   const [quantity, setQuantity] = useState('')
   const [manufacturingDate, setManufacturingDate] = useState('')
   const [expirationDate, setExpirationDate] = useState('')
@@ -296,13 +305,13 @@ export function MovementsPage() {
   const productBatchesQuery = useQuery({
     queryKey: ['productBatches', 'forMovements', productId],
     queryFn: () => listProductBatches(auth.accessToken!, productId),
-    enabled: !!auth.accessToken && !!productId,
+    enabled: !!auth.accessToken && !!productId && type !== 'IN',
   })
 
   const presentationsQuery = useQuery({
     queryKey: ['productPresentations', 'forMovements', productId],
     queryFn: () => fetchProductPresentations(auth.accessToken!, productId),
-    enabled: !!auth.accessToken && !!productId && type === 'REPACK',
+    enabled: !!auth.accessToken && !!productId && (type === 'REPACK' || type === 'IN'),
   })
 
   const warehousesQuery = useQuery({
@@ -353,6 +362,30 @@ export function MovementsPage() {
     if (!requestWarehousesQuery.data?.items.some((w) => w.id === wid)) return
     setRequestWarehouseId(wid)
   }, [showCreateRequestModal, editingRequestId, permissions, requestWarehousesQuery.data, requestWarehouseId])
+
+  // Preseleccionar sucursal para ENTRADA (IN) cuando el usuario está scopeado por sucursal
+  useEffect(() => {
+    if (type !== 'IN') return
+    const isBranchScoped = permissions.hasPermission('scope:branch') && !permissions.isTenantAdmin
+    if (!isBranchScoped) return
+    const wid = permissions.user?.warehouseId ?? ''
+    if (!wid) return
+    if (toWarehouseId) return
+    if (!warehousesQuery.data?.items.some((w) => w.id === wid)) return
+    setToWarehouseId(wid)
+  }, [type, permissions, warehousesQuery.data, toWarehouseId])
+
+  // Auto-select default presentation for IN
+  useEffect(() => {
+    if (type !== 'IN') return
+    if (!productId) return
+    if (inPresentationId) return
+    const items = presentationsQuery.data?.items ?? []
+    if (!items.length) return
+    const active = items.filter((p) => p.isActive !== false)
+    const def = active.find((p) => p.isDefault) ?? active[0]
+    if (def?.id) setInPresentationId(def.id)
+  }, [type, productId, presentationsQuery.data, inPresentationId])
 
   const outMutation = useMutation({
     mutationFn: async () => {
@@ -445,7 +478,14 @@ export function MovementsPage() {
       expiresAt?: string
       manufacturingDate?: string
       status: string
-      initialStock?: { warehouseId: string; quantity: number; note?: string }
+      initialStock?: {
+        warehouseId?: string
+        toLocationId?: string
+        quantity?: number
+        presentationId?: string
+        presentationQuantity?: number
+        note?: string
+      }
     }) => createBatch(auth.accessToken!, productId, data),
     onSuccess: () => {
       setBatchNumber('')
@@ -503,6 +543,7 @@ export function MovementsPage() {
     setProductId('')
     setSelectedStockKey('')
     setBatchNumber('')
+    setInPresentationId('')
     setQuantity('')
     setManufacturingDate('')
     setExpirationDate('')
@@ -529,6 +570,7 @@ export function MovementsPage() {
     setProductId(nextProductId)
     setSelectedStockKey('')
     setBatchNumber('')
+    setInPresentationId('')
     setQuantity('')
 
     setRepackSourcePresentationId('')
@@ -827,12 +869,6 @@ export function MovementsPage() {
       return
     }
 
-    const qty = Number(quantity)
-    if (!Number.isFinite(qty) || qty <= 0) {
-      setCreateBatchError('Ingresá una cantidad válida (mayor a 0).')
-      return
-    }
-
     if (!manufacturingDate) {
       setCreateBatchError('Ingresá la fecha de elaboración.')
       return
@@ -844,12 +880,18 @@ export function MovementsPage() {
     }
 
     if (!toWarehouseId) {
-      setCreateBatchError('Seleccioná el almacén destino.')
+      setCreateBatchError('Seleccioná la sucursal de ingreso.')
       return
     }
 
-    if (!toLocationId) {
-      setCreateBatchError('Seleccioná la ubicación destino.')
+    if (!inPresentationId) {
+      setCreateBatchError('Seleccioná la presentación.')
+      return
+    }
+
+    const qty = Number(quantity)
+    if (!Number.isFinite(qty) || qty <= 0) {
+      setCreateBatchError('Ingresá una cantidad válida (mayor a 0).')
       return
     }
 
@@ -860,7 +902,8 @@ export function MovementsPage() {
       manufacturingDate: dateOnlyToUtcIso(manufacturingDate),
       initialStock: {
         warehouseId: toWarehouseId,
-        quantity: qty,
+        presentationId: inPresentationId,
+        presentationQuantity: qty,
       },
     }
 
@@ -890,7 +933,7 @@ export function MovementsPage() {
         </div>
 
         <div className="rounded-lg border border-slate-200 bg-white p-6 dark:border-slate-700 dark:bg-slate-900">
-          <form className="space-y-6">
+          <div className="space-y-6">
             {/* ENTRADA */}
             {type === 'IN' && (
               <div className="space-y-4 border-t border-slate-200 pt-6 dark:border-slate-700">
@@ -910,38 +953,6 @@ export function MovementsPage() {
                   disabled={productsQuery.isLoading}
                 />
 
-                {/* Mostrar existencias actuales si hay producto seleccionado */}
-                {productId && (
-                  <div className="rounded-md border border-blue-200 bg-blue-50 p-4 dark:border-blue-800 dark:bg-blue-900/20">
-                    <h4 className="mb-3 font-medium text-slate-900 dark:text-slate-100">Existencias Actuales</h4>
-                    {productBatchesQuery.isLoading && <Loading />}
-                    {productBatchesQuery.error && (
-                      <ErrorState
-                        message="Error cargando existencias"
-                        retry={productBatchesQuery.refetch}
-                      />
-                    )}
-                    {productBatchesQuery.data?.hasStockRead && stockRows.length > 0 && (
-                      <Table
-                        columns={[
-                          { header: 'Lote', accessor: (r) => r.batchNumber },
-                          { header: 'Elaboración', accessor: (r) => r.manufacturingDate },
-                          { header: 'Vence', accessor: (r) => r.expiresAt },
-                          { header: 'Total', accessor: (r) => r.totalQuantity },
-                          { header: 'Reservado', accessor: (r) => r.reservedQuantity },
-                          { header: 'Disponible', accessor: (r) => r.availableQuantity },
-                          { header: 'Ubicación', accessor: (r) => `${r.warehouse} / ${r.location}` },
-                        ]}
-                        data={stockRows}
-                        keyExtractor={(r) => r.id}
-                      />
-                    )}
-                    {productBatchesQuery.data?.hasStockRead && stockRows.length === 0 && (
-                      <div className="text-sm text-slate-600 dark:text-slate-400">Sin existencias</div>
-                    )}
-                  </div>
-                )}
-
                 {/* Campos de entrada para nuevo lote */}
                 {productId && (
                   <form onSubmit={handleCreateBatch} className="space-y-4">
@@ -954,12 +965,30 @@ export function MovementsPage() {
                       disabled={batchMutation.isPending}
                     />
 
+                    {presentationsQuery.isLoading && <Loading />}
+                    {presentationsQuery.error && (
+                      <ErrorState message="Error cargando presentaciones" retry={presentationsQuery.refetch} />
+                    )}
+
+                    <Select
+                      label="Presentación"
+                      value={inPresentationId}
+                      onChange={(e) => setInPresentationId(e.target.value)}
+                      options={[
+                        { value: '', label: 'Selecciona presentación' },
+                        ...((presentationsQuery.data?.items ?? [])
+                          .filter((p) => p.isActive !== false)
+                          .map((p) => ({ value: p.id, label: `${p.name} · ${p.unitsPerPresentation} u.` }))),
+                      ]}
+                      disabled={presentationsQuery.isLoading || batchMutation.isPending}
+                    />
+
                     <Input
-                      label="Cantidad"
+                      label="Cantidad (en base a la presentación)"
                       type="number"
                       value={quantity}
                       onChange={(e) => setQuantity(e.target.value)}
-                      placeholder="Cantidad a ingresar"
+                      placeholder="Ej: 2"
                       required
                       disabled={batchMutation.isPending}
                     />
@@ -983,35 +1012,20 @@ export function MovementsPage() {
                     />
 
                     <Select
-                      label="Almacén Destino"
+                      label="Sucursal de ingreso"
                       value={toWarehouseId}
                       onChange={(e) => {
                         setToWarehouseId(e.target.value)
                         setToLocationId('')
                       }}
                       options={[
-                        { value: '', label: 'Selecciona almacén' },
+                        { value: '', label: 'Selecciona sucursal' },
                         ...(warehousesQuery.data?.items ?? [])
                           .filter((w) => w.isActive)
                           .map((w) => ({ value: w.id, label: `${w.code} - ${w.name}` })),
                       ]}
                       disabled={warehousesQuery.isLoading || batchMutation.isPending}
                     />
-
-                    {toWarehouseId && (
-                      <Select
-                        label="Ubicación Destino"
-                        value={toLocationId}
-                        onChange={(e) => setToLocationId(e.target.value)}
-                        options={[
-                          { value: '', label: 'Selecciona ubicación' },
-                          ...(locationsQuery.data?.items ?? [])
-                            .filter((l) => l.isActive)
-                            .map((l) => ({ value: l.id, label: l.code })),
-                        ]}
-                        disabled={locationsQuery.isLoading || batchMutation.isPending}
-                      />
-                    )}
 
                     {createBatchError && (
                       <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-200">
@@ -1678,7 +1692,7 @@ export function MovementsPage() {
                 )}
               </div>
             )}
-          </form>
+          </div>
         </div>
 
         {/* Solicitudes de movimiento */}
