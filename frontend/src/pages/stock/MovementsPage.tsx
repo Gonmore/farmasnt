@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import React, { useEffect, useState } from 'react'
 import { PencilSquareIcon, TrashIcon } from '@heroicons/react/24/outline'
 import { apiFetch } from '../../lib/api'
+import { formatDateOnlyUtc } from '../../lib/date'
 import { getProductLabel } from '../../lib/productName'
 import { useAuth } from '../../providers/AuthProvider'
 import { MainLayout, PageContainer, Select, Input, Button, Table, Loading, ErrorState, Modal } from '../../components'
@@ -61,6 +62,7 @@ type ProductBatchListItem = {
   batchNumber: string
   expiresAt: string | null
   manufacturingDate: string | null
+  presentationId?: string | null
   locations: {
     warehouseId: string
     warehouseCode: string
@@ -603,8 +605,9 @@ export function MovementsPage() {
         rows.push({
           id: `${batch.id}::${loc.locationId}`,
           batchNumber: batch.batchNumber,
-          manufacturingDate: batch.manufacturingDate ? new Date(batch.manufacturingDate).toLocaleDateString() : '-',
-          expiresAt: batch.expiresAt ? new Date(batch.expiresAt).toLocaleDateString() : '-',
+          manufacturingDate: batch.manufacturingDate ? formatDateOnlyUtc(batch.manufacturingDate) : '-',
+          expiresAt: batch.expiresAt ? formatDateOnlyUtc(batch.expiresAt) : '-',
+          presentationId: batch.presentationId ?? null,
           totalQuantity: String(total),
           reservedQuantity: String(Math.max(0, reserved)),
           availableQuantity: String(Math.max(0, available)),
@@ -626,41 +629,105 @@ export function MovementsPage() {
 
   const repackDerived = (() => {
     const row = stockRows.find((r) => r.id === selectedStockKey)
-    const availableUnits = row ? Number(row.availableQuantity || '0') : null
-
-    const srcQty = Number(repackSourceQty)
+    const availableSourceQtyRaw = row ? Number(row.availableQuantity || '0') : null
     const tgtQty = Number(repackTargetQty)
 
     const srcFactor = sourcePresentation ? Number(sourcePresentation.unitsPerPresentation) : null
     const tgtFactor = targetPresentation ? Number(targetPresentation.unitsPerPresentation) : null
 
-    const srcOk = Number.isFinite(srcQty) && srcQty > 0
     const tgtOk = Number.isFinite(tgtQty) && tgtQty > 0
     const srcFactorOk = srcFactor !== null && Number.isFinite(srcFactor) && srcFactor > 0
     const tgtFactorOk = tgtFactor !== null && Number.isFinite(tgtFactor) && tgtFactor > 0
 
-    const baseSource = srcOk && srcFactorOk ? srcQty * srcFactor : null
-    const maxTarget = baseSource !== null && tgtFactorOk ? Math.floor(baseSource / (tgtFactor as number)) : null
+    // IMPORTANT: For repack UX we treat the displayed available quantity as "cantidad en presentación de origen".
+    // Then we convert to base units and do all arithmetic in base units.
+    const availableSourceQty =
+      typeof availableSourceQtyRaw === 'number' && Number.isFinite(availableSourceQtyRaw) && availableSourceQtyRaw >= 0
+        ? availableSourceQtyRaw
+        : null
+
+    const availableBaseUnits =
+      availableSourceQty !== null && srcFactorOk
+        ? availableSourceQty * (srcFactor as number)
+        : null
+
     const baseTarget = tgtOk && tgtFactorOk ? tgtQty * (tgtFactor as number) : null
-    const remainder = baseSource !== null && baseTarget !== null ? baseSource - baseTarget : null
+
+    // Use whole-source presentations: if you need 21 units and the source is Caja(20u), you consume 2 cajas
+    // and remainder returns as units.
+    const requiredSourceQty = baseTarget !== null && srcFactorOk
+      ? Math.ceil((baseTarget + 1e-12) / (srcFactor as number))
+      : null
+
+    const baseSource = requiredSourceQty !== null && srcFactorOk
+      ? requiredSourceQty * (srcFactor as number)
+      : null
+
+    const maxTarget =
+      availableBaseUnits !== null && tgtFactorOk
+        ? Math.floor(availableBaseUnits / (tgtFactor as number))
+        : null
+
+    const maxTargetBaseUnits =
+      maxTarget !== null && tgtFactorOk
+        ? maxTarget * (tgtFactor as number)
+        : null
+
+    const remainder = baseSource !== null && baseTarget !== null ? Math.max(0, baseSource - baseTarget) : null
 
     const exceedsAvailable =
-      baseSource !== null && typeof availableUnits === 'number' && Number.isFinite(availableUnits)
-        ? baseSource > availableUnits + 1e-9
+      baseSource !== null && availableBaseUnits !== null
+        ? baseSource > availableBaseUnits + 1e-9
         : false
 
-    const targetExceedsSource = baseSource !== null && baseTarget !== null ? baseTarget > baseSource + 1e-9 : false
+    const targetExceedsSource = false
 
     return {
-      availableUnits: typeof availableUnits === 'number' && Number.isFinite(availableUnits) ? availableUnits : null,
+      availableSourceQty,
+      availableBaseUnits,
       baseSource,
       baseTarget,
       remainder,
       maxTarget,
+      maxTargetBaseUnits,
       exceedsAvailable,
       targetExceedsSource,
+      requiredSourceQty,
     }
   })()
+
+  // Repack: auto-derive source presentation from selected batch and auto-calc required source quantity.
+  useEffect(() => {
+    if (type !== 'REPACK') return
+    if (!selectedStockKey) {
+      setRepackSourcePresentationId('')
+      setRepackSourceQty('')
+      return
+    }
+
+    const row: any = stockRows.find((r) => r.id === selectedStockKey)
+    const batchPresentationId = row?.presentationId ? String(row.presentationId) : ''
+    const fallbackPresentationId = activePresentations.find((p) => p.isDefault)?.id ?? activePresentations[0]?.id ?? ''
+    const derivedSourceId = batchPresentationId || fallbackPresentationId
+
+    if (derivedSourceId && derivedSourceId !== repackSourcePresentationId) {
+      setRepackSourcePresentationId(derivedSourceId)
+    }
+  }, [type, selectedStockKey, productId, productBatchesQuery.data, presentationsQuery.data, activePresentations.length, repackSourcePresentationId])
+
+  useEffect(() => {
+    if (type !== 'REPACK') return
+    if (!repackSourcePresentationId || !repackTargetPresentationId || !repackTargetQty) {
+      setRepackSourceQty('')
+      return
+    }
+    if (repackDerived.requiredSourceQty === null) {
+      setRepackSourceQty('')
+      return
+    }
+
+    setRepackSourceQty(String(repackDerived.requiredSourceQty))
+  }, [type, repackSourcePresentationId, repackTargetPresentationId, repackTargetQty, repackDerived.requiredSourceQty])
 
   const repackMutation = useMutation({
     mutationFn: async () => {
@@ -679,7 +746,6 @@ export function MovementsPage() {
       if (repackDerived.baseSource === null) throw new Error('No se pudo calcular la cantidad base de origen')
       if (repackDerived.baseTarget === null) throw new Error('No se pudo calcular la cantidad base a armar')
       if (repackDerived.exceedsAvailable) throw new Error('La cantidad de origen supera lo disponible')
-      if (repackDerived.targetExceedsSource) throw new Error('La cantidad a armar supera la cantidad de origen')
       if (repackDerived.remainder !== null && repackDerived.remainder < -1e-9) throw new Error('Remanente inválido')
 
       const ok = confirm(
@@ -853,7 +919,6 @@ export function MovementsPage() {
     if (repackDerived.baseTarget === null) return false
     if (repackDerived.remainder === null) return false
     if (repackDerived.exceedsAvailable) return false
-    if (repackDerived.targetExceedsSource) return false
     if (repackDerived.remainder < -1e-9) return false
 
     return true
@@ -1079,13 +1144,25 @@ export function MovementsPage() {
                                 name="stockSelectionRepack"
                                 value={r.id}
                                 checked={selectedStockKey === r.id}
-                                onChange={(e) => setSelectedStockKey(e.target.value)}
+                                onChange={(e) => {
+                                  setSelectedStockKey(e.target.value)
+                                  // Reset derived fields so they re-calc for the new batch.
+                                  setRepackSourceQty('')
+                                }}
                               />
                             ),
                             className: 'w-16',
                           },
                           { header: 'Lote', accessor: (r) => r.batchNumber },
-                          { header: 'Elaboración', accessor: (r) => r.manufacturingDate },
+                          {
+                            header: 'Presentación',
+                            accessor: (r) => {
+                              const pid = (r as any).presentationId ? String((r as any).presentationId) : ''
+                              const p = pid ? activePresentations.find((x) => x.id === pid) : null
+                              if (p) return `${p.name}${p.unitsPerPresentation ? ` (${p.unitsPerPresentation}u)` : ''}`
+                              return presentationsQuery.isLoading ? '…' : '—'
+                            },
+                          },
                           { header: 'Vence', accessor: (r) => r.expiresAt },
                           { header: 'Disponible', accessor: (r) => r.availableQuantity },
                           { header: 'Ubicación', accessor: (r) => `${r.warehouse} / ${r.location}` },
@@ -1122,7 +1199,7 @@ export function MovementsPage() {
                                 label: `${p.name} · ${p.unitsPerPresentation} u.`,
                               })),
                             ]}
-                            disabled={presentationsQuery.isLoading}
+                            disabled
                           />
                           <Input
                             label="Cantidad"
@@ -1130,6 +1207,7 @@ export function MovementsPage() {
                             value={repackSourceQty}
                             onChange={(e) => setRepackSourceQty(e.target.value)}
                             placeholder="Ej: 1"
+                            disabled
                           />
                           <Select
                             label="A"
@@ -1154,26 +1232,41 @@ export function MovementsPage() {
                         </div>
 
                         <div className="text-xs text-slate-700 dark:text-slate-300">
-                          {repackDerived.baseSource !== null ? (
+                          {repackDerived.baseTarget !== null ? (
                             <div>
-                              Equivale a <span className="font-semibold">{repackDerived.baseSource}</span> unidades base.
-                              {repackDerived.availableUnits !== null ? ` Disponibles: ${repackDerived.availableUnits}.` : ''}
+                              Equivale a <span className="font-semibold">{repackDerived.baseTarget}</span> unidades base.
+                              {repackDerived.availableBaseUnits !== null ? (
+                                <>
+                                  {' '}
+                                  Disponibles: <span className="font-semibold">{repackDerived.availableBaseUnits}</span> unidades base
+                                  {sourcePresentation && repackDerived.availableSourceQty !== null ? (
+                                    <> ({repackDerived.availableSourceQty} {sourcePresentation.name})</>
+                                  ) : null}
+                                  .
+                                </>
+                              ) : null}
                               {repackDerived.exceedsAvailable ? <span className="ml-2 text-red-600">Supera lo disponible.</span> : null}
                             </div>
                           ) : (
-                            <div>Ingresá cantidad y presentación de origen para ver conversión.</div>
+                            <div>Seleccioná “A” y la cantidad a armar para ver conversión.</div>
                           )}
 
                           {repackDerived.maxTarget !== null && targetPresentation ? (
                             <div>
-                              Podés armar hasta <span className="font-semibold">{repackDerived.maxTarget}</span> {targetPresentation.name}.
+                              Podés armar hasta <span className="font-semibold">{repackDerived.maxTarget}</span> {targetPresentation.name}
+                              {repackDerived.maxTargetBaseUnits !== null ? (
+                                <>
+                                  {' '}
+                                  (<span className="font-semibold">{repackDerived.maxTargetBaseUnits}</span> unidades base)
+                                </>
+                              ) : null}
+                              .
                             </div>
                           ) : null}
 
                           {repackDerived.remainder !== null && targetPresentation ? (
                             <div>
-                              Remanente: {repackDerived.remainder} Unidad.
-                              {repackDerived.targetExceedsSource ? <span className="ml-2 text-red-600">Supera el origen.</span> : null}
+                              Remanente: {repackDerived.remainder} unidades base.
                             </div>
                           ) : null}
                         </div>

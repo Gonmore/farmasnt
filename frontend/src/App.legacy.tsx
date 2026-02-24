@@ -8,6 +8,7 @@ import {
   verifyPlatformTenantDomain,
   type PlatformTenantDomainListItem,
 } from './lib/api'
+import { formatDateOnlyUtc } from './lib/date'
 import { connectSocket, disconnectSocket } from './lib/socket'
 import { useAuth } from './providers/AuthProvider'
 import { useTenant } from './providers/TenantProvider'
@@ -2764,7 +2765,7 @@ function App() {
                                 <td className="px-3 py-2 font-medium text-slate-800">{x.sku}</td>
                                 <td className="px-3 py-2">{x.name}</td>
                                 <td className="px-3 py-2">{x.batchNumber}</td>
-                                <td className="px-3 py-2">{new Date(x.expiresAt).toLocaleDateString()}</td>
+                                <td className="px-3 py-2">{formatDateOnlyUtc(x.expiresAt)}</td>
                                 <td className="px-3 py-2">{x.daysToExpire}</td>
                                 <td className="px-3 py-2">{x.quantity}</td>
                                 <td className="px-3 py-2">

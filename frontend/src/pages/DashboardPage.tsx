@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getApiBaseUrl, api } from '../lib/api';
+import { formatDateOnlyUtc } from '../lib/date';
 import { connectSocket, disconnectSocket } from '../lib/socket';
 import { useAuth } from '../providers/AuthProvider';
 import { MainLayout } from '../components/layout';
@@ -486,7 +487,7 @@ export function DashboardPage() {
                     <p className="text-xs text-slate-600 dark:text-slate-400">Fecha de Expiración</p>
                     <p className="text-sm font-medium text-slate-900 dark:text-slate-100">
                       {subscriptionQuery.data.subscriptionExpiresAt
-                        ? new Date(subscriptionQuery.data.subscriptionExpiresAt).toLocaleDateString('es-BO')
+                        ? formatDateOnlyUtc(subscriptionQuery.data.subscriptionExpiresAt, 'es-BO')
                         : 'Sin fecha'}
                     </p>
                     {subscriptionQuery.data.daysRemaining !== null && (

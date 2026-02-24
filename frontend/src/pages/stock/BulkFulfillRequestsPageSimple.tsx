@@ -7,6 +7,7 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../providers/AuthProvider'
 import { usePermissions } from '../../hooks/usePermissions'
 import { apiFetch } from '../../lib/api'
+import { formatDateOnlyUtc } from '../../lib/date'
 
 type WarehouseListItem = { id: string; code: string; name: string; city?: string | null; isActive: boolean }
 
@@ -592,65 +593,67 @@ export function BulkFulfillRequestsPage() {
           setBatchSelections({})
         }}
         title={`Transferencia de ${activeWarehouses.find(w => w.id === fromWarehouseId)?.name || 'Origen'} a ${activeWarehouses.find(w => w.id === toWarehouseId)?.name || 'Destino'}`}
-        maxWidth="2xl"
+        maxWidth="3xl"
       >
-        <div className="space-y-6 max-h-96 overflow-y-auto">
-          {/* Lo Solicitado */}
-          <div className="border border-slate-200 rounded-lg p-4 dark:border-slate-700">
+        <div className="flex flex-col gap-4 md:flex-row">
+          {/* Lo Solicitado (siempre visible a la izquierda) */}
+          <div className="border border-slate-200 rounded-lg p-4 dark:border-slate-700 md:w-5/12">
             <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100 mb-4">Lo Solicitado</h3>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-slate-200 dark:border-slate-700">
-                    <th className="w-12 py-2 px-3"></th>
-                    <th className="text-left py-2 px-3 font-medium text-slate-700 dark:text-slate-300">Producto</th>
-                    <th className="text-left py-2 px-3 font-medium text-slate-700 dark:text-slate-300">Presentación</th>
-                    <th className="text-left py-2 px-3 font-medium text-slate-700 dark:text-slate-300">Se requiere</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {requestedProducts.filter(product => product.remainingQuantity > 0).map((product, index) => {
-                    const isFulfilled = getProductFulfillmentStatus(product)
-                    return (
-                      <tr key={index} className="border-b border-slate-100 dark:border-slate-700">
-                        <td className="py-3 px-3 text-center">
-                          <div className={`inline-flex items-center justify-center w-6 h-6 rounded-full border-2 ${
-                            isFulfilled 
-                              ? 'border-green-500 bg-green-50 dark:bg-green-900/20' 
-                              : 'border-slate-300 bg-slate-50 dark:bg-slate-800 dark:border-slate-600'
-                          }`}>
-                            <span className={`text-sm ${isFulfilled ? 'text-green-600 dark:text-green-400' : 'text-slate-400 dark:text-slate-500'}`}>
-                              ✓
-                            </span>
-                          </div>
-                        </td>
-                        <td className="py-3 px-3">
-                          <span className="font-bold text-sm text-slate-900 dark:text-slate-100">
-                            {product.productName || 'Producto desconocido'}
-                          </span>
-                        </td>
-                        <td className="py-3 px-3 text-slate-600 dark:text-slate-400">
-                          {product.unitsPerPresentation === 1 
-                            ? 'Unidad' 
-                            : (product.presentationName || 'Sin presentación') + (product.unitsPerPresentation && product.unitsPerPresentation > 1 ? ` (${product.unitsPerPresentation}u)` : '')}
-                        </td>
-                        <td className="py-3 px-3">
-                          <strong className={`text-slate-900 dark:text-slate-100 ${product.remainingQuantity === 0 ? 'line-through text-slate-400 dark:text-slate-500' : ''}`}>
-                            {product.remaining}
-                          </strong>
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
+            <div className="space-y-2">
+              {requestedProducts.filter(product => product.remainingQuantity > 0).map((product, index) => {
+                const isFulfilled = getProductFulfillmentStatus(product)
+                const presentationText =
+                  product.unitsPerPresentation === 1
+                    ? 'Unidad'
+                    : (product.presentationName || 'Sin presentación') +
+                      (product.unitsPerPresentation && product.unitsPerPresentation > 1 ? ` (${product.unitsPerPresentation}u)` : '')
+                return (
+                  <div key={index} className="flex items-start gap-3 border-b border-slate-100 py-2 last:border-b-0 dark:border-slate-700">
+                    <div className="pt-0.5">
+                      <div
+                        className={`inline-flex items-center justify-center w-6 h-6 rounded-full border-2 ${
+                          isFulfilled
+                            ? 'border-green-500 bg-green-50 dark:bg-green-900/20'
+                            : 'border-slate-300 bg-slate-50 dark:bg-slate-800 dark:border-slate-600'
+                        }`}
+                      >
+                        <span
+                          className={`text-sm ${
+                            isFulfilled ? 'text-green-600 dark:text-green-400' : 'text-slate-400 dark:text-slate-500'
+                          }`}
+                        >
+                          ✓
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="min-w-0 flex-1">
+                      <div className="font-bold text-[13px] leading-tight text-slate-900 dark:text-slate-100">
+                        {product.productName || 'Producto desconocido'}
+                      </div>
+                      <div className="mt-0.5 leading-tight">
+                        <span
+                          className={`font-bold text-xs text-slate-900 dark:text-slate-100 ${
+                            product.remainingQuantity === 0 ? 'line-through text-slate-400 dark:text-slate-500' : ''
+                          }`}
+                        >
+                          {product.remaining}x
+                        </span>{' '}
+                        <span className="text-[11px] text-slate-600 dark:text-slate-400">
+                          {presentationText}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
             </div>
           </div>
 
-          {/* Lo Seleccionado */}
-          <div className="border border-slate-200 rounded-lg p-4 dark:border-slate-700">
+          {/* Lo Seleccionado (sin cambios, a la derecha) */}
+          <div className="border border-slate-200 rounded-lg p-4 dark:border-slate-700 md:w-7/12">
             <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100 mb-4">Lo Seleccionado</h3>
-            <div className="overflow-x-auto">
+            <div className="max-h-[60vh] overflow-auto scrollbar scrollbar-thumb-slate-400 scrollbar-track-slate-200 dark:scrollbar-thumb-slate-500 dark:scrollbar-track-slate-700">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-200 dark:border-slate-700">
@@ -658,7 +661,7 @@ export function BulkFulfillRequestsPage() {
                     <th className="text-left py-2 px-3 font-medium text-slate-700 dark:text-slate-300">Lote (Vencimiento)</th>
                     <th className="text-left py-2 px-3 font-medium text-slate-700 dark:text-slate-300">Presentación</th>
                     <th className="text-left py-2 px-3 font-medium text-slate-700 dark:text-slate-300">Disp</th>
-                    <th className="text-left py-2 px-3 font-medium text-slate-700 dark:text-slate-300">Selección</th>
+                    <th className="text-left py-2 px-3 font-medium text-slate-700 dark:text-slate-300 min-w-[9rem]">Selección</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -701,7 +704,7 @@ export function BulkFulfillRequestsPage() {
                                     {productBatches[0].batchNumber}
                                   </div>
                                   <div className={`text-xs px-2 py-1 rounded-full inline-block ${getExpiryColor(productBatches[0].expiryDate)}`}>
-                                    {productBatches[0].expiryDate ? new Date(productBatches[0].expiryDate).toLocaleDateString('es-ES') : 'Sin fecha'}
+                                    {productBatches[0].expiryDate ? formatDateOnlyUtc(productBatches[0].expiryDate, 'es-ES') : 'Sin fecha'}
                                   </div>
                                 </div>
                               </td>
@@ -721,7 +724,7 @@ export function BulkFulfillRequestsPage() {
                               <td className="py-3 px-3 text-slate-600 dark:text-slate-400">
                                 {getBatchMaxSelectable(productBatches[0])}
                               </td>
-                              <td className="py-3 px-3">
+                              <td className="py-3 px-3 min-w-[9rem]">
                                 <div className="flex items-center gap-2">
                                   <input
                                     type="checkbox"
@@ -742,22 +745,23 @@ export function BulkFulfillRequestsPage() {
                                     }}
                                     className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-slate-300 rounded"
                                   />
-                                  <Input
-                                    type="number"
-                                    value={batchSelections[productBatches[0].id] || ''}
-                                    onChange={(e) => {
-                                      const value = parseInt(e.target.value) || 0
-                                      setBatchSelections(prev => ({
-                                        ...prev,
-                                        [productBatches[0].id]: Math.min(value, getBatchMaxSelectable(productBatches[0]))
-                                      }))
-                                    }}
-                                    disabled={!batchSelections[productBatches[0].id]}
-                                    min="0"
-                                    max={getBatchMaxSelectable(productBatches[0])}
-                                    className="w-20"
-                                    placeholder="0"
-                                  />
+                                  <div className="w-16">
+                                    <Input
+                                      type="number"
+                                      value={batchSelections[productBatches[0].id] || ''}
+                                      onChange={(e) => {
+                                        const value = parseInt(e.target.value) || 0
+                                        setBatchSelections(prev => ({
+                                          ...prev,
+                                          [productBatches[0].id]: Math.min(value, getBatchMaxSelectable(productBatches[0]))
+                                        }))
+                                      }}
+                                      disabled={!batchSelections[productBatches[0].id]}
+                                      min="0"
+                                      max={getBatchMaxSelectable(productBatches[0])}
+                                      placeholder="0"
+                                    />
+                                  </div>
                                 </div>
                               </td>
                             </>
@@ -773,7 +777,7 @@ export function BulkFulfillRequestsPage() {
                                   {batch.batchNumber}
                                 </div>
                                 <div className={`text-xs px-2 py-1 rounded-full inline-block ${getExpiryColor(batch.expiryDate)}`}>
-                                  {batch.expiryDate ? new Date(batch.expiryDate).toLocaleDateString('es-ES') : 'Sin fecha'}
+                                  {batch.expiryDate ? formatDateOnlyUtc(batch.expiryDate, 'es-ES') : 'Sin fecha'}
                                 </div>
                               </div>
                             </td>
@@ -793,7 +797,7 @@ export function BulkFulfillRequestsPage() {
                             <td className="py-3 px-3 text-slate-600 dark:text-slate-400">
                               {getBatchMaxSelectable(batch)}
                             </td>
-                            <td className="py-3 px-3">
+                            <td className="py-3 px-3 min-w-[9rem]">
                               <div className="flex items-center gap-2">
                                 <input
                                   type="checkbox"
@@ -814,22 +818,23 @@ export function BulkFulfillRequestsPage() {
                                   }}
                                   className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-slate-300 rounded"
                                 />
-                                <Input
-                                  type="number"
-                                  value={batchSelections[batch.id] || ''}
-                                  onChange={(e) => {
-                                    const value = parseInt(e.target.value) || 0
-                                    setBatchSelections(prev => ({
-                                      ...prev,
-                                      [batch.id]: Math.min(value, getBatchMaxSelectable(batch))
-                                    }))
-                                  }}
-                                  disabled={!batchSelections[batch.id]}
-                                  min="0"
-                                  max={getBatchMaxSelectable(batch)}
-                                  className="w-20"
-                                  placeholder="0"
-                                />
+                                <div className="w-16">
+                                  <Input
+                                    type="number"
+                                    value={batchSelections[batch.id] || ''}
+                                    onChange={(e) => {
+                                      const value = parseInt(e.target.value) || 0
+                                      setBatchSelections(prev => ({
+                                        ...prev,
+                                        [batch.id]: Math.min(value, getBatchMaxSelectable(batch))
+                                      }))
+                                    }}
+                                    disabled={!batchSelections[batch.id]}
+                                    min="0"
+                                    max={getBatchMaxSelectable(batch)}
+                                    placeholder="0"
+                                  />
+                                </div>
                               </div>
                             </td>
                           </tr>

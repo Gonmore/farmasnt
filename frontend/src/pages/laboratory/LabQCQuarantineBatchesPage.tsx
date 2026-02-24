@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiFetch } from '../../lib/api'
+import { formatDateOnlyUtc } from '../../lib/date'
 import { useAuth } from '../../providers/AuthProvider'
 import { useNavigation, usePermissions } from '../../hooks'
 import { MainLayout, PageContainer, Loading, ErrorState, Table, PaginationCursor, Button, Modal, Input } from '../../components'
@@ -67,8 +68,8 @@ export function LabQCQuarantineBatchesPage() {
     () => [
       { header: 'Lote', accessor: (b: BatchItem) => b.batchNumber, className: 'wrap' },
       { header: 'Producto', accessor: (b: BatchItem) => `${b.product.sku} — ${b.product.name}`, className: 'wrap' },
-      { header: 'F. Fab', accessor: (b: BatchItem) => (b.manufacturingDate ? new Date(b.manufacturingDate).toLocaleDateString() : '—') },
-      { header: 'Vence', accessor: (b: BatchItem) => (b.expiresAt ? new Date(b.expiresAt).toLocaleDateString() : '—') },
+      { header: 'F. Fab', accessor: (b: BatchItem) => (b.manufacturingDate ? formatDateOnlyUtc(b.manufacturingDate) : '—') },
+      { header: 'Vence', accessor: (b: BatchItem) => (b.expiresAt ? formatDateOnlyUtc(b.expiresAt) : '—') },
       { header: 'Estado', accessor: (b: BatchItem) => b.status },
       {
         header: 'Acciones',

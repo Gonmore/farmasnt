@@ -3,10 +3,11 @@ import { useState, useEffect } from 'react'
 import type { FormEvent } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { apiFetch, getApiBaseUrl } from '../../lib/api'
+import { formatDateOnlyUtc } from '../../lib/date'
 import { getProductDisplayName } from '../../lib/productName'
 import { useAuth } from '../../providers/AuthProvider'
 import { MainLayout, PageContainer, Button, Input, Select, Loading, ErrorState, ImageUpload, Table, Modal } from '../../components'
-import { useNavigation } from '../../hooks'
+import { useNavigation, usePermissions } from '../../hooks'
 import { PlusIcon, CheckIcon, ArrowLeftIcon, TrashIcon, PowerIcon, PencilSquareIcon } from '@heroicons/react/24/outline'
 
 type Product = {
@@ -414,6 +415,7 @@ async function deleteRecipe(token: string, productId: string): Promise<void> {
 
 export function ProductDetailPage() {
   const auth = useAuth()
+  const perms = usePermissions()
   const navigate = useNavigate()
   const navGroups = useNavigation()
   const params = useParams<{ id: string }>()
@@ -475,6 +477,16 @@ export function ProductDetailPage() {
   const [editingAdjustNote, setEditingAdjustNote] = useState<string>('')
   const [batchManageError, setBatchManageError] = useState<string>('')
 
+  // Add stock to an existing batch (delta, not replace)
+  const [addingStockBatchId, setAddingStockBatchId] = useState<string | null>(null)
+  const [addingStockLocationId, setAddingStockLocationId] = useState<string>('')
+  const [addingStockPresentationId, setAddingStockPresentationId] = useState<string>('')
+  const [addingStockPresentationQty, setAddingStockPresentationQty] = useState<string>('')
+  const [addingStockNote, setAddingStockNote] = useState<string>('')
+  const [addingStockError, setAddingStockError] = useState<string>('')
+
+  const canStockMove = perms.hasPermission('stock:move')
+
   const openEditBatch = (b: ProductBatchListItem) => {
     setBatchManageError('')
     setEditingBatchId(b.id)
@@ -492,6 +504,16 @@ export function ProductDetailPage() {
     setEditingAdjustLocationId(pickLoc?.locationId ?? '')
     setEditingAdjustTotalQty(pickLoc?.quantity ?? '')
     setEditingAdjustNote('')
+  }
+
+  const openAddStockToBatch = (b: ProductBatchListItem) => {
+    setAddingStockError('')
+    setAddingStockBatchId(b.id)
+    const pickLoc = b.locations?.[0]
+    setAddingStockLocationId(pickLoc?.locationId ?? '')
+    setAddingStockPresentationId(b.presentationId ?? '')
+    setAddingStockPresentationQty('')
+    setAddingStockNote('Ingreso de producción')
   }
 
   // Reempaque (calculadora por lote)
@@ -872,6 +894,41 @@ export function ProductDetailPage() {
     queryKey: ['batchMovements', id, selectedBatchId],
     queryFn: () => listBatchMovements(auth.accessToken!, id!, selectedBatchId),
     enabled: !!auth.accessToken && !isNew && !!id && !!selectedBatchId,
+  })
+
+  const addStockToBatchMutation = useMutation({
+    mutationFn: async (args: {
+      batchId: string
+      toLocationId: string
+      presentationId: string
+      presentationQuantity: number
+      note?: string
+    }) => {
+      if (!id) throw new Error('Missing product id')
+      return apiFetch(`/api/v1/stock/movements`, {
+        token: auth.accessToken,
+        method: 'POST',
+        body: JSON.stringify({
+          type: 'IN',
+          productId: id,
+          batchId: args.batchId,
+          toLocationId: args.toLocationId,
+          presentationId: args.presentationId,
+          presentationQuantity: args.presentationQuantity,
+          note: args.note?.trim() ? args.note.trim() : 'Ingreso a lote',
+        }),
+      })
+    },
+    onSuccess: async (_data, vars) => {
+      await queryClient.invalidateQueries({ queryKey: ['productBatches', id] })
+      await queryClient.invalidateQueries({ queryKey: ['batchMovements', id, vars.batchId] })
+      setAddingStockBatchId(null)
+      setAddingStockError('')
+      alert('Ingreso registrado')
+    },
+    onError: (e: any) => {
+      setAddingStockError(e instanceof Error ? e.message : 'Error registrando ingreso')
+    },
   })
 
   const repackMutation = useMutation({
@@ -1891,7 +1948,7 @@ export function ProductDetailPage() {
 
                                   <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-slate-600 dark:text-slate-400">
                                     <span>Estado: {b.status}</span>
-                                    {b.expiresAt ? <span>· Vence: {new Date(b.expiresAt).toLocaleDateString()}</span> : null}
+                                    {b.expiresAt ? <span>· Vence: {formatDateOnlyUtc(b.expiresAt, 'es-ES')}</span> : null}
                                   </div>
 
                                   <div className="mt-0.5 text-xs text-slate-600 dark:text-slate-400">
@@ -1903,32 +1960,46 @@ export function ProductDetailPage() {
                                 </button>
 
                                 <div className="shrink-0 text-right">
-                                  {b.canManage ? (
-                                    <div className="mb-2 flex items-center justify-end gap-2">
+                                  <div className="mb-2 flex flex-wrap items-center justify-end gap-2">
+                                    {productBatchesQuery.data?.hasStockRead && canStockMove ? (
                                       <Button
                                         size="sm"
                                         variant="secondary"
-                                        icon={<PencilSquareIcon className="h-4 w-4" />}
-                                        onClick={() => openEditBatch(b)}
-                                        disabled={deleteBatchMutation.isPending || updateBatchMutation.isPending}
+                                        icon={<PlusIcon className="h-4 w-4" />}
+                                        onClick={() => openAddStockToBatch(b)}
+                                        disabled={addStockToBatchMutation.isPending}
                                       >
-                                        Editar
+                                        Adicionar
                                       </Button>
-                                      <Button
-                                        size="sm"
-                                        variant="secondary"
-                                        icon={<TrashIcon className="h-4 w-4" />}
-                                        onClick={() => {
-                                          const ok = confirm(`Eliminar lote ${b.batchNumber}? Esta acción no se puede deshacer.`)
-                                          if (!ok) return
-                                          deleteBatchMutation.mutate({ batchId: b.id, version: b.version })
-                                        }}
-                                        disabled={deleteBatchMutation.isPending || updateBatchMutation.isPending}
-                                      >
-                                        Eliminar
-                                      </Button>
-                                    </div>
-                                  ) : null}
+                                    ) : null}
+
+                                    {b.canManage ? (
+                                      <>
+                                        <Button
+                                          size="sm"
+                                          variant="secondary"
+                                          icon={<PencilSquareIcon className="h-4 w-4" />}
+                                          onClick={() => openEditBatch(b)}
+                                          disabled={deleteBatchMutation.isPending || updateBatchMutation.isPending}
+                                        >
+                                          Editar
+                                        </Button>
+                                        <Button
+                                          size="sm"
+                                          variant="secondary"
+                                          icon={<TrashIcon className="h-4 w-4" />}
+                                          onClick={() => {
+                                            const ok = confirm(`Eliminar lote ${b.batchNumber}? Esta acción no se puede deshacer.`)
+                                            if (!ok) return
+                                            deleteBatchMutation.mutate({ batchId: b.id, version: b.version })
+                                          }}
+                                          disabled={deleteBatchMutation.isPending || updateBatchMutation.isPending}
+                                        >
+                                          Eliminar
+                                        </Button>
+                                      </>
+                                    ) : null}
+                                  </div>
 
                                   <div className="text-sm font-medium text-slate-900 dark:text-slate-100">
                                     {(() => {
@@ -1962,6 +2033,78 @@ export function ProductDetailPage() {
 
                           {selectedBatchId === b.id && (
                             <div className="mt-3 rounded-md bg-slate-50 p-3 dark:bg-slate-800">
+                              {batchMovementsQuery.data && (
+                                <>
+                                  {(() => {
+                                    const items = batchMovementsQuery.data?.items ?? []
+                                    const isAddition = (m: BatchMovementItem) => {
+                                      if (m.type === 'IN') return true
+                                      if (m.type === 'ADJUSTMENT' && m.to) return true
+                                      return false
+                                    }
+                                    const tz = 'America/La_Paz'
+                                    const toYmd = (iso: string) =>
+                                      new Intl.DateTimeFormat('en-CA', {
+                                        timeZone: tz,
+                                        year: 'numeric',
+                                        month: '2-digit',
+                                        day: '2-digit',
+                                      }).format(new Date(iso))
+
+                                    const batchPres = activePresentations.find((p) => p.id === (b.presentationId ?? '')) ?? null
+                                    const presLabel = batchPres ? batchPres.name : 'presentación'
+                                    const unitsPerPres = batchPres ? Number(batchPres.unitsPerPresentation) : null
+
+                                    const sumByDay = new Map<string, number>()
+                                    for (const m of items) {
+                                      if (!isAddition(m)) continue
+                                      let qty = NaN
+
+                                      if (batchPres && m.presentation?.id === batchPres.id && m.presentationQuantity != null) {
+                                        qty = Number(m.presentationQuantity)
+                                      } else {
+                                        const baseQty = Number(m.quantity)
+                                        if (Number.isFinite(baseQty) && baseQty > 0 && Number.isFinite(unitsPerPres ?? NaN) && (unitsPerPres ?? 0) > 0) {
+                                          qty = baseQty / (unitsPerPres as number)
+                                        }
+                                      }
+
+                                      if (!Number.isFinite(qty) || qty <= 0) continue
+                                      const ymd = toYmd(m.createdAt)
+                                      sumByDay.set(ymd, (sumByDay.get(ymd) ?? 0) + qty)
+                                    }
+
+                                    const days = Array.from(sumByDay.entries())
+                                      .sort((a, b) => b[0].localeCompare(a[0]))
+                                      .slice(0, 7)
+
+                                    if (days.length === 0) return null
+                                    return (
+                                      <div className="mb-3 rounded-md border border-slate-200 bg-white p-2 text-xs dark:border-slate-700 dark:bg-slate-900">
+                                        <div className="mb-1 font-semibold text-slate-900 dark:text-slate-100">
+                                          Ingresos por día (últimos 7) · {presLabel}
+                                        </div>
+                                        <div className="grid gap-1">
+                                          {days.map(([ymd, qty]) => (
+                                            <div key={ymd} className="flex justify-between text-slate-700 dark:text-slate-300">
+                                              <span>{(() => {
+                                                const parts = ymd.split('-')
+                                                if (parts.length !== 3) return ymd
+                                                const [y, m, d] = parts
+                                                return `${d}/${m}/${y}`
+                                              })()}</span>
+                                              <span className="font-medium">
+                                                +{Number.isInteger(qty) ? qty : qty.toFixed(2)}
+                                              </span>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )
+                                  })()}
+                                </>
+                              )}
+
                               {batchMovementsQuery.isLoading && (
                                 <p className="text-sm text-slate-600 dark:text-slate-400">Cargando movimientos…</p>
                               )}
@@ -2384,6 +2527,120 @@ export function ProductDetailPage() {
               )}
 
               <Modal
+                isOpen={!!addingStockBatchId}
+                onClose={() => {
+                  if (addStockToBatchMutation.isPending) return
+                  setAddingStockBatchId(null)
+                  setAddingStockError('')
+                }}
+                title="Adicionar existencias al lote"
+                maxWidth="md"
+              >
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault()
+                    setAddingStockError('')
+                    if (!addingStockBatchId) return
+
+                    const presId = addingStockPresentationId.trim()
+                    if (!presId) {
+                      setAddingStockError('Este lote no tiene presentación asignada. Asigná una presentación en “Editar lote”.')
+                      return
+                    }
+
+                    const qty = Number(addingStockPresentationQty)
+                    if (!Number.isFinite(qty) || qty <= 0) {
+                      setAddingStockError('Ingresá una cantidad válida (mayor a 0) en presentación.')
+                      return
+                    }
+                    if (!addingStockLocationId.trim()) {
+                      setAddingStockError('Seleccioná una ubicación destino.')
+                      return
+                    }
+
+                    addStockToBatchMutation.mutate({
+                      batchId: addingStockBatchId,
+                      toLocationId: addingStockLocationId,
+                      presentationId: presId,
+                      presentationQuantity: qty,
+                      note: addingStockNote,
+                    })
+                  }}
+                  className="space-y-4"
+                >
+                  <p className="text-xs text-slate-600 dark:text-slate-400">
+                    Esto registra un movimiento tipo “IN” para el lote (no reemplaza el total). La cantidad se ingresa en la presentación del lote.
+                  </p>
+
+                  {(() => {
+                    const batch = (productBatchesQuery.data?.items ?? []).find((x) => x.id === addingStockBatchId) ?? null
+                    const locs = batch?.locations ?? []
+                    const pres = activePresentations.find((p) => p.id === (batch?.presentationId ?? '')) ?? null
+                    const presLabel = pres ? `${pres.name} · ${pres.unitsPerPresentation} u.` : '—'
+                    return (
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <div className="md:col-span-2 rounded-md border border-slate-200 bg-slate-50 p-2 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                          <span className="font-medium">Presentación del lote:</span> {presLabel}
+                        </div>
+
+                        <Select
+                          label="Ubicación destino"
+                          value={addingStockLocationId}
+                          onChange={(e) => setAddingStockLocationId(e.target.value)}
+                          disabled={addStockToBatchMutation.isPending || locs.length === 0}
+                          options={locs.map((l) => ({
+                            value: l.locationId,
+                            label: `${l.warehouseCode} · ${l.locationCode} (total: ${l.quantity})`,
+                          }))}
+                        />
+
+                        <Input
+                          label="Cantidad a agregar (en presentación)"
+                          type="number"
+                          value={addingStockPresentationQty}
+                          onChange={(e) => setAddingStockPresentationQty(e.target.value)}
+                          disabled={addStockToBatchMutation.isPending || !addingStockLocationId}
+                          placeholder="0"
+                        />
+
+                        <div className="md:col-span-2">
+                          <Input
+                            label="Nota (opcional)"
+                            value={addingStockNote}
+                            onChange={(e) => setAddingStockNote(e.target.value)}
+                            disabled={addStockToBatchMutation.isPending}
+                          />
+                        </div>
+
+                        {locs.length === 0 && (
+                          <div className="md:col-span-2 text-xs text-slate-600 dark:text-slate-400">
+                            Este lote todavía no tiene ubicaciones con stock. Para ingresar por primera vez, usá “Crear Lote” (ingreso inicial) o la pantalla de Movimientos.
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })()}
+
+                  {addingStockError && <p className="text-sm text-red-600">{addingStockError}</p>}
+
+                  <div className="flex gap-2">
+                    <Button type="submit" size="sm" loading={addStockToBatchMutation.isPending}>
+                      Registrar ingreso
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => setAddingStockBatchId(null)}
+                      disabled={addStockToBatchMutation.isPending}
+                    >
+                      Cancelar
+                    </Button>
+                  </div>
+                </form>
+              </Modal>
+
+              <Modal
                 isOpen={!!editingBatchId}
                 onClose={() => {
                   if (updateBatchMutation.isPending) return
@@ -2435,7 +2692,7 @@ export function ProductDetailPage() {
                     <div className="rounded-md border border-slate-200 p-3 dark:border-slate-700">
                       <div className="mb-2 text-sm font-semibold text-slate-900 dark:text-slate-100">Cantidad (ajuste)</div>
                       <p className="mb-3 text-xs text-slate-600 dark:text-slate-400">
-                        Cambia la cantidad total de una ubicación. Esto registra un movimiento tipo “Ajuste”.
+                        Cambia la cantidad total de una ubicación. Esto registra un movimiento tipo “Ajuste”. Para ingresos diarios, preferí el botón “Adicionar”.
                       </p>
 
                       {(() => {

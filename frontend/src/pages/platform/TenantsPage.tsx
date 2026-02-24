@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { MainLayout, PageContainer, Table, Button, IconButton, Loading, ErrorState, EmptyState, Badge, Input, Modal } from '../../components';
 import { useNavigation } from '../../hooks';
 import { api } from '../../lib/api';
+import { formatDateOnlyUtc } from '../../lib/date';
 import { ICON_EDIT } from '../../lib/actionIcons';
 
 interface TenantDomain {
@@ -507,7 +508,7 @@ export function TenantsPage() {
                       <Badge variant={variant}>{label}</Badge>
                       {tenant.subscriptionExpiresAt && (
                         <div className="mt-1 text-xs text-slate-500">
-                          {new Date(tenant.subscriptionExpiresAt).toLocaleDateString('es-BO')}
+                          {formatDateOnlyUtc(tenant.subscriptionExpiresAt, 'es-BO')}
                         </div>
                       )}
                     </div>
@@ -626,7 +627,7 @@ export function TenantsPage() {
             </div>
 
             <div className="text-xs text-slate-500">
-              <p>Expira actualmente: {editingTenant.subscriptionExpiresAt ? new Date(editingTenant.subscriptionExpiresAt).toLocaleDateString('es-BO') : 'Sin expiración'}</p>
+              <p>Expira actualmente: {editingTenant.subscriptionExpiresAt ? formatDateOnlyUtc(editingTenant.subscriptionExpiresAt, 'es-BO') : 'Sin expiración'}</p>
             </div>
           </div>
         </Modal>

@@ -18,6 +18,7 @@ import {
 import { useNavigation } from '../../hooks'
 import { usePermissions } from '../../hooks/usePermissions'
 import { apiFetch } from '../../lib/api'
+import { formatDateOnlyUtc } from '../../lib/date'
 import { useAuth } from '../../providers/AuthProvider'
 import { useTenant } from '../../providers/TenantProvider'
 import { EyeIcon, CheckCircleIcon, DocumentTextIcon } from '@heroicons/react/24/outline'
@@ -365,7 +366,7 @@ export function DeliveriesPage() {
                               const items = reservations.map((r: any) => ({
                                 productName: r.productName ?? '—',
                                 batchNumber: r.batchNumber ?? '—',
-                                expiresAt: r.expiresAt ? new Date(r.expiresAt).toLocaleDateString() : '—',
+                                expiresAt: r.expiresAt ? formatDateOnlyUtc(r.expiresAt) : '—',
                                 quantity: r.presentationQuantity ?? r.quantity ?? 0,
                                 presentationName: r.presentationName ?? undefined,
                                 presentationQuantity: r.presentationQuantity ?? undefined,

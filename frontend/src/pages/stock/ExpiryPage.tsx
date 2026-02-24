@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { apiFetch } from '../../lib/api'
+import { formatDateOnlyUtc } from '../../lib/date'
 import { exportToXlsx } from '../../lib/exportXlsx'
 import { useAuth } from '../../providers/AuthProvider'
 import { MainLayout, PageContainer, Table, Loading, ErrorState, EmptyState, ExpiryBadge, Button, PaginationCursor } from '../../components'
@@ -123,7 +124,7 @@ export function ExpiryPage() {
           SKU: item.sku,
           Producto: item.name,
           Lote: item.batchNumber,
-          Vence: new Date(item.expiresAt).toLocaleDateString(),
+          Vence: formatDateOnlyUtc(item.expiresAt),
           'Días para vencer': item.daysToExpire,
           Estado: item.status,
           'Almacén (código)': item.warehouseCode,
@@ -185,7 +186,7 @@ export function ExpiryPage() {
                   { header: 'Lote', accessor: (item) => item.batchNumber, width: '120px' },
                   {
                     header: 'Vence',
-                    accessor: (item) => new Date(item.expiresAt).toLocaleDateString(),
+                    accessor: (item) => formatDateOnlyUtc(item.expiresAt),
                     width: '100px'
                   },
                   {

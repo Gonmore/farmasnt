@@ -3225,6 +3225,9 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
             tenantId,
             referenceType: 'MOVEMENT_REQUEST',
             referenceId: { not: null },
+            // Only shipment movements; reception creates IN movements too.
+            // Grouping by OUT avoids double-counting quantities once received.
+            type: 'OUT',
             ...(branchLocationIds
               ? { OR: [{ fromLocationId: { in: branchLocationIds } }, { toLocationId: { in: branchLocationIds } }] }
               : {}),
@@ -3466,7 +3469,11 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
                 warehouse: { select: { id: true, name: true, code: true } },
               },
             })
-            if (!req || req.status !== 'FULFILLED') return null
+            if (!req) return null
+
+            // Only show requests that have shipment movements. For OPEN this means partial shipment.
+            // Exclude cancelled requests even if they somehow have movements.
+            if (req.status === 'CANCELLED') return null
 
             // IMPORTANT: When a request is later received, it creates IN movements with fromLocationId=null.
             // For the origin warehouse, we must look at the shipment OUT movements.
@@ -3500,7 +3507,7 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
             const fulfilledByName = fulfilledByUser?.fullName || fulfilledByUser?.email || createdByUser?.fullName || createdByUser?.email || null
 
             const completedAt = (req.fulfilledAt ?? g._max.createdAt ?? req.createdAt) as any
-            const typeLabel = req.status === 'FULFILLED' ? 'Atención de solicitud' : 'Atención de solicitud (parcial)'
+            const typeLabel = req.status === 'OPEN' ? 'Atención parcial' : 'Atención de solicitud'
 
             return {
               id: req.id,
@@ -3562,7 +3569,7 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
       const movements =
         type === 'FULFILL_REQUEST'
           ? await db.stockMovement.findMany({
-              where: { tenantId, referenceType: 'MOVEMENT_REQUEST', referenceId: id },
+              where: { tenantId, type: 'OUT', referenceType: 'MOVEMENT_REQUEST', referenceId: id },
               orderBy: { createdAt: 'asc' },
             })
           : type === 'BULK_TRANSFER'
@@ -3745,7 +3752,7 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
       const movements =
         type === 'FULFILL_REQUEST'
           ? await db.stockMovement.findMany({
-              where: { tenantId, referenceType: 'MOVEMENT_REQUEST', referenceId: id },
+              where: { tenantId, type: 'OUT', referenceType: 'MOVEMENT_REQUEST', referenceId: id },
               orderBy: { createdAt: 'asc' },
             })
           : type === 'BULK_TRANSFER'

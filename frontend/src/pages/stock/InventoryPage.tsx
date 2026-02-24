@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState, type ReactElement, type ReactNode } from 'react'
 import { apiFetch } from '../../lib/api'
+import { formatDateOnlyUtc } from '../../lib/date'
 import { exportToXlsx } from '../../lib/exportXlsx'
 import { getProductLabel } from '../../lib/productName'
 import { useAuth } from '../../providers/AuthProvider'
@@ -92,6 +93,25 @@ type ReservationItem = {
   productName: string
 }
 
+type BatchMovementItem = {
+  id: string
+  number: string
+  numberYear: number
+  createdAt: string
+  type: string
+  quantity: string
+  presentationId?: string | null
+  presentationQuantity?: string | null
+  presentation?: { id: string; name: string; unitsPerPresentation: string | number } | null
+  referenceType: string | null
+  referenceId: string | null
+  note: string | null
+  from: { id: string; code: string; warehouse: { id: string; code: string; name: string } } | null
+  to: { id: string; code: string; warehouse: { id: string; code: string; name: string } } | null
+}
+
+type BatchMovementsResponse = { batch: { id: string; batchNumber: string }; items: BatchMovementItem[] }
+
 type ProductGroup = {
   productId: string
   sku: string
@@ -113,6 +133,8 @@ type ProductGroup = {
     availableQuantity: number
     batches: Array<{
       id: string
+      productId: string
+      productName: string
       batchId: string | null
       batchNumber: string
       expiresAt: string | null
@@ -150,6 +172,8 @@ type WarehouseGroup = {
     availableQuantity: number
     batches: Array<{
       id: string
+      productId: string
+      productName: string
       batchId: string | null
       batchNumber: string
       expiresAt: string | null
@@ -238,6 +262,10 @@ async function listWarehouseLocations(token: string, warehouseId: string): Promi
 
 async function fetchReservations(token: string, balanceId: string): Promise<{ items: ReservationItem[] }> {
   return apiFetch(`/api/v1/stock/reservations?balanceId=${balanceId}`, { token })
+}
+
+async function listBatchMovements(token: string, productId: string, batchId: string): Promise<BatchMovementsResponse> {
+  return apiFetch(`/api/v1/products/${productId}/batches/${batchId}/movements`, { token })
 }
 
 async function updateBatchStatus(
@@ -368,6 +396,9 @@ export function InventoryPage() {
   const perms = usePermissions()
   const queryClient = useQueryClient()
 
+  const canSeeBatchFlow = perms.hasPermission('stock:read') && perms.hasPermission('catalog:read')
+  const canChangeBatchStatus = perms.hasPermission('stock:manage')
+
   const [groupBy, setGroupBy] = useState<'product' | 'warehouse'>('product')
   const [expandedProduct, setExpandedProduct] = useState<string | null>(null)
   const [expandedWarehouse, setExpandedWarehouse] = useState<string | null>(null)
@@ -401,6 +432,13 @@ export function InventoryPage() {
   const [selectedReservations, setSelectedReservations] = useState<ReservationItem[]>([])
   const [loadingReservations, setLoadingReservations] = useState(false)
 
+  const [flowItem, setFlowItem] = useState<{
+    productId: string
+    productName: string
+    batchId: string
+    batchNumber: string
+  } | null>(null)
+
   const openReservationsModal = async (balanceId: string) => {
     setLoadingReservations(true)
     try {
@@ -418,6 +456,12 @@ export function InventoryPage() {
     queryKey: ['balances', 'inventory'],
     queryFn: () => fetchBalances(auth.accessToken!),
     enabled: !!auth.accessToken,
+  })
+
+  const batchFlowQuery = useQuery({
+    queryKey: ['batchFlow', flowItem?.productId, flowItem?.batchId],
+    queryFn: () => listBatchMovements(auth.accessToken!, flowItem!.productId, flowItem!.batchId),
+    enabled: !!auth.accessToken && !!flowItem && canSeeBatchFlow,
   })
 
   const warehousesQuery = useQuery({
@@ -548,7 +592,7 @@ export function InventoryPage() {
           const colors = getExpiryColors(expiryStatus)
           return (
             <span className={`inline-block rounded-md border px-2 py-1 text-xs font-medium ${colors.bg} ${colors.border} ${colors.text}`}>
-              {new Date(b.expiresAt).toLocaleDateString()}
+              {formatDateOnlyUtc(b.expiresAt)}
             </span>
           )
         },
@@ -569,46 +613,49 @@ export function InventoryPage() {
       },
     ]
 
-    // Add action column only if user has stock:move permission
-    if (perms.hasPermission('stock:move')) {
+    // Action column: flow + optional status change
+    if (canSeeBatchFlow || canChangeBatchStatus) {
       baseColumns.push({
         header: 'Acción',
         accessor: (b, _index) => (
           <div className="flex gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() =>
-                setMovingItem({
-                  productId: b.productId,
-                  productName: b.productName,
-                  batchId: b.batchId,
-                  batchNumber: b.batchNumber,
-                  fromLocationId: b.locationId,
-                  fromWarehouseCode: b.warehouseCode,
-                  fromLocationCode: b.locationCode,
-                  availableQty: String(b.availableQuantity),
-                })
-              }
-            >
-              Mover
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() =>
-                setStatusChangeItem({
-                  productId: b.productId,
-                  productName: b.productName,
-                  batchId: b.batchId,
-                  batchNumber: b.batchNumber,
-                  currentStatus: b.status,
-                  version: b.version,
-                })
-              }
-            >
-              Estado
-            </Button>
+            {canSeeBatchFlow ? (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  if (!b.batchId) return
+                  setFlowItem({
+                    productId: b.productId,
+                    productName: b.productName,
+                    batchId: b.batchId,
+                    batchNumber: b.batchNumber,
+                  })
+                }}
+                disabled={!b.batchId}
+              >
+                Ver flujo
+              </Button>
+            ) : null}
+
+            {canChangeBatchStatus && b.batchId ? (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() =>
+                  setStatusChangeItem({
+                    productId: b.productId,
+                    productName: b.productName,
+                    batchId: b.batchId,
+                    batchNumber: b.batchNumber,
+                    currentStatus: b.status,
+                    version: b.version,
+                  })
+                }
+              >
+                Estado
+              </Button>
+            ) : null}
           </div>
         ),
         width: '200px',
@@ -616,7 +663,7 @@ export function InventoryPage() {
     }
 
     return baseColumns
-  }, [perms])
+  }, [canSeeBatchFlow, canChangeBatchStatus])
 
   const warehouseColumns = useMemo(() => {
     const baseColumns: Array<{
@@ -633,7 +680,7 @@ export function InventoryPage() {
           const colors = getExpiryColors(expiryStatus)
           return (
             <span className={`inline-block px-2 py-1 rounded-md border text-xs font-medium ${colors.bg} ${colors.border} ${colors.text}`}>
-              {new Date(b.expiresAt).toLocaleDateString()}
+              {formatDateOnlyUtc(b.expiresAt)}
             </span>
           )
         },
@@ -673,28 +720,26 @@ export function InventoryPage() {
       { header: '✅ Disponible', accessor: (b, _index) => formatQtyByBatchPresentation(Number(b.availableQuantity), b) },
     ]
 
-    // Add action column only if user has stock:move permission
-    if (perms.hasPermission('stock:move')) {
+    // Action column: flow
+    if (canSeeBatchFlow) {
       baseColumns.push({
         header: '🚀 Acción',
         accessor: (b, _index) => (
           <Button
             size="sm"
             variant="outline"
-            onClick={() =>
-              setMovingItem({
+            onClick={() => {
+              if (!b.batchId) return
+              setFlowItem({
                 productId: b.productId,
                 productName: b.productName,
                 batchId: b.batchId,
                 batchNumber: b.batchNumber,
-                fromLocationId: b.locationId,
-                fromWarehouseCode: b.warehouseCode,
-                fromLocationCode: b.locationCode,
-                availableQty: String(b.availableQuantity),
               })
-            }
+            }}
+            disabled={!b.batchId}
           >
-            Mover
+            Ver flujo
           </Button>
         ),
         width: '120px',
@@ -702,7 +747,7 @@ export function InventoryPage() {
     }
 
     return baseColumns
-  }, [perms, loadingReservations])
+  }, [canSeeBatchFlow, loadingReservations])
 
   const productGroups = useMemo<ProductGroup[]>(() => {
     if (!balancesQuery.data?.items) return []
@@ -758,6 +803,8 @@ export function InventoryPage() {
       whGroup.availableQuantity += available
       whGroup.batches.push({
         id: item.id,
+        productId: item.productId,
+        productName: item.product.name,
         batchId: item.batchId,
         batchNumber: item.batch?.batchNumber ?? '-',
         expiresAt: item.batch?.expiresAt ?? null,
@@ -830,6 +877,8 @@ export function InventoryPage() {
       prodGroup.availableQuantity += available
       prodGroup.batches.push({
         id: item.id,
+        productId: item.productId,
+        productName: item.product.name,
         batchId: item.batchId,
         batchNumber: item.batch?.batchNumber ?? '-',
         expiresAt: item.batch?.expiresAt ?? null,
@@ -870,7 +919,7 @@ export function InventoryPage() {
           SKU: item.product.sku,
           Producto: getProductLabel(item.product),
           Lote: item.batch?.batchNumber ?? '-',
-          Vence: item.batch?.expiresAt ? new Date(item.batch.expiresAt).toLocaleDateString() : '',
+          Vence: item.batch?.expiresAt ? formatDateOnlyUtc(item.batch.expiresAt) : '',
           'Estado lote': item.batch?.status ?? '',
           'Sucursal (código)': item.location.warehouse.code,
           'Sucursal (nombre)': item.location.warehouse.name,
@@ -1286,6 +1335,73 @@ export function InventoryPage() {
               </Button>
               <Button onClick={() => moveMutation.mutate()} disabled={moveMutation.isPending}>
                 {moveMutation.isPending ? '⏳ Moviendo...' : '✅ Confirmar Movimiento'}
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* Modal Ver flujo */}
+      <Modal
+        isOpen={!!flowItem}
+        onClose={() => setFlowItem(null)}
+        title={flowItem ? `Ver flujo — Lote ${flowItem.batchNumber}` : 'Ver flujo'}
+        maxWidth="lg"
+      >
+        {!canSeeBatchFlow ? (
+          <p className="text-sm text-slate-600 dark:text-slate-400">No tenés permisos para ver el flujo del lote.</p>
+        ) : (
+          <div className="space-y-3">
+            {flowItem ? (
+              <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm dark:border-slate-700 dark:bg-slate-800">
+                <div>
+                  <span className="font-medium">Producto:</span> {flowItem.productName}
+                </div>
+                <div>
+                  <span className="font-medium">Lote:</span> {flowItem.batchNumber}
+                </div>
+              </div>
+            ) : null}
+
+            {batchFlowQuery.isLoading && <p className="text-sm text-slate-600 dark:text-slate-400">Cargando flujo…</p>}
+            {batchFlowQuery.error && (
+              <p className="text-sm text-red-600">
+                {batchFlowQuery.error instanceof Error ? batchFlowQuery.error.message : 'Error cargando flujo'}
+              </p>
+            )}
+
+            {batchFlowQuery.data && batchFlowQuery.data.items.length === 0 && (
+              <p className="text-sm text-slate-600 dark:text-slate-400">Sin movimientos registrados para este lote.</p>
+            )}
+
+            {batchFlowQuery.data && batchFlowQuery.data.items.length > 0 && (
+              <div className="max-h-[60vh] space-y-2 overflow-auto rounded-md border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+                {batchFlowQuery.data.items.map((m) => (
+                  <div key={m.id} className="text-xs text-slate-700 dark:text-slate-300">
+                    <div className="flex justify-between gap-3">
+                      <span className="font-medium">{m.number}</span>
+                      <span className="shrink-0">{new Date(m.createdAt).toLocaleString()}</span>
+                    </div>
+                    <div>
+                      {m.type} · Qty {m.quantity}
+                      {m.presentation && m.presentationQuantity ? ` · ${m.presentationQuantity} ${m.presentation.name}` : ''}
+                      {m.from ? ` · Desde ${m.from.warehouse.code}/${m.from.code}` : ''}
+                      {m.to ? ` · Hacia ${m.to.warehouse.code}/${m.to.code}` : ''}
+                    </div>
+                    {m.note ? <div className="text-slate-500 dark:text-slate-400">Nota: {m.note}</div> : null}
+                    {(m.referenceType || m.referenceId) ? (
+                      <div className="text-slate-500 dark:text-slate-400">
+                        Ref: {m.referenceType ?? '-'} · {m.referenceId ?? '-'}
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="flex justify-end">
+              <Button size="sm" variant="secondary" onClick={() => setFlowItem(null)}>
+                Cerrar
               </Button>
             </div>
           </div>

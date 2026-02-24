@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiFetch } from '../../lib/api'
+import { formatDateOnlyUtc } from '../../lib/date'
 import { useAuth } from '../../providers/AuthProvider'
 import { MainLayout, PageContainer, Table, Button, Modal, Input, Select, Loading, ErrorState, EmptyState } from '../../components'
 import { useNavigation } from '../../hooks'
@@ -444,7 +445,7 @@ export function ReturnsPage() {
                     <div><strong>Presentación:</strong> {movement.presentation?.name ?? '-'}</div>
                     <div><strong>Cantidad:</strong> {movement.quantity}</div>
                     <div><strong>Lote:</strong> {movement.batch?.batchNumber ?? '-'}</div>
-                    <div><strong>Vencimiento:</strong> {movement.batch?.expiresAt ? new Date(movement.batch.expiresAt).toLocaleDateString() : '-'}</div>
+                    <div><strong>Vencimiento:</strong> {movement.batch?.expiresAt ? formatDateOnlyUtc(movement.batch.expiresAt) : '-'}</div>
                   </div>
                 </div>
               </div>
@@ -554,7 +555,7 @@ export function ReturnsPage() {
                 { value: '', label: 'Sin lote' },
                 ...(itemBatchesQuery.data?.items ?? []).map((b) => ({
                   value: b.id,
-                  label: `${b.batchNumber}${b.expiresAt ? ` (vence ${new Date(b.expiresAt).toLocaleDateString()})` : ''}`,
+                  label: `${b.batchNumber}${b.expiresAt ? ` (vence ${formatDateOnlyUtc(b.expiresAt)})` : ''}`,
                 })),
               ]}
             />

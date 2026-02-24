@@ -1120,6 +1120,27 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
         },
       })
 
+      // Some older batches may have presentationId unset; infer it from the latest movement
+      // that recorded a presentationId so the frontend can derive repack source presentation.
+      const missingPresentationBatchIds = batches.filter((b) => !b.presentationId).map((b) => b.id)
+      const derivedPresentationByBatchId = new Map<string, string>()
+      if (missingPresentationBatchIds.length > 0) {
+        const recentWithPres = await db.stockMovement.findMany({
+          where: {
+            tenantId,
+            productId,
+            batchId: { in: missingPresentationBatchIds },
+            presentationId: { not: null },
+          },
+          orderBy: [{ createdAt: 'desc' }],
+          select: { batchId: true, presentationId: true },
+        })
+        for (const m of recentWithPres) {
+          if (!m.batchId || !m.presentationId) continue
+          if (!derivedPresentationByBatchId.has(m.batchId)) derivedPresentationByBatchId.set(m.batchId, m.presentationId)
+        }
+      }
+
       const batchIds = batches.map((b) => b.id)
       const balances = hasStockRead && batchIds.length
         ? await db.inventoryBalance.findMany({
@@ -1154,6 +1175,7 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
         const totalAvailable = Math.max(0, total - totalReserved)
         return {
           ...b,
+          presentationId: b.presentationId ?? derivedPresentationByBatchId.get(b.id) ?? null,
           canManage: !!b.createdBy && b.createdBy === userId,
           totalQuantity: hasStockRead ? String(total) : null,
           totalReservedQuantity: hasStockRead ? String(totalReserved) : null,
@@ -1288,6 +1310,7 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
               batchNumber: parsed.data.batchNumber,
               manufacturingDate,
               expiresAt,
+              presentationId: parsed.data.initialStock?.presentationId ?? null,
               status: parsed.data.status ?? 'RELEASED',
               createdBy: userId,
             },

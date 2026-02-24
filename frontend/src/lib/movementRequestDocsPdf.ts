@@ -1,4 +1,5 @@
 import jsPDF from 'jspdf'
+import { formatDateOnlyUtc } from './date'
 
 export type PickingPdfRequestedLine = {
   productLabel: string
@@ -193,7 +194,7 @@ export function exportPickingToPdf(
   for (const line of sorted) {
     const loc = sanitizePdfText(line.locationCode ?? '—')
     const lote = sanitizePdfText(line.batchNumber ?? '—')
-    const vence = line.expiresAt ? sanitizePdfText(new Date(line.expiresAt).toLocaleDateString()) : '—'
+    const vence = line.expiresAt ? sanitizePdfText(formatDateOnlyUtc(line.expiresAt)) : '—'
     const qty = String(Math.ceil(Number(line.quantityUnits ?? 0)))
     const pres = sanitizePdfText(line.presentationLabel ?? '—')
     const productText = sanitizePdfText(line.productLabel ?? '—')

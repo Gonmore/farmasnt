@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useParams } from 'react-router-dom'
 import { apiFetch } from '../../lib/api'
+import { formatDateOnlyUtc } from '../../lib/date'
 import { useAuth } from '../../providers/AuthProvider'
 import { useNavigation, usePermissions } from '../../hooks'
 import { MainLayout, PageContainer, Loading, ErrorState, Button } from '../../components'
@@ -138,7 +139,7 @@ export function LabReceiptDetailPage() {
                         <td className="py-2 pr-3">{l.quantity}</td>
                         <td className="py-2 pr-3">{l.unit}</td>
                         <td className="py-2 pr-3">{l.lotNumber ?? '—'}</td>
-                        <td className="py-2 pr-3">{l.expiresAt ? new Date(l.expiresAt).toLocaleDateString() : '—'}</td>
+                        <td className="py-2 pr-3">{l.expiresAt ? formatDateOnlyUtc(l.expiresAt) : '—'}</td>
                       </tr>
                     ))}
                   </tbody>

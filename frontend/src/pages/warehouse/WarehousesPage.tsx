@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { apiFetch } from '../../lib/api'
+import { formatDateOnlyUtc } from '../../lib/date'
 import { getProductLabel } from '../../lib/productName'
 import { useAuth } from '../../providers/AuthProvider'
 import { useTenant } from '../../providers/TenantProvider'
@@ -467,7 +468,7 @@ export function WarehousesPage() {
                 { header: 'Lote', accessor: (r) => r.batch.batchNumber },
                 {
                   header: 'Vence',
-                  accessor: (r) => (r.batch.expiresAt ? new Date(r.batch.expiresAt).toLocaleDateString() : '-'),
+                  accessor: (r) => (r.batch.expiresAt ? formatDateOnlyUtc(r.batch.expiresAt) : '-'),
                 },
                 { header: 'Ubicación', accessor: (r) => r.location.code },
                 { header: 'Total', accessor: (r) => r.quantity },

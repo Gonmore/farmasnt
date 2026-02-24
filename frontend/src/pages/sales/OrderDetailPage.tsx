@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
 import { apiFetch } from '../../lib/api'
+import { formatDateOnlyUtc } from '../../lib/date'
 import { getProductDisplayName } from '../../lib/productName'
 import { openWhatsAppShare } from '../../lib/whatsapp'
 import { MainLayout, PageContainer, Button, Loading, ErrorState, Table, Badge } from '../../components'
@@ -256,7 +257,7 @@ export function OrderDetailPage() {
                     { header: 'Lote', accessor: (r: any) => r.batchNumber ?? '—' },
                     {
                       header: 'Vence',
-                      accessor: (r: any) => (r.expiresAt ? new Date(r.expiresAt).toLocaleDateString() : '—'),
+                      accessor: (r: any) => (r.expiresAt ? formatDateOnlyUtc(r.expiresAt) : '—'),
                     },
                     {
                       header: 'Ubicación',

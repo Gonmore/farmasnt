@@ -6,6 +6,7 @@ import { MainLayout, PageContainer, Button, IconButton, Input, Loading, ErrorSta
 import { KPICard, ReportSection, reportColors, getChartColor, chartTooltipStyle, chartGridStyle, chartAxisStyle } from '../../components/reports'
 import { useNavigation } from '../../hooks'
 import { apiFetch } from '../../lib/api'
+import { formatDateOnlyUtc } from '../../lib/date'
 import { blobToBase64, exportElementToPdf, pdfBlobFromElement } from '../../lib/exportPdf'
 import { getProductLabel } from '../../lib/productName'
 import { exportPickingToPdf, exportLabelToPdf } from '../../lib/movementRequestDocsPdf'
@@ -1777,7 +1778,7 @@ export function StockReportsPage() {
                             accessor: (r) => getProductLabel({ sku: r.productSku ?? '—', name: r.productName ?? '—', genericName: r.genericName ?? null }),
                           },
                           { header: 'Lote', className: 'w-28', accessor: (r) => r.batchNumber ?? '—' },
-                          { header: 'Vence', className: 'w-28', accessor: (r) => (r.expiresAt ? new Date(r.expiresAt).toLocaleDateString() : '—') },
+                          { header: 'Vence', className: 'w-28', accessor: (r) => (r.expiresAt ? formatDateOnlyUtc(r.expiresAt) : '—') },
                           { header: 'Cantidad (u)', className: 'w-24', accessor: (r) => String(r.quantity ?? 0) },
                         ]}
                       />

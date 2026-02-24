@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
 import { apiFetch } from '../../lib/api'
+import { formatDateOnlyUtc } from '../../lib/date'
 import { useAuth } from '../../providers/AuthProvider'
 import { useNavigation, usePermissions } from '../../hooks'
 import { MainLayout, PageContainer, Loading, ErrorState, Table, Button, Modal, Input, Select } from '../../components'
@@ -266,8 +267,8 @@ export function LabProductionRunDetailPage() {
       { header: 'Lote', accessor: (o: any) => o.batch.batchNumber },
       { header: 'Estado', accessor: (o: any) => o.batch.status },
       { header: 'Cantidad', accessor: (o: any) => `${o.quantity} ${o.unit}` },
-      { header: 'F. Fab', accessor: (o: any) => (o.batch.manufacturingDate ? new Date(o.batch.manufacturingDate).toLocaleDateString() : '—') },
-      { header: 'Vence', accessor: (o: any) => (o.batch.expiresAt ? new Date(o.batch.expiresAt).toLocaleDateString() : '—') },
+      { header: 'F. Fab', accessor: (o: any) => (o.batch.manufacturingDate ? formatDateOnlyUtc(o.batch.manufacturingDate) : '—') },
+      { header: 'Vence', accessor: (o: any) => (o.batch.expiresAt ? formatDateOnlyUtc(o.batch.expiresAt) : '—') },
       {
         header: 'QC',
         accessor: (o: any) => (
@@ -489,7 +490,7 @@ export function LabProductionRunDetailPage() {
                                   .filter((x) => !!x.lotId)
                                   .map((x) => ({
                                     value: x.lotId as string,
-                                    label: `${x.lot?.lotNumber ?? x.lotId} — ${x.quantity} @ ${x.location.code}${x.lot?.expiresAt ? ` (vence ${new Date(x.lot.expiresAt).toLocaleDateString()})` : ''}`,
+                                      label: `${x.lot?.lotNumber ?? x.lotId} — ${x.quantity} @ ${x.location.code}${x.lot?.expiresAt ? ` (vence ${formatDateOnlyUtc(x.lot.expiresAt)})` : ''}`,
                                   })),
                               ]}
                               disabled={!i.supplyId || !consumeFromLocationId}
@@ -650,7 +651,7 @@ export function LabProductionRunDetailPage() {
                                     .filter((x) => !!x.lotId)
                                     .map((x) => ({
                                       value: x.lotId as string,
-                                      label: `${x.lot?.lotNumber ?? x.lotId} — ${x.quantity} @ ${x.location.code}${x.lot?.expiresAt ? ` (vence ${new Date(x.lot.expiresAt).toLocaleDateString()})` : ''}`,
+                                      label: `${x.lot?.lotNumber ?? x.lotId} — ${x.quantity} @ ${x.location.code}${x.lot?.expiresAt ? ` (vence ${formatDateOnlyUtc(x.lot.expiresAt)})` : ''}`,
                                     })),
                                 ]}
                                 disabled={!w.supplyId || !consumeFromLocationId}
