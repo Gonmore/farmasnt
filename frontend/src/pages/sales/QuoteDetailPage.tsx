@@ -322,8 +322,16 @@ export function QuoteDetailPage() {
 
   const canEdit = quoteQuery.data?.status !== 'PROCESSED'
 
+  useEffect(() => {
+    if (!quoteQuery.data) return
+    if (quoteQuery.data.status !== 'PROCESSED') return
+    if (!isEditing) return
+    setIsEditing(false)
+    setEditError('')
+  }, [isEditing, quoteQuery.data])
+
   const editColumns = useMemo(() => {
-    return [
+    const cols = [
       {
         header: 'Producto',
         accessor: (row: DraftLine) => (
@@ -467,7 +475,10 @@ export function QuoteDetailPage() {
           return `${money(total)} ${currency}`
         },
       },
-      {
+    ]
+
+    if (canEdit) {
+      cols.push({
         header: '',
         accessor: (row: DraftLine) => (
           <button
@@ -480,15 +491,17 @@ export function QuoteDetailPage() {
                 return { ...prev, lines: nextLines.length ? nextLines : prev.lines }
               })
             }}
-            disabled={saveMutation.isPending}
+            disabled={saveMutation.isPending || !canEdit}
             title="Quitar fila"
           >
             <TrashIcon className="h-5 w-5" />
           </button>
         ),
-      },
-    ]
-  }, [currency, saveMutation.isPending, queryClient])
+      } as any)
+    }
+
+    return cols
+  }, [canEdit, currency, saveMutation.isPending])
 
   return (
     <MainLayout navGroups={navGroups}>
@@ -692,6 +705,7 @@ export function QuoteDetailPage() {
 
             <div className="rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
               <Table
+                alwaysVisibleHorizontalScroll
                 columns={[
                   { header: 'SKU', accessor: (r: any) => r.productSku },
                   { header: 'Producto', accessor: (r: any) => r.productName },
@@ -842,6 +856,7 @@ export function QuoteDetailPage() {
 
             <div className="rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
               <Table
+                alwaysVisibleHorizontalScroll
                 columns={editColumns as any}
                 data={draft.lines}
                 keyExtractor={(r: any) => r.key}

@@ -33,6 +33,11 @@ const orderConfirmSchema = z.object({
   version: z.number().int().positive(),
 })
 
+const orderCancelSchema = z.object({
+  version: z.number().int().positive(),
+  note: z.string().trim().max(500).optional(),
+})
+
 const orderFulfillSchema = z.object({
   version: z.number().int().positive(),
   fromLocationId: z.string().uuid(),
@@ -752,11 +757,13 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
           id: true,
           number: true,
           status: true,
+          version: true,
           createdAt: true,
           updatedAt: true,
           createdBy: true,
           deliveredAt: true,
           paidAt: true,
+          paidAmount: true,
           deliveryDate: true,
           deliveryCity: true,
           deliveryZone: true,
@@ -783,6 +790,7 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
         id: o.id,
         number: o.number,
         status: o.status,
+        version: o.version,
         createdAt: o.createdAt.toISOString(),
         updatedAt: o.updatedAt.toISOString(),
         customerId: o.customer.id,
@@ -792,6 +800,7 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
         processedBy: o.createdBy ? authorMap.get(o.createdBy) ?? null : null,
         deliveredAt: o.deliveredAt ? o.deliveredAt.toISOString() : null,
         paidAt: o.paidAt ? o.paidAt.toISOString() : null,
+        paidAmount: Number(o.paidAmount ?? 0),
         deliveryDate: o.deliveryDate ? o.deliveryDate.toISOString() : null,
         deliveryCity: o.deliveryCity,
         deliveryZone: o.deliveryZone,
@@ -843,6 +852,9 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
           createdAt: true,
           updatedAt: true,
           createdBy: true,
+          deliveredAt: true,
+          paidAt: true,
+          paidAmount: true,
           deliveryDate: true,
           deliveryCity: true,
           deliveryZone: true,
@@ -892,8 +904,135 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
         })),
         createdAt: order.createdAt.toISOString(),
         updatedAt: order.updatedAt.toISOString(),
+        deliveredAt: order.deliveredAt ? order.deliveredAt.toISOString() : null,
+        paidAt: order.paidAt ? order.paidAt.toISOString() : null,
+        paidAmount: Number(order.paidAmount ?? 0),
         deliveryDate: order.deliveryDate ? order.deliveryDate.toISOString() : null,
       })
+    },
+  )
+
+  // Cancel/Annul: mark order as CANCELLED (only if not delivered nor paid), release reservations,
+  // and reopen the originating quote by setting it back to CREATED.
+  app.post(
+    '/api/v1/sales/orders/:id/cancel',
+    {
+      preHandler: [
+        requireAuth(),
+        requireModuleEnabled(db, 'SALES'),
+        requireModuleEnabled(db, 'WAREHOUSE'),
+        requirePermission(Permissions.SalesOrderWrite),
+        requirePermission(Permissions.StockMove),
+      ],
+    },
+    async (request, reply) => {
+      const id = (request.params as any).id as string
+      const parsed = orderCancelSchema.safeParse(request.body)
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid request', issues: parsed.error.issues })
+
+      const tenantId = request.auth!.tenantId
+      const userId = request.auth!.userId
+      const branchCity = branchCityOf(request)
+
+      if (branchCity === '__MISSING__') {
+        return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+      }
+
+      const result = await db.$transaction(async (tx) => {
+        const order = await tx.salesOrder.findFirst({
+          where: {
+            id,
+            tenantId,
+            ...(branchCity
+              ? {
+                  OR: [
+                    { deliveryCity: { equals: branchCity, mode: 'insensitive' as const } },
+                    { AND: [{ OR: [{ deliveryCity: null }, { deliveryCity: '' }] }, { customer: { city: { equals: branchCity, mode: 'insensitive' as const } } }] },
+                  ],
+                }
+              : {}),
+          },
+          select: { id: true, number: true, status: true, version: true, quoteId: true, deliveredAt: true, paidAt: true, paidAmount: true, note: true },
+        })
+
+        if (!order) {
+          const err = new Error('Not found') as Error & { statusCode?: number }
+          err.statusCode = 404
+          throw err
+        }
+        if (order.version !== parsed.data.version) {
+          const err = new Error('Version conflict') as Error & { statusCode?: number }
+          err.statusCode = 409
+          throw err
+        }
+        if (order.status === 'CANCELLED') {
+          const err = new Error('Order already cancelled') as Error & { statusCode?: number }
+          err.statusCode = 409
+          throw err
+        }
+        if (order.status === 'FULFILLED' || order.deliveredAt) {
+          const err = new Error('Delivered orders cannot be cancelled') as Error & { statusCode?: number }
+          err.statusCode = 409
+          throw err
+        }
+
+        const paidAmount = toNumber(order.paidAmount)
+        if (order.paidAt || paidAmount > 0) {
+          const err = new Error('Paid orders cannot be cancelled') as Error & { statusCode?: number }
+          err.statusCode = 409
+          throw err
+        }
+
+        await releaseReservationsForOrder(tx, { tenantId, orderId: order.id, userId })
+
+        const existingNote = (order.note ?? '').trim()
+        const reason = (parsed.data.note ?? '').trim()
+        const nextNote = (() => {
+          const tag = reason ? `ANULADA: ${reason}` : 'ANULADA'
+          return existingNote ? `${existingNote}\n${tag}` : tag
+        })()
+
+        const updatedOrder = await tx.salesOrder.update({
+          where: { id: order.id },
+          data: {
+            status: 'CANCELLED',
+            // Unlink quoteId so the quote can be processed again into a new order.
+            quoteId: null,
+            note: nextNote,
+            version: { increment: 1 },
+            createdBy: userId,
+          },
+          select: { id: true, number: true, status: true, version: true, updatedAt: true },
+        })
+
+        const reopenedQuote = order.quoteId
+          ? await tx.quote.update({
+              where: { id: order.quoteId },
+              data: { status: 'CREATED', processedAt: null, version: { increment: 1 } },
+              select: { id: true, number: true, status: true, updatedAt: true },
+            })
+          : null
+
+        return { before: order, updatedOrder, reopenedQuote }
+      })
+
+      await audit.append({
+        tenantId,
+        actorUserId: userId,
+        action: 'sales.order.cancel',
+        entityType: 'SalesOrder',
+        entityId: id,
+        before: result.before,
+        after: { order: result.updatedOrder, quote: result.reopenedQuote },
+      })
+
+      const room = `tenant:${tenantId}`
+      app.io?.to(room).emit('sales.order.cancelled', result.updatedOrder)
+      if (result.reopenedQuote) {
+        app.io?.to(room).emit('sales.quote.reopened', result.reopenedQuote)
+      }
+
+      return reply.send({ order: result.updatedOrder, quote: result.reopenedQuote })
     },
   )
 

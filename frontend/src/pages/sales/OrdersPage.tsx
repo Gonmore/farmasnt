@@ -1,11 +1,12 @@
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { apiFetch } from '../../lib/api'
 import { useAuth } from '../../providers/AuthProvider'
 import { MainLayout, PageContainer, Button, Table, Loading, ErrorState, EmptyState, Badge, PaginationCursor, Input } from '../../components'
 import { useNavigation } from '../../hooks'
-import { EyeIcon } from '@heroicons/react/24/outline'
+import { EyeIcon, TrashIcon } from '@heroicons/react/24/outline'
+import { useNotifications } from '../../providers/NotificationsProvider'
 
 type OrderListItem = {
   id: string
@@ -13,7 +14,11 @@ type OrderListItem = {
   customerId: string
   customerName: string
   status: 'DRAFT' | 'CONFIRMED' | 'FULFILLED' | 'CANCELLED'
+  version: number
   updatedAt: string
+  deliveredAt?: string | null
+  paidAt?: string | null
+  paidAmount?: number
 }
 
 type ListResponse = { items: OrderListItem[]; nextCursor: string | null }
@@ -33,10 +38,20 @@ async function fetchOrders(token: string, take: number, cursor?: string, custome
   return apiFetch(`/api/v1/sales/orders?${params}`, { token })
 }
 
+async function cancelOrder(token: string, id: string, version: number): Promise<{ order: any; quote: any | null }> {
+  return apiFetch(`/api/v1/sales/orders/${encodeURIComponent(id)}/cancel`, {
+    token,
+    method: 'POST',
+    body: JSON.stringify({ version }),
+  })
+}
+
 export function OrdersPage() {
   const auth = useAuth()
   const navigate = useNavigate()
   const navGroups = useNavigation()
+  const queryClient = useQueryClient()
+  const notifications = useNotifications()
   const [searchParams, setSearchParams] = useSearchParams()
   const highlightId = searchParams.get('highlight')
   const [cursor, setCursor] = useState<string | undefined>()
@@ -46,6 +61,21 @@ export function OrdersPage() {
     queryKey: ['orders', cursor, customerSearch],
     queryFn: () => fetchOrders(auth.accessToken!, 20, cursor, customerSearch || undefined),
     enabled: !!auth.accessToken,
+  })
+
+  const cancelMutation = useMutation({
+    mutationFn: async (o: OrderListItem) => cancelOrder(auth.accessToken!, o.id, o.version),
+    onSuccess: async (resp) => {
+      await queryClient.invalidateQueries({ queryKey: ['orders'] })
+      notifications.notify({
+        kind: 'success',
+        title: 'Orden anulada',
+        body: resp?.quote?.id ? 'La cotización volvió a estar disponible.' : 'La orden fue anulada.',
+      })
+    },
+    onError: (err: any) => {
+      notifications.notify({ kind: 'error', title: 'No se pudo anular', body: err?.message ?? 'Error desconocido' })
+    },
   })
 
   useEffect(() => {
@@ -106,6 +136,28 @@ export function OrdersPage() {
                     accessor: (o) => (
                       <div className="flex items-center justify-center gap-1">
                         <Button variant="ghost" size="sm" icon={<EyeIcon className="w-4 h-4" />} onClick={() => navigate(`/sales/orders/${o.id}`)}>Ver</Button>
+                        {(() => {
+                          const deliveredAt = (o as any).deliveredAt ?? null
+                          const paidAt = (o as any).paidAt ?? null
+                          const paidAmount = Number((o as any).paidAmount ?? 0)
+                          const canCancel = o.status !== 'CANCELLED' && o.status !== 'FULFILLED' && !deliveredAt && !paidAt && paidAmount <= 0
+                          if (!canCancel) return null
+                          return (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              title="Anular"
+                              icon={<TrashIcon className="w-4 h-4 text-red-600" />}
+                              disabled={cancelMutation.isPending}
+                              onClick={() => {
+                                if (cancelMutation.isPending) return
+                                const ok = window.confirm('¿Anular esta orden de venta? Esto liberará reservas y la cotización volverá a “no procesada”.')
+                                if (!ok) return
+                                cancelMutation.mutate(o)
+                              }}
+                            />
+                          )
+                        })()}
                       </div>
                     ),
                   },

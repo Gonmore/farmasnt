@@ -188,6 +188,7 @@ export function QuotesPage() {
           {quotesQuery.data && quotesQuery.data.items.length > 0 && (
             <>
               <Table<QuoteListItem>
+                alwaysVisibleHorizontalScroll
                 columns={[
                   { header: 'Número', accessor: (q) => q.number.split('-').pop() ?? q.number },
                   { header: 'Cliente', accessor: (q) => q.customerName.length > 15 ? `${q.customerName.slice(0, 15)}...` : q.customerName },
@@ -218,26 +219,30 @@ export function QuotesPage() {
                         >
                           <span className="hidden md:inline">Ver</span>
                         </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          icon={<ArrowPathIcon className="w-4 h-4" />}
-                          onClick={() => processMutation.mutate(q.id)}
-                          loading={processMutation.isPending}
-                        >
-                          <span className="hidden md:inline">Procesar</span>
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          icon={<TrashIcon className="w-4 h-4 text-red-500" />}
-                          onClick={() => {
-                            if (confirm('¿Estás seguro de que quieres eliminar esta cotización?')) {
-                              deleteMutation.mutate(q.id)
-                            }
-                          }}
-                          loading={deleteMutation.isPending}
-                        />
+                        {q.status !== 'PROCESSED' && (
+                          <>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              icon={<ArrowPathIcon className="w-4 h-4" />}
+                              onClick={() => processMutation.mutate(q.id)}
+                              loading={processMutation.isPending}
+                            >
+                              <span className="hidden md:inline">Procesar</span>
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              icon={<TrashIcon className="w-4 h-4 text-red-500" />}
+                              onClick={() => {
+                                if (confirm('¿Estás seguro de que quieres eliminar esta cotización?')) {
+                                  deleteMutation.mutate(q.id)
+                                }
+                              }}
+                              loading={deleteMutation.isPending}
+                            />
+                          </>
+                        )}
                       </div>
                     ),
                   },

@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
 import { apiFetch } from '../../lib/api'
 import { formatDateOnlyUtc } from '../../lib/date'
@@ -8,6 +8,7 @@ import { MainLayout, PageContainer, Button, Loading, ErrorState, Table, Badge } 
 import { useNavigation } from '../../hooks'
 import { useAuth } from '../../providers/AuthProvider'
 import { useTenant } from '../../providers/TenantProvider'
+import { useNotifications } from '../../providers/NotificationsProvider'
 
 type OrderLine = {
   id: string
@@ -32,6 +33,9 @@ type SalesOrderDetail = {
   version: number
   createdAt: string
   updatedAt: string
+  deliveredAt: string | null
+  paidAt: string | null
+  paidAmount: number
   processedBy: string | null
   deliveryDate: string | null
   deliveryCity: string | null
@@ -41,6 +45,11 @@ type SalesOrderDetail = {
   customer: { id: string; name: string; nit: string | null }
   quote: { id: string; number: string } | null
   lines: OrderLine[]
+}
+
+type CancelOrderResponse = {
+  order: { id: string; number: string; status: 'CANCELLED'; version: number; updatedAt: string }
+  quote: { id: string; number: string; status: 'CREATED'; updatedAt: string } | null
 }
 
 type OrderReservationRow = {
@@ -86,6 +95,14 @@ async function fetchOrder(token: string, id: string): Promise<SalesOrderDetail> 
   return apiFetch(`/api/v1/sales/orders/${id}`, { token })
 }
 
+async function cancelOrder(token: string, id: string, version: number): Promise<CancelOrderResponse> {
+  return apiFetch(`/api/v1/sales/orders/${encodeURIComponent(id)}/cancel`, {
+    token,
+    method: 'POST',
+    body: JSON.stringify({ version }),
+  })
+}
+
 async function fetchOrderReservations(token: string, id: string): Promise<OrderReservationsResponse> {
   return apiFetch(`/api/v1/sales/orders/${encodeURIComponent(id)}/reservations`, { token })
 }
@@ -96,6 +113,8 @@ export function OrderDetailPage() {
   const navGroups = useNavigation()
   const auth = useAuth()
   const tenant = useTenant()
+  const queryClient = useQueryClient()
+  const notifications = useNotifications()
   const currency = tenant.branding?.currency || 'BOB'
 
   const orderQuery = useQuery({
@@ -115,6 +134,39 @@ export function OrderDetailPage() {
     const unit = toNumber(l.unitPrice)
     return sum + qty * unit
   }, 0)
+
+  const canCancel = (() => {
+    const o = orderQuery.data
+    if (!o) return false
+    if (o.status === 'CANCELLED' || o.status === 'FULFILLED') return false
+    const paidAmount = toNumber(o.paidAmount)
+    return !o.deliveredAt && !o.paidAt && paidAmount <= 0
+  })()
+
+  const cancelMutation = useMutation({
+    mutationFn: async () => cancelOrder(auth.accessToken!, id!, orderQuery.data!.version),
+    onSuccess: async (resp) => {
+      await queryClient.invalidateQueries({ queryKey: ['orders'] })
+      await queryClient.invalidateQueries({ queryKey: ['order', id] })
+      await queryClient.invalidateQueries({ queryKey: ['order', id, 'reservations'] })
+      await queryClient.invalidateQueries({ queryKey: ['quotes'] })
+      if (resp.quote?.id) {
+        await queryClient.invalidateQueries({ queryKey: ['quote', resp.quote.id] })
+      }
+
+      notifications.notify({
+        kind: 'success',
+        title: 'Orden anulada',
+        body: resp.quote?.id ? 'La orden fue anulada y la cotización volvió a estar disponible.' : 'La orden fue anulada.',
+      })
+
+      if (resp.quote?.id) navigate(`/sales/quotes/${resp.quote.id}`)
+      else navigate('/sales/orders')
+    },
+    onError: (err: any) => {
+      notifications.notify({ kind: 'error', title: 'No se pudo anular', body: err?.message ?? 'Error desconocido' })
+    },
+  })
 
   return (
     <MainLayout navGroups={navGroups}>
@@ -141,6 +193,21 @@ export function OrderDetailPage() {
                 }}
               >
                 📲 WhatsApp
+              </Button>
+            )}
+
+            {orderQuery.data && canCancel && (
+              <Button
+                variant="danger"
+                disabled={cancelMutation.isPending}
+                onClick={() => {
+                  if (cancelMutation.isPending) return
+                  const ok = window.confirm('¿Anular esta orden de venta? Esto liberará reservas y la cotización volverá a “no procesada”.')
+                  if (!ok) return
+                  cancelMutation.mutate()
+                }}
+              >
+                Anular
               </Button>
             )}
           </div>
