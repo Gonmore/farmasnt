@@ -7,7 +7,8 @@ import { MainLayout, PageContainer, Table, Button, Modal, Input, Select, Loading
 import { useNavigation } from '../../hooks'
 import { getProductLabel } from '../../lib/productName'
 import { MovementQuickActions } from '../../components/MovementQuickActions'
-import { EyeIcon } from '@heroicons/react/24/outline'
+import { EyeIcon, CheckCircleIcon } from '@heroicons/react/24/outline'
+import { useNotifications } from '../../providers/NotificationsProvider'
 
 type WarehouseListItem = {
   id: string
@@ -78,8 +79,32 @@ type StockReturn = {
 }
 
 async function listSentMovementRequests(token: string): Promise<{ items: any[] }> {
-  const params = new URLSearchParams({ take: '50', status: 'SENT' })
-  return apiFetch(`/api/v1/stock/movement-requests?${params.toString()}`, { token })
+  const take = '50'
+  const fetchByStatus = async (status: 'SENT' | 'OPEN') => {
+    const params = new URLSearchParams({ take, status })
+    return apiFetch(`/api/v1/stock/movement-requests?${params.toString()}`, { token }) as Promise<{ items: any[] }>
+  }
+
+  const [sent, open] = await Promise.all([fetchByStatus('SENT'), fetchByStatus('OPEN')])
+
+  const withPendingShipments = (r: any) => {
+    const ms = Array.isArray(r?.movements) ? r.movements : []
+    const pending = ms.reduce((sum: number, m: any) => sum + Number(m?.pendingQuantity ?? 0), 0)
+    return pending > 0
+  }
+
+  // Sent: fully shipped, pending reception/return.
+  // Open: partial shipments (only include if there is something shipped pending).
+  const merged = [...(sent.items ?? []).filter(withPendingShipments), ...(open.items ?? []).filter(withPendingShipments)]
+
+  const dedup = new Map<string, any>()
+  for (const r of merged) {
+    const id = String(r?.id ?? '')
+    if (!id) continue
+    dedup.set(id, r)
+  }
+
+  return { items: Array.from(dedup.values()) }
 }
 
 async function listReturns(token: string): Promise<{ items: StockReturn[] }> {
@@ -130,6 +155,18 @@ async function confirmReception(token: string, requestId: string): Promise<{ mes
   })
 }
 
+async function returnShipment(
+  token: string,
+  requestId: string,
+  input: { mode: 'ALL' | 'PARTIAL'; reason: string; items?: Array<{ outMovementId: string; quantity: number }> },
+): Promise<{ message: string }> {
+  return apiFetch(`/api/v1/stock/movement-requests/${encodeURIComponent(requestId)}/return`, {
+    token,
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+}
+
 async function createReturn(
   token: string,
   input: {
@@ -152,6 +189,7 @@ export function ReturnsPage() {
   const auth = useAuth()
   const navGroups = useNavigation()
   const queryClient = useQueryClient()
+  const notifications = useNotifications()
 
   const returnsQuery = useQuery({
     queryKey: ['stockReturns'],
@@ -185,6 +223,10 @@ export function ReturnsPage() {
   const [activeTab, setActiveTab] = useState<'returns' | 'receptions'>('receptions')
 
   const [selectedRequest, setSelectedRequest] = useState<any>(null)
+  const [showReturnModal, setShowReturnModal] = useState(false)
+  const [returnMode, setReturnMode] = useState<'ALL' | 'PARTIAL'>('ALL')
+  const [returnReason, setReturnReason] = useState('')
+  const [returnItems, setReturnItems] = useState<Record<string, number>>({})
 
   const sortedReturns = useMemo(() => {
     const items = returnsQuery.data?.items ?? []
@@ -198,6 +240,13 @@ export function ReturnsPage() {
         new Date(b.fulfilledAt || b.createdAt).getTime() - new Date(a.fulfilledAt || a.createdAt).getTime(),
     )
   }, [sentRequestsQuery.data?.items])
+
+  const pendingMovements = useMemo(() => {
+    const ms = Array.isArray(selectedRequest?.movements) ? selectedRequest.movements : []
+    return ms
+      .map((m: any) => ({ ...m, pendingQuantity: Number(m?.pendingQuantity ?? 0) }))
+      .filter((m: any) => m.pendingQuantity > 0)
+  }, [selectedRequest])
 
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
@@ -367,6 +416,48 @@ export function ReturnsPage() {
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['sentMovementRequests'] })
       await queryClient.invalidateQueries({ queryKey: ['movement-requests'] })
+      notifications.notify({ kind: 'success', title: 'Recepción confirmada', body: 'Se registró la recepción del envío.' })
+    },
+    onError: (e: any) => {
+      notifications.notify({ kind: 'error', title: 'No se pudo recepcionar', body: e?.message ?? 'Error desconocido' })
+    },
+  })
+
+  const returnMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedRequest?.id) throw new Error('Envío inválido')
+      const reason = returnReason.trim()
+      if (!reason) throw new Error('Ingresá un motivo')
+
+      if (returnMode === 'ALL') {
+        return returnShipment(auth.accessToken!, selectedRequest.id, { mode: 'ALL', reason })
+      }
+
+      const items = pendingMovements
+        .map((m: any) => ({ outMovementId: String(m.id), quantity: Number(returnItems[String(m.id)] ?? 0) }))
+        .filter((it: any) => Number.isFinite(it.quantity) && it.quantity > 0)
+
+      if (items.length === 0) throw new Error('Ingresá al menos una cantidad a devolver')
+
+      // Client-side guard: do not exceed pending.
+      for (const it of items) {
+        const m = pendingMovements.find((x: any) => String(x.id) === String(it.outMovementId))
+        const pending = Number(m?.pendingQuantity ?? 0)
+        if (it.quantity > pending) throw new Error('La cantidad a devolver excede lo pendiente')
+      }
+
+      return returnShipment(auth.accessToken!, selectedRequest.id, { mode: 'PARTIAL', reason, items })
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['sentMovementRequests'] })
+      await queryClient.invalidateQueries({ queryKey: ['movement-requests'] })
+      notifications.notify({ kind: 'success', title: 'Devolución registrada', body: 'Se registró la devolución del envío.' })
+      setShowReturnModal(false)
+      setReturnReason('')
+      setReturnItems({})
+    },
+    onError: (e: any) => {
+      notifications.notify({ kind: 'error', title: 'No se pudo devolver', body: e?.message ?? 'Error desconocido' })
     },
   })
 
@@ -398,66 +489,234 @@ export function ReturnsPage() {
       isOpen={!!selectedRequest}
       onClose={() => setSelectedRequest(null)}
       title="📦 Detalle del envío"
-      maxWidth="lg"
+      maxWidth="3xl"
     >
       <div className="space-y-4">
-        <div className="grid grid-cols-2 gap-4 text-sm">
-          <div>
-            <div className="font-medium text-slate-900 dark:text-slate-100">Origen</div>
-            <div className="text-slate-600 dark:text-slate-400">
-              {selectedRequest.originWarehouse?.city
-                ? abbreviateCity(selectedRequest.originWarehouse.city)
-                : selectedRequest.originWarehouse?.code?.replace(/^SUC-/, '') ?? '-'}
-            </div>
-          </div>
-          <div>
-            <div className="font-medium text-slate-900 dark:text-slate-100">Destino</div>
-            <div className="text-slate-600 dark:text-slate-400">
-              {selectedRequest.warehouse?.city
-                ? abbreviateCity(selectedRequest.warehouse.city)
-                : selectedRequest.requestedCity
-                  ? abbreviateCity(selectedRequest.requestedCity)
-                  : selectedRequest.warehouse?.code?.replace(/^SUC-/, '') ?? '-'}
-            </div>
-          </div>
-          <div>
-            <div className="font-medium text-slate-900 dark:text-slate-100">Solicitante</div>
-            <div className="text-slate-600 dark:text-slate-400">{selectedRequest.requestedByName ?? '-'}</div>
-          </div>
-          <div>
-            <div className="font-medium text-slate-900 dark:text-slate-100">Enviado por</div>
-            <div className="text-slate-600 dark:text-slate-400">{selectedRequest.fulfilledByName ?? '-'}</div>
-          </div>
-          <div>
-            <div className="font-medium text-slate-900 dark:text-slate-100">Fecha envío</div>
-            <div className="text-slate-600 dark:text-slate-400">{new Date(selectedRequest.fulfilledAt || selectedRequest.createdAt).toLocaleString()}</div>
-          </div>
-        </div>
+        {(() => {
+          const fromCode = selectedRequest.originWarehouse?.city
+            ? abbreviateCity(selectedRequest.originWarehouse.city)
+            : selectedRequest.originWarehouse?.code?.replace(/^SUC-/, '') ?? '—'
+          const toCode = selectedRequest.warehouse?.city
+            ? abbreviateCity(selectedRequest.warehouse.city)
+            : selectedRequest.requestedCity
+              ? abbreviateCity(selectedRequest.requestedCity)
+              : selectedRequest.warehouse?.code?.replace(/^SUC-/, '') ?? '—'
 
-        <div>
-          <div className="font-medium text-slate-900 dark:text-slate-100 mb-2">Productos enviados</div>
-          <div className="space-y-2 max-h-60 overflow-y-auto">
-            {selectedRequest.movements?.map((movement: any, idx: number) => (
-              <div key={idx} className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800 rounded">
-                <div className="flex-1">
-                  <div className="font-medium">{getProductLabel(movement)}</div>
-                  <div className="text-sm text-slate-600 dark:text-slate-400 grid grid-cols-2 gap-2 mt-1">
-                    <div><strong>Presentación:</strong> {movement.presentation?.name ?? '-'}</div>
-                    <div><strong>Cantidad:</strong> {movement.quantity}</div>
-                    <div><strong>Lote:</strong> {movement.batch?.batchNumber ?? '-'}</div>
-                    <div><strong>Vencimiento:</strong> {movement.batch?.expiresAt ? formatDateOnlyUtc(movement.batch.expiresAt) : '-'}</div>
+          const sentAt = new Date(selectedRequest.fulfilledAt || selectedRequest.createdAt)
+          const tipo = selectedRequest.status === 'OPEN' ? 'Atención parcial' : 'Atención de solicitud'
+
+          return (
+            <div className="grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <div className="font-medium text-slate-900 dark:text-slate-100">ORG -&gt; DEST</div>
+                <div className="text-slate-600 dark:text-slate-400">{fromCode} -&gt; {toCode}</div>
+              </div>
+              <div>
+                <div className="font-medium text-slate-900 dark:text-slate-100">Tipo</div>
+                <div className="text-slate-600 dark:text-slate-400">{tipo}</div>
+              </div>
+              <div>
+                <div className="font-medium text-slate-900 dark:text-slate-100">Solicitante</div>
+                <div className="text-slate-600 dark:text-slate-400">{selectedRequest.requestedByName ?? '-'}</div>
+              </div>
+              <div>
+                <div className="font-medium text-slate-900 dark:text-slate-100">Enviado por</div>
+                <div className="text-slate-600 dark:text-slate-400">{selectedRequest.fulfilledByName ?? '-'}</div>
+              </div>
+              <div>
+                <div className="font-medium text-slate-900 dark:text-slate-100">Fecha envío</div>
+                <div className="text-slate-600 dark:text-slate-400">
+                  <div>{sentAt.toLocaleDateString()}</div>
+                  <div className="text-xs">{sentAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                </div>
+              </div>
+            </div>
+          )
+        })()}
+
+        {selectedRequest.status === 'OPEN' && Array.isArray(selectedRequest.items) &&
+          (() => {
+            const allMovements = Array.isArray(selectedRequest.movements) ? selectedRequest.movements : []
+            const normalize = (v: any) => String(v ?? '').trim().toLowerCase()
+
+            const formatQty = (v: number) => {
+              if (!Number.isFinite(v)) return '0'
+              const rounded = Math.round(v)
+              if (Math.abs(v - rounded) <= 1e-9) return String(rounded)
+              return String(Number(v.toFixed(2)))
+            }
+
+            const movementsForItem = (it: any) => {
+              const itSku = normalize(it.productSku)
+              const itName = normalize(it.productName)
+              const itGeneric = normalize(it.genericName)
+
+              return allMovements.filter((m: any) => {
+                const mSku = normalize(m.productSku)
+                const mName = normalize(m.productName)
+                const mGeneric = normalize(m.genericName)
+                if (itSku && mSku) return itSku === mSku
+                if (itName && mName && itGeneric && mGeneric) return itName === mName && itGeneric === mGeneric
+                if (itName && mName) return itName === mName
+                return false
+              })
+            }
+
+            return (
+              <div>
+                <div className="font-medium text-slate-900 dark:text-slate-100 mb-2">Solicitud</div>
+
+                <div className="rounded-lg border-2 border-blue-500 dark:border-blue-400 overflow-hidden">
+                  <div className="grid grid-cols-2 bg-slate-50 dark:bg-slate-800 text-sm">
+                    <div className="px-3 py-2 font-semibold text-slate-700 dark:text-slate-200">Solicitado</div>
+                    <div className="px-3 py-2 font-semibold text-slate-700 dark:text-slate-200">Enviado</div>
+                  </div>
+
+                  <div className="max-h-72 overflow-y-auto divide-y-2 divide-blue-200 dark:divide-blue-500/40">
+                    {selectedRequest.items.map((it: any) => {
+                      const requestedUnits = Number(it.requestedQuantity ?? 0)
+                      const remainingUnits = Number(it.remainingQuantity ?? 0)
+                      const sentUnits = Math.max(0, requestedUnits - remainingUnits)
+
+                      const unitsPerPresentation = Number(it.unitsPerPresentation ?? it.presentation?.unitsPerPresentation ?? 0)
+                      const requestedPres =
+                        it.presentationQuantity != null && Number.isFinite(Number(it.presentationQuantity))
+                          ? Number(it.presentationQuantity)
+                          : unitsPerPresentation > 0
+                            ? requestedUnits / unitsPerPresentation
+                            : requestedUnits
+                      const remainingPres = unitsPerPresentation > 0 ? remainingUnits / unitsPerPresentation : remainingUnits
+                      const sentPres = unitsPerPresentation > 0 ? sentUnits / unitsPerPresentation : sentUnits
+
+                      const isDone = remainingPres <= 1e-9
+
+                      const label = getProductLabel({ sku: it.productSku, name: it.productName, genericName: it.genericName } as any)
+                      const presentationName = it.presentation?.name ?? it.presentationName ?? '-'
+                      const shippedDetails = movementsForItem(it)
+
+                      return (
+                        <div key={it.id} className="grid grid-cols-2">
+                          <div className="p-3">
+                            <div className="flex items-start gap-2">
+                              {isDone ? <CheckCircleIcon className="w-5 h-5 text-emerald-600 mt-0.5" /> : null}
+                              <div className="flex-1">
+                                <div className="font-medium text-slate-900 dark:text-slate-100">{label || '—'}</div>
+                                <div className="mt-1 text-xs text-slate-600 dark:text-slate-400">
+                                  <div><strong>Presentación:</strong> {presentationName}</div>
+                                  <div className="flex flex-wrap gap-x-4 gap-y-1">
+                                    <div><strong>Solicitado:</strong> {formatQty(requestedPres)}</div>
+                                    <div>
+                                      <strong>Pendiente:</strong>{' '}
+                                      <span
+                                        className={
+                                          Math.max(0, remainingPres) <= 1e-9
+                                            ? 'text-emerald-700 dark:text-emerald-400'
+                                            : 'text-red-700 dark:text-red-400'
+                                        }
+                                      >
+                                        {formatQty(Math.max(0, remainingPres))}
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="p-3 bg-slate-50/50 dark:bg-slate-800/30 border-l-2 border-blue-200 dark:border-blue-500/40">
+                            {sentPres <= 1e-9 ? (
+                              <div className="h-full flex items-center">
+                                <div className="w-full border-t border-blue-200 dark:border-blue-500/40" />
+                              </div>
+                            ) : (
+                              <div className="space-y-2">
+                                <div className="text-sm text-slate-700 dark:text-slate-200">
+                                  <strong>Enviado:</strong> {formatQty(sentPres)}
+                                </div>
+
+                                {shippedDetails.length > 0 && (
+                                  <div className="space-y-1">
+                                    {shippedDetails.map((m: any, idx: number) => {
+                                      const mUnitsPerPresentation = Number(m.presentation?.unitsPerPresentation ?? unitsPerPresentation ?? 0)
+                                      const mPresQty =
+                                        m.presentationQuantity != null && Number.isFinite(Number(m.presentationQuantity))
+                                          ? Number(m.presentationQuantity)
+                                          : mUnitsPerPresentation > 0
+                                            ? Number(m.quantity ?? 0) / mUnitsPerPresentation
+                                            : Number(m.quantity ?? 0)
+
+                                      return (
+                                        <div
+                                          key={`${it.id}-${idx}`}
+                                          className="rounded-md border border-slate-200 bg-white p-2 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+                                        >
+                                          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                                            <div><strong>Cant:</strong> {formatQty(mPresQty)}</div>
+                                            <div><strong>Pres:</strong> {m.presentation?.name ?? '-'}</div>
+                                          </div>
+                                          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-slate-600 dark:text-slate-400">
+                                            <div><strong>Lote:</strong> {m.batch?.batchNumber ?? '-'}</div>
+                                            <div><strong>Venc:</strong> {m.batch?.expiresAt ? formatDateOnlyUtc(m.batch.expiresAt) : '-'}</div>
+                                          </div>
+                                        </div>
+                                      )
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
                   </div>
                 </div>
               </div>
-            )) || (
-              <div className="text-sm text-slate-500">No hay información detallada de envío disponible</div>
-            )}
+            )
+          })()}
+
+        {selectedRequest.status !== 'OPEN' && (
+          <div>
+            <div className="font-medium text-slate-900 dark:text-slate-100 mb-2">Productos enviados</div>
+            <div className="space-y-2 max-h-60 overflow-y-auto">
+              {selectedRequest.movements?.map((movement: any, idx: number) => (
+                <div key={idx} className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800 rounded">
+                  <div className="flex-1">
+                    <div className="font-medium">
+                      {getProductLabel({ sku: movement.productSku, name: movement.productName, genericName: movement.genericName } as any) || '—'}
+                    </div>
+                    <div className="text-sm text-slate-600 dark:text-slate-400 grid grid-cols-2 gap-2 mt-1">
+                      <div><strong>Presentación:</strong> {movement.presentation?.name ?? '-'}</div>
+                      <div><strong>Cantidad:</strong> {movement.quantity} {Number(movement.pendingQuantity ?? 0) > 0 ? `(pendiente ${movement.pendingQuantity})` : ''}</div>
+                      <div><strong>Lote:</strong> {movement.batch?.batchNumber ?? '-'}</div>
+                      <div><strong>Vencimiento:</strong> {movement.batch?.expiresAt ? formatDateOnlyUtc(movement.batch.expiresAt) : '-'}</div>
+                    </div>
+                  </div>
+                </div>
+              )) || (
+                <div className="text-sm text-slate-500">No hay información detallada de envío disponible</div>
+              )}
+            </div>
           </div>
-        </div>
+        )}
 
         <div className="flex justify-end gap-2 pt-4 border-t">
           <Button variant="outline" onClick={() => setSelectedRequest(null)}>
             Cerrar
+          </Button>
+          <Button
+            variant="danger"
+            onClick={() => {
+              setReturnMode('ALL')
+              setReturnReason('')
+              const seed: Record<string, number> = {}
+              for (const m of pendingMovements) seed[String(m.id)] = Number(m.pendingQuantity ?? 0)
+              setReturnItems(seed)
+              setShowReturnModal(true)
+            }}
+            disabled={pendingMovements.length === 0}
+          >
+            ↩️ Devolver
           </Button>
           <Button 
             onClick={() => {
@@ -467,6 +726,75 @@ export function ReturnsPage() {
             disabled={confirmReceptionMutation.isPending}
           >
             {confirmReceptionMutation.isPending ? 'Confirmando…' : '✅ Confirmar recepción'}
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  ) : null
+
+  const returnModal = selectedRequest ? (
+    <Modal
+      isOpen={showReturnModal}
+      onClose={() => {
+        if (returnMutation.isPending) return
+        setShowReturnModal(false)
+      }}
+      title="↩️ Devolver envío"
+      maxWidth="lg"
+    >
+      <div className="space-y-3">
+        <Input label="Motivo" value={returnReason} onChange={(e) => setReturnReason(e.target.value)} />
+
+        <Select
+          label="Tipo de devolución"
+          value={returnMode}
+          onChange={(e) => setReturnMode(e.target.value as any)}
+          options={[
+            { value: 'ALL', label: 'Devolver todo lo pendiente' },
+            { value: 'PARTIAL', label: 'Devolver solo algunos ítems' },
+          ]}
+        />
+
+        {returnMode === 'PARTIAL' && (
+          <div className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+            <div className="mb-2 text-sm font-semibold">Ítems a devolver</div>
+            <div className="space-y-2">
+              {pendingMovements.length === 0 ? (
+                <div className="text-sm text-slate-500">No hay cantidades pendientes para devolver.</div>
+              ) : (
+                pendingMovements.map((m: any) => (
+                  <div key={m.id} className="grid grid-cols-1 gap-2 md:grid-cols-3 items-end rounded-md bg-slate-50 p-2 text-sm dark:bg-slate-800">
+                    <div className="md:col-span-2">
+                      <div className="font-medium">
+                        {getProductLabel({ sku: m.productSku, name: m.productName, genericName: m.genericName } as any) || '—'}
+                      </div>
+                      <div className="text-xs text-slate-600 dark:text-slate-300">
+                        Pendiente: {Number(m.pendingQuantity ?? 0)}
+                        {m.batch?.batchNumber ? ` · Lote ${m.batch.batchNumber}` : ''}
+                      </div>
+                    </div>
+                    <Input
+                      label="Cantidad"
+                      type="number"
+                      value={String(returnItems[String(m.id)] ?? 0)}
+                      onChange={(e) => {
+                        const v = Number(e.target.value)
+                        setReturnItems((prev) => ({ ...prev, [String(m.id)]: v }))
+                      }}
+                    />
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+
+        <div className="flex justify-end gap-2 pt-2">
+          <Button variant="outline" onClick={() => setShowReturnModal(false)}>
+            Cancelar
+          </Button>
+          <Button variant="danger" onClick={() => returnMutation.mutate()} disabled={returnMutation.isPending}>
+            {returnMutation.isPending ? 'Devolviendo…' : 'Confirmar devolución'}
           </Button>
         </div>
       </div>
@@ -681,9 +1009,26 @@ export function ReturnsPage() {
             {!sentRequestsQuery.isLoading && !sentRequestsQuery.isError && (sentRequestsQuery.data?.items?.length ?? 0) > 0 && (
               <Table
                 columns={[
-                  { header: 'Fecha envío', width: '170px', accessor: (r: any) => new Date(r.fulfilledAt || r.createdAt).toLocaleString() },
+                  {
+                    header: 'Fecha envío',
+                    width: '140px',
+                    accessor: (r: any) => {
+                      const d = new Date(r.fulfilledAt || r.createdAt)
+                      return (
+                        <div>
+                          <div>{d.toLocaleDateString()}</div>
+                          <div className="text-xs text-slate-500 dark:text-slate-400">{d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                        </div>
+                      )
+                    },
+                  },
+                  {
+                    header: 'Tipo',
+                    width: '150px',
+                    accessor: (r: any) => (r.status === 'OPEN' ? 'Atención parcial' : 'Atención de solicitud'),
+                  },
                   { 
-                    header: 'Origen → Destino', 
+                    header: 'ORG -> DEST', 
                     accessor: (r: any) => {
                       const fromCode = r.originWarehouse?.city
                         ? abbreviateCity(r.originWarehouse.city)
@@ -695,7 +1040,7 @@ export function ReturnsPage() {
                           ? abbreviateCity(r.requestedCity)
                           : r.warehouse?.code?.replace(/^SUC-/, '') ?? '—'
 
-                      return `${fromCode} → ${toCode}`
+                      return `${fromCode} -> ${toCode}`
                     }
                   },
                   { header: 'Solicitante', accessor: (r: any) => r.requestedByName },
@@ -724,6 +1069,7 @@ export function ReturnsPage() {
         )}
 
         {receptionModal}
+        {returnModal}
         {createModal}
       </PageContainer>
     </MainLayout>
