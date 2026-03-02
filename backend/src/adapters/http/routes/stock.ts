@@ -877,6 +877,27 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
         orderBy: { createdAt: 'asc' }
       }) : []
 
+      // Add movement.createdBy users to the userMap for traceability (who shipped each line)
+      const movementUserIds = [
+        ...new Set(
+          movements
+            .map((m: any) => m.createdBy)
+            .filter(Boolean)
+            .filter(isUuid)
+            .map((v: any) => String(v)),
+        ),
+      ]
+      const missingMovementUserIds = movementUserIds.filter((id) => !userMap.has(id))
+      if (missingMovementUserIds.length) {
+        const extraUsers = await db.user.findMany({
+          where: { tenantId, id: { in: missingMovementUserIds } },
+          select: { id: true, email: true, fullName: true },
+        })
+        for (const u of extraUsers) {
+          userMap.set(u.id, u.fullName || u.email || u.id)
+        }
+      }
+
       // For idempotent reception/returns: compute received/returned quantities per OUT movement.
       const outMovementIds = movements.map((m: any) => String(m.id))
       const inLinked = outMovementIds.length
@@ -1037,6 +1058,8 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
             presentation: m.presentation
               ? { id: m.presentation.id, name: m.presentation.name, unitsPerPresentation: m.presentation.unitsPerPresentation }
               : null,
+            createdBy: (m as any).createdBy ?? null,
+            createdByName: (m as any).createdBy ? (userMap.get(String((m as any).createdBy)) || String((m as any).createdBy)) : null,
             batchId: m.batchId,
             batch: m.batch
               ? { id: m.batch.id, batchNumber: m.batch.batchNumber, expiresAt: m.batch.expiresAt?.toISOString() ?? null }
@@ -2942,14 +2965,17 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
           for (const fulfillment of input.fulfillments) {
             const { requestId, items } = fulfillment
 
-            // Validate request exists and is OPEN
+            // Validate request exists and is effectively OPEN.
+            // Historical inconsistency: some requests may be marked SENT/FULFILLED without any OUT movements.
+            // In that case, treat them as OPEN again so they can be fulfilled.
             const req = await tx.stockMovementRequest.findFirst({
-              where: { tenantId, id: requestId, status: 'OPEN' },
+              where: { tenantId, id: requestId, status: { in: ['OPEN', 'SENT', 'FULFILLED'] } },
               select: {
                 id: true,
                 status: true,
                 requestedCity: true,
                 warehouseId: true,
+                confirmationStatus: true,
                 items: {
                   select: {
                     id: true,
@@ -2962,7 +2988,35 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
                 },
               },
             })
-            if (!req) throw Object.assign(new Error(`Request ${requestId} not found or not OPEN`), { statusCode: 404 })
+            if (!req) throw Object.assign(new Error(`Request ${requestId} not found`), { statusCode: 404 })
+
+            const existingOut = await tx.stockMovement.findFirst({
+              where: {
+                tenantId,
+                type: 'OUT',
+                referenceType: 'MOVEMENT_REQUEST',
+                referenceId: requestId,
+              },
+              select: { id: true },
+            })
+
+            if (req.status !== 'OPEN') {
+              if (existingOut) {
+                throw Object.assign(new Error(`Request ${requestId} is not OPEN`), { statusCode: 409 })
+              }
+              await tx.stockMovementRequest.update({
+                where: { id: req.id },
+                data: {
+                  status: 'OPEN',
+                  fulfilledAt: null,
+                  fulfilledBy: null,
+                  confirmedAt: null,
+                  confirmedBy: null,
+                  confirmationNote: null,
+                  confirmationStatus: 'PENDING',
+                },
+              })
+            }
 
             const reqCity = String(req.requestedCity ?? '').trim().toUpperCase()
 

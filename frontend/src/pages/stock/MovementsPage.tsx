@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import React, { useEffect, useState } from 'react'
-import { PencilSquareIcon, TrashIcon } from '@heroicons/react/24/outline'
+import { EyeIcon, PencilSquareIcon, TrashIcon } from '@heroicons/react/24/outline'
 import { apiFetch } from '../../lib/api'
 import { formatDateOnlyUtc } from '../../lib/date'
 import { getProductLabel } from '../../lib/productName'
@@ -33,6 +33,26 @@ type MovementRequest = {
   requestedByName: string | null
   createdAt: string
   fulfilledAt: string | null
+  fulfilledByName?: string | null
+  confirmedAt?: string | null
+  confirmedByName?: string | null
+  confirmationNote?: string | null
+  originWarehouse?: { id: string; code: string; name: string; city: string | null } | null
+  warehouse?: { id: string; code: string | null; name: string | null; city: string | null } | null
+  movements?: Array<{
+    id: string
+    type: 'OUT' | 'IN'
+    quantity: number
+    presentationQuantity: number | null
+    productId: string
+    productSku: string | null
+    productName: string | null
+    genericName: string | null
+    presentation?: { id: string; name: string; unitsPerPresentation: number } | null
+    batch?: { id: string; batchNumber: string; expiresAt: string | null } | null
+    createdAt: string
+    createdByName?: string | null
+  }>
   items: MovementRequestItem[]
 }
 
@@ -186,6 +206,15 @@ async function listMovementRequests(token: string): Promise<{ items: MovementReq
             }
           : null,
       })),
+      movements: Array.isArray(req.movements)
+        ? req.movements.map((m: any) => ({
+            ...m,
+            quantity: Number(m.quantity ?? 0),
+            presentationQuantity:
+              m.presentationQuantity === null || m.presentationQuantity === undefined ? null : Number(m.presentationQuantity),
+            createdByName: m.createdByName ?? null,
+          }))
+        : [],
     })),
   }
 }
@@ -276,6 +305,8 @@ export function MovementsPage() {
   // Estados para CREAR SOLICITUD
   const [showCreateRequestModal, setShowCreateRequestModal] = useState(false)
   const [editingRequestId, setEditingRequestId] = useState<string | null>(null)
+  const [selectedRequest, setSelectedRequest] = useState<MovementRequest | null>(null)
+  const [showRequestDetailModal, setShowRequestDetailModal] = useState(false)
   const [requestWarehouseId, setRequestWarehouseId] = useState('')
   const [requestProductId, setRequestProductId] = useState('')
   const [requestItem, setRequestItem] = useState<{ presentationId: string; quantity: number } | null>(null)
@@ -843,6 +874,262 @@ export function MovementsPage() {
       setCreateRequestError(msg)
     },
   })
+
+  const requestDetailModal = selectedRequest ? (
+    <Modal
+      isOpen={showRequestDetailModal}
+      onClose={() => {
+        setShowRequestDetailModal(false)
+        setSelectedRequest(null)
+      }}
+      title="📨 Detalle de solicitud"
+      maxWidth="3xl"
+    >
+      {(() => {
+        const outMovements = (selectedRequest.movements ?? []).filter((m) => m.type === 'OUT')
+        const hasOutMovements = outMovements.length > 0
+
+        const statusLabel =
+          !hasOutMovements && selectedRequest.status !== 'OPEN' && selectedRequest.status !== 'CANCELLED'
+            ? '🟡 Pendiente'
+            : selectedRequest.status === 'OPEN'
+              ? '🟡 Pendiente'
+              : selectedRequest.status === 'SENT'
+                ? '📤 Enviada'
+                : selectedRequest.status === 'FULFILLED'
+                  ? '✅ Recepcionada'
+                  : '⛔ Cancelada'
+        const lastOut = outMovements.length ? outMovements[outMovements.length - 1] : null
+
+        const shippedAt = selectedRequest.fulfilledAt
+          ? new Date(selectedRequest.fulfilledAt)
+          : lastOut?.createdAt
+            ? new Date(lastOut.createdAt)
+            : null
+
+        const shippedBy = selectedRequest.fulfilledByName ?? lastOut?.createdByName ?? null
+
+        const isPartial = selectedRequest.status === 'OPEN' && (selectedRequest.items ?? []).some((it) => {
+          const rq = Number(it.requestedQuantity ?? 0)
+          const rem = Number(it.remainingQuantity ?? 0)
+          return Number.isFinite(rq) && Number.isFinite(rem) ? rem < rq - 1e-9 : false
+        })
+
+        const formatQty = (v: number) => {
+          if (!Number.isFinite(v)) return '0'
+          const rounded = Math.round(v)
+          if (Math.abs(v - rounded) <= 1e-9) return String(rounded)
+          return String(Number(v.toFixed(2)))
+        }
+
+        return (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <div className="font-medium text-slate-900 dark:text-slate-100">Estado</div>
+                <div className="text-slate-600 dark:text-slate-400 leading-tight">
+                  <div>{statusLabel}</div>
+                  {!hasOutMovements && selectedRequest.status !== 'OPEN' && selectedRequest.status !== 'CANCELLED' && (
+                    <div className="text-[11px] text-amber-700 dark:text-amber-300">(sin envíos asociados)</div>
+                  )}
+                  {isPartial && <div className="text-[11px] text-slate-500 dark:text-slate-400">(atención parcial)</div>}
+                </div>
+              </div>
+              <div>
+                <div className="font-medium text-slate-900 dark:text-slate-100">Destino</div>
+                <div className="text-slate-600 dark:text-slate-400">{selectedRequest.warehouse?.name ?? selectedRequest.requestedCity}</div>
+              </div>
+              <div>
+                <div className="font-medium text-slate-900 dark:text-slate-100">Solicitado por</div>
+                <div className="text-slate-600 dark:text-slate-400">{selectedRequest.requestedByName ?? '-'}</div>
+              </div>
+              <div>
+                <div className="font-medium text-slate-900 dark:text-slate-100">Creado</div>
+                <div className="text-slate-600 dark:text-slate-400">{new Date(selectedRequest.createdAt).toLocaleString()}</div>
+              </div>
+              <div>
+                <div className="font-medium text-slate-900 dark:text-slate-100">Atendido (envío)</div>
+                <div className="text-slate-600 dark:text-slate-400">
+                  {shippedAt ? shippedAt.toLocaleString() : '-'}
+                </div>
+              </div>
+              <div>
+                <div className="font-medium text-slate-900 dark:text-slate-100">Atendido por</div>
+                <div className="text-slate-600 dark:text-slate-400">{shippedBy ?? '-'}</div>
+              </div>
+              {selectedRequest.status === 'FULFILLED' && (
+                <>
+                  <div>
+                    <div className="font-medium text-slate-900 dark:text-slate-100">Recepcionado</div>
+                    <div className="text-slate-600 dark:text-slate-400">
+                      {selectedRequest.confirmedAt ? new Date(selectedRequest.confirmedAt).toLocaleString() : '-'}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="font-medium text-slate-900 dark:text-slate-100">Recepcionado por</div>
+                    <div className="text-slate-600 dark:text-slate-400">{selectedRequest.confirmedByName ?? '-'}</div>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {Array.isArray(selectedRequest.items) && (
+              <div>
+                <div className="font-medium text-slate-900 dark:text-slate-100 mb-2">Detalle (por presentación)</div>
+
+                {outMovements.length === 0 && selectedRequest.status !== 'OPEN' && (
+                  <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-200 mb-3">
+                    No hay movimientos de envío (OUT) asociados a esta solicitud. Si el estado figura como atendido sin envíos, puede deberse a una inconsistencia histórica.
+                  </div>
+                )}
+
+                <div className="rounded-lg border-2 border-blue-500 dark:border-blue-400 overflow-hidden">
+                  <div className="grid grid-cols-2 bg-slate-50 dark:bg-slate-800 text-sm">
+                    <div className="px-3 py-2 font-semibold text-slate-700 dark:text-slate-200">Solicitado</div>
+                    <div className="px-3 py-2 font-semibold text-slate-700 dark:text-slate-200">{hasOutMovements ? 'Enviado' : 'Pendiente'}</div>
+                  </div>
+                  <div className="max-h-72 overflow-y-auto divide-y-2 divide-blue-200 dark:divide-blue-500/40">
+                    {selectedRequest.items.map((it) => {
+                      const requestedUnits = Number(it.requestedQuantity ?? 0)
+                      const remainingUnits = Number(it.remainingQuantity ?? 0)
+                      const unitsPerPresentation = Number(it.unitsPerPresentation ?? it.presentation?.unitsPerPresentation ?? 0)
+
+                      const requestedPres =
+                        it.presentationQuantity != null && Number.isFinite(Number(it.presentationQuantity))
+                          ? Number(it.presentationQuantity)
+                          : unitsPerPresentation > 0
+                            ? requestedUnits / unitsPerPresentation
+                            : requestedUnits
+
+                      const remainingPres = unitsPerPresentation > 0 ? remainingUnits / unitsPerPresentation : remainingUnits
+
+                      const shippedForItem = outMovements.filter((m) => {
+                        if (m.productId !== it.productId) return false
+                        const reqPresId = it.presentationId ?? it.presentation?.id ?? null
+                        const movPresId = m.presentation?.id ?? null
+                        if (reqPresId && movPresId && reqPresId !== movPresId) return false
+                        return true
+                      })
+
+                      const shippedTotalPres = shippedForItem.reduce((acc, m) => {
+                        const unitsPerMov = Number(m.presentation?.unitsPerPresentation ?? 0)
+                        const qtyPres =
+                          m.presentationQuantity != null && Number.isFinite(Number(m.presentationQuantity))
+                            ? Number(m.presentationQuantity)
+                            : unitsPerMov > 0
+                              ? Number(m.quantity ?? 0) / unitsPerMov
+                              : Number(m.quantity ?? 0)
+                        return acc + (Number.isFinite(qtyPres) ? qtyPres : 0)
+                      }, 0)
+
+                      const label =
+                        getProductLabel({ sku: it.productSku, name: it.productName, genericName: it.genericName } as any) || it.productId
+                      const presName = it.presentation?.name ?? it.presentationName ?? '-'
+
+                      return (
+                        <div key={it.id} className="grid grid-cols-2">
+                          <div className="p-3">
+                            <div className="font-medium text-slate-900 dark:text-slate-100">{label}</div>
+                            <div className="text-xs text-slate-600 dark:text-slate-400 mt-1 space-y-0.5">
+                              <div>
+                                <strong>Presentación:</strong> {presName}
+                              </div>
+                              <div>
+                                <strong>Solicitado:</strong> {formatQty(requestedPres)}
+                              </div>
+                              <div>
+                                <strong>Pendiente:</strong>{' '}
+                                <span
+                                  className={
+                                    Math.max(0, remainingPres) <= 1e-9
+                                      ? 'text-emerald-700 dark:text-emerald-400'
+                                      : 'text-red-700 dark:text-red-400'
+                                  }
+                                >
+                                  {formatQty(Math.max(0, remainingPres))}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="p-3 bg-slate-50/50 dark:bg-slate-800/30 border-l-2 border-blue-200 dark:border-blue-500/40">
+                            {!hasOutMovements ? (
+                              <div className="text-sm text-slate-700 dark:text-slate-200">
+                                <strong>Pendiente:</strong>{' '}
+                                <span
+                                  className={
+                                    Math.max(0, remainingPres) <= 1e-9
+                                      ? 'text-emerald-700 dark:text-emerald-400'
+                                      : 'text-red-700 dark:text-red-400'
+                                  }
+                                >
+                                  {formatQty(Math.max(0, remainingPres))}
+                                </span>
+                              </div>
+                            ) : shippedForItem.length === 0 ? (
+                              <div className="space-y-1">
+                                <div className="text-sm text-slate-700 dark:text-slate-200">
+                                  <strong>Enviado:</strong> 0
+                                </div>
+                                <div className="text-xs text-slate-600 dark:text-slate-300">Sin envíos</div>
+                              </div>
+                            ) : (
+                              <div className="space-y-2">
+                                <div className="text-sm text-slate-700 dark:text-slate-200">
+                                  <strong>Enviado:</strong> {formatQty(shippedTotalPres)} {presName !== '-' ? presName : ''}
+                                </div>
+                                <div className="space-y-1">
+                                  {shippedForItem.map((m, idx) => {
+                                    const unitsPerMov = Number(m.presentation?.unitsPerPresentation ?? 0)
+                                    const qtyPres =
+                                      m.presentationQuantity != null && Number.isFinite(Number(m.presentationQuantity))
+                                        ? Number(m.presentationQuantity)
+                                        : unitsPerMov > 0
+                                          ? Number(m.quantity ?? 0) / unitsPerMov
+                                          : Number(m.quantity ?? 0)
+
+                                    return (
+                                      <div
+                                        key={m.id ?? `${it.id}-${idx}`}
+                                        className="rounded-md bg-white/70 dark:bg-slate-900/30 border border-blue-200/70 dark:border-blue-500/30 px-2 py-1 text-xs text-slate-600 dark:text-slate-300"
+                                      >
+                                        <div>
+                                          <strong>Cant:</strong> {formatQty(qtyPres)} {m.presentation?.name ?? ''}
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 mt-1">
+                                          <div><strong>Lote:</strong> {m.batch?.batchNumber ?? '-'}</div>
+                                          <div><strong>Venc:</strong> {m.batch?.expiresAt ? formatDateOnlyUtc(m.batch.expiresAt) : '-'}</div>
+                                          <div><strong>Fecha:</strong> {m.createdAt ? new Date(m.createdAt).toLocaleString() : '-'}</div>
+                                          <div><strong>Por:</strong> {m.createdByName ?? shippedBy ?? '-'}</div>
+                                        </div>
+                                      </div>
+                                    )
+                                  })}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-4 border-t">
+              <Button variant="outline" onClick={() => {
+                setShowRequestDetailModal(false)
+                setSelectedRequest(null)
+              }}>
+                Cerrar
+              </Button>
+            </div>
+          </div>
+        )
+      })()}
+    </Modal>
+  ) : null
 
   const cancelRequestMutation = useMutation({
     mutationFn: async (requestId: string) => {
@@ -1881,29 +2168,47 @@ export function MovementsPage() {
                       return Number.isFinite(rq) && Number.isFinite(rem) ? Math.abs(rem - rq) <= 1e-9 : true
                     })
 
-                    if (!isPending || !isUnfulfilled) return null
+                    const isPartial = isPending && !isUnfulfilled
+                    const canView = r.status !== 'OPEN' || isPartial
 
                     return (
                       <div className="flex items-center justify-end gap-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          title="Editar"
-                          icon={<PencilSquareIcon className="w-4 h-4" />}
-                          onClick={() => openEditRequestModal(r)}
-                        />
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          title="Cancelar"
-                          icon={<TrashIcon className="w-4 h-4 text-red-500" />}
-                          onClick={() => {
-                            const ok = confirm('¿Cancelar esta solicitud?')
-                            if (!ok) return
-                            cancelRequestMutation.mutate(r.id)
-                          }}
-                          loading={cancelRequestMutation.isPending}
-                        />
+                        {canView ? (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            title="Ver"
+                            icon={<EyeIcon className="w-4 h-4" />}
+                            onClick={() => {
+                              setSelectedRequest(r)
+                              setShowRequestDetailModal(true)
+                            }}
+                          />
+                        ) : null}
+
+                        {isPending && isUnfulfilled ? (
+                          <>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              title="Editar"
+                              icon={<PencilSquareIcon className="w-4 h-4" />}
+                              onClick={() => openEditRequestModal(r)}
+                            />
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              title="Cancelar"
+                              icon={<TrashIcon className="w-4 h-4 text-red-500" />}
+                              onClick={() => {
+                                const ok = confirm('¿Cancelar esta solicitud?')
+                                if (!ok) return
+                                cancelRequestMutation.mutate(r.id)
+                              }}
+                              loading={cancelRequestMutation.isPending}
+                            />
+                          </>
+                        ) : null}
                       </div>
                     )
                   },
@@ -1920,6 +2225,8 @@ export function MovementsPage() {
             <div className="text-sm text-slate-600 dark:text-slate-400">No hay solicitudes.</div>
           )}
         </div>
+
+        {requestDetailModal}
 
       </PageContainer>
 

@@ -38,6 +38,7 @@ type MovementRequest = {
   fulfilledAt: string | null
   confirmedAt?: string | null
   confirmationNote?: string | null
+  movements?: Array<{ id: string; type: 'OUT' | 'IN' }>
   items: MovementRequestItem[]
 }
 
@@ -98,12 +99,18 @@ async function listLocationStock(token: string, locationId: string): Promise<{ i
 
 async function listMovementRequests(token: string, city?: string): Promise<{ items: MovementRequest[] }> {
   const url = city 
-    ? `/api/v1/stock/movement-requests?take=50&status=OPEN&city=${encodeURIComponent(city)}`
-    : '/api/v1/stock/movement-requests?take=50&status=OPEN'
+    ? `/api/v1/stock/movement-requests?take=50&city=${encodeURIComponent(city)}`
+    : '/api/v1/stock/movement-requests?take=50'
   const response = await apiFetch<{ items: any[] }>(url, { token })
   return {
     items: response.items.map((req: any) => ({
       ...req,
+      movements: Array.isArray(req.movements)
+        ? req.movements.map((m: any) => ({
+            id: String(m.id),
+            type: m.type,
+          }))
+        : [],
       items: (req.items ?? []).map((item: any) => ({
         ...item,
         requestedQuantity: Number(item.requestedQuantity ?? 0),
@@ -200,9 +207,13 @@ export function BulkFulfillRequestsPage() {
   const filteredRequests = useMemo(() => {
     if (!movementRequestsQuery.data?.items) return []
 
-    return movementRequestsQuery.data.items.filter(
-      (request: MovementRequest) => request.status === 'OPEN'
-    )
+    return movementRequestsQuery.data.items.filter((request: MovementRequest) => {
+      if (request.status === 'OPEN') return true
+      if (request.status === 'CANCELLED') return false
+      const outCount = (request.movements ?? []).filter((m) => m.type === 'OUT').length
+      // Historical inconsistency: SENT/FULFILLED without OUT => treat as pending.
+      return outCount === 0
+    })
   }, [movementRequestsQuery.data])
 
   const selectedRequests = useMemo(() => {
