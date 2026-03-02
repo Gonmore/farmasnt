@@ -2099,7 +2099,11 @@ export function MovementsPage() {
                   header: 'Estado',
                   className: 'wrap text-[13px]',
                   accessor: (r) => {
-                    if (r.status === 'OPEN') {
+                    const hasOutMovements = (r.movements ?? []).some((m) => m.type === 'OUT')
+                    const effectiveStatus: MovementRequest['status'] =
+                      !hasOutMovements && (r.status === 'SENT' || r.status === 'FULFILLED') ? 'OPEN' : r.status
+
+                    if (effectiveStatus === 'OPEN') {
                       const isPartial = (r.items ?? []).some((it) => {
                         const rq = Number(it.requestedQuantity ?? 0)
                         const rem = Number(it.remainingQuantity ?? 0)
@@ -2109,13 +2113,16 @@ export function MovementsPage() {
                       return (
                         <div className="leading-tight">
                           <div>🟡 Pendiente</div>
+                          {!hasOutMovements && (r.status === 'SENT' || r.status === 'FULFILLED') && (
+                            <div className="text-[11px] text-amber-700 dark:text-amber-300">(sin envíos)</div>
+                          )}
                           {isPartial && <div className="text-[11px] text-slate-500 dark:text-slate-400">(parcial)</div>}
                         </div>
                       )
                     }
 
-                    if (r.status === 'SENT') return '📤 Enviada'
-                    if (r.status === 'FULFILLED') return '✅ Atendida'
+                    if (effectiveStatus === 'SENT') return '📤 Enviada'
+                    if (effectiveStatus === 'FULFILLED') return '✅ Atendida'
                     return '⛔ Cancelada'
                   },
                 },
@@ -2126,8 +2133,12 @@ export function MovementsPage() {
                   header: 'Detalle',
                   className: 'wrap text-[13px]',
                   accessor: (r) => {
+                    const hasOutMovements = (r.movements ?? []).some((m) => m.type === 'OUT')
+                    const effectiveStatus: MovementRequest['status'] =
+                      !hasOutMovements && (r.status === 'SENT' || r.status === 'FULFILLED') ? 'OPEN' : r.status
+
                     const lines = (r.items ?? [])
-                      .filter((it) => it.remainingQuantity > 0 || r.status !== 'OPEN')
+                      .filter((it) => it.remainingQuantity > 0 || effectiveStatus !== 'OPEN')
                       .slice(0, 4)
                       .map((it) => {
                         const name = it.productName ?? it.productSku ?? it.productId
@@ -2140,7 +2151,7 @@ export function MovementsPage() {
                           const unitsPer = Number(it.presentation?.unitsPerPresentation ?? it.unitsPerPresentation ?? 1)
                           display = `${presQty.toFixed(0)} ${presName}${Number.isFinite(unitsPer) && unitsPer > 0 ? ` (${unitsPer.toFixed(0)}u)` : ''} de ${name}`
                         } else {
-                          const suffix = r.status === 'OPEN' ? `Pendiente: ${remaining} / ${requested}` : `Solicitado: ${requested}`
+                          const suffix = effectiveStatus === 'OPEN' ? `Pendiente: ${remaining} / ${requested}` : `Solicitado: ${requested}`
                           display = `${name} — ${suffix} unidades`
                         }
                         return display
