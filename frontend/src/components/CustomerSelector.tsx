@@ -24,6 +24,18 @@ async function fetchCustomers(token: string, search?: string): Promise<CustomerL
   return apiFetch(`/api/v1/customers?${params}`, { token })
 }
 
+async function fetchCustomerById(token: string, id: string): Promise<CustomerListItem> {
+  const c = await apiFetch<any>(`/api/v1/customers/${encodeURIComponent(id)}`, { token })
+  return {
+    id: String(c.id),
+    name: String(c.name),
+    isActive: Boolean(c.isActive),
+    city: c.city ?? null,
+    creditEnabled: Boolean(c.creditEnabled),
+    creditDays: c.creditDays ?? null,
+  }
+}
+
 interface CustomerSelectorProps {
   value?: string
   onChange: (customerId: string) => void
@@ -36,6 +48,7 @@ export function CustomerSelector({ value, onChange, placeholder = "Buscar client
   const auth = useAuth()
   const [searchTerm, setSearchTerm] = useState('')
   const [isOpen, setIsOpen] = useState(false)
+  const [selectedOverride, setSelectedOverride] = useState<CustomerListItem | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -53,16 +66,25 @@ export function CustomerSelector({ value, onChange, placeholder = "Buscar client
     enabled: !!auth.accessToken && searchTerm.length > 0,
   })
 
+  const knownCustomersById = useMemo(() => {
+    const map = new Map<string, CustomerListItem>()
+    for (const c of allCustomersQuery.data?.items ?? []) map.set(c.id, c)
+    for (const c of searchQuery.data?.items ?? []) map.set(c.id, c)
+    if (selectedOverride) map.set(selectedOverride.id, selectedOverride)
+    return map
+  }, [allCustomersQuery.data?.items, searchQuery.data?.items, selectedOverride])
+
+  const selectedByIdQuery = useQuery({
+    queryKey: ['customer-by-id', value],
+    queryFn: () => fetchCustomerById(auth.accessToken!, value!),
+    enabled: !!auth.accessToken && !!value && !knownCustomersById.has(value),
+  })
+
   const customers = searchTerm ? searchQuery.data?.items ?? [] : allCustomersQuery.data?.items ?? []
   const activeCustomers = customers.filter(c => c.isActive)
 
-  // Find selected customer
-  const selectedCustomer = useMemo(() => {
-    if (value && allCustomersQuery.data?.items) {
-      return allCustomersQuery.data.items.find(c => c.id === value) || null
-    }
-    return null
-  }, [value, allCustomersQuery.data])
+  // Find selected customer (works for search results too)
+  const selectedCustomer = value ? knownCustomersById.get(value) ?? selectedByIdQuery.data ?? null : null
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -76,6 +98,7 @@ export function CustomerSelector({ value, onChange, placeholder = "Buscar client
   }, [])
 
   const handleSelect = (customer: CustomerListItem) => {
+    setSelectedOverride(customer)
     onChange(customer.id)
     setIsOpen(false)
     setSearchTerm('')

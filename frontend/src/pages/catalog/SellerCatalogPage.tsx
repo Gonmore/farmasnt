@@ -274,6 +274,8 @@ type CustomerDetail = {
   city: string | null
   zone: string | null
   mapsUrl: string | null
+  creditEnabled?: boolean
+  creditDays?: number | null
 }
 
 async function fetchCustomerDetail(token: string, customerId: string): Promise<CustomerDetail> {
@@ -680,7 +682,7 @@ export function SellerCatalogPage() {
     return map
   }, [balancesQuery.data?.items])
 
-  const selectedCustomer = (customersQuery.data?.items ?? []).find((c) => c.id === customerId) ?? null
+  const selectedCustomer = (customersQuery.data?.items ?? []).find((c) => c.id === customerId) ?? customerDetailQuery.data ?? null
 
   const paymentOptions = useMemo(() => {
     const options = [{ value: 'CASH', label: '💵 Pago al contado' }]
@@ -1037,6 +1039,19 @@ export function SellerCatalogPage() {
                 {quoteActionError}
               </div>
             )}
+
+            <div className="rounded-lg border border-slate-200 dark:border-slate-700 p-3">
+              <div className="text-sm font-semibold text-slate-900 dark:text-slate-100 mb-2">Cliente</div>
+              <CustomerSelector
+                value={customerId}
+                onChange={setCustomerId}
+                placeholder="Buscar cliente..."
+                disabled={customersQuery.isLoading || modalReadOnly}
+              />
+              {!customerId && (
+                <div className="mt-2 text-xs text-amber-700 dark:text-amber-300">Selecciona un cliente para generar la cotización.</div>
+              )}
+            </div>
 
             <div className="grid gap-3 md:grid-cols-2">
               <Input
