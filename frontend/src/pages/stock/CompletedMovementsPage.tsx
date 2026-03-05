@@ -78,26 +78,6 @@ export default function CompletedMovementsPage() {
     }
   }
 
-  if (completedMovementsQuery.isLoading) {
-    return (
-      <MainLayout navGroups={navGroups}>
-        <PageContainer title="📋 Movimientos Realizados">
-          <Loading />
-        </PageContainer>
-      </MainLayout>
-    )
-  }
-
-  if (completedMovementsQuery.isError) {
-    return (
-      <MainLayout navGroups={navGroups}>
-        <PageContainer title="📋 Movimientos Realizados">
-          <ErrorState message="No se pudieron cargar los movimientos realizados." />
-        </PageContainer>
-      </MainLayout>
-    )
-  }
-
   const movements = completedMovementsQuery.data?.items || []
 
   const visibleMovements = useMemo(() => {
@@ -127,6 +107,26 @@ export default function CompletedMovementsPage() {
       ])
     })
   }, [movements, searchQuery])
+
+  if (completedMovementsQuery.isLoading) {
+    return (
+      <MainLayout navGroups={navGroups}>
+        <PageContainer title="📋 Movimientos Realizados">
+          <Loading />
+        </PageContainer>
+      </MainLayout>
+    )
+  }
+
+  if (completedMovementsQuery.isError) {
+    return (
+      <MainLayout navGroups={navGroups}>
+        <PageContainer title="📋 Movimientos Realizados">
+          <ErrorState message="No se pudieron cargar los movimientos realizados." />
+        </PageContainer>
+      </MainLayout>
+    )
+  }
 
   const openDetail = (m: CompletedMovement) => {
     setSelected(m)
