@@ -164,6 +164,15 @@ Se incorporaron endpoints read-only de reportes para acelerar dashboards y panta
 - Inserción de notificaciones “best-effort” (try/catch) para no romper flujos principales (stock/ventas).
 - Frontend: `NotificationsProvider` carga desde API y persiste “marcar todo leído”; sockets quedan para toast/sonido + refresco.
 
+### Stock — Buscador unificado (mismo campo)
+- Se unificó el patrón de búsqueda client-side en pantallas operativas de Stock para que el usuario pueda buscar por cualquier texto relevante (código, producto, lote, origen/destino, solicitante, etc.) desde un único campo.
+- Cobertura en UI (Stock): Solicitudes, Atender masivo, Recepciones/Devoluciones, Movimientos y Movimientos realizados.
+
+### Stock — Vista "Trazabilidad de solicitudes" (UI)
+- Nueva vista para revisar el estado de una solicitud de movimiento y su avance: **creada**, **atendida (parcial)**, **envíos** y **recepción**.
+- Incluye modal de detalle con métricas por ítem (solicitado / enviado / pendiente) respetando **presentación** (ej. caja vs unidad) y estado de envíos (pendiente de recepción / recibido / devuelto).
+- Se mejoró la ergonomía de modales con scroll vertical interno para soportar contenido largo sin cortar acciones/título.
+
 ### Operación / despliegue
 - Requiere aplicar migraciones Prisma antes de ejecutar la nueva versión (en local y producción) para evitar errores por columnas faltantes.
 

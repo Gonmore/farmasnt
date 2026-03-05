@@ -1202,6 +1202,117 @@ Response 201
 }
 ```
 
+### GET /api/v1/stock/completed-movements
+Requiere permiso: `stock:move`.
+
+Lista “Movimientos realizados” para UI, unificando:
+- Movimientos individuales (manuales) relevantes para operación.
+- Transferencias masivas (`referenceType: BULK_TRANSFER`) agrupadas por `referenceId`.
+- Atenciones/envíos de solicitudes (`referenceType: MOVEMENT_REQUEST`) agrupadas por solicitud (incluye atenciones parciales).
+- Devoluciones.
+
+Notas
+- Si el usuario tiene scope de sucursal (`ScopeBranch`), el backend exige sucursal seleccionada; si falta, responde `409`.
+- Devuelve como máximo los 100 más recientes, ordenados por `completedAt` desc.
+
+Response 200
+```json
+{
+  "items": [
+    {
+      "id": "...",
+      "type": "FULFILL_REQUEST",
+      "typeLabel": "Atención de solicitud - SOL260001",
+      "createdAt": "2026-03-05T12:00:00.000Z",
+      "completedAt": "2026-03-05T12:10:00.000Z",
+      "fromWarehouseCode": "CEN",
+      "toWarehouseCode": "SCZ",
+      "requestedByName": "Juan Pérez",
+      "fulfilledByName": "María López",
+      "totalItems": 4,
+      "totalQuantity": 120,
+      "canExportPicking": true,
+      "canExportLabel": true
+    }
+  ]
+}
+```
+
+### GET /api/v1/stock/completed-movements/:id/picking
+Requiere permiso: `stock:move`.
+
+Params
+- `id` (uuid)
+
+Query
+- `type`: `MOVEMENT` | `BULK_TRANSFER` | `FULFILL_REQUEST` | `RETURN`
+
+Notas
+- `409` si `type=RETURN` (picking no disponible).
+- Si `type=MOVEMENT`, solo aplica para movimientos `OUT` o `TRANSFER`.
+- Para `FULFILL_REQUEST` se usan los movimientos `OUT` de embarque (`referenceType: MOVEMENT_REQUEST`).
+
+Response 200
+```json
+{
+  "meta": {
+    "requestId": "...",
+    "generatedAtIso": "2026-03-05T12:34:56.000Z",
+    "fromWarehouseLabel": "CEN - Central (SANTA CRUZ)",
+    "fromLocationCode": "A1",
+    "toWarehouseLabel": "SCZ - Sucursal SCZ (SANTA CRUZ)",
+    "toLocationCode": "BIN-01",
+    "requestedByName": "Juan Pérez"
+  },
+  "requestedItems": [
+    {
+      "productLabel": "SKU - Producto (Genérico)",
+      "quantityUnits": 100,
+      "presentationLabel": "Caja (10u)"
+    }
+  ],
+  "sentLines": [
+    {
+      "locationCode": "A1",
+      "productLabel": "SKU - Producto (Genérico)",
+      "batchNumber": "L-0001",
+      "expiresAt": "2026-06-01T00:00:00.000Z",
+      "quantityUnits": 100,
+      "presentationLabel": "Caja (10u)"
+    }
+  ]
+}
+```
+
+### GET /api/v1/stock/completed-movements/:id/label
+Requiere permiso: `stock:move`.
+
+Params
+- `id` (uuid)
+
+Query
+- `type`: `MOVEMENT` | `BULK_TRANSFER` | `FULFILL_REQUEST` | `RETURN`
+
+Notas
+- `409` si `type=RETURN` (rótulo no disponible).
+- Si `type=MOVEMENT`, solo aplica para movimientos `OUT` o `TRANSFER`.
+
+Response 200
+```json
+{
+  "requestId": "...",
+  "generatedAtIso": "2026-03-05T12:34:56.000Z",
+  "fromWarehouseLabel": "SANTA CRUZ, BOLIVIA",
+  "fromLocationCode": "A1",
+  "toWarehouseLabel": "SANTA CRUZ, BOLIVIA",
+  "toLocationCode": "BIN-01",
+  "requestedByName": "Juan Pérez",
+  "bultos": "—",
+  "responsable": "María López",
+  "observaciones": "—"
+}
+```
+
 ### GET /api/v1/stock/movement-requests
 Requiere permiso: `stock:read`.
 

@@ -76,6 +76,7 @@ export function useNavigation(): NavGroup[] {
     // Movimientos: tenant admin + stock manage + admin de sucursal
     if (isTenantAdmin || hasPermission('stock:manage') || isBranchAdmin) {
       warehouseItems.push({ to: '/stock/movements', label: '🚚 Movimientos' })
+      warehouseItems.push({ to: '/stock/movement-requests-traceability', label: '🧭 Trazabilidad solicitudes' })
     }
 
     // Vencimientos: lectura para ambos roles

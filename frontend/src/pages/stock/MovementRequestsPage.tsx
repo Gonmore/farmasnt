@@ -5,6 +5,7 @@ import { useAuth } from '../../providers/AuthProvider'
 import { MainLayout, PageContainer, Table, Button, Modal, Input, Select, Loading, ErrorState, EmptyState } from '../../components'
 import { useNavigation } from '../../hooks'
 import { getProductLabel } from '../../lib/productName'
+import { matchesSearchQuery } from '../../lib/search'
 
 type MovementRequestItem = {
   id: string
@@ -23,6 +24,7 @@ type MovementRequestItem = {
 
 type MovementRequest = {
   id: string
+  code: string
   status: 'OPEN' | 'SENT' | 'FULFILLED' | 'CANCELLED'
   confirmationStatus?: 'PENDING' | 'ACCEPTED' | 'REJECTED'
   requestedCity: string
@@ -64,6 +66,7 @@ async function listMovementRequests(token: string): Promise<{ items: MovementReq
   return {
     items: response.items.map((req: any) => ({
       ...req,
+      code: String(req.code ?? ''),
       items: (req.items ?? []).map((item: any) => ({
         ...item,
         requestedQuantity: Number(item.requestedQuantity ?? 0),
@@ -155,6 +158,7 @@ export function MovementRequestsPage() {
   })
 
   const [showCreateModal, setShowCreateModal] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
   const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null)
   const [showDetailsModal, setShowDetailsModal] = useState(false)
   const [confirmAction, setConfirmAction] = useState<'ACCEPT' | 'REJECT'>('ACCEPT')
@@ -258,6 +262,7 @@ export function MovementRequestsPage() {
 
   type MovementRequestRow = {
     id: string
+    code: string
     status: MovementRequest['status']
     confirmationStatus: NonNullable<MovementRequest['confirmationStatus']>
     requestedCity: string
@@ -268,22 +273,45 @@ export function MovementRequestsPage() {
     confirmedAt: string | null
   }
 
-  const rows = useMemo<MovementRequestRow[]>(() => {
+  const filteredRequests = useMemo(() => {
     const items = movementRequestsQuery.data?.items ?? []
-    return [...items]
+    return items.filter((r) => {
+      const itemText = (r.items ?? [])
+        .map((it) => [it.productSku, it.productName, it.genericName, it.presentationName, it.presentation?.name].filter(Boolean).join(' '))
+        .join(' ')
+
+      return matchesSearchQuery(searchQuery, [
+        r.code,
+        r.status,
+        r.confirmationStatus,
+        r.requestedCity,
+        r.requestedByName,
+        r.note,
+        r.createdAt,
+        r.fulfilledAt,
+        r.confirmedAt,
+        r.confirmationNote,
+        itemText,
+      ])
+    })
+  }, [movementRequestsQuery.data?.items, searchQuery])
+
+  const rows = useMemo<MovementRequestRow[]>(() => {
+    return [...filteredRequests]
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
       .map((r) => ({
-      id: r.id,
-      status: r.status,
-      confirmationStatus: (r.confirmationStatus ?? 'PENDING') as any,
-      requestedCity: r.requestedCity,
-      requestedByName: r.requestedByName ?? '-',
-      itemsCount: r.items?.length ?? 0,
-      createdAt: r.createdAt,
-      fulfilledAt: r.fulfilledAt,
-      confirmedAt: r.confirmedAt ?? null,
-    }))
-  }, [movementRequestsQuery.data])
+        id: r.id,
+        code: r.code,
+        status: r.status,
+        confirmationStatus: (r.confirmationStatus ?? 'PENDING') as any,
+        requestedCity: r.requestedCity,
+        requestedByName: r.requestedByName ?? '-',
+        itemsCount: r.items?.length ?? 0,
+        createdAt: r.createdAt,
+        fulfilledAt: r.fulfilledAt,
+        confirmedAt: r.confirmedAt ?? null,
+      }))
+  }, [filteredRequests])
 
   const selectedRequest = useMemo(() => {
     if (!selectedRequestId) return null
@@ -298,6 +326,7 @@ export function MovementRequestsPage() {
         if (r.status === 'FULFILLED') return '✅ Atendida'
         return '⛔ Cancelada'
       } },
+      { header: 'Código', width: '120px', accessor: (r: MovementRequestRow) => r.code || '—' },
       {
         header: 'Confirmación',
         width: '140px',
@@ -340,6 +369,15 @@ export function MovementRequestsPage() {
               Actualizar
             </Button>
           </div>
+        </div>
+
+        <div className="mb-3 max-w-xl">
+          <Input
+            label="Buscar"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Código (SOL…), solicitante, ciudad, fecha, producto…"
+          />
         </div>
 
         {movementRequestsQuery.isLoading && <Loading />}

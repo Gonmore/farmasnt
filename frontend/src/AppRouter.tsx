@@ -15,6 +15,7 @@ import {
   BulkTransferPage,
   CompletedMovementsPage,
   MovementRequestsPage,
+  MovementRequestsTraceabilityPage,
   MovementsPage,
   ReturnsPage,
   ExpiryPage,
@@ -193,6 +194,15 @@ export function AppRouter() {
           element={
             <ProtectedRoute requiredPermissions={['stock:move', 'stock:manage']} requireAll={false}>
               <MovementsPage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/stock/movement-requests-traceability"
+          element={
+            <ProtectedRoute requiredPermissions={['stock:move', 'stock:manage']} requireAll={false}>
+              <MovementRequestsTraceabilityPage />
             </ProtectedRoute>
           }
         />

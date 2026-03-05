@@ -4,6 +4,7 @@ import { EyeIcon, PencilSquareIcon, TrashIcon } from '@heroicons/react/24/outlin
 import { apiFetch } from '../../lib/api'
 import { formatDateOnlyUtc } from '../../lib/date'
 import { getProductLabel } from '../../lib/productName'
+import { matchesSearchQuery } from '../../lib/search'
 import { useAuth } from '../../providers/AuthProvider'
 import { MainLayout, PageContainer, Select, Input, Button, Table, Loading, ErrorState, Modal } from '../../components'
 import { useNavigation, usePermissions } from '../../hooks'
@@ -326,6 +327,7 @@ export function MovementsPage() {
   const [requestQuantity, setRequestQuantity] = useState('1')
   const [requestNote, setRequestNote] = useState('')
   const [createRequestError, setCreateRequestError] = useState('')
+  const [movementRequestsSearchQuery, setMovementRequestsSearchQuery] = useState('')
 
   // Estados para el selector de producto con búsqueda
   const [productSearchQuery, setProductSearchQuery] = useState('')
@@ -373,6 +375,47 @@ export function MovementsPage() {
     enabled: !!auth.accessToken,
     refetchInterval: 10_000,
   })
+
+  const movementRequestsForTable = React.useMemo(() => {
+    const items = movementRequestsQuery.data?.items ?? []
+    const q = movementRequestsSearchQuery
+
+    const filtered = items.filter((r) => {
+      const itemText = (r.items ?? [])
+        .map((it) => [it.productSku, it.productName, it.genericName, it.presentationName, it.presentation?.name].filter(Boolean).join(' '))
+        .join(' ')
+
+      const movementText = (r.movements ?? [])
+        .map((m) => [m.productSku, m.productName, m.genericName, m.createdByName].filter(Boolean).join(' '))
+        .join(' ')
+
+      return matchesSearchQuery(q, [
+        r.code,
+        r.status,
+        r.requestedCity,
+        r.requestedByName,
+        r.fulfilledByName,
+        r.confirmedByName,
+        r.note,
+        r.createdAt,
+        r.fulfilledAt,
+        r.confirmedAt,
+        formatDateOnlyUtc(r.createdAt),
+        r.fulfilledAt ? formatDateOnlyUtc(r.fulfilledAt) : '',
+        r.confirmedAt ? formatDateOnlyUtc(r.confirmedAt) : '',
+        r.originWarehouse?.code,
+        r.originWarehouse?.name,
+        r.originWarehouse?.city,
+        r.warehouse?.code,
+        r.warehouse?.name,
+        r.warehouse?.city,
+        itemText,
+        movementText,
+      ])
+    })
+
+    return [...filtered].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+  }, [movementRequestsQuery.data?.items, movementRequestsSearchQuery])
 
   const requestProductPresentationsQuery = useQuery({
     queryKey: ['productPresentations', requestProductId],
@@ -2091,10 +2134,19 @@ export function MovementsPage() {
             </div>
           </div>
 
+          <div className="mb-3 max-w-xl">
+            <Input
+              label="Buscar"
+              value={movementRequestsSearchQuery}
+              onChange={(e) => setMovementRequestsSearchQuery(e.target.value)}
+              placeholder="Código (SOL…), solicitante, destino, fecha, producto…"
+            />
+          </div>
+
           {movementRequestsQuery.isLoading && <Loading />}
           {movementRequestsQuery.error && <ErrorState message="Error cargando solicitudes" retry={movementRequestsQuery.refetch} />}
 
-          {movementRequestsQuery.data?.items && movementRequestsQuery.data.items.length > 0 && (
+          {movementRequestsForTable.length > 0 && (
             <Table<MovementRequest>
               columns={[
                 {
@@ -2236,15 +2288,17 @@ export function MovementsPage() {
                   },
                 },
               ]}
-              data={[...movementRequestsQuery.data.items].sort(
-                (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-              )}
+              data={movementRequestsForTable}
               keyExtractor={(r) => r.id}
             />
           )}
 
           {movementRequestsQuery.data?.items && movementRequestsQuery.data.items.length === 0 && (
             <div className="text-sm text-slate-600 dark:text-slate-400">No hay solicitudes.</div>
+          )}
+
+          {movementRequestsQuery.data?.items && movementRequestsQuery.data.items.length > 0 && movementRequestsForTable.length === 0 && (
+            <div className="text-sm text-slate-600 dark:text-slate-400">No hay resultados.</div>
           )}
         </div>
 

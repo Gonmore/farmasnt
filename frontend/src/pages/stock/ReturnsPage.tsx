@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiFetch } from '../../lib/api'
 import { formatDateOnlyUtc } from '../../lib/date'
+import { matchesSearchQuery } from '../../lib/search'
 import { useAuth } from '../../providers/AuthProvider'
 import { MainLayout, PageContainer, Table, Button, Modal, Input, Select, Loading, ErrorState, EmptyState } from '../../components'
 import { useNavigation } from '../../hooks'
@@ -221,6 +222,7 @@ export function ReturnsPage() {
   const activeProducts = useMemo(() => (productsQuery.data?.items ?? []).filter((p) => p.isActive), [productsQuery.data])
 
   const [activeTab, setActiveTab] = useState<'returns' | 'receptions'>('receptions')
+  const [searchQuery, setSearchQuery] = useState('')
 
   const [selectedRequest, setSelectedRequest] = useState<any>(null)
   const [showReturnModal, setShowReturnModal] = useState(false)
@@ -233,6 +235,26 @@ export function ReturnsPage() {
     return [...items].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
   }, [returnsQuery.data?.items])
 
+  const filteredReturns = useMemo(() => {
+    return sortedReturns.filter((r) => {
+      const itemText = (r.items ?? [])
+        .map((it) => [it.sku, it.name, it.genericName, it.batchNumber, it.presentationName].filter(Boolean).join(' '))
+        .join(' ')
+
+      return matchesSearchQuery(searchQuery, [
+        r.reason,
+        r.note,
+        r.createdAt,
+        formatDateOnlyUtc(r.createdAt),
+        r.toLocation?.code,
+        r.toLocation?.warehouse?.code,
+        r.toLocation?.warehouse?.name,
+        r.toLocation?.warehouse?.city,
+        itemText,
+      ])
+    })
+  }, [sortedReturns, searchQuery])
+
   const sortedSentRequests = useMemo(() => {
     const items = sentRequestsQuery.data?.items ?? []
     return [...items].sort(
@@ -240,6 +262,39 @@ export function ReturnsPage() {
         new Date(b.fulfilledAt || b.createdAt).getTime() - new Date(a.fulfilledAt || a.createdAt).getTime(),
     )
   }, [sentRequestsQuery.data?.items])
+
+  const filteredSentRequests = useMemo(() => {
+    return sortedSentRequests.filter((r: any) => {
+      const itemText = (r.items ?? [])
+        .map((it: any) => [it.productSku, it.productName, it.genericName, it.presentationName, it.presentation?.name].filter(Boolean).join(' '))
+        .join(' ')
+      const movementText = (r.movements ?? [])
+        .map((m: any) => [m.productSku, m.productName, m.genericName, m.createdByName].filter(Boolean).join(' '))
+        .join(' ')
+
+      return matchesSearchQuery(searchQuery, [
+        r.code,
+        r.status,
+        r.requestedCity,
+        r.requestedByName,
+        r.fulfilledByName,
+        r.confirmedByName,
+        r.note,
+        r.createdAt,
+        r.fulfilledAt,
+        formatDateOnlyUtc(r.createdAt),
+        r.fulfilledAt ? formatDateOnlyUtc(r.fulfilledAt) : '',
+        r.originWarehouse?.code,
+        r.originWarehouse?.name,
+        r.originWarehouse?.city,
+        r.warehouse?.code,
+        r.warehouse?.name,
+        r.warehouse?.city,
+        itemText,
+        movementText,
+      ])
+    })
+  }, [sortedSentRequests, searchQuery])
 
   const pendingMovements = useMemo(() => {
     const ms = Array.isArray(selectedRequest?.movements) ? selectedRequest.movements : []
@@ -961,6 +1016,15 @@ export function ReturnsPage() {
           <Button onClick={() => setShowCreateModal(true)}>➕ Nueva devolución</Button>
         </div>
 
+        <div className="mb-3 max-w-xl">
+          <Input
+            label="Buscar"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Código (SOL…), persona, fecha, sucursal, producto…"
+          />
+        </div>
+
         <div className="mb-4 border-b border-slate-200 dark:border-slate-700">
           <nav className="-mb-px flex space-x-8">
             <button
@@ -990,11 +1054,14 @@ export function ReturnsPage() {
           <>
             {returnsQuery.isLoading && <Loading />}
             {returnsQuery.isError && <ErrorState message={(returnsQuery.error as any)?.message ?? 'Error cargando devoluciones'} />}
-            {!returnsQuery.isLoading && !returnsQuery.isError && (returnsQuery.data?.items?.length ?? 0) === 0 && (
+            {!returnsQuery.isLoading && !returnsQuery.isError && sortedReturns.length === 0 && (
               <EmptyState message="No hay devoluciones registradas." />
             )}
-            {!returnsQuery.isLoading && !returnsQuery.isError && (returnsQuery.data?.items?.length ?? 0) > 0 && (
-              <Table columns={columns as any} data={sortedReturns} keyExtractor={(r: StockReturn) => r.id} />
+            {!returnsQuery.isLoading && !returnsQuery.isError && sortedReturns.length > 0 && filteredReturns.length === 0 && (
+              <EmptyState message="No hay resultados." />
+            )}
+            {!returnsQuery.isLoading && !returnsQuery.isError && filteredReturns.length > 0 && (
+              <Table columns={columns as any} data={filteredReturns} keyExtractor={(r: StockReturn) => r.id} />
             )}
           </>
         )}
@@ -1003,10 +1070,13 @@ export function ReturnsPage() {
           <>
             {sentRequestsQuery.isLoading && <Loading />}
             {sentRequestsQuery.isError && <ErrorState message={(sentRequestsQuery.error as any)?.message ?? 'Error cargando recepciones'} />}
-            {!sentRequestsQuery.isLoading && !sentRequestsQuery.isError && (sentRequestsQuery.data?.items?.length ?? 0) === 0 && (
+            {!sentRequestsQuery.isLoading && !sentRequestsQuery.isError && sortedSentRequests.length === 0 && (
               <EmptyState message="No hay envíos pendientes de recepción." />
             )}
-            {!sentRequestsQuery.isLoading && !sentRequestsQuery.isError && (sentRequestsQuery.data?.items?.length ?? 0) > 0 && (
+            {!sentRequestsQuery.isLoading && !sentRequestsQuery.isError && sortedSentRequests.length > 0 && filteredSentRequests.length === 0 && (
+              <EmptyState message="No hay resultados." />
+            )}
+            {!sentRequestsQuery.isLoading && !sentRequestsQuery.isError && filteredSentRequests.length > 0 && (
               <Table
                 columns={[
                   {
@@ -1066,7 +1136,7 @@ export function ReturnsPage() {
                     ),
                   },
                 ]}
-                data={sortedSentRequests}
+                data={filteredSentRequests}
                 keyExtractor={(r) => r.id}
               />
             )}

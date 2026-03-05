@@ -8,6 +8,7 @@ import { useAuth } from '../../providers/AuthProvider'
 import { usePermissions } from '../../hooks/usePermissions'
 import { apiFetch } from '../../lib/api'
 import { formatDateOnlyUtc } from '../../lib/date'
+import { matchesSearchQuery } from '../../lib/search'
 
 type WarehouseListItem = { id: string; code: string; name: string; city?: string | null; isActive: boolean }
 
@@ -146,6 +147,7 @@ export function BulkFulfillRequestsPage() {
   const [selectedRequestIds, setSelectedRequestIds] = useState<string[]>([])
   const [isFulfillModalOpen, setIsFulfillModalOpen] = useState(false)
   const [batchSelections, setBatchSelections] = useState<Record<string, number>>({})
+  const [requestsSearchQuery, setRequestsSearchQuery] = useState('')
 
   const warehousesQuery = useQuery({
     queryKey: ['warehouses', 'fulfillRequests'],
@@ -220,6 +222,27 @@ export function BulkFulfillRequestsPage() {
       return outCount === 0
     })
   }, [movementRequestsQuery.data])
+
+  const visibleRequests = useMemo(() => {
+    return filteredRequests.filter((r: MovementRequest) => {
+      const itemText = (r.items ?? [])
+        .map((it) => [it.productSku, it.productName, it.genericName, it.presentationName].filter(Boolean).join(' '))
+        .join(' ')
+
+      return matchesSearchQuery(requestsSearchQuery, [
+        r.code,
+        r.status,
+        r.requestedCity,
+        r.requestedByName,
+        r.note,
+        r.createdAt,
+        r.fulfilledAt,
+        formatDateOnlyUtc(r.createdAt),
+        r.fulfilledAt ? formatDateOnlyUtc(r.fulfilledAt) : '',
+        itemText,
+      ])
+    })
+  }, [filteredRequests, requestsSearchQuery])
 
   const selectedRequests = useMemo(() => {
     return filteredRequests.filter((request: MovementRequest) => selectedRequestIds.includes(request.id))
@@ -493,8 +516,22 @@ export function BulkFulfillRequestsPage() {
                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
                   Solicitudes a atender
                 </label>
+
+                <div className="mb-2 max-w-xl">
+                  <Input
+                    label="Buscar"
+                    value={requestsSearchQuery}
+                    onChange={(e) => setRequestsSearchQuery(e.target.value)}
+                    placeholder="Código (SOL…), solicitante, fecha, producto…"
+                  />
+                </div>
+
                 <div className="max-h-60 overflow-y-auto border border-slate-200 rounded-md dark:border-slate-700">
-                  {filteredRequests.map((request: MovementRequest) => (
+                  {visibleRequests.length === 0 ? (
+                    <div className="p-3 text-sm text-slate-600 dark:text-slate-400">No hay resultados.</div>
+                  ) : null}
+
+                  {visibleRequests.map((request: MovementRequest) => (
                     <div key={request.id} className="flex items-center p-3 border-b border-slate-100 last:border-b-0 dark:border-slate-700">
                       <input
                         type="checkbox"

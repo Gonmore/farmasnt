@@ -43,28 +43,41 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
 
   const refreshFromServer = async () => {
     if (!auth.accessToken) return
-    const data = await apiFetch<{
-      lastReadAt: string
-      items: Array<{ id: string; createdAt: string; title: string; body?: string | null; kind?: string | null; linkTo?: string | null }>
-    }>(`/api/v1/notifications?take=50`, { token: auth.accessToken })
+    try {
+      const data = await apiFetch<{
+        lastReadAt: string
+        items: Array<{ id: string; createdAt: string; title: string; body?: string | null; kind?: string | null; linkTo?: string | null }>
+      }>(`/api/v1/notifications?take=50`, { token: auth.accessToken })
 
-    const normalizeKind = (k: any): AppNotification['kind'] => {
-      const v = typeof k === 'string' ? k : ''
-      if (v === 'success' || v === 'warning' || v === 'error' || v === 'info') return v
-      return 'info'
+      const normalizeKind = (k: any): AppNotification['kind'] => {
+        const v = typeof k === 'string' ? k : ''
+        if (v === 'success' || v === 'warning' || v === 'error' || v === 'info') return v
+        return 'info'
+      }
+
+      setLastReadAt(data?.lastReadAt ?? new Date().toISOString())
+      setServerNotifications(
+        (Array.isArray(data?.items) ? data.items : []).map((n) => ({
+          id: String(n.id),
+          createdAt: String(n.createdAt),
+          title: String(n.title ?? ''),
+          body: n.body ? String(n.body) : undefined,
+          kind: normalizeKind(n.kind),
+          linkTo: n.linkTo ? String(n.linkTo) : undefined,
+        })),
+      )
+    } catch (e: any) {
+      const msg = String(e?.message ?? '')
+      // Back-end can respond 409 when branch-scoped user has no branch selected.
+      // We keep UI stable and avoid noisy logs in this expected state.
+      if (msg.toLowerCase().includes('seleccione su sucursal')) {
+        setServerNotifications((prev) => (prev.length > 0 ? [] : prev))
+        return
+      }
+      // Silent on session-expired flows; auth layer handles logout.
+      if (msg.toLowerCase().includes('sesion expirada')) return
+      throw e
     }
-
-    setLastReadAt(data?.lastReadAt ?? new Date().toISOString())
-    setServerNotifications(
-      (Array.isArray(data?.items) ? data.items : []).map((n) => ({
-        id: String(n.id),
-        createdAt: String(n.createdAt),
-        title: String(n.title ?? ''),
-        body: n.body ? String(n.body) : undefined,
-        kind: normalizeKind(n.kind),
-        linkTo: n.linkTo ? String(n.linkTo) : undefined,
-      })),
-    )
   }
 
   const scheduleRefresh = () => {
@@ -100,7 +113,11 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       return
     }
 
-    refreshFromServer().catch((e) => console.warn('notifications.initial_load.failed', e))
+    refreshFromServer().catch((e) => {
+      const msg = String((e as any)?.message ?? '')
+      if (msg.toLowerCase().includes('seleccione su sucursal')) return
+      console.warn('notifications.initial_load.failed', e)
+    })
 
     const socket = connectSocket()
     if (!socket) return
@@ -426,6 +443,11 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       })
         .then((r) => setLastReadAt(r?.lastReadAt ?? fallback))
         .catch((e) => {
+          const msg = String((e as any)?.message ?? '')
+          if (msg.toLowerCase().includes('seleccione su sucursal')) {
+            setLastReadAt(fallback)
+            return
+          }
           console.warn('notifications.markAllRead.failed', e)
           setLastReadAt(fallback)
         })
@@ -441,7 +463,11 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
           method: 'POST',
         })
           .then((r) => setLastReadAt(r?.lastReadAt ?? now))
-          .catch((e) => console.warn('notifications.clear.markAllRead.failed', e))
+          .catch((e) => {
+            const msg = String((e as any)?.message ?? '')
+            if (msg.toLowerCase().includes('seleccione su sucursal')) return
+            console.warn('notifications.clear.markAllRead.failed', e)
+          })
       }
     },
     notify: (n) => {

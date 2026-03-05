@@ -55,7 +55,7 @@ export function Modal({ isOpen, onClose, title, children, maxWidth = 'md' }: Mod
     >
       <div
         ref={modalRef}
-        className={`relative w-full ${maxWidthClasses[maxWidth]} overflow-hidden rounded-lg border-2 border-blue-500 bg-white shadow-xl dark:border-blue-400 dark:bg-slate-800`}
+        className={`relative flex max-h-[calc(100vh-2rem)] w-full flex-col ${maxWidthClasses[maxWidth]} overflow-hidden rounded-lg border-2 border-blue-500 bg-white shadow-xl dark:border-blue-400 dark:bg-slate-800`}
       >
         <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 dark:border-slate-700">
           <h2 className="text-lg font-semibold text-slate-900 dark:text-white">{title}</h2>
@@ -79,7 +79,7 @@ export function Modal({ isOpen, onClose, title, children, maxWidth = 'md' }: Mod
           </button>
         </div>
 
-        <div className="px-6 py-4">
+        <div className="flex-1 overflow-y-auto px-6 py-4">
           {children}
         </div>
       </div>

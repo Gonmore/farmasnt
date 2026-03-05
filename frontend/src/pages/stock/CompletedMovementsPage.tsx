@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
-import { MainLayout, PageContainer, Button, Loading, ErrorState, EmptyState, Table, Modal } from '../../components'
+import { MainLayout, PageContainer, Button, Loading, ErrorState, EmptyState, Table, Modal, Input } from '../../components'
 import { MovementQuickActions } from '../../components/MovementQuickActions'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useNavigation } from '../../hooks'
 import { apiFetch } from '../../lib/api'
@@ -9,6 +9,7 @@ import { exportPickingToPdf } from '../../lib/movementRequestDocsPdf'
 import type { PickingPdfMeta, PickingPdfRequestedLine, PickingPdfSentLine } from '../../lib/movementRequestDocsPdf'
 import { formatDateOnlyUtc } from '../../lib/date'
 import { useAuth } from '../../providers/AuthProvider'
+import { matchesSearchQuery } from '../../lib/search'
 
 type CompletedMovement = {
   id: string
@@ -33,6 +34,7 @@ export default function CompletedMovementsPage() {
 
   const [detailOpen, setDetailOpen] = useState(false)
   const [selected, setSelected] = useState<CompletedMovement | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
 
   const [searchParams] = useSearchParams()
   const [highlightId, setHighlightId] = useState<string | null>(null)
@@ -97,6 +99,34 @@ export default function CompletedMovementsPage() {
   }
 
   const movements = completedMovementsQuery.data?.items || []
+
+  const visibleMovements = useMemo(() => {
+    const items = movements
+    const q = searchQuery
+
+    return items.filter((m) => {
+      const fromCode = m.fromWarehouseCode ? String(m.fromWarehouseCode).replace(/^SUC-/, '') : ''
+      const toCode = m.toWarehouseCode ? String(m.toWarehouseCode).replace(/^SUC-/, '') : ''
+      const date = m.createdAt ? new Date(m.createdAt) : null
+
+      return matchesSearchQuery(q, [
+        m.type,
+        m.typeLabel,
+        m.createdAt,
+        m.completedAt,
+        date ? date.toLocaleString('es-ES', { timeZone: 'America/La_Paz' }) : '',
+        fromCode,
+        toCode,
+        m.fromWarehouseCode,
+        m.toWarehouseCode,
+        m.requestedByName,
+        m.fulfilledByName,
+        m.note,
+        m.totalItems,
+        m.totalQuantity,
+      ])
+    })
+  }, [movements, searchQuery])
 
   const openDetail = (m: CompletedMovement) => {
     setSelected(m)
@@ -175,12 +205,23 @@ export default function CompletedMovementsPage() {
           Historial de movimientos completados con acceso a documentos PDF
         </div>
 
+        <div className="mb-3 max-w-xl">
+          <Input
+            label="Buscar"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Sucursal, solicitante, fecha, tipo, nota…"
+          />
+        </div>
+
         {movements.length === 0 ? (
           <EmptyState message="Aún no se han completado movimientos en el sistema." />
+        ) : visibleMovements.length === 0 ? (
+          <EmptyState message="No hay resultados." />
         ) : (
           <div className="rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
             <div className="overflow-x-auto">
-              <Table columns={columns} data={movements} keyExtractor={(m) => m.id} rowClassName={rowClassName} />
+              <Table columns={columns} data={visibleMovements} keyExtractor={(m) => m.id} rowClassName={rowClassName} />
             </div>
           </div>
         )}
