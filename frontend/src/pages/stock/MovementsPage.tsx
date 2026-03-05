@@ -26,6 +26,7 @@ type MovementRequestItem = {
 
 type MovementRequest = {
   id: string
+  code: string
   status: 'OPEN' | 'SENT' | 'FULFILLED' | 'CANCELLED'
   requestedCity: string
   warehouseId?: string | null
@@ -182,6 +183,7 @@ async function listMovementRequests(token: string): Promise<{ items: MovementReq
   return {
     items: response.items.map((req: any) => ({
       ...req,
+      code: String(req.code ?? ''),
       items: req.items.map((item: any) => ({
         ...item,
         // Backend puede enviar presentación como campos planos o anidada (item.presentation)
@@ -882,7 +884,7 @@ export function MovementsPage() {
         setShowRequestDetailModal(false)
         setSelectedRequest(null)
       }}
-      title="📨 Detalle de solicitud"
+      title={`📨 Detalle de solicitud ${selectedRequest.code || ''}`.trim()}
       maxWidth="3xl"
     >
       {(() => {
@@ -2126,7 +2128,16 @@ export function MovementsPage() {
                     return '⛔ Cancelada'
                   },
                 },
-                { header: 'Destino', className: 'text-[13px]', accessor: (r) => r.requestedCity },
+                {
+                  header: 'Destino',
+                  className: 'text-[13px]',
+                  accessor: (r) => (
+                    <div className="leading-tight">
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400">{r.code}</div>
+                      <div>{r.requestedCity}</div>
+                    </div>
+                  ),
+                },
                 { header: 'Solicitado por', className: 'text-[13px]', accessor: (r) => r.requestedByName ?? '-' },
                 { header: 'Fecha', className: 'text-[13px]', accessor: (r) => new Date(r.createdAt).toLocaleString() },
                 {

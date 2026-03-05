@@ -29,6 +29,7 @@ type MovementRequestItem = {
 
 type MovementRequest = {
   id: string
+  code: string
   status: 'OPEN' | 'SENT' | 'FULFILLED' | 'CANCELLED'
   confirmationStatus?: 'PENDING' | 'ACCEPTED' | 'REJECTED'
   requestedCity: string
@@ -105,6 +106,7 @@ async function listMovementRequests(token: string, city?: string): Promise<{ ite
   return {
     items: response.items.map((req: any) => ({
       ...req,
+      code: String(req.code ?? ''),
       movements: Array.isArray(req.movements)
         ? req.movements.map((m: any) => ({
             id: String(m.id),
@@ -208,6 +210,9 @@ export function BulkFulfillRequestsPage() {
     if (!movementRequestsQuery.data?.items) return []
 
     return movementRequestsQuery.data.items.filter((request: MovementRequest) => {
+      const hasPendingItems = (request.items ?? []).some((it) => Number(it.remainingQuantity ?? 0) > 1e-9)
+      if (!hasPendingItems) return false
+
       if (request.status === 'OPEN') return true
       if (request.status === 'CANCELLED') return false
       const outCount = (request.movements ?? []).filter((m) => m.type === 'OUT').length
@@ -511,6 +516,9 @@ export function BulkFulfillRequestsPage() {
                               <span className="text-sm font-medium text-slate-900 dark:text-slate-100">
                                 {request.requestedByName || 'Usuario desconocido'}
                               </span>
+                              {request.code ? (
+                                <span className="text-xs text-slate-500 dark:text-slate-400">({request.code})</span>
+                              ) : null}
                               {request.note && (
                                 <span
                                   className="text-xs cursor-help"

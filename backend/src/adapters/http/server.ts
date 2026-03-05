@@ -25,6 +25,7 @@ import { registerContactRoutes } from './routes/contact.js'
 import { registerWellKnownRoutes } from './routes/wellKnown.js'
 import { registerDashboardRoutes } from './routes/dashboards.js'
 import { registerLaboratoryRoutes } from './routes/laboratory.js'
+import { registerNotificationRoutes } from './routes/notifications.js'
 
 export async function createHttpServer() {
   const env = getEnv()
@@ -146,6 +147,7 @@ export async function createHttpServer() {
 
   await registerHealthRoutes(app)
   await registerAuthRoutes(app)
+  await registerNotificationRoutes(app)
   await registerCatalogRoutes(app)
   await registerProductRoutes(app)
   await registerStockRoutes(app)

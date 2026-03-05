@@ -191,6 +191,7 @@ model User {
   photoKey     String?
   warehouseId  String?
   isActive     Boolean  @default(true)
+  notificationsLastReadAt DateTime @default(now())
   version      Int      @default(1)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -635,6 +636,9 @@ model StockMovement {
 model StockMovementRequest {
   id            String                    @id @default(uuid())
   tenantId      String
+  code          String
+  codeYear      Int
+  codeSeq       Int
   warehouseId   String?
   status        StockMovementRequestStatus @default(OPEN)
   confirmationStatus StockMovementRequestConfirmationStatus @default(PENDING)
@@ -656,6 +660,8 @@ model StockMovementRequest {
   items StockMovementRequestItem[]
 
   @@index([tenantId])
+  @@unique([tenantId, code])
+  @@index([tenantId, codeYear, codeSeq])
   @@index([tenantId, status])
   @@index([tenantId, confirmationStatus])
   @@index([tenantId, warehouseId])
@@ -742,6 +748,24 @@ model TenantSequence {
 
   @@unique([tenantId, year, key])
   @@index([tenantId])
+}
+
+model Notification {
+  id           String   @id @default(uuid())
+  tenantId     String
+  city         String?
+  targetUserId String?
+  type         String
+  title        String
+  body         String?
+  linkTo       String?
+  meta         Json?
+  createdAt    DateTime @default(now())
+  createdBy    String?
+
+  @@index([tenantId, createdAt])
+  @@index([tenantId, city, createdAt])
+  @@index([tenantId, targetUserId, createdAt])
 }
 
 model SalesOrder {

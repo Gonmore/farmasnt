@@ -77,7 +77,7 @@ async function fulfillOrderInTx(
 
   const order = await tx.salesOrder.findFirst({
     where: { id: args.orderId, tenantId: args.tenantId },
-    select: { id: true, number: true, status: true, version: true, customerId: true, paymentMode: true },
+    select: { id: true, number: true, status: true, version: true, customerId: true, paymentMode: true, deliveryCity: true },
   })
   if (!order) {
     const err = new Error('Not found') as Error & { statusCode?: number }
@@ -296,7 +296,7 @@ async function fulfillOrderInTx(
       version: { increment: 1 },
       createdBy: args.userId,
     },
-    select: { id: true, number: true, status: true, version: true, paymentMode: true, deliveredAt: true, updatedAt: true },
+    select: { id: true, number: true, status: true, version: true, paymentMode: true, deliveredAt: true, updatedAt: true, deliveryCity: true },
   })
 
   return { orderBefore: order, updatedOrder, createdMovements, changedBalances }
@@ -1308,7 +1308,7 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
       const updated = await db.salesOrder.update({
         where: { id },
         data: { status: 'CONFIRMED', version: { increment: 1 }, createdBy: userId },
-        select: { id: true, number: true, status: true, version: true, updatedAt: true },
+        select: { id: true, number: true, status: true, version: true, updatedAt: true, deliveryCity: true },
       })
 
       await audit.append({
@@ -1320,6 +1320,24 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
         before,
         after: updated,
       })
+
+      try {
+        const body = updated?.number ? `Orden: ${String(updated.number)}` : null
+        await db.notification.create({
+          data: {
+            tenantId,
+            city: (updated as any)?.deliveryCity ?? null,
+            type: 'sales.order.confirmed',
+            title: '✅ Pedido confirmado',
+            linkTo: `/sales/orders/${encodeURIComponent(String(updated.id))}`,
+            createdBy: userId,
+            meta: { kind: 'success', orderId: updated.id, orderNumber: updated.number },
+            ...(body ? { body } : {}),
+          },
+        })
+      } catch (e) {
+        request.log.warn({ err: e }, 'notifications.create.failed')
+      }
 
       app.io?.to(`tenant:${tenantId}`).emit('sales.order.confirmed', updated)
       console.log(`Emitted sales.order.confirmed to tenant:${tenantId}`, updated)
@@ -1370,6 +1388,24 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
         before: result.orderBefore,
         after: { order: result.updatedOrder, movements: result.createdMovements, balances: result.changedBalances },
       })
+
+      try {
+        const body = result.updatedOrder?.number ? `Orden: ${String(result.updatedOrder.number)}` : null
+        await db.notification.create({
+          data: {
+            tenantId,
+            city: (result.updatedOrder as any)?.deliveryCity ?? null,
+            type: 'sales.order.fulfilled',
+            title: '📦 Pedido atendido',
+            linkTo: `/sales/orders/${encodeURIComponent(String(result.updatedOrder.id))}`,
+            createdBy: userId,
+            meta: { kind: 'success', orderId: result.updatedOrder.id, orderNumber: result.updatedOrder.number },
+            ...(body ? { body } : {}),
+          },
+        })
+      } catch (e) {
+        request.log.warn({ err: e }, 'notifications.create.failed')
+      }
 
       const room = `tenant:${tenantId}`
       console.log(`Emitted sales.order.fulfilled to ${room}`, result.updatedOrder)
@@ -1445,7 +1481,7 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
                   }
                 : {}),
             },
-            select: { id: true, number: true, status: true, version: true, paymentMode: true },
+            select: { id: true, number: true, status: true, version: true, paymentMode: true, deliveryCity: true },
           })
           if (!order) {
             const err = new Error('Not found') as Error & { statusCode?: number }
@@ -1628,7 +1664,7 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
           const updatedOrder = await tx.salesOrder.update({
             where: { id: order.id },
             data: { status: 'FULFILLED', deliveredAt, version: { increment: 1 }, createdBy: userId },
-            select: { id: true, number: true, status: true, version: true, paymentMode: true, deliveredAt: true, updatedAt: true },
+            select: { id: true, number: true, status: true, version: true, paymentMode: true, deliveredAt: true, updatedAt: true, deliveryCity: true },
           })
 
           return { orderBefore: order, updatedOrder, createdMovements, changedBalances }
@@ -1644,6 +1680,24 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
         after: { order: result.updatedOrder, movements: result.createdMovements, balances: result.changedBalances },
       })
 
+      try {
+        const body = result.updatedOrder?.number ? `Orden: ${String(result.updatedOrder.number)}` : null
+        await db.notification.create({
+          data: {
+            tenantId,
+            city: (result.updatedOrder as any)?.deliveryCity ?? null,
+            type: 'sales.order.delivered',
+            title: '✅ Orden entregada',
+            linkTo: `/sales/orders/${encodeURIComponent(String(result.updatedOrder.id))}`,
+            createdBy: userId,
+            meta: { kind: 'success', orderId: result.updatedOrder.id, orderNumber: result.updatedOrder.number },
+            ...(body ? { body } : {}),
+          },
+        })
+      } catch (e) {
+        request.log.warn({ err: e }, 'notifications.create.failed')
+      }
+
       const room = `tenant:${tenantId}`
       console.log(`Emitted sales.order.delivered to ${room}`, result.updatedOrder)
       app.io?.to(room).emit('sales.order.delivered', result.updatedOrder)
@@ -1654,6 +1708,32 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
       const creditDays = parseCreditDays(result.updatedOrder.paymentMode)
       const base = result.updatedOrder.deliveredAt ?? new Date()
       const dueAt = addDaysUtc(base, creditDays)
+
+      try {
+        const dueLabel = Number.isFinite(creditDays) && creditDays > 0 ? `Cobrar en ${creditDays} día(s)` : 'Cobrar ahora'
+        const body = result.updatedOrder?.number ? `Orden: ${String(result.updatedOrder.number)}` : null
+        await db.notification.create({
+          data: {
+            tenantId,
+            city: (result.updatedOrder as any)?.deliveryCity ?? null,
+            type: 'sales.order.payment.due',
+            title: `💳 ${dueLabel}`,
+            linkTo: `/sales/orders/${encodeURIComponent(String(result.updatedOrder.id))}`,
+            createdBy: userId,
+            meta: {
+              kind: 'warning',
+              orderId: result.updatedOrder.id,
+              orderNumber: result.updatedOrder.number,
+              creditDays,
+              dueAt: dueAt.toISOString(),
+            },
+            ...(body ? { body } : {}),
+          },
+        })
+      } catch (e) {
+        request.log.warn({ err: e }, 'notifications.create.failed')
+      }
+
       app.io?.to(room).emit('sales.order.payment.due', {
         id: result.updatedOrder.id,
         number: result.updatedOrder.number,

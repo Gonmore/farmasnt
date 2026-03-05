@@ -488,7 +488,7 @@ export function ReturnsPage() {
     <Modal
       isOpen={!!selectedRequest}
       onClose={() => setSelectedRequest(null)}
-      title="📦 Detalle del envío"
+      title={`📦 Detalle del envío${selectedRequest.code ? ` — ${selectedRequest.code}` : ''}`}
       maxWidth="3xl"
     >
       <div className="space-y-4">
@@ -1025,7 +1025,12 @@ export function ReturnsPage() {
                   {
                     header: 'Tipo',
                     width: '150px',
-                    accessor: (r: any) => (r.status === 'OPEN' ? 'Atención parcial' : 'Atención de solicitud'),
+                    accessor: (r: any) => (
+                      <div className="leading-tight">
+                        <div>{r.status === 'OPEN' ? 'Atención parcial' : 'Atención de solicitud'}</div>
+                        {r.code ? <div className="text-xs text-slate-500 dark:text-slate-400">{r.code}</div> : null}
+                      </div>
+                    ),
                   },
                   { 
                     header: 'ORG -> DEST', 

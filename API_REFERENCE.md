@@ -101,6 +101,66 @@ Response 200
 
 ---
 
+## Notifications (campana)
+Notificaciones persistentes (server-side) con marca de lectura por usuario.
+
+Notas
+- Requiere JWT.
+- Para usuarios con scope de sucursal (`ScopeBranch`), el backend filtra por la ciudad de la sucursal autenticada.
+- Si el usuario está scopeado por sucursal pero no tiene sucursal seleccionada, puede responder `409`.
+
+### GET /api/v1/notifications
+
+Query
+- `take` (1..100, default 50)
+
+Response 200
+```json
+{
+  "lastReadAt": "2026-03-05T12:34:56.000Z",
+  "items": [
+    {
+      "id": "...",
+      "createdAt": "2026-03-05T12:00:00.000Z",
+      "type": "sales.order.confirmed",
+      "title": "✅ Pedido confirmado",
+      "body": "Orden: OV-000123",
+      "kind": "success",
+      "linkTo": "/sales/orders/...",
+      "isRead": false
+    }
+  ]
+}
+```
+
+### POST /api/v1/notifications/mark-all-read
+Marca todas como leídas (setea `notificationsLastReadAt = now()` para el usuario autenticado).
+
+Response 200
+```json
+{ "lastReadAt": "2026-03-05T12:34:56.000Z" }
+```
+
+### POST /api/v1/notifications/send-bulk-transfer
+Endpoint utilitario para el flujo de transferencia masiva en UI (crea notificaciones best-effort).
+
+Body
+```json
+{
+  "referenceId": "...",
+  "fromWarehouseId": "...",
+  "toWarehouseId": "...",
+  "items": [{ "productId": "...", "quantity": 10 }]
+}
+```
+
+Response 200
+```json
+{ "ok": true }
+```
+
+---
+
 ## Tenant Branding
 Branding del tenant (logo/colores/tema). Hay 2 variantes:
 - Pública (sin JWT) para pintar la pantalla de login según el `Host`.
@@ -1153,6 +1213,7 @@ Query
 
 Notas
 - Si el usuario tiene scope de sucursal (`ScopeBranch`), el backend filtra por la ciudad de la sucursal autenticada y no permite operar sin sucursal seleccionada.
+- `code` es un identificador humano tipo `SOLYY####`, secuencial por tenant+año.
 
 Response 200
 ```json
@@ -1160,6 +1221,7 @@ Response 200
   "items": [
     {
       "id": "...",
+      "code": "SOL260001",
       "status": "OPEN",
       "confirmationStatus": "PENDING",
       "warehouseId": "...",
@@ -1244,11 +1306,13 @@ Notas
 - `quantity` está expresado en cantidad de presentaciones (no en unidades base).
 - El backend calcula `requestedQuantity`/`remainingQuantity` en unidades base usando `presentation.unitsPerPresentation`.
 - `requestedByName` se determina automáticamente desde el usuario autenticado (nombre o email).
+- `code` se asigna automáticamente al crear la solicitud.
 
 Response 201 (resumen)
 ```json
 {
   "id": "...",
+  "code": "SOL260002",
   "status": "OPEN",
   "confirmationStatus": "PENDING",
   "warehouseId": "...",

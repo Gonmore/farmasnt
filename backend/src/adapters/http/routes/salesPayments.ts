@@ -267,6 +267,7 @@ export function registerSalesPaymentRoutes(app: FastifyInstance) {
           version: true,
           paidAt: true,
           paidAmount: true,
+          deliveryCity: true,
           customerId: true,
           lines: { select: { quantity: true, unitPrice: true } },
         },
@@ -340,6 +341,25 @@ export function registerSalesPaymentRoutes(app: FastifyInstance) {
 
       if (fullyPaid) {
         const room = `tenant:${tenantId}`
+
+        try {
+          const body = updated?.number ? `Orden: ${String(updated.number)}` : null
+          await db.notification.create({
+            data: {
+              tenantId,
+              city: (order as any)?.deliveryCity ?? null,
+              type: 'sales.order.paid',
+              title: '✅ Orden cobrada',
+              linkTo: `/sales/orders/${encodeURIComponent(String(updated.id))}`,
+              createdBy: userId,
+              meta: { kind: 'success', orderId: updated.id, orderNumber: updated.number },
+              ...(body ? { body } : {}),
+            },
+          })
+        } catch (e) {
+          request.log.warn({ err: e }, 'notifications.create.failed')
+        }
+
         app.io?.to(room).emit('sales.order.paid', {
           id: updated.id,
           number: updated.number,

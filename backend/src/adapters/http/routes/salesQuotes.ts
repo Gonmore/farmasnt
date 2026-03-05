@@ -991,6 +991,60 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
         after: created?.order ?? created,
       })
 
+      try {
+        const quoteNumber = created?.quoteInfo?.number ? String(created.quoteInfo.number) : null
+        const orderNumber = created?.order?.number ? String(created.order.number) : null
+        const customerName = created?.quoteInfo?.customerName ? String(created.quoteInfo.customerName) : null
+        const city = created?.quoteInfo?.city ? String(created.quoteInfo.city) : null
+        const parts = [
+          quoteNumber ? `COT ${quoteNumber}` : null,
+          orderNumber ? `→ ORD ${orderNumber}` : null,
+          customerName,
+          city ? `Ciudad: ${city}` : null,
+        ].filter(Boolean)
+
+        const body = parts.join(' • ') || null
+        const linkTo = created?.order?.id ? `/sales/orders/${encodeURIComponent(String(created.order.id))}` : null
+
+        await db.notification.create({
+          data: {
+            tenantId,
+            city,
+            type: 'sales.quote.processed',
+            title: '🧾 Cotización procesada',
+            createdBy: userId,
+            meta: {
+              kind: 'info',
+              quoteId: created?.quoteInfo?.id ?? id,
+              quoteNumber: quoteNumber ?? null,
+              orderId: created?.order?.id ?? null,
+              orderNumber: orderNumber ?? null,
+              city,
+            },
+            ...(body ? { body } : {}),
+            ...(linkTo ? { linkTo } : {}),
+          },
+        })
+
+        if (created?.order) {
+          const body = orderNumber ? `Orden: ${orderNumber}` : null
+          await db.notification.create({
+            data: {
+              tenantId,
+              city,
+              type: 'sales.order.created',
+              title: '🧾 Pedido creado',
+              linkTo: `/sales/orders/${encodeURIComponent(String(created.order.id))}`,
+              createdBy: userId,
+              meta: { kind: 'info', orderId: created.order.id, orderNumber, city },
+              ...(body ? { body } : {}),
+            },
+          })
+        }
+      } catch (e) {
+        request.log.warn({ err: e }, 'notifications.create.failed')
+      }
+
       // Real-time notifications + stock reservation updates
       const room = `tenant:${tenantId}`
       console.log(`Emitting sales.quote.processed to room ${room}`, {
@@ -1097,9 +1151,15 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
 
         if (items.length === 0) return { request: null as any, items }
 
+        const year = currentYearUtc()
+        const seq = await nextSequence(tx, { tenantId, year, key: 'SOL' })
+
         const requestRow = await tx.stockMovementRequest.create({
           data: {
             tenantId,
+            code: seq.number,
+            codeYear: year,
+            codeSeq: seq.value,
             requestedCity: city,
             quoteId: quote.id,
             requestedBy: userId,
@@ -1130,7 +1190,7 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
               })),
             },
           },
-          select: { id: true, requestedCity: true, status: true, createdAt: true },
+          select: { id: true, code: true, requestedCity: true, status: true, createdAt: true },
         })
 
         return { request: requestRow, items }
@@ -1146,6 +1206,42 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
         city,
         items: created.items,
       })
+
+      try {
+        const actorLabel = actor?.email ? String(actor.email) : 'Un usuario'
+        const quoteNumber = quote?.number ? String(quote.number) : null
+        const cityLabel = city ? String(city) : null
+
+        const items = Array.isArray(created?.items) ? created.items : []
+        const lines = items
+          .map((i: any) => {
+            const name = i?.productName ? String(i.productName) : null
+            const missing = typeof i?.missing === 'number' ? i.missing : Number(i?.missing)
+            if (!name) return null
+            const miss = Number.isFinite(missing) && missing > 0 ? `: ${missing}` : ''
+            return `• ${name}${miss}`
+          })
+          .filter(Boolean)
+          .slice(0, 8)
+
+        const header = `${actorLabel} solicitó existencias${quoteNumber ? ` para COT ${quoteNumber}` : ''}${cityLabel ? ` (almacén ${cityLabel})` : ''}.`
+        const body = lines.length > 0 ? `${header}\n\nFaltantes:\n${lines.join('\n')}` : header
+
+        await db.notification.create({
+          data: {
+            tenantId,
+            city: cityLabel,
+            type: 'sales.quote.stock_requested',
+            title: '📣 Solicitud de existencias',
+            body,
+            linkTo: '/stock/movements',
+            createdBy: userId,
+            meta: { kind: 'warning', quoteId: quote.id, quoteNumber, city: cityLabel, requestId: created.request?.id ?? null },
+          },
+        })
+      } catch (e) {
+        request.log.warn({ err: e }, 'notifications.create.failed')
+      }
 
       return reply.send({ ok: true, requestId: created.request?.id ?? null, city, items: created.items })
     },

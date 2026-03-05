@@ -4,6 +4,7 @@ import { connectSocket, disconnectSocket } from '../lib/socket'
 import { useAuth } from './AuthProvider'
 import { playNotificationChime } from '../lib/sound'
 import { usePermissions } from '../hooks/usePermissions'
+import { apiFetch } from '../lib/api'
 
 export type AppNotification = {
   id: string
@@ -30,61 +31,109 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
   const auth = useAuth()
   const queryClient = useQueryClient()
   const perms = usePermissions()
-  const [notifications, setNotifications] = useState<AppNotification[]>([])
+  const [serverNotifications, setServerNotifications] = useState<AppNotification[]>([])
+  const [localNotifications, setLocalNotifications] = useState<AppNotification[]>([])
   const [lastReadAt, setLastReadAt] = useState<string | null>(null)
   const [toast, setToast] = useState<AppNotification | null>(null)
 
   const toastTimerRef = useRef<number | null>(null)
   const invalidateTimerRef = useRef<number | null>(null)
-  const pushRef = useRef<null | ((n: Omit<AppNotification, 'id' | 'createdAt'>) => void)>(null)
+  const refreshTimerRef = useRef<number | null>(null)
+  const pushLocalRef = useRef<null | ((n: Omit<AppNotification, 'id' | 'createdAt'>) => void)>(null)
+
+  const refreshFromServer = async () => {
+    if (!auth.accessToken) return
+    const data = await apiFetch<{
+      lastReadAt: string
+      items: Array<{ id: string; createdAt: string; title: string; body?: string | null; kind?: string | null; linkTo?: string | null }>
+    }>(`/api/v1/notifications?take=50`, { token: auth.accessToken })
+
+    const normalizeKind = (k: any): AppNotification['kind'] => {
+      const v = typeof k === 'string' ? k : ''
+      if (v === 'success' || v === 'warning' || v === 'error' || v === 'info') return v
+      return 'info'
+    }
+
+    setLastReadAt(data?.lastReadAt ?? new Date().toISOString())
+    setServerNotifications(
+      (Array.isArray(data?.items) ? data.items : []).map((n) => ({
+        id: String(n.id),
+        createdAt: String(n.createdAt),
+        title: String(n.title ?? ''),
+        body: n.body ? String(n.body) : undefined,
+        kind: normalizeKind(n.kind),
+        linkTo: n.linkTo ? String(n.linkTo) : undefined,
+      })),
+    )
+  }
+
+  const scheduleRefresh = () => {
+    if (refreshTimerRef.current) return
+    refreshTimerRef.current = window.setTimeout(() => {
+      refreshTimerRef.current = null
+      refreshFromServer().catch((e) => console.warn('notifications.refresh.failed', e))
+    }, 250)
+  }
+
+  const showToast = (n: Omit<AppNotification, 'id' | 'createdAt'>) => {
+    const now = new Date().toISOString()
+    const full: AppNotification = {
+      id: `toast-${now}-${Math.random().toString(16).slice(2)}`,
+      createdAt: now,
+      ...n,
+    }
+    setToast(full)
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
+    toastTimerRef.current = window.setTimeout(() => setToast(null), 10_000)
+    playNotificationChime()
+  }
 
   useEffect(() => {
     if (!auth.isAuthenticated) {
       disconnectSocket()
-      setNotifications((prev) => (prev.length > 0 ? [] : prev))
+      setServerNotifications((prev) => (prev.length > 0 ? [] : prev))
+      setLocalNotifications((prev) => (prev.length > 0 ? [] : prev))
       setLastReadAt((prev) => (prev !== null ? null : prev))
       setToast((prev) => (prev !== null ? null : prev))
       if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
+      if (refreshTimerRef.current) window.clearTimeout(refreshTimerRef.current)
       return
     }
+
+    refreshFromServer().catch((e) => console.warn('notifications.initial_load.failed', e))
 
     const socket = connectSocket()
     if (!socket) return
 
     console.log('Setting up socket listeners')
 
-    const push = (n: Omit<AppNotification, 'id' | 'createdAt'>) => {
+    const pushLocal = (n: Omit<AppNotification, 'id' | 'createdAt'>) => {
       const now = new Date().toISOString()
       const full: AppNotification = {
-        id: `${now}-${Math.random().toString(16).slice(2)}`,
+        id: `local-${now}-${Math.random().toString(16).slice(2)}`,
         createdAt: now,
         ...n,
       }
-
-      setNotifications((prev) => [full, ...prev].slice(0, 50))
-
-      // Toast under bell for 10 seconds (does not mark as read)
-      setToast(full)
-      if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
-      toastTimerRef.current = window.setTimeout(() => setToast(null), 10_000)
-
-      // Sound
-      playNotificationChime()
+      setLocalNotifications((prev) => [full, ...prev].slice(0, 25))
+      showToast(n)
     }
 
-    pushRef.current = push
+    pushLocalRef.current = pushLocal
 
     const onOrderCreated = (payload: any) => {
       console.log('Notification: Order created', payload)
-      push({ kind: 'info', title: '🧾 Pedido creado', body: payload?.number ? `Orden: ${payload.number}` : undefined })
+      showToast({ kind: 'info', title: '🧾 Pedido creado', body: payload?.number ? `Orden: ${payload.number}` : undefined })
+      scheduleRefresh()
     }
     const onOrderConfirmed = (payload: any) => {
       console.log('Notification: Order confirmed', payload)
-      push({ kind: 'success', title: '✅ Pedido confirmado', body: payload?.number ? `Orden: ${payload.number}` : undefined })
+      showToast({ kind: 'success', title: '✅ Pedido confirmado', body: payload?.number ? `Orden: ${payload.number}` : undefined })
+      scheduleRefresh()
     }
     const onOrderFulfilled = (payload: any) => {
       console.log('Notification: Order fulfilled', payload)
-      push({ kind: 'success', title: '📦 Pedido entregado', body: payload?.number ? `Orden: ${payload.number}` : undefined })
+      showToast({ kind: 'success', title: '📦 Pedido entregado', body: payload?.number ? `Orden: ${payload.number}` : undefined })
+      scheduleRefresh()
     }
 
     const onOrderDelivered = (payload: any) => {
@@ -96,22 +145,25 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
 
       // Seller-facing: congratulations
       if (isVentas && orderId) {
-        push({
+        showToast({
           kind: 'success',
           title: '🎉 Venta finalizada — ¡felicitaciones!',
           body: orderNumber ? `Orden: ${orderNumber}` : undefined,
           linkTo: `/sales/orders/${encodeURIComponent(orderId)}`,
         })
+        scheduleRefresh()
         return
       }
 
       // Logistics/admin: delivery completed
-      push({
+      showToast({
         kind: 'success',
         title: isLogistica ? '✅ Entrega marcada como realizada' : '✅ Orden entregada',
         body: orderNumber ? `Orden: ${orderNumber}` : undefined,
         linkTo: orderId ? `/sales/orders/${encodeURIComponent(orderId)}` : '/sales/deliveries',
       })
+
+      scheduleRefresh()
     }
 
     const onPaymentDue = (payload: any) => {
@@ -130,7 +182,7 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       // Keep A/R list fresh
       queryClient.invalidateQueries({ queryKey: ['payments'] })
 
-      push({
+      showToast({
         kind: 'warning',
         title: `💳 ${dueLabel}`,
         body: [orderNumber ? `Orden: ${orderNumber}` : null, dueDateLabel ? `Fecha: ${dueDateLabel}` : null]
@@ -138,6 +190,8 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
           .join(' • '),
         linkTo: orderId ? `/sales/orders/${encodeURIComponent(orderId)}` : '/sales/payments',
       })
+
+      scheduleRefresh()
     }
 
     const onOrderPaid = (payload: any) => {
@@ -149,12 +203,14 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       queryClient.invalidateQueries({ queryKey: ['payments'] })
       queryClient.invalidateQueries({ queryKey: ['orders'] })
 
-      push({
+      showToast({
         kind: 'success',
         title: '✅ Orden cobrada',
         body: orderNumber ? `Orden: ${orderNumber}` : undefined,
         linkTo: orderId ? `/sales/orders/${encodeURIComponent(orderId)}` : '/sales/payments',
       })
+
+      scheduleRefresh()
     }
 
     const onQuoteProcessed = (payload: any) => {
@@ -209,12 +265,14 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
 
       const reservationsBlock = lines.length > 0 ? `Reservas:\n${lines.join('\n')}` : null
 
-      push({
+      showToast({
         kind: 'info',
         title: '🧾 Cotización procesada (reserva realizada)',
         body: [headerParts.join(' • '), extraParts.join(' • '), reservationsBlock].filter(Boolean).join('\n'),
         linkTo: orderId ? `/sales/orders/${encodeURIComponent(orderId)}` : undefined,
       })
+
+      scheduleRefresh()
 
       // Extra requested notification: Logistics needs to know about upcoming delivery + payment terms
       if (isLogistica) {
@@ -226,7 +284,7 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
           deliveryDate ? `Fecha: ${new Date(deliveryDate).toLocaleDateString()}` : null,
         ].filter(Boolean)
 
-        push({
+        showToast({
           kind: 'warning',
           title: '🚚 Entrega pendiente (nueva venta)',
           body: parts.join(' • '),
@@ -236,7 +294,7 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
 
       // Seller-friendly: quick link to the created order
       if (isVentas && orderId) {
-        push({
+        showToast({
           kind: 'success',
           title: '✅ Venta generada',
           body: [orderNumber ? `Orden: ${orderNumber}` : null, customerName ? customerName : null]
@@ -273,22 +331,26 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       const header = `${actorEmail} intentó procesar la ${quoteNumber ? `COT ${quoteNumber}` : 'cotización'}, pero faltan existencias${city ? ` en el almacén de ${city}` : ''}.`
       const body = lines.length > 0 ? `${header}\n\nFaltantes:\n${lines.join('\n')}` : header
 
-      push({
+      showToast({
         kind: 'warning',
         title: '📣 Solicitud de existencias',
         body,
         linkTo: '/stock/movements',
       })
+
+      scheduleRefresh()
     }
 
     const onMovementRequestFulfilled = (payload: any) => {
       const city = payload?.requestedCity ? String(payload.requestedCity) : null
-      push({
+      showToast({
         kind: 'success',
         title: '✅ Solicitud de movimiento atendida',
         body: city ? `Destino: ${city}` : undefined,
         linkTo: '/stock/movements',
       })
+
+      scheduleRefresh()
 
       // Keep movement-requests list fresh where used.
       queryClient.invalidateQueries({ queryKey: ['movementRequests'] })
@@ -330,10 +392,16 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
 
       if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
       if (invalidateTimerRef.current) window.clearTimeout(invalidateTimerRef.current)
+      if (refreshTimerRef.current) window.clearTimeout(refreshTimerRef.current)
 
-      if (pushRef.current) pushRef.current = null
+      if (pushLocalRef.current) pushLocalRef.current = null
     }
   }, [auth.isAuthenticated, queryClient, perms.roles])
+
+  const notifications = useMemo(() => {
+    // Local (ephemeral) notifications first, then persisted server notifications.
+    return [...localNotifications, ...serverNotifications].slice(0, 50)
+  }, [localNotifications, serverNotifications])
 
   const unreadCount = useMemo(() => {
     if (!lastReadAt) return notifications.length
@@ -346,13 +414,38 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
     unreadCount,
     toast,
     dismissToast: () => setToast(null),
-    markAllRead: () => setLastReadAt(new Date().toISOString()),
+    markAllRead: () => {
+      const fallback = new Date().toISOString()
+      if (!auth.accessToken) {
+        setLastReadAt(fallback)
+        return
+      }
+      apiFetch<{ lastReadAt: string }>('/api/v1/notifications/mark-all-read', {
+        token: auth.accessToken,
+        method: 'POST',
+      })
+        .then((r) => setLastReadAt(r?.lastReadAt ?? fallback))
+        .catch((e) => {
+          console.warn('notifications.markAllRead.failed', e)
+          setLastReadAt(fallback)
+        })
+    },
     clear: () => {
-      setNotifications([])
-      setLastReadAt(new Date().toISOString())
+      setLocalNotifications([])
+      setServerNotifications([])
+      const now = new Date().toISOString()
+      setLastReadAt(now)
+      if (auth.accessToken) {
+        apiFetch<{ lastReadAt: string }>('/api/v1/notifications/mark-all-read', {
+          token: auth.accessToken,
+          method: 'POST',
+        })
+          .then((r) => setLastReadAt(r?.lastReadAt ?? now))
+          .catch((e) => console.warn('notifications.clear.markAllRead.failed', e))
+      }
     },
     notify: (n) => {
-      pushRef.current?.(n)
+      pushLocalRef.current?.(n)
     },
   }
 

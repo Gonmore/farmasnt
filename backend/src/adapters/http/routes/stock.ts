@@ -8,6 +8,7 @@ import { AuditService } from '../../../application/audit/auditService.js'
 import { requireAuth, requireModuleEnabled, requirePermission } from '../../../application/security/rbac.js'
 import { Permissions } from '../../../application/security/permissions.js'
 import { createStockMovementTx } from '../../../application/stock/stockMovementService.js'
+import { currentYearUtc, nextSequence } from '../../../application/shared/sequence.js'
 import { getEnv } from '../../../shared/env.js'
 
 const movementCreateSchema = z.object({
@@ -998,6 +999,7 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
       return reply.send({
         items: rows.map((r) => ({
           id: r.id,
+          code: (r as any).code,
           status: r.status,
           confirmationStatus: (r as any).confirmationStatus,
           warehouseId: (r as any).warehouseId ?? null,
@@ -1166,10 +1168,16 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
             }
           }
 
+          const year = currentYearUtc()
+          const seq = await nextSequence(tx, { tenantId, year, key: 'SOL' })
+
           // Create the movement request
           const movementRequest = await (tx as any).stockMovementRequest.create({
             data: {
               tenantId,
+              code: seq.number,
+              codeYear: year,
+              codeSeq: seq.value,
               warehouseId: input.warehouseId,
               requestedCity: warehouse.city,
               requestedBy: userId,
@@ -1225,6 +1233,7 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
 
         return reply.status(201).send({
           id: result.id,
+          code: (result as any).code,
           status: result.status,
           confirmationStatus: (result as any).confirmationStatus,
           warehouseId: (result as any).warehouseId ?? input.warehouseId,
@@ -1937,9 +1946,9 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
             ? await (tx as any).stockMovementRequest.update({
                 where: { id: req.id },
                 data: { status: 'FULFILLED', fulfilledAt: new Date(), fulfilledBy: userId },
-                select: { id: true, status: true, requestedCity: true, warehouseId: true, fulfilledAt: true, fulfilledBy: true },
+                select: { id: true, code: true, status: true, requestedCity: true, warehouseId: true, fulfilledAt: true, fulfilledBy: true },
               })
-            : { id: req.id, status: req.status, requestedCity: req.requestedCity, warehouseId: reqWarehouseId, fulfilledAt: req.fulfilledAt, fulfilledBy: req.fulfilledBy }
+            : { id: req.id, code: (req as any).code, status: req.status, requestedCity: req.requestedCity, warehouseId: reqWarehouseId, fulfilledAt: req.fulfilledAt, fulfilledBy: req.fulfilledBy }
 
           await audit.append({
             tenantId,
@@ -1966,6 +1975,24 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
           if (b) app.io?.to(room).emit('stock.balance.changed', b)
         }
         if ((txResult.request as any)?.status === 'FULFILLED') {
+          try {
+            const body = (txResult.request as any)?.code ? `Solicitud: ${(txResult.request as any).code}` : null
+            await db.notification.create({
+              data: {
+                tenantId,
+                city: (txResult.request as any)?.requestedCity ?? null,
+                type: 'stock.movement_request.fulfilled',
+                title: '✅ Solicitud atendida',
+                linkTo: `/stock/completed-movements?highlight=${encodeURIComponent(String((txResult.request as any).id))}`,
+                createdBy: userId,
+                meta: { requestId: (txResult.request as any).id, requestCode: (txResult.request as any).code ?? null },
+                ...(body ? { body } : {}),
+              },
+            })
+          } catch (e) {
+            request.log.warn({ err: e }, 'notifications.create.failed')
+          }
+
           app.io?.to(room).emit('stock.movement_request.fulfilled', txResult.request)
         }
 
@@ -2578,8 +2605,27 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
                   const updatedReq = await db.stockMovementRequest.update({
                     where: { id: requestId },
                     data: { status: 'FULFILLED', fulfilledAt: new Date(), fulfilledBy: userId },
-                    select: { id: true, requestedCity: true, quoteId: true, requestedBy: true },
+                    select: { id: true, code: true, requestedCity: true, quoteId: true, requestedBy: true },
                   })
+
+                  try {
+                    const body = (updatedReq as any)?.code ? `Solicitud: ${(updatedReq as any).code}` : null
+                    await db.notification.create({
+                      data: {
+                        tenantId,
+                        city: (updatedReq as any)?.requestedCity ?? null,
+                        type: 'stock.movement_request.fulfilled',
+                        title: '✅ Solicitud atendida',
+                        linkTo: `/stock/completed-movements?highlight=${encodeURIComponent(String((updatedReq as any).id))}`,
+                        createdBy: userId,
+                        meta: { requestId: (updatedReq as any).id, requestCode: (updatedReq as any).code ?? null },
+                        ...(body ? { body } : {}),
+                      },
+                    })
+                  } catch (e) {
+                    request.log.warn({ err: e }, 'notifications.create.failed')
+                  }
+
                   app.io?.to(room).emit('stock.movement_request.fulfilled', updatedReq)
                 }
               }
@@ -3805,6 +3851,7 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
               where: { tenantId, id: requestId },
               select: {
                 id: true,
+                code: true,
                 createdAt: true,
                 fulfilledAt: true,
                 status: true,
@@ -3851,7 +3898,7 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
             const fulfilledByName = fulfilledByUser?.fullName || fulfilledByUser?.email || createdByUser?.fullName || createdByUser?.email || null
 
             const completedAt = (req.fulfilledAt ?? g._max.createdAt ?? req.createdAt) as any
-            const typeLabel = req.status === 'OPEN' ? 'Atención parcial' : 'Atención de solicitud'
+            const typeLabel = req.status === 'OPEN' ? `Atención parcial - ${req.code}` : `Atención de solicitud - ${req.code}`
 
             return {
               id: req.id,

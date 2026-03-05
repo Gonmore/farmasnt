@@ -147,6 +147,26 @@ Se incorporaron endpoints read-only de reportes para acelerar dashboards y panta
 
 ---
 
+## **[05 Mar 2026] Stock: códigos SOL en solicitudes + Notificaciones persistentes (campana)**
+
+### Stock — Solicitudes con código `SOLYY####`
+- Se agregaron campos `StockMovementRequest.code`, `codeYear`, `codeSeq`.
+- Se implementó secuenciación por `tenantId + año` usando `TenantSequence` (clave `SOL`).
+- Migración incluye backfill para solicitudes existentes y crea índices/unique (`tenantId + code`).
+- Frontend: se muestra `code` en pantallas de movimientos, recepciones y atención masiva.
+
+### Notificaciones persistentes (campana)
+- Backend: nueva tabla `Notification` y `User.notificationsLastReadAt`.
+- API:
+  - `GET /api/v1/notifications`
+  - `POST /api/v1/notifications/mark-all-read`
+  - `POST /api/v1/notifications/send-bulk-transfer` (utilitario)
+- Inserción de notificaciones “best-effort” (try/catch) para no romper flujos principales (stock/ventas).
+- Frontend: `NotificationsProvider` carga desde API y persiste “marcar todo leído”; sockets quedan para toast/sonido + refresco.
+
+### Operación / despliegue
+- Requiere aplicar migraciones Prisma antes de ejecutar la nueva versión (en local y producción) para evitar errores por columnas faltantes.
+
 ## **[20 Feb 2026] Ventas: pagos parciales + Lotes: gobernanza + UX en detalle de producto**
 
 ### Ventas: Cuentas por cobrar (Pago TOTAL vs PARCIAL)
