@@ -3,6 +3,7 @@ import { z } from 'zod'
 import bcrypt from 'bcryptjs'
 import crypto from 'node:crypto'
 import { parse as parseCsv } from 'csv-parse/sync'
+import { Prisma } from '../../../generated/prisma/client.js'
 import { prisma } from '../../db/prisma.js'
 import { requireAuth, requirePermission } from '../../../application/security/rbac.js'
 import { Permissions } from '../../../application/security/permissions.js'
@@ -40,6 +41,25 @@ const createTenantSchema = z.object({
   contactPhone: z.string().trim().min(8).max(20),
   subscriptionMonths: z.coerce.number().int().min(1).max(36).default(12), // 1-36 meses
 })
+
+function isPrismaSchemaMismatchError(error: unknown): boolean {
+  const err: any = error
+  const code = String(err?.code ?? '')
+  // P2021: table does not exist
+  // P2022: column does not exist
+  if (code === 'P2021' || code === 'P2022') return true
+
+  // Some adapters/drivers may wrap messages differently.
+  const message = String(err?.message ?? '')
+  if (!message) return false
+  return (
+    message.includes('does not exist') ||
+    message.includes('relation') ||
+    message.includes('column') ||
+    message.includes('TenantDomain') ||
+    message.includes('tenantDomain')
+  )
+}
 
 const platformTenantAdminCreateSchema = z.object({
   tenantId: uuidLike,
@@ -197,30 +217,65 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
 
       const q = parsed.data.q
 
-      const items = await db.tenant.findMany({
-        where: {
-          ...(q ? { name: { contains: q, mode: 'insensitive' } } : {}),
-        },
-        take: parsed.data.take,
-        ...(parsed.data.cursor ? { skip: 1, cursor: { id: parsed.data.cursor } } : {}),
-        orderBy: { id: 'asc' },
-        select: {
-          id: true,
-          name: true,
-          isActive: true,
-          branchLimit: true,
-          contactName: true,
-          contactEmail: true,
-          contactPhone: true,
-          subscriptionExpiresAt: true,
-          createdAt: true,
-          updatedAt: true,
-          domains: { select: { domain: true, isPrimary: true, verifiedAt: true } },
-        },
-      })
+      const where = {
+        ...(q ? { name: { contains: q, mode: 'insensitive' as const } } : {}),
+      }
 
-      const nextCursor = items.length === parsed.data.take ? items[items.length - 1]!.id : null
-      return reply.send({ items, nextCursor })
+      try {
+        const items = await db.tenant.findMany({
+          where,
+          take: parsed.data.take,
+          ...(parsed.data.cursor ? { skip: 1, cursor: { id: parsed.data.cursor } } : {}),
+          orderBy: { id: 'asc' },
+          select: {
+            id: true,
+            name: true,
+            isActive: true,
+            branchLimit: true,
+            contactName: true,
+            contactEmail: true,
+            contactPhone: true,
+            subscriptionExpiresAt: true,
+            createdAt: true,
+            updatedAt: true,
+            domains: { select: { domain: true, isPrimary: true, verifiedAt: true } },
+          },
+        })
+
+        const nextCursor = items.length === parsed.data.take ? items[items.length - 1]!.id : null
+        return reply.send({ items, nextCursor })
+      } catch (error) {
+        // Backward/forward compatibility: if DB schema is out of date (missing optional columns/tables),
+        // return a minimal shape instead of a hard 500 that blocks platform operations.
+        if (!isPrismaSchemaMismatchError(error)) throw error
+
+        const items = await db.tenant.findMany({
+          where,
+          take: parsed.data.take,
+          ...(parsed.data.cursor ? { skip: 1, cursor: { id: parsed.data.cursor } } : {}),
+          orderBy: { id: 'asc' },
+          select: {
+            id: true,
+            name: true,
+            isActive: true,
+            branchLimit: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+        })
+
+        const mapped = items.map((t) => ({
+          ...t,
+          contactName: null,
+          contactEmail: null,
+          contactPhone: null,
+          subscriptionExpiresAt: null,
+          domains: [],
+        }))
+
+        const nextCursor = items.length === parsed.data.take ? items[items.length - 1]!.id : null
+        return reply.send({ items: mapped, nextCursor })
+      }
     },
   )
 
@@ -252,19 +307,24 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
 
       const passwordHash = await bcrypt.hash(adminPassword, 12)
 
-      const tenant = await db.$transaction(async (tx) => {
-        const t = await tx.tenant.create({
-          data: {
-            name,
-            branchLimit: branchCount,
-            contactName,
-            contactEmail,
-            contactPhone,
-            subscriptionExpiresAt,
-            createdBy: actor.userId,
-          },
-          select: { id: true, name: true, subscriptionExpiresAt: true },
-        })
+      const createTenantTx = async (opts: { includeSubscriptionFields: boolean; includeDomain: boolean }) => {
+        return db.$transaction(async (tx) => {
+          const t = await tx.tenant.create({
+            data: {
+              name,
+              branchLimit: branchCount,
+              ...(opts.includeSubscriptionFields
+                ? {
+                    contactName,
+                    contactEmail,
+                    contactPhone,
+                    subscriptionExpiresAt,
+                  }
+                : {}),
+              createdBy: actor.userId,
+            },
+            select: { id: true, name: true },
+          })
 
         // Enable default modules
         for (const module of ['WAREHOUSE', 'SALES', 'LABORATORY'] as const) {
@@ -410,7 +470,7 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
           })
         }
 
-        if (primaryDomain) {
+        if (primaryDomain && opts.includeDomain) {
           await tx.tenantDomain.create({
             data: {
               tenantId: t.id,
@@ -423,7 +483,18 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
         }
 
         return t
-      })
+        })
+      }
+
+      let tenant: { id: string; name: string }
+      try {
+        tenant = await createTenantTx({ includeSubscriptionFields: true, includeDomain: true })
+      } catch (error) {
+        if (!isPrismaSchemaMismatchError(error)) throw error
+        // If schema is out of date, retry without optional subscription fields and without domains.
+        // This keeps tenant creation available while migrations are pending.
+        tenant = await createTenantTx({ includeSubscriptionFields: false, includeDomain: false })
+      }
 
       await audit.append({
         tenantId: actor.tenantId,
@@ -439,14 +510,14 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
           contactEmail, 
           contactPhone, 
           subscriptionMonths,
-          subscriptionExpiresAt: tenant.subscriptionExpiresAt,
+          subscriptionExpiresAt,
         },
       })
 
       return reply.status(201).send({ 
         id: tenant.id, 
         name: tenant.name,
-        subscriptionExpiresAt: tenant.subscriptionExpiresAt,
+        subscriptionExpiresAt,
       })
     },
   )
