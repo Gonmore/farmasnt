@@ -10,6 +10,7 @@ import type { PickingPdfMeta, PickingPdfRequestedLine, PickingPdfSentLine } from
 import { formatDateOnlyUtc } from '../../lib/date'
 import { useAuth } from '../../providers/AuthProvider'
 import { matchesSearchQuery } from '../../lib/search'
+import { useTenant } from '../../providers/TenantProvider'
 
 type CompletedMovement = {
   id: string
@@ -23,14 +24,69 @@ type CompletedMovement = {
   fulfilledByName?: string
   totalItems: number
   totalQuantity: number
+  totalQuantityUnits?: number
+  totalQuantityPresentations?: number
   note?: string
   canExportPicking: boolean
   canExportLabel: boolean
 }
 
+function formatQty(value: unknown): string {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return '—'
+  if (Math.abs(n - Math.round(n)) < 1e-9) return String(Math.round(n))
+  return n.toFixed(2)
+}
+
+async function toDataUrlFromBlob(blob: Blob): Promise<string> {
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result ?? ''))
+    reader.onerror = () => reject(new Error('Failed to read blob'))
+    reader.readAsDataURL(blob)
+  })
+}
+
+async function tryLoadLogoDataUrl(url: string): Promise<string | null> {
+  const src = String(url ?? '').trim()
+  if (!src) return null
+
+  try {
+    const res = await fetch(src)
+    if (!res.ok) return null
+    const blob = await res.blob()
+    const dataUrl = await toDataUrlFromBlob(blob)
+
+    // Try to render grayscale (best-effort). If it fails, fall back to original.
+    try {
+      const img = new Image()
+      img.src = dataUrl
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve()
+        img.onerror = () => reject(new Error('Logo image load failed'))
+      })
+
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.max(1, img.naturalWidth || img.width || 1)
+      canvas.height = Math.max(1, img.naturalHeight || img.height || 1)
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return dataUrl
+
+      ;(ctx as any).filter = 'grayscale(1)'
+      ctx.drawImage(img, 0, 0)
+      return canvas.toDataURL('image/png')
+    } catch {
+      return dataUrl
+    }
+  } catch {
+    return null
+  }
+}
+
 export default function CompletedMovementsPage() {
   const navGroups = useNavigation()
   const auth = useAuth()
+  const tenant = useTenant()
 
   const [detailOpen, setDetailOpen] = useState(false)
   const [selected, setSelected] = useState<CompletedMovement | null>(null)
@@ -71,7 +127,10 @@ export default function CompletedMovementsPage() {
         `/api/v1/stock/completed-movements/${movement.id}/picking?type=${movement.type}`,
         { token: auth.accessToken! },
       )
-      exportPickingToPdf(data.meta, data.requestedItems ?? [], data.sentLines ?? [])
+
+      const logoUrl = tenant.branding?.logoUrl
+      const logoDataUrl = logoUrl ? await tryLoadLogoDataUrl(logoUrl) : null
+      exportPickingToPdf(data.meta, data.requestedItems ?? [], data.sentLines ?? [], { logoDataUrl })
     } catch (error) {
       console.error('Error exporting picking:', error)
       alert('Error al exportar picking')
@@ -104,6 +163,8 @@ export default function CompletedMovementsPage() {
         m.note,
         m.totalItems,
         m.totalQuantity,
+        m.totalQuantityUnits,
+        m.totalQuantityPresentations,
       ])
     })
   }, [movements, searchQuery])
@@ -172,7 +233,7 @@ export default function CompletedMovementsPage() {
     { header: 'Solicitante', accessor: (m: CompletedMovement) => m.requestedByName || '—' },
     { header: 'Realizado por', accessor: (m: CompletedMovement) => m.fulfilledByName || '—' },
     { header: 'Items', accessor: (m: CompletedMovement) => m.totalItems },
-    { header: 'Cantidad', accessor: (m: CompletedMovement) => m.totalQuantity },
+    { header: 'Cantidad', accessor: (m: CompletedMovement) => formatQty(m.totalQuantityPresentations ?? m.totalQuantity) },
     {
       header: 'Acciones',
       accessor: (m: CompletedMovement) => (
@@ -188,7 +249,7 @@ export default function CompletedMovementsPage() {
   const sentLinesColumns = [
     { header: 'Producto', accessor: (l: PickingPdfSentLine) => l.productLabel },
     { header: 'Presentación', accessor: (l: PickingPdfSentLine) => l.presentationLabel || '—' },
-    { header: 'Cantidad', accessor: (l: PickingPdfSentLine) => l.quantityUnits },
+    { header: 'Cantidad', accessor: (l: PickingPdfSentLine) => formatQty(l.quantityPresentations ?? l.quantityUnits) },
     { header: 'Lote', accessor: (l: PickingPdfSentLine) => l.batchNumber || '—' },
     {
       header: 'Vence',
@@ -260,7 +321,7 @@ export default function CompletedMovementsPage() {
                 </div>
                 <div>
                   <div className="text-slate-500">Cantidad</div>
-                  <div className="text-slate-900 dark:text-slate-100">{selected.totalQuantity}</div>
+                  <div className="text-slate-900 dark:text-slate-100">{formatQty(selected.totalQuantityPresentations ?? selected.totalQuantity)}</div>
                 </div>
               </div>
             </div>
@@ -298,7 +359,7 @@ export default function CompletedMovementsPage() {
                           [
                             l.productLabel,
                             l.presentationLabel ?? '',
-                            String(l.quantityUnits ?? ''),
+                            String((l.quantityPresentations ?? l.quantityUnits) ?? ''),
                             l.batchNumber ?? '',
                             l.expiresAt ?? '',
                             l.locationCode ?? '',

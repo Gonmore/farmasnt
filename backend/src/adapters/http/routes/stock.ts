@@ -3593,6 +3593,62 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
     async (request, reply) => {
       const tenantId = request.auth!.tenantId
 
+      const unitsPer = (value: unknown): number => {
+        const n = Number(value)
+        return Number.isFinite(n) && n > 0 ? n : 1
+      }
+
+      const sumPresentationsByReference = async (opts: {
+        referenceType: 'BULK_TRANSFER' | 'MOVEMENT_REQUEST'
+        referenceIds: string[]
+        movementType?: 'OUT'
+      }): Promise<Map<string, { totalUnits: number; totalPresentations: number }>> => {
+        const ids = Array.from(new Set((opts.referenceIds ?? []).filter(Boolean)))
+        const result = new Map<string, { totalUnits: number; totalPresentations: number }>()
+        if (ids.length === 0) return result
+
+        const grouped = await db.stockMovement.groupBy({
+          by: ['referenceId', 'batchId'],
+          where: {
+            tenantId,
+            referenceType: opts.referenceType,
+            referenceId: { in: ids },
+            ...(opts.movementType ? { type: opts.movementType } : {}),
+            ...(branchLocationIds
+              ? { OR: [{ fromLocationId: { in: branchLocationIds } }, { toLocationId: { in: branchLocationIds } }] }
+              : {}),
+          },
+          _sum: { quantity: true },
+        })
+
+        const batchIds = Array.from(new Set(grouped.map((g) => g.batchId).filter(Boolean) as string[]))
+        const batches = batchIds.length
+          ? await db.batch.findMany({
+              where: { tenantId, id: { in: batchIds } },
+              select: { id: true, presentation: { select: { unitsPerPresentation: true } } },
+            })
+          : []
+        const batchMap = new Map(batches.map((b) => [b.id, b]))
+
+        for (const g of grouped) {
+          const refId = String(g.referenceId ?? '')
+          if (!refId) continue
+
+          const qtyUnits = Number(g._sum.quantity ?? 0)
+          const b = g.batchId ? batchMap.get(g.batchId) : null
+          const u = unitsPer(b?.presentation?.unitsPerPresentation)
+          const qtyPres = u > 1 ? qtyUnits / u : qtyUnits
+
+          const prev = result.get(refId) ?? { totalUnits: 0, totalPresentations: 0 }
+          result.set(refId, {
+            totalUnits: prev.totalUnits + qtyUnits,
+            totalPresentations: prev.totalPresentations + qtyPres,
+          })
+        }
+
+        return result
+      }
+
       const branchWarehouseId = branchWarehouseIdOf(request)
       if (branchWarehouseId === '__MISSING__') {
         return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
@@ -3656,6 +3712,12 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
           take: 100,
         })
 
+        const bulkTransferIds = bulkTransfers.map((bt) => bt.referenceId).filter(Boolean) as string[]
+        const bulkTransferTotals = await sumPresentationsByReference({
+          referenceType: 'BULK_TRANSFER',
+          referenceIds: bulkTransferIds,
+        })
+
         // Get bulk transfer details
         const bulkTransferDetails = await Promise.all(
           bulkTransfers.map(async (bt) => {
@@ -3694,6 +3756,7 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
                 })
               : null
 
+            const totals = bulkTransferTotals.get(bt.referenceId!)
             return {
               id: bt.referenceId!,
               type: 'BULK_TRANSFER' as const,
@@ -3706,6 +3769,8 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
               fulfilledByName: createdBy?.fullName || createdBy?.email,
               totalItems: bt._count.id,
               totalQuantity: Number(bt._sum.quantity),
+              totalQuantityUnits: Number(bt._sum.quantity),
+              totalQuantityPresentations: totals?.totalPresentations ?? 0,
               canExportPicking: true,
               canExportLabel: true,
             }
@@ -3729,6 +3794,15 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
           },
           take: 100,
         })
+
+        const individualBatchIds = Array.from(new Set(individualMovements.map((m) => m.batchId).filter(Boolean) as string[]))
+        const individualBatches = individualBatchIds.length
+          ? await db.batch.findMany({
+              where: { tenantId, id: { in: individualBatchIds } },
+              select: { id: true, presentation: { select: { unitsPerPresentation: true } } },
+            })
+          : []
+        const individualBatchMap = new Map(individualBatches.map((b) => [b.id, b]))
 
         // Get individual movement details
         const individualMovementDetails = await Promise.all(
@@ -3768,6 +3842,11 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
                 break
             }
 
+            const b = movement.batchId ? individualBatchMap.get(movement.batchId) : null
+            const u = unitsPer(b?.presentation?.unitsPerPresentation)
+            const qtyUnits = Number(movement.quantity)
+            const qtyPres = u > 1 ? qtyUnits / u : qtyUnits
+
             return {
               id: movement.id,
               type: 'MOVEMENT' as const,
@@ -3780,6 +3859,8 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
               fulfilledByName: createdBy?.fullName || createdBy?.email,
               totalItems: 1,
               totalQuantity: Number(movement.quantity),
+              totalQuantityUnits: Number(movement.quantity),
+              totalQuantityPresentations: qtyPres,
               canExportPicking: movement.type === 'OUT' || movement.type === 'TRANSFER',
               canExportLabel: movement.type === 'OUT' || movement.type === 'TRANSFER',
             }
@@ -3823,6 +3904,11 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
               : null
 
             const totalQuantity = returnRecord.items.reduce((sum, item) => sum + Number(item.quantity), 0)
+            const totalQuantityPresentations = returnRecord.items.reduce((sum, item) => {
+              const u = unitsPer(item.presentation?.unitsPerPresentation)
+              const q = Number(item.quantity ?? 0)
+              return sum + (u > 1 ? q / u : q)
+            }, 0)
 
             return {
               id: returnRecord.id,
@@ -3836,6 +3922,8 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
               fulfilledByName: createdBy?.fullName || createdBy?.email,
               totalItems: returnRecord.items.length,
               totalQuantity,
+              totalQuantityUnits: totalQuantity,
+              totalQuantityPresentations,
               canExportPicking: false,
               canExportLabel: false,
             }
@@ -3844,9 +3932,21 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
 
         const isUuid = (value: unknown) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value ?? ''))
 
+        const fulfillRequestIds = movementRequestGroups.map((g) => String(g.referenceId ?? '')).filter(Boolean)
+        const fulfillTotalsByRef = await sumPresentationsByReference({
+          referenceType: 'MOVEMENT_REQUEST',
+          referenceIds: fulfillRequestIds,
+          movementType: 'OUT',
+        })
+
         const movementRequestFulfillmentDetails = await Promise.all(
           movementRequestGroups.map(async (g) => {
             const requestId = g.referenceId as string
+
+            // Pre-computed totals (presentations) for this request id
+            // (computed once for all referenceIds)
+            // NOTE: includes only OUT movements to avoid double-counting after reception.
+
             const req = await db.stockMovementRequest.findFirst({
               where: { tenantId, id: requestId },
               select: {
@@ -3900,6 +4000,8 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
             const completedAt = (req.fulfilledAt ?? g._max.createdAt ?? req.createdAt) as any
             const typeLabel = req.status === 'OPEN' ? `Atención parcial - ${req.code}` : `Atención de solicitud - ${req.code}`
 
+            const totals = fulfillTotalsByRef.get(requestId)
+
             return {
               id: req.id,
               type: 'FULFILL_REQUEST' as const,
@@ -3912,6 +4014,8 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
               fulfilledByName,
               totalItems: g._count.id,
               totalQuantity: Number(g._sum.quantity ?? 0),
+              totalQuantityUnits: Number(g._sum.quantity ?? 0),
+              totalQuantityPresentations: totals?.totalPresentations ?? 0,
               canExportPicking: true,
               canExportLabel: true,
             }
@@ -4041,12 +4145,22 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
       const fromLocationCode = fromLocCodes.size === 1 ? Array.from(fromLocCodes)[0] : fromLocCodes.size > 1 ? 'MIXED' : '—'
       const toLocationCode = toLocCodes.size === 1 ? Array.from(toLocCodes)[0] : toLocCodes.size > 1 ? 'MIXED' : '—'
 
+      const isUuid = (value: unknown) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value ?? ''))
+
       let requestedByName: string | null | undefined = undefined
-      let requestedItems: Array<{ productLabel: string; quantityUnits: number; presentationLabel: string }> = []
+      let requestedItems: Array<{
+        productLabel: string
+        quantityUnits: number
+        quantityPresentations?: number
+        unitsPerPresentation?: number
+        presentationLabel: string
+      }> = []
+      let requestCode: string | null = null
       if (type === 'FULFILL_REQUEST') {
         const req = await db.stockMovementRequest.findFirst({
           where: { tenantId, id },
           select: {
+            code: true,
             requestedBy: true,
             items: {
               select: {
@@ -4057,9 +4171,14 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
             },
           },
         })
+        requestCode = req?.code ?? null
         if (req?.requestedBy) {
-          const u = await db.user.findFirst({ where: { tenantId, id: req.requestedBy }, select: { fullName: true, email: true } })
-          requestedByName = u?.fullName || u?.email || null
+          if (isUuid(req.requestedBy)) {
+            const u = await db.user.findFirst({ where: { tenantId, id: req.requestedBy }, select: { fullName: true, email: true } })
+            requestedByName = u?.fullName || u?.email || null
+          } else {
+            requestedByName = String(req.requestedBy)
+          }
         }
 
         requestedItems = (req?.items ?? []).map((it) => {
@@ -4071,9 +4190,15 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
               : presName
             : '—'
 
+          const quantityUnits = Number(it.requestedQuantity ?? 0)
+          const u = unitsPer(presUnits)
+          const quantityPresentations = u > 1 ? quantityUnits / u : quantityUnits
+
           return {
             productLabel: buildProductLabel({ sku: it.product?.sku ?? null, name: it.product?.name ?? null, genericName: it.product?.genericName ?? null }),
-            quantityUnits: Math.ceil(Number(it.requestedQuantity ?? 0)),
+            quantityUnits,
+            quantityPresentations,
+            unitsPerPresentation: u,
             presentationLabel,
           }
         })
@@ -4087,6 +4212,7 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
 
       const meta = {
         requestId: id,
+        requestCode,
         generatedAtIso: new Date().toISOString(),
         fromWarehouseLabel,
         fromLocationCode,
@@ -4101,17 +4227,23 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
         const b = m.batchId ? batchMap.get(m.batchId) : null
         const presName = String(b?.presentation?.name ?? '').trim()
         const presUnits = Number(b?.presentation?.unitsPerPresentation ?? 1)
+        const u = unitsPer(presUnits)
         const presentationLabel = presName
           ? Number.isFinite(presUnits) && presUnits > 1
             ? `${presName} (${presUnits}u)`
             : presName
           : '—'
+
+        const quantityUnits = Number(m.quantity ?? 0)
+        const quantityPresentations = u > 1 ? quantityUnits / u : quantityUnits
         return {
           locationCode: String(loc?.code ?? '—'),
           productLabel: buildProductLabel(p),
           batchNumber: b?.batchNumber ?? null,
           expiresAt: b?.expiresAt ? new Date(b.expiresAt).toISOString() : null,
-          quantityUnits: Math.ceil(Number(m.quantity ?? 0)),
+          quantityUnits,
+          quantityPresentations,
+          unitsPerPresentation: u,
           presentationLabel,
         }
       })

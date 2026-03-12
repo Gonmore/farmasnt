@@ -4,6 +4,8 @@ import { formatDateOnlyUtc } from './date'
 export type PickingPdfRequestedLine = {
   productLabel: string
   quantityUnits: number
+  quantityPresentations?: number
+  unitsPerPresentation?: number
   presentationLabel: string
 }
 
@@ -13,17 +15,24 @@ export type PickingPdfSentLine = {
   batchNumber: string | null
   expiresAt: string | null
   quantityUnits: number
+  quantityPresentations?: number
+  unitsPerPresentation?: number
   presentationLabel: string
 }
 
 export type PickingPdfMeta = {
   requestId: string
+  requestCode?: string | null
   generatedAtIso: string
   fromWarehouseLabel: string
   fromLocationCode: string
   toWarehouseLabel: string
   toLocationCode: string
   requestedByName?: string | null
+}
+
+type PickingPdfOptions = {
+  logoDataUrl?: string | null
 }
 
 export type LabelPdfData = {
@@ -43,6 +52,13 @@ function sanitizePdfText(value: string): string {
   return (value ?? '').replace(/[\u0000-\u001f\u007f-\u009f]/g, '').trim()
 }
 
+function formatPdfNumber(value: unknown): string {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return '—'
+  if (Math.abs(n - Math.round(n)) < 1e-9) return String(Math.round(n))
+  return n.toFixed(2)
+}
+
 function savePdf(pdf: jsPDF, filename: string): void {
   pdf.save(filename)
 }
@@ -51,6 +67,7 @@ export function exportPickingToPdf(
   meta: PickingPdfMeta,
   requested: PickingPdfRequestedLine[],
   sent: PickingPdfSentLine[],
+  options?: PickingPdfOptions,
 ): void {
   const pdf = new jsPDF('p', 'mm', 'letter')
   const pageWidth = pdf.internal.pageSize.getWidth()
@@ -62,10 +79,31 @@ export function exportPickingToPdf(
 
   const title = 'PICKING'
 
+  const tryDrawLogo = () => {
+    const logo = String(options?.logoDataUrl ?? '').trim()
+    if (!logo) return
+
+    const typeMatch = /^data:image\/(png|jpeg|jpg);/i.exec(logo)
+    const imageType = typeMatch?.[1]?.toLowerCase() === 'png' ? 'PNG' : 'JPEG'
+
+    // Place logo on top-right, inside margins.
+    const w = 28
+    const h = 14
+    const x = pageWidth - margin - w
+    const y = margin + 2
+    try {
+      pdf.addImage(logo, imageType as any, x, y, w, h)
+    } catch {
+      // Best-effort only
+    }
+  }
+
   const header = () => {
     pdf.setFont('helvetica', 'bold')
     pdf.setFontSize(18)
     pdf.text(title, pageWidth / 2, margin, { align: 'center' })
+
+    tryDrawLogo()
 
     pdf.setFont('helvetica', 'normal')
     pdf.setFontSize(10)
@@ -73,6 +111,7 @@ export function exportPickingToPdf(
     const dateStr = new Date(meta.generatedAtIso).toLocaleString()
     const infoLines = [
       `Fecha: ${sanitizePdfText(dateStr)}`,
+      ...(meta.requestCode ? [`Solicitud: ${sanitizePdfText(meta.requestCode)}`] : []),
       `Solicitante: ${sanitizePdfText(meta.requestedByName ?? '—')}`,
       `Origen: ${sanitizePdfText(meta.fromWarehouseLabel)} · ${sanitizePdfText(meta.fromLocationCode)}`,
       `Destino: ${sanitizePdfText(meta.toWarehouseLabel)} · ${sanitizePdfText(meta.toLocationCode)}`,
@@ -131,7 +170,8 @@ export function exportPickingToPdf(
       const rowH = Math.max(5, productLines.length * 4)
 
       pdf.text(productLines, margin, y)
-      pdf.text(String(Math.ceil(Number(it.quantityUnits ?? 0))), margin + colW[0], y)
+      const qty = it.quantityPresentations ?? it.quantityUnits
+      pdf.text(formatPdfNumber(qty), margin + colW[0], y)
       pdf.text(sanitizePdfText(it.presentationLabel ?? '—'), margin + colW[0] + colW[1], y)
 
       y += rowH
@@ -195,7 +235,8 @@ export function exportPickingToPdf(
     const loc = sanitizePdfText(line.locationCode ?? '—')
     const lote = sanitizePdfText(line.batchNumber ?? '—')
     const vence = line.expiresAt ? sanitizePdfText(formatDateOnlyUtc(line.expiresAt)) : '—'
-    const qty = String(Math.ceil(Number(line.quantityUnits ?? 0)))
+    const qtyValue = line.quantityPresentations ?? line.quantityUnits
+    const qty = formatPdfNumber(qtyValue)
     const pres = sanitizePdfText(line.presentationLabel ?? '—')
     const productText = sanitizePdfText(line.productLabel ?? '—')
     const productLines = pdf.splitTextToSize(productText, productW - 2)
