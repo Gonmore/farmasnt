@@ -4147,6 +4147,11 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
 
       const isUuid = (value: unknown) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value ?? ''))
 
+      const unitsPer = (value: unknown): number => {
+        const n = Number(value)
+        return Number.isFinite(n) && n > 0 ? n : 1
+      }
+
       let requestedByName: string | null | undefined = undefined
       let requestedItems: Array<{
         productLabel: string
