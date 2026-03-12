@@ -651,9 +651,9 @@ export function BulkFulfillRequestsPage() {
         title={`Transferencia de ${activeWarehouses.find(w => w.id === fromWarehouseId)?.name || 'Origen'} a ${activeWarehouses.find(w => w.id === toWarehouseId)?.name || 'Destino'}`}
         maxWidth="3xl"
       >
-        <div className="flex flex-col gap-4 md:flex-row">
+        <div className="flex flex-col gap-4 md:flex-row md:items-start">
           {/* Lo Solicitado (siempre visible a la izquierda) */}
-          <div className="border border-slate-200 rounded-lg p-4 dark:border-slate-700 md:w-5/12">
+          <div className="border border-slate-200 rounded-lg p-4 dark:border-slate-700 md:w-[30%]">
             <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100 mb-4">Lo Solicitado</h3>
             <div className="space-y-2">
               {requestedProducts.filter(product => product.remainingQuantity > 0).map((product, index) => {
@@ -664,40 +664,39 @@ export function BulkFulfillRequestsPage() {
                     : (product.presentationName || 'Sin presentación') +
                       (product.unitsPerPresentation && product.unitsPerPresentation > 1 ? ` (${product.unitsPerPresentation}u)` : '')
                 return (
-                  <div key={index} className="flex items-start gap-3 border-b border-slate-100 py-2 last:border-b-0 dark:border-slate-700">
-                    <div className="pt-0.5">
-                      <div
-                        className={`inline-flex items-center justify-center w-6 h-6 rounded-full border-2 ${
-                          isFulfilled
-                            ? 'border-green-500 bg-green-50 dark:bg-green-900/20'
-                            : 'border-slate-300 bg-slate-50 dark:bg-slate-800 dark:border-slate-600'
-                        }`}
-                      >
-                        <span
-                          className={`text-sm ${
-                            isFulfilled ? 'text-green-600 dark:text-green-400' : 'text-slate-400 dark:text-slate-500'
-                          }`}
-                        >
-                          ✓
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="min-w-0 flex-1">
+                  <div key={index} className="border-b border-slate-100 py-2 last:border-b-0 dark:border-slate-700">
+                    <div className="min-w-0">
                       <div className="font-bold text-[13px] leading-tight text-slate-900 dark:text-slate-100">
                         {product.productName || 'Producto desconocido'}
                       </div>
-                      <div className="mt-0.5 leading-tight">
-                        <span
-                          className={`font-bold text-xs text-slate-900 dark:text-slate-100 ${
-                            product.remainingQuantity === 0 ? 'line-through text-slate-400 dark:text-slate-500' : ''
+                      <div className="mt-0.5 flex items-center justify-between gap-2 leading-tight">
+                        <div className="min-w-0">
+                          <span
+                            className={`font-bold text-xs text-slate-900 dark:text-slate-100 ${
+                              product.remainingQuantity === 0 ? 'line-through text-slate-400 dark:text-slate-500' : ''
+                            }`}
+                          >
+                            {product.remaining}x
+                          </span>{' '}
+                          <span className="text-[11px] text-slate-600 dark:text-slate-400">{presentationText}</span>
+                        </div>
+
+                        <div
+                          className={`inline-flex items-center justify-center w-6 h-6 rounded-full border-2 flex-shrink-0 ${
+                            isFulfilled
+                              ? 'border-green-500 bg-green-50 dark:bg-green-900/20'
+                              : 'border-slate-300 bg-slate-50 dark:bg-slate-800 dark:border-slate-600'
                           }`}
+                          title={isFulfilled ? 'Completado' : 'Pendiente'}
                         >
-                          {product.remaining}x
-                        </span>{' '}
-                        <span className="text-[11px] text-slate-600 dark:text-slate-400">
-                          {presentationText}
-                        </span>
+                          <span
+                            className={`text-sm ${
+                              isFulfilled ? 'text-green-600 dark:text-green-400' : 'text-slate-400 dark:text-slate-500'
+                            }`}
+                          >
+                            ✓
+                          </span>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -707,7 +706,7 @@ export function BulkFulfillRequestsPage() {
           </div>
 
           {/* Lo Seleccionado (sin cambios, a la derecha) */}
-          <div className="border border-slate-200 rounded-lg p-4 dark:border-slate-700 md:w-7/12">
+          <div className="border border-slate-200 rounded-lg p-4 dark:border-slate-700 md:w-[70%]">
             <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100 mb-4">Lo Seleccionado</h3>
             <div className="max-h-[60vh] overflow-auto scrollbar scrollbar-thumb-slate-400 scrollbar-track-slate-200 dark:scrollbar-thumb-slate-500 dark:scrollbar-track-slate-700">
               <table className="w-full text-sm">
