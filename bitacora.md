@@ -147,6 +147,17 @@ Se incorporaron endpoints read-only de reportes para acelerar dashboards y panta
 
 ---
 
+## **[12 Mar 2026] Stock: Movimientos realizados por presentación + Picking PDF (SOL + logo)**
+
+### Stock — Movimientos realizados (`/stock/completed-movements`)
+- Se ajustó la UI para mostrar **Cantidad** en base a **presentación** (ej. cajas) en la tabla y en el modal de detalle.
+- Backend: el listado agrega `totalQuantityUnits` + `totalQuantityPresentations` para soportar el cálculo sin perder la unidad base.
+
+### Stock — Picking PDF (export)
+- El endpoint de picking ahora incluye `meta.requestCode` y cantidades por presentación (`quantityPresentations`, `unitsPerPresentation`) en ítems solicitados y líneas enviadas.
+- El PDF de picking muestra `Solicitud: SOL...` en el encabezado y renderiza el **logo del tenant** (best-effort en B/N) a la derecha.
+- Fix: el picking ya no falla si `requestedBy` no es UUID (en ese caso se usa el string directo como nombre).
+
 ## **[05 Mar 2026] Stock: códigos SOL en solicitudes + Notificaciones persistentes (campana)**
 
 ### Stock — Solicitudes con código `SOLYY####`

@@ -1231,12 +1231,18 @@ Response 200
       "fulfilledByName": "María López",
       "totalItems": 4,
       "totalQuantity": 120,
+      "totalQuantityUnits": 120,
+      "totalQuantityPresentations": 12,
       "canExportPicking": true,
       "canExportLabel": true
     }
   ]
 }
 ```
+
+Notas de cantidades
+- `totalQuantity` y `totalQuantityUnits` representan unidades base (tal como se persisten en movimientos).
+- `totalQuantityPresentations` representa la cantidad expresada en presentación (ej. cajas), calculada como `quantityUnits / unitsPerPresentation` según la presentación del lote. Puede ser decimal.
 
 ### GET /api/v1/stock/completed-movements/:id/picking
 Requiere permiso: `stock:move`.
@@ -1257,6 +1263,7 @@ Response 200
 {
   "meta": {
     "requestId": "...",
+    "requestCode": "SOL260001",
     "generatedAtIso": "2026-03-05T12:34:56.000Z",
     "fromWarehouseLabel": "CEN - Central (SANTA CRUZ)",
     "fromLocationCode": "A1",
@@ -1268,6 +1275,8 @@ Response 200
     {
       "productLabel": "SKU - Producto (Genérico)",
       "quantityUnits": 100,
+      "quantityPresentations": 10,
+      "unitsPerPresentation": 10,
       "presentationLabel": "Caja (10u)"
     }
   ],
@@ -1278,11 +1287,17 @@ Response 200
       "batchNumber": "L-0001",
       "expiresAt": "2026-06-01T00:00:00.000Z",
       "quantityUnits": 100,
+      "quantityPresentations": 10,
+      "unitsPerPresentation": 10,
       "presentationLabel": "Caja (10u)"
     }
   ]
 }
 ```
+
+Notas
+- `meta.requestCode` se devuelve cuando `type=FULFILL_REQUEST` (código humano `SOLYY####`). En los demás tipos puede venir `null`.
+- `quantityPresentations` puede ser decimal (no se redondea hacia arriba).
 
 ### GET /api/v1/stock/completed-movements/:id/label
 Requiere permiso: `stock:move`.
