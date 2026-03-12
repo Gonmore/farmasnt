@@ -649,7 +649,7 @@ export function BulkFulfillRequestsPage() {
           setBatchSelections({})
         }}
         title={`Transferencia de ${activeWarehouses.find(w => w.id === fromWarehouseId)?.name || 'Origen'} a ${activeWarehouses.find(w => w.id === toWarehouseId)?.name || 'Destino'}`}
-        maxWidth="3xl"
+        maxWidth="6xl"
       >
         <div className="flex flex-col gap-4 md:flex-row md:items-start">
           {/* Lo Solicitado (siempre visible a la izquierda) */}
@@ -800,7 +800,7 @@ export function BulkFulfillRequestsPage() {
                                     }}
                                     className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-slate-300 rounded"
                                   />
-                                  <div className="w-16">
+                                  <div className="w-24">
                                     <Input
                                       type="number"
                                       value={batchSelections[productBatches[0].id] || ''}
@@ -873,7 +873,7 @@ export function BulkFulfillRequestsPage() {
                                   }}
                                   className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-slate-300 rounded"
                                 />
-                                <div className="w-16">
+                                <div className="w-24">
                                   <Input
                                     type="number"
                                     value={batchSelections[batch.id] || ''}
