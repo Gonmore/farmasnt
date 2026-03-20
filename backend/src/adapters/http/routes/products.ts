@@ -32,20 +32,30 @@ const presentationUpdateSchema = z
     isActive: z.boolean().optional(),
   })
 
+function buildPresentationDuplicateKey(name: string, unitsPerPresentation: number) {
+  return `${name.trim().toLowerCase()}::${Math.trunc(unitsPerPresentation)}`
+}
+
+function isPrismaUniqueTarget(e: any, keys: string[]) {
+  const targetRaw = e?.meta?.target
+  const targetText = Array.isArray(targetRaw) ? targetRaw.join(',') : String(targetRaw ?? '')
+  const normalized = targetText.toLowerCase()
+  return keys.every((key) => normalized.includes(key.toLowerCase()))
+}
+
 function mapPrismaUniqueToHttp409(e: any): { status: number; message: string } | null {
   if (!e || typeof e !== 'object') return null
   if (typeof (e as any).code !== 'string') return null
   if ((e as any).code !== 'P2002') return null
 
-  const targetRaw = (e as any)?.meta?.target
-  const targetText = Array.isArray(targetRaw) ? targetRaw.join(',') : String(targetRaw ?? '')
-  const t = targetText.toLowerCase()
-
-  if (t.includes('one_default') || t.includes('default')) {
+  if (isPrismaUniqueTarget(e, ['one_default']) || isPrismaUniqueTarget(e, ['default'])) {
     return { status: 409, message: 'Solo puede existir una presentación por defecto por producto' }
   }
-  if (t.includes('tenantid') && t.includes('productid') && t.includes('name')) {
-    return { status: 409, message: 'Ya existe una presentación con ese nombre para este producto' }
+  if (isPrismaUniqueTarget(e, ['tenantId', 'productId', 'name', 'unitsPerPresentation'])) {
+    return { status: 409, message: 'Ya existe una presentación con ese formato y cantidad de unidades para este producto' }
+  }
+  if (isPrismaUniqueTarget(e, ['tenantId', 'sku'])) {
+    return { status: 409, message: 'SKU already exists' }
   }
   return { status: 409, message: 'Conflicto por restricción única' }
 }
@@ -82,10 +92,11 @@ const productCreateSchema = z
 
       const seen = new Set<string>()
       for (const p of pres) {
-        const key = p.name.trim().toLowerCase()
-        if (!key) continue
+        const name = p.name.trim()
+        if (!name) continue
+        const key = buildPresentationDuplicateKey(name, p.unitsPerPresentation)
         if (seen.has(key)) {
-          ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Duplicate presentation name: ${p.name}`, path: ['presentations'] })
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Duplicate presentation combination: ${p.name} + ${Math.trunc(p.unitsPerPresentation)} unidades`, path: ['presentations'] })
           break
         }
         seen.add(key)
@@ -451,10 +462,8 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
 
         return reply.status(201).send(created)
       } catch (e: any) {
-        // Unique constraint (tenantId, sku)
-        if (typeof e?.code === 'string' && e.code === 'P2002') {
-          return reply.status(409).send({ message: 'SKU already exists' })
-        }
+        const mapped = mapPrismaUniqueToHttp409(e)
+        if (mapped) return reply.status(mapped.status).send({ message: mapped.message })
         throw e
       }
     },

@@ -627,6 +627,11 @@ Requiere permisos `catalog:*`.
 ### POST /api/v1/products/:productId/presentations
 Requiere permiso: `catalog:write`.
 
+Notas
+- La unicidad de la presentación es por combinación `name + unitsPerPresentation` dentro del producto y tenant.
+- Se permite repetir el mismo formato si cambia la cantidad de unidades. Ejemplo válido: `Caja` de 20 unidades y `Caja` de 50 unidades.
+- `409` si ya existe otra presentación con el mismo `name` y el mismo `unitsPerPresentation` para ese producto.
+
 Body
 ```json
 {
@@ -680,6 +685,9 @@ Response 200
 
 ### PATCH /api/v1/products/:productId/presentations/:id
 Requiere permiso: `catalog:write`.
+
+Notas
+- Al editar, sigue aplicando la misma regla de unicidad por `name + unitsPerPresentation`.
 
 Body
 - `version` (int, requerido)

@@ -7,6 +7,23 @@ SaaS **multi-tenant** con **single DB** (row-level `tenantId`), backend Node.js/
 
 ## Hitos principales
 
+## **[20 Mar 2026] Catálogo: unicidad de presentaciones por formato + unidades**
+
+### Presentaciones de producto
+- Se cambió la regla de negocio de `ProductPresentation`: la unicidad ya no depende solo del formato/nombre.
+- Desde este ajuste, la combinación única es `tenantId + productId + name + unitsPerPresentation`.
+- Resultado esperado en catálogo: ahora se permiten múltiples presentaciones `Caja` para el mismo producto siempre que cambie la cantidad de unidades que contiene cada caja.
+- Ejemplos válidos: `Caja` de 20 unidades y `Caja` de 50 unidades para el mismo producto.
+- Sigue bloqueado el duplicado exacto de formato con la misma cantidad de unidades.
+
+### Backend y frontend alineados
+- Backend: se actualizó la validación y el mapeo de conflictos únicos para devolver un `409` específico cuando se repite la combinación `formato + unidades`.
+- Frontend: se ajustaron las validaciones del detalle de producto para permitir formatos repetidos con diferente `unitsPerPresentation` y bloquear solo duplicados exactos.
+
+### Persistencia y operación
+- Se agregó la migración `20260320120000_product_presentation_name_units_unique` para reemplazar el índice único anterior por uno compuesto con `unitsPerPresentation`.
+- La migración fue aplicada y validada en el entorno local Docker contra `postgres-local`.
+
 ### 1) Base técnica y estructura
 - Backend en `backend/`:
   - Fastify + TypeScript (ESM).

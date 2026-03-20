@@ -1,5 +1,7 @@
 import html2canvas from 'html2canvas'
 import jsPDF from 'jspdf'
+import type { ReactNode } from 'react'
+import { createRoot } from 'react-dom/client'
 
 type PdfOptions = {
   title?: string
@@ -8,16 +10,70 @@ type PdfOptions = {
   generatedDate?: string
   headerColor?: string
   logoUrl?: string
+  captureWidthPx?: number
+  forceLightMode?: boolean
 }
 
 export async function pdfBlobFromElement(el: HTMLElement, opts?: PdfOptions): Promise<Blob> {
   // Capturar siempre en un “layout de escritorio / carta”, sin depender del tamaño actual
   // (ej: si el usuario está en móvil).
-  const captureWidthPx = 1200
+  const captureWidthPx = opts?.captureWidthPx ?? 1200
   const originalWidth = el.style.width
   const originalMaxWidth = el.style.maxWidth
   const originalMinWidth = el.style.minWidth
+  const exportAttr = 'data-pdf-export-root'
+  const htmlEl = document.documentElement
+  const shouldForceLightMode = opts?.forceLightMode !== false
+  const wasDark = shouldForceLightMode && htmlEl.classList.contains('dark')
 
+  const styleTag = document.createElement('style')
+  styleTag.id = 'pdf-export-overrides'
+  styleTag.textContent = `
+    .pdf-hide {
+      display: none !important;
+    }
+
+    [${exportAttr}="true"] {
+      width: ${captureWidthPx}px !important;
+      max-width: ${captureWidthPx}px !important;
+      min-width: ${captureWidthPx}px !important;
+      background: #ffffff !important;
+      color: #0f172a !important;
+    }
+
+    [${exportAttr}="true"] .overflow-x-auto,
+    [${exportAttr}="true"] .overflow-x-scroll,
+    [${exportAttr}="true"] .overflow-y-auto,
+    [${exportAttr}="true"] .overflow-auto {
+      overflow: visible !important;
+    }
+
+    [${exportAttr}="true"] table {
+      width: 100% !important;
+      min-width: 0 !important;
+      table-layout: fixed !important;
+    }
+
+    [${exportAttr}="true"] th,
+    [${exportAttr}="true"] td {
+      vertical-align: top !important;
+    }
+
+    [${exportAttr}="true"] th > div,
+    [${exportAttr}="true"] td > div,
+    [${exportAttr}="true"] th span,
+    [${exportAttr}="true"] td span {
+      white-space: normal !important;
+      overflow: visible !important;
+      text-overflow: unset !important;
+      word-break: break-word !important;
+    }
+  `
+  document.head.appendChild(styleTag)
+
+  if (wasDark) htmlEl.classList.remove('dark')
+
+  el.setAttribute(exportAttr, 'true')
   el.classList.add('pdf-export')
   el.style.width = `${captureWidthPx}px`
   el.style.maxWidth = `${captureWidthPx}px`
@@ -46,6 +102,9 @@ export async function pdfBlobFromElement(el: HTMLElement, opts?: PdfOptions): Pr
   el.style.maxWidth = originalMaxWidth
   el.style.minWidth = originalMinWidth
   el.classList.remove('pdf-export')
+  el.removeAttribute(exportAttr)
+  if (wasDark) htmlEl.classList.add('dark')
+  styleTag.remove()
 
   // Usar tamaño carta (Letter: 215.9mm x 279.4mm)
   const pdf = new jsPDF('p', 'mm', 'letter')
@@ -175,6 +234,36 @@ export async function pdfBlobFromElement(el: HTMLElement, opts?: PdfOptions): Pr
   return pdf.output('blob')
 }
 
+export async function pdfBlobFromReactNode(content: ReactNode, opts?: PdfOptions): Promise<Blob> {
+  const captureWidthPx = opts?.captureWidthPx ?? 1200
+  const host = document.createElement('div')
+  host.style.position = 'fixed'
+  host.style.left = '-20000px'
+  host.style.top = '0'
+  host.style.width = `${captureWidthPx}px`
+  host.style.minWidth = `${captureWidthPx}px`
+  host.style.maxWidth = `${captureWidthPx}px`
+  host.style.background = '#ffffff'
+  host.style.pointerEvents = 'none'
+  host.style.zIndex = '-1'
+  document.body.appendChild(host)
+
+  const root = createRoot(host)
+  root.render(content)
+
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+  window.dispatchEvent(new Event('resize'))
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+
+  try {
+    return await pdfBlobFromElement(host, { ...opts, captureWidthPx, forceLightMode: false })
+  } finally {
+    root.unmount()
+    host.remove()
+  }
+}
+
 // Agregar footer con "powered by" + logo de Supernovatel en todas las páginas
 async function addFooter(pdf: jsPDF, pageNumber: number, pageWidth: number, pageHeight: number): Promise<void> {
   const footerY = pageHeight - 15  // Más arriba para respetar margen
@@ -249,6 +338,57 @@ export async function exportElementToPdf(
     const a = document.createElement('a')
     a.href = url
     a.download = opts?.filename ?? 'reporte.pdf'
+    a.click()
+  } finally {
+    URL.revokeObjectURL(url)
+  }
+}
+
+export async function exportReactNodeToPdf(
+  content: ReactNode,
+  opts?: {
+    filename?: string
+    title?: string
+    subtitle?: string
+    companyName?: string
+    headerColor?: string
+    logoUrl?: string
+    captureWidthPx?: number
+  },
+): Promise<void> {
+  const blob = await pdfBlobFromReactNode(content, opts)
+  const url = URL.createObjectURL(blob)
+  try {
+    const a = document.createElement('a')
+    a.href = url
+    a.download = opts?.filename ?? 'reporte.pdf'
+    a.click()
+  } finally {
+    URL.revokeObjectURL(url)
+  }
+}
+
+/**
+ * Export a modal/detail element to PDF with the same professional styling.
+ * Useful for exporting drill-down detail content from modals.
+ */
+export async function exportModalContentToPdf(
+  el: HTMLElement,
+  opts?: {
+    filename?: string
+    title?: string
+    subtitle?: string
+    companyName?: string
+    headerColor?: string
+    logoUrl?: string
+  },
+): Promise<void> {
+  const blob = await pdfBlobFromElement(el, opts)
+  const url = URL.createObjectURL(blob)
+  try {
+    const a = document.createElement('a')
+    a.href = url
+    a.download = opts?.filename ?? 'detalle-reporte.pdf'
     a.click()
   } finally {
     URL.revokeObjectURL(url)

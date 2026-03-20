@@ -11,7 +11,7 @@ export function useNavigation(): NavGroup[] {
   if (isLoading) {
     return [
       {
-        title: 'General',
+        title: 'Estado',
         items: [{ to: '/', label: 'Estado' }],
       },
     ];
@@ -21,14 +21,14 @@ export function useNavigation(): NavGroup[] {
 
   // Dashboard (todos)
   groups.push({
-    title: 'General',
+    title: 'Estado',
     items: [{ to: '/', label: 'Estado' }],
   });
 
   // Platform Admin: solo gestión de tenants
   if (isPlatformAdmin) {
     groups.push({
-      title: '🌐 Plataforma',
+      title: 'Sistema',
       items: [
         { to: '/platform/tenants', label: '🏢 Tenants' },
         { to: '/platform/contact', label: '📞 Configuración Contacto' },
@@ -58,7 +58,7 @@ export function useNavigation(): NavGroup[] {
       // No mostrar grupo vacío
     } else {
     groups.push({
-      title: '📦 Catálogo',
+      title: 'Catalogo',
       items: catalogItems,
     });
     }
@@ -83,7 +83,7 @@ export function useNavigation(): NavGroup[] {
     warehouseItems.push({ to: '/stock/expiry', label: '⏰ Vencimientos' })
 
     groups.push({
-      title: '🏢 Almacén',
+      title: 'Almacen',
       items: warehouseItems,
     });
   }
@@ -100,7 +100,7 @@ export function useNavigation(): NavGroup[] {
     labItems.push({ to: '/laboratory/qc', label: '✅ QC (Cuarentena)' })
 
     groups.push({
-      title: '🧪 Laboratorio',
+      title: 'Laboratorio',
       items: labItems,
     })
   }
@@ -127,7 +127,7 @@ export function useNavigation(): NavGroup[] {
     }
 
     groups.push({
-      title: '💰 Ventas',
+      title: 'Ventas',
       items: salesItems,
     });
   }
@@ -137,7 +137,7 @@ export function useNavigation(): NavGroup[] {
   if (hasPermission('report:sales:read')) reportItems.push({ to: '/reports/sales', label: '💵 Ventas' })
   if (hasPermission('report:stock:read') || (isBranchAdmin && hasPermission('stock:read'))) reportItems.push({ to: '/reports/stock', label: '📦 Stock' })
   if (reportItems.length > 0) {
-    groups.push({ title: '📈 Reportes', items: reportItems })
+    groups.push({ title: 'Reportes', items: reportItems })
   }
 
   // Sistema (solo Tenant Admin)
@@ -150,7 +150,7 @@ export function useNavigation(): NavGroup[] {
       systemItems.push({ to: '/admin/branding', label: '🎨 Branding' })
     }
     if (systemItems.length > 0) {
-      groups.push({ title: '⚙️ Sistema', items: systemItems })
+      groups.push({ title: 'Sistema', items: systemItems })
     }
   }
 

@@ -87,7 +87,7 @@ const stockBalancesExpandedQuerySchema = z.object({
 const stockMovementsExpandedQuerySchema = dateRangeQuerySchema.extend({
   productId: z.string().uuid().optional(),
   locationId: z.string().uuid().optional(),
-  take: z.coerce.number().int().min(1).max(200).default(100),
+  take: z.coerce.number().int().min(1).max(5000).default(1000),
 })
 
 const stockInputsByProductQuerySchema = dateRangeQuerySchema.extend({
@@ -317,6 +317,9 @@ type ExpiryAlertRow = {
   productId: string
   sku: string
   name: string
+  warehouseId: string
+  warehouseCode: string | null
+  warehouseName: string | null
   locationId: string
   locationName: string | null
   lotNumber: string | null
@@ -769,6 +772,9 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
           p.id as "productId",
           p.sku,
           p.name,
+          w.id as "warehouseId",
+          w.code as "warehouseCode",
+          w.name as "warehouseName",
           l.id as "locationId",
           l.code as "locationName",
           b."batchNumber" as "lotNumber",
@@ -777,6 +783,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
         FROM "InventoryBalance" ib
         JOIN "Product" p ON p.id = ib."productId" AND p."tenantId" = ib."tenantId"
         JOIN "Location" l ON l.id = ib."locationId" AND l."tenantId" = ib."tenantId"
+        JOIN "Warehouse" w ON w.id = l."warehouseId" AND w."tenantId" = l."tenantId"
         JOIN "Batch" b ON b.id = ib."batchId" AND b."tenantId" = ib."tenantId"
         WHERE ib."tenantId" = ${tenantId}
           AND ib."batchId" IS NOT NULL
@@ -791,6 +798,9 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
         productId: r.productId,
         sku: r.sku,
         name: r.name,
+        warehouseId: r.warehouseId,
+        warehouseCode: r.warehouseCode,
+        warehouseName: r.warehouseName,
         locationId: r.locationId,
         locationName: r.locationName,
         lotNumber: r.lotNumber,

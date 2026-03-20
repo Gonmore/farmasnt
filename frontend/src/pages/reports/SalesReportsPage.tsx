@@ -17,10 +17,11 @@ import {
   AreaChart,
 } from 'recharts'
 import { MainLayout, PageContainer, Button, IconButton, Input, Loading, ErrorState, EmptyState, Modal, Table } from '../../components'
-import { KPICard, ReportSection, reportColors, getChartColor, chartTooltipStyle, chartGridStyle, chartAxisStyle } from '../../components/reports'
+import { KPICard, ReportSection, SalesByCityDocument, SalesByCustomerDocument, SalesComparisonDocument, SalesFunnelDocument, SalesMarginsDocument, SalesMonthDocument, SalesTopProductsDocument, reportColors, getChartColor, chartTooltipStyle, chartGridStyle, chartAxisStyle } from '../../components/reports'
 import { useNavigation } from '../../hooks'
 import { apiFetch } from '../../lib/api'
-import { blobToBase64, exportElementToPdf, pdfBlobFromElement } from '../../lib/exportPdf'
+import { blobToBase64, exportElementToPdf, exportModalContentToPdf, exportReactNodeToPdf, pdfBlobFromElement, pdfBlobFromReactNode } from '../../lib/exportPdf'
+import { exportToXlsx } from '../../lib/exportXlsx'
 import { useAuth } from '../../providers/AuthProvider'
 import { useTenant } from '../../providers/TenantProvider'
 
@@ -152,6 +153,77 @@ function statusLabel(s: SalesStatus): string {
   if (s === 'FULFILLED') return 'ENTREGADO'
   if (s === 'CANCELLED') return 'ANULADO'
   return s
+}
+
+function orderStatusLabel(status: string): string {
+  if (status === 'DRAFT') return 'BORRADOR'
+  if (status === 'CONFIRMED') return 'CONFIRMADO'
+  if (status === 'FULFILLED') return 'ENTREGADO'
+  if (status === 'CANCELLED') return 'ANULADO'
+  return status
+}
+
+function buildTopCustomerMix(orders: OrderDetailItem[]): Array<{ label: string; total: number; ordersCount: number; color: string }> {
+  const totalsByCustomer = new Map<string, { label: string; total: number; ordersCount: number }>()
+
+  for (const order of orders) {
+    const entry = totalsByCustomer.get(order.customerId) ?? {
+      label: order.customerName || 'Cliente sin nombre',
+      total: 0,
+      ordersCount: 0,
+    }
+    entry.total += toNumber(order.total)
+    entry.ordersCount += 1
+    totalsByCustomer.set(order.customerId, entry)
+  }
+
+  const sorted = Array.from(totalsByCustomer.values()).sort((a, b) => b.total - a.total)
+  const topThree = sorted.slice(0, 3)
+  const others = sorted.slice(3)
+  const result = topThree.map((item, idx) => ({
+    label: item.label,
+    total: item.total,
+    ordersCount: item.ordersCount,
+    color: getChartColor(idx, 'rainbow'),
+  }))
+
+  if (others.length > 0) {
+    result.push({
+      label: 'Otros',
+      total: others.reduce((sum, item) => sum + item.total, 0),
+      ordersCount: others.reduce((sum, item) => sum + item.ordersCount, 0),
+      color: '#94a3b8',
+    })
+  }
+
+  return result.filter((item) => item.total > 0)
+}
+
+function buildStatusMix(orders: OrderDetailItem[]): Array<{ label: string; total: number; ordersCount: number; color: string }> {
+  const palette: Record<string, string> = {
+    DRAFT: '#94a3b8',
+    CONFIRMED: '#2563eb',
+    FULFILLED: '#10b981',
+    CANCELLED: '#ef4444',
+  }
+
+  const totalsByStatus = new Map<string, { label: string; total: number; ordersCount: number; color: string }>()
+  for (const order of orders) {
+    const status = order.status || 'DRAFT'
+    const entry = totalsByStatus.get(status) ?? {
+      label: orderStatusLabel(status),
+      total: 0,
+      ordersCount: 0,
+      color: palette[status] ?? '#64748b',
+    }
+    entry.total += toNumber(order.total)
+    entry.ordersCount += 1
+    totalsByStatus.set(status, entry)
+  }
+
+  return Array.from(totalsByStatus.values())
+    .sort((a, b) => b.total - a.total)
+    .filter((item) => item.total > 0 || item.ordersCount > 0)
 }
 
 async function fetchSalesSummary(token: string, q: { from?: string; to?: string; status?: SalesStatus }): Promise<{ items: SalesSummaryItem[] }> {
@@ -369,6 +441,9 @@ export function SalesReportsPage() {
   const [scheduleDayOfMonth, setScheduleDayOfMonth] = useState(1)
 
   const reportRef = useRef<HTMLDivElement | null>(null)
+  const drillDownRef = useRef<HTMLDivElement | null>(null)
+  const [exportingPdf, setExportingPdf] = useState(false)
+  const [exportingExcel, setExportingExcel] = useState(false)
 
   const title = useMemo(() => {
     const period = `${from} a ${to}`
@@ -408,6 +483,780 @@ export function SalesReportsPage() {
     setDrillDownParam(param)
     setDrillDownTitle(title)
     setDrillDownOpen(true)
+  }
+
+  const buildSalesByCityStructuredReport = async () => {
+    if (!auth.accessToken) throw new Error('Sesión no disponible para exportar')
+
+    const cityItems = (byCityQuery.data?.items ?? []).map((item) => ({
+      city: item.city,
+      ordersCount: item.ordersCount,
+      quantity: toNumber(item.quantity),
+      amount: toNumber(item.amount),
+    }))
+
+    const cityDetails = await Promise.all(
+      cityItems.map(async (item) => {
+        const response = await fetchOrdersByCity(auth.accessToken!, { from, to, city: item.city, status })
+        return {
+          city: item.city,
+          orders: response.items.map((order) => ({
+            id: order.id,
+            number: order.number,
+            status: order.status,
+            customerName: order.customerName,
+            total: order.total || 0,
+            createdAt: order.createdAt,
+            deliveredAt: order.deliveredAt,
+            paidAt: order.paidAt,
+          })),
+        }
+      }),
+    )
+
+    return { cityItems, cityDetails }
+  }
+
+  const buildSalesByCustomerStructuredReport = async () => {
+    if (!auth.accessToken) throw new Error('Sesión no disponible para exportar')
+
+    const customerItems = (byCustomerQuery.data?.items ?? []).map((item) => ({
+      customerName: item.customerName,
+      city: item.city,
+      ordersCount: item.ordersCount,
+      quantity: toNumber(item.quantity),
+      amount: toNumber(item.amount),
+    }))
+
+    const customerDetails = await Promise.all(
+      (byCustomerQuery.data?.items ?? []).map(async (item) => {
+        const response = await fetchOrdersByCustomer(auth.accessToken!, { from, to, customerId: item.customerId, status })
+        return {
+          customerName: item.customerName,
+          orders: response.items.map((order) => ({
+            id: order.id,
+            number: order.number,
+            status: order.status,
+            customerName: order.customerName,
+            total: order.total || 0,
+            createdAt: order.createdAt,
+            deliveredAt: order.deliveredAt,
+            paidAt: order.paidAt,
+          })),
+        }
+      }),
+    )
+
+    return { customerItems, customerDetails }
+  }
+
+  const buildTopProductsStructuredReport = async () => {
+    if (!auth.accessToken) throw new Error('Sesión no disponible para exportar')
+
+    const productItems = (topProductsQuery.data?.items ?? []).map((item) => ({
+      sku: item.sku,
+      name: item.name,
+      quantity: toNumber(item.quantity),
+      amount: toNumber(item.amount),
+    }))
+
+    const productDetails = await Promise.all(
+      (topProductsQuery.data?.items ?? []).map(async (item) => {
+        const response = await fetchOrdersByProduct(auth.accessToken!, { from, to, productId: item.productId, status })
+        return {
+          productName: item.name,
+          sku: item.sku,
+          orders: response.items.map((order) => ({
+            id: order.id,
+            number: order.number,
+            status: order.status,
+            customerName: order.customerName,
+            total: order.total || 0,
+            createdAt: order.createdAt,
+            deliveredAt: order.deliveredAt,
+            paidAt: order.paidAt,
+          })),
+        }
+      }),
+    )
+
+    return { productItems, productDetails }
+  }
+
+  const buildMarginsStructuredReport = async () => {
+    if (!auth.accessToken) throw new Error('Sesión no disponible para exportar')
+
+    const items = marginsQuery.data?.items ?? []
+    const totals = marginsQuery.data?.totals ?? { revenue: 0, costTotal: 0, profit: 0, avgMargin: 0 }
+    const hasCostData = items.some((item) => item.costPrice > 0)
+
+    const marginItems = items.map((item) => ({
+      productId: item.productId,
+      sku: item.sku,
+      name: item.name,
+      qtySold: item.qtySold,
+      revenue: item.revenue,
+      costTotal: item.costTotal,
+      profit: item.profit,
+      marginPct: item.marginPct,
+    }))
+
+    const marginDetails = await Promise.all(
+      items.map(async (item) => {
+        const response = await fetchOrdersByProduct(auth.accessToken!, { from, to, productId: item.productId, status })
+        return {
+          productName: item.name,
+          sku: item.sku,
+          qtySold: item.qtySold,
+          revenue: item.revenue,
+          costTotal: item.costTotal,
+          profit: item.profit,
+          marginPct: item.marginPct,
+          orders: response.items.map((order) => ({
+            id: order.id,
+            number: order.number,
+            status: order.status,
+            customerName: order.customerName,
+            total: order.total || 0,
+            createdAt: order.createdAt,
+            deliveredAt: order.deliveredAt,
+            paidAt: order.paidAt,
+          })),
+        }
+      }),
+    )
+
+    return { marginItems, marginDetails, totals, hasCostData }
+  }
+
+  const buildMonthStructuredReport = async () => {
+    const monthItems = (summaryQuery.data?.items ?? []).map((item) => ({
+      day: item.day,
+      ordersCount: item.ordersCount,
+      linesCount: item.linesCount,
+      quantity: toNumber(item.quantity),
+      amount: toNumber(item.amount),
+    }))
+
+    return { monthItems }
+  }
+
+  const buildFunnelStructuredReport = async () => {
+    const funnelItems = (funnelQuery.data?.items ?? []).map((item) => ({
+      key: item.key,
+      label: item.label,
+      value: item.value,
+    }))
+
+    const totals = {
+      amountFulfilled: toNumber(funnelQuery.data?.totals?.amountFulfilled),
+      amountPaid: toNumber(funnelQuery.data?.totals?.amountPaid),
+    }
+
+    return { funnelItems, totals }
+  }
+
+  const buildComparisonStructuredReport = async () => {
+    const comparisonItems = (byMonthQuery.data?.items ?? []).map((item) => ({
+      month: item.month,
+      orderCount: item.orderCount,
+      linesCount: item.linesCount,
+      quantity: toNumber(item.quantity),
+      total: item.total,
+    }))
+
+    return { comparisonItems }
+  }
+
+  const handleExportDrillDownExcel = async () => {
+    const items = drillDownType === 'city'
+      ? (drillDownCityQuery.data?.items ?? [])
+      : drillDownType === 'customer'
+        ? (drillDownCustomerQuery.data?.items ?? [])
+        : drillDownType === 'product'
+          ? (drillDownProductQuery.data?.items ?? [])
+          : []
+
+    if (items.length === 0) {
+      window.alert('No hay detalle para exportar')
+      return
+    }
+
+    const sheets: Array<{ name: string; rows: Record<string, unknown>[] }> = []
+
+    if (drillDownType === 'city' || drillDownType === 'product') {
+      const mix = buildTopCustomerMix(items)
+      const total = mix.reduce((sum, item) => sum + item.total, 0)
+      sheets.push({
+        name: 'Participacion clientes',
+        rows: mix.map((item) => ({
+          Cliente: item.label,
+          Ordenes: item.ordersCount,
+          [`Facturacion (${currency})`]: item.total,
+          'Participacion %': total > 0 ? (item.total / total) * 100 : 0,
+        })),
+      })
+    } else if (drillDownType === 'customer') {
+      const mix = buildStatusMix(items)
+      const total = mix.reduce((sum, item) => sum + item.total, 0)
+      sheets.push({
+        name: 'Participacion estados',
+        rows: mix.map((item) => ({
+          Estado: item.label,
+          Ordenes: item.ordersCount,
+          [`Facturacion (${currency})`]: item.total,
+          'Participacion %': total > 0 ? (item.total / total) * 100 : 0,
+        })),
+      })
+    }
+
+    sheets.push({
+      name: 'Ordenes',
+      rows: items.map((order) => ({
+        Orden: order.number,
+        Cliente: order.customerName,
+        Estado: orderStatusLabel(order.status),
+        [`Total (${currency})`]: order.total,
+        Fecha: new Date(order.createdAt).toLocaleDateString(),
+        Entregada: order.deliveredAt ? 'Si' : 'No',
+        Pagada: order.paidAt ? 'Si' : 'No',
+      })),
+    })
+
+    sheets.push({
+      name: 'Meta',
+      rows: [{
+        Detalle: drillDownTitle,
+        Tipo: drillDownType ?? 'reporte',
+        Desde: from,
+        Hasta: to,
+        Moneda: currency,
+        Generado: new Date().toLocaleString(),
+      }],
+    })
+
+    exportToXlsx(`detalle-${(drillDownType ?? 'reporte').toLowerCase()}-${from}-${to}.xlsx`, sheets)
+  }
+
+  const exportLegacyPdf = async () => {
+    if (!reportRef.current || !auth.accessToken) return
+
+    let tempContainer: HTMLDivElement | null = null
+    try {
+      type DrillEntry = { label: string; orders: OrderDetailItem[] }
+      const drillEntries: DrillEntry[] = []
+
+      // Obtener datos de drill-down según la pestaña activa
+      if (tab === 'CITIES') {
+        const cities = byCityQuery.data?.items ?? []
+        const results = await Promise.all(
+          cities.slice(0, 15).map((c) =>
+            fetchOrdersByCity(auth.accessToken!, { from, to, city: c.city, status }).then((r) => ({
+              label: c.city,
+              orders: r.items,
+            })),
+          ),
+        )
+        drillEntries.push(...results)
+      } else if (tab === 'CUSTOMERS') {
+        const customers = byCustomerQuery.data?.items ?? []
+        const results = await Promise.all(
+          customers.slice(0, 15).map((c) =>
+            fetchOrdersByCustomer(auth.accessToken!, { from, to, customerId: c.customerId, status }).then((r) => ({
+              label: c.customerName,
+              orders: r.items,
+            })),
+          ),
+        )
+        drillEntries.push(...results)
+      } else if (tab === 'TOP_PRODUCTS') {
+        const products = topProductsQuery.data?.items ?? []
+        const results = await Promise.all(
+          products.slice(0, 15).map((p) =>
+            fetchOrdersByProduct(auth.accessToken!, { from, to, productId: p.productId, status }).then((r) => ({
+              label: p.name,
+              orders: r.items,
+            })),
+          ),
+        )
+        drillEntries.push(...results)
+      } else if (tab === 'MARGINS') {
+        const products = marginsQuery.data?.items ?? []
+        const results = await Promise.all(
+          products.slice(0, 15).map((p) =>
+            fetchOrdersByProduct(auth.accessToken!, { from, to, productId: p.productId, status }).then((r) => ({
+              label: p.name,
+              orders: r.items,
+            })),
+          ),
+        )
+        drillEntries.push(...results)
+      }
+
+      // Si hay drill-down data, crear secciones temporales
+      if (drillEntries.length > 0) {
+        tempContainer = document.createElement('div')
+        tempContainer.style.cssText = 'margin-top: 24px; page-break-before: always;'
+
+        const sectionTitle = document.createElement('h2')
+        sectionTitle.textContent = 'Detalle por registro'
+        sectionTitle.style.cssText = 'font-size: 18px; font-weight: 700; color: #1e293b; margin-bottom: 16px; padding: 12px 16px; background: linear-gradient(135deg, #eff6ff, #f0fdf4); border-radius: 8px; border-left: 4px solid #3b82f6;'
+        tempContainer.appendChild(sectionTitle)
+
+        for (const entry of drillEntries) {
+          if (entry.orders.length === 0) continue
+
+          const section = document.createElement('div')
+          section.style.cssText = 'margin-bottom: 20px; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden;'
+
+          const header = document.createElement('div')
+          header.style.cssText = 'padding: 10px 16px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #334155; font-size: 14px;'
+          header.textContent = `📋 ${entry.label} — ${entry.orders.length} órdenes · Total: ${money(entry.orders.reduce((s, o) => s + (o.total || 0), 0))} ${currency}`
+          section.appendChild(header)
+
+          const table = document.createElement('table')
+          table.style.cssText = 'width: 100%; border-collapse: collapse; font-size: 12px;'
+          const thead = document.createElement('thead')
+          thead.innerHTML = `<tr style="background:#f1f5f9;"><th style="padding:6px 10px;text-align:left;color:#475569;border-bottom:1px solid #e2e8f0;">Orden</th><th style="padding:6px 10px;text-align:left;color:#475569;border-bottom:1px solid #e2e8f0;">Cliente</th><th style="padding:6px 10px;text-align:left;color:#475569;border-bottom:1px solid #e2e8f0;">Estado</th><th style="padding:6px 10px;text-align:right;color:#475569;border-bottom:1px solid #e2e8f0;">Total (${currency})</th><th style="padding:6px 10px;text-align:left;color:#475569;border-bottom:1px solid #e2e8f0;">Fecha</th><th style="padding:6px 10px;text-align:center;color:#475569;border-bottom:1px solid #e2e8f0;">Entrega</th><th style="padding:6px 10px;text-align:center;color:#475569;border-bottom:1px solid #e2e8f0;">Pago</th></tr>`
+          table.appendChild(thead)
+
+          const tbody = document.createElement('tbody')
+          for (const o of entry.orders) {
+            const tr = document.createElement('tr')
+            tr.style.cssText = 'border-bottom: 1px solid #f1f5f9;'
+            tr.innerHTML = `<td style="padding:5px 10px;font-family:monospace;font-size:11px;">${o.number}</td><td style="padding:5px 10px;">${o.customerName}</td><td style="padding:5px 10px;"><span style="padding:2px 8px;border-radius:4px;font-size:11px;font-weight:500;background:${o.status === 'FULFILLED' ? '#dcfce7;color:#166534' : o.status === 'CANCELLED' ? '#fee2e2;color:#991b1b' : '#dbeafe;color:#1e40af'}">${statusLabel(o.status as SalesStatus)}</span></td><td style="padding:5px 10px;text-align:right;color:#16a34a;font-weight:600;">${money(o.total || 0)}</td><td style="padding:5px 10px;">${new Date(o.createdAt).toLocaleDateString()}</td><td style="padding:5px 10px;text-align:center;">${o.deliveredAt ? '✅' : '⏳'}</td><td style="padding:5px 10px;text-align:center;">${o.paidAt ? '✅' : '⏳'}</td>`
+            tbody.appendChild(tr)
+          }
+          table.appendChild(tbody)
+          section.appendChild(table)
+          tempContainer.appendChild(section)
+        }
+
+        reportRef.current.appendChild(tempContainer)
+        // Esperar reflow
+        await new Promise<void>((r) => requestAnimationFrame(() => r()))
+        await new Promise<void>((r) => requestAnimationFrame(() => r()))
+      }
+
+      await exportElementToPdf(reportRef.current, {
+        filename: exportFilename,
+        title,
+        subtitle: `Período: ${from} a ${to} | Moneda: ${currency}`,
+        companyName: tenant.branding?.tenantName ?? 'Empresa',
+        headerColor: '#10B981',
+        logoUrl: tenant.branding?.logoUrl ?? undefined,
+      })
+    } catch (err) {
+      console.error('Error exportando PDF:', err)
+      window.alert('No se pudo generar el PDF')
+    } finally {
+      if (tempContainer && reportRef.current?.contains(tempContainer)) {
+        reportRef.current.removeChild(tempContainer)
+      }
+    }
+  }
+
+  const handleExportPdf = async () => {
+    setExportingPdf(true)
+    try {
+      if (tab === 'CITIES') {
+        const { cityItems, cityDetails } = await buildSalesByCityStructuredReport()
+        await exportReactNodeToPdf(
+          <SalesByCityDocument
+            title={title}
+            from={from}
+            to={to}
+            currency={currency}
+            statusLabel={statusLabel(status)}
+            items={cityItems}
+            details={cityDetails}
+          />,
+          {
+            filename: exportFilename,
+            title,
+            subtitle: `Período: ${from} a ${to} | Moneda: ${currency}`,
+            companyName: tenant.branding?.tenantName ?? 'Empresa',
+            headerColor: '#10B981',
+            logoUrl: tenant.branding?.logoUrl ?? undefined,
+            captureWidthPx: 1200,
+          },
+        )
+        return
+      }
+
+      if (tab === 'CUSTOMERS') {
+        const { customerItems, customerDetails } = await buildSalesByCustomerStructuredReport()
+        await exportReactNodeToPdf(
+          <SalesByCustomerDocument
+            title={title}
+            from={from}
+            to={to}
+            currency={currency}
+            statusLabel={statusLabel(status)}
+            items={customerItems}
+            details={customerDetails}
+          />,
+          {
+            filename: exportFilename,
+            title,
+            subtitle: `Período: ${from} a ${to} | Moneda: ${currency}`,
+            companyName: tenant.branding?.tenantName ?? 'Empresa',
+            headerColor: '#10B981',
+            logoUrl: tenant.branding?.logoUrl ?? undefined,
+            captureWidthPx: 1200,
+          },
+        )
+        return
+      }
+
+      if (tab === 'TOP_PRODUCTS') {
+        const { productItems, productDetails } = await buildTopProductsStructuredReport()
+        await exportReactNodeToPdf(
+          <SalesTopProductsDocument
+            title={title}
+            from={from}
+            to={to}
+            currency={currency}
+            statusLabel={statusLabel(status)}
+            items={productItems}
+            details={productDetails}
+          />,
+          {
+            filename: exportFilename,
+            title,
+            subtitle: `Período: ${from} a ${to} | Moneda: ${currency}`,
+            companyName: tenant.branding?.tenantName ?? 'Empresa',
+            headerColor: '#10B981',
+            logoUrl: tenant.branding?.logoUrl ?? undefined,
+            captureWidthPx: 1200,
+          },
+        )
+        return
+      }
+
+      if (tab === 'MARGINS') {
+        const { marginItems, marginDetails, totals, hasCostData } = await buildMarginsStructuredReport()
+        await exportReactNodeToPdf(
+          <SalesMarginsDocument
+            title={title}
+            from={from}
+            to={to}
+            currency={currency}
+            statusLabel={statusLabel(status)}
+            hasCostData={hasCostData}
+            totals={totals}
+            items={marginItems}
+            details={marginDetails}
+          />,
+          {
+            filename: exportFilename,
+            title,
+            subtitle: `Período: ${from} a ${to} | Moneda: ${currency}`,
+            companyName: tenant.branding?.tenantName ?? 'Empresa',
+            headerColor: '#10B981',
+            logoUrl: tenant.branding?.logoUrl ?? undefined,
+            captureWidthPx: 1200,
+          },
+        )
+        return
+      }
+
+      if (tab === 'MONTH') {
+        const { monthItems } = await buildMonthStructuredReport()
+        await exportReactNodeToPdf(
+          <SalesMonthDocument
+            title={title}
+            from={from}
+            to={to}
+            currency={currency}
+            statusLabel={statusLabel(status)}
+            items={monthItems}
+          />,
+          {
+            filename: exportFilename,
+            title,
+            subtitle: `Período: ${from} a ${to} | Moneda: ${currency}`,
+            companyName: tenant.branding?.tenantName ?? 'Empresa',
+            headerColor: '#10B981',
+            logoUrl: tenant.branding?.logoUrl ?? undefined,
+            captureWidthPx: 1200,
+          },
+        )
+        return
+      }
+
+      if (tab === 'FUNNEL') {
+        const { funnelItems, totals } = await buildFunnelStructuredReport()
+        await exportReactNodeToPdf(
+          <SalesFunnelDocument
+            title={title}
+            from={from}
+            to={to}
+            currency={currency}
+            items={funnelItems}
+            totals={totals}
+          />,
+          {
+            filename: exportFilename,
+            title,
+            subtitle: `Período: ${from} a ${to} | Moneda: ${currency}`,
+            companyName: tenant.branding?.tenantName ?? 'Empresa',
+            headerColor: '#10B981',
+            logoUrl: tenant.branding?.logoUrl ?? undefined,
+            captureWidthPx: 1200,
+          },
+        )
+        return
+      }
+
+      if (tab === 'COMPARISON') {
+        const { comparisonItems } = await buildComparisonStructuredReport()
+        await exportReactNodeToPdf(
+          <SalesComparisonDocument
+            title={title}
+            from={from}
+            to={to}
+            currency={currency}
+            statusLabel={statusLabel(status)}
+            items={comparisonItems}
+          />,
+          {
+            filename: exportFilename,
+            title,
+            subtitle: `Período: ${from} a ${to} | Moneda: ${currency}`,
+            companyName: tenant.branding?.tenantName ?? 'Empresa',
+            headerColor: '#10B981',
+            logoUrl: tenant.branding?.logoUrl ?? undefined,
+            captureWidthPx: 1200,
+          },
+        )
+        return
+      }
+
+      await exportLegacyPdf()
+    } finally {
+      setExportingPdf(false)
+    }
+  }
+
+  const handleExportExcel = async () => {
+    setExportingExcel(true)
+    try {
+      const metaSheet = {
+        name: 'Meta',
+        rows: [
+          {
+            Reporte: title,
+            Desde: from,
+            Hasta: to,
+            Estado: statusLabel(status),
+            Moneda: currency,
+            Generado: new Date().toLocaleString(),
+          },
+        ],
+      }
+
+      if (tab === 'CITIES') {
+        const { cityItems, cityDetails } = await buildSalesByCityStructuredReport()
+        exportToXlsx(`reporte-ventas-ciudades-${from}-${to}.xlsx`, [
+          {
+            name: 'Resumen',
+            rows: cityItems.map((item) => ({
+              Ciudad: item.city,
+              Ordenes: item.ordersCount,
+              Cantidad: item.quantity,
+              [`Total (${currency})`]: item.amount,
+            })),
+          },
+          {
+            name: 'Detalle ordenes',
+            rows: cityDetails.flatMap((detail) =>
+              detail.orders.map((order) => ({
+                Ciudad: detail.city,
+                Orden: order.number,
+                Cliente: order.customerName,
+                Estado: orderStatusLabel(order.status),
+                [`Total (${currency})`]: order.total,
+                Fecha: new Date(order.createdAt).toLocaleDateString(),
+                Entregada: order.deliveredAt ? 'Si' : 'No',
+                Pagada: order.paidAt ? 'Si' : 'No',
+              })),
+            ),
+          },
+          metaSheet,
+        ])
+      } else if (tab === 'CUSTOMERS') {
+        const { customerItems, customerDetails } = await buildSalesByCustomerStructuredReport()
+        exportToXlsx(`reporte-ventas-clientes-${from}-${to}.xlsx`, [
+          {
+            name: 'Resumen',
+            rows: customerItems.map((item) => ({
+              Cliente: item.customerName,
+              Ciudad: item.city ?? '-',
+              Ordenes: item.ordersCount,
+              Cantidad: item.quantity,
+              [`Total (${currency})`]: item.amount,
+            })),
+          },
+          {
+            name: 'Detalle ordenes',
+            rows: customerDetails.flatMap((detail) =>
+              detail.orders.map((order) => ({
+                Cliente: detail.customerName,
+                Orden: order.number,
+                Estado: orderStatusLabel(order.status),
+                [`Total (${currency})`]: order.total,
+                Fecha: new Date(order.createdAt).toLocaleDateString(),
+                Entregada: order.deliveredAt ? 'Si' : 'No',
+                Pagada: order.paidAt ? 'Si' : 'No',
+              })),
+            ),
+          },
+          metaSheet,
+        ])
+      } else if (tab === 'TOP_PRODUCTS') {
+        const { productItems, productDetails } = await buildTopProductsStructuredReport()
+        exportToXlsx(`reporte-ventas-productos-${from}-${to}.xlsx`, [
+          {
+            name: 'Resumen',
+            rows: productItems.map((item) => ({
+              SKU: item.sku,
+              Producto: item.name,
+              Cantidad: item.quantity,
+              [`Total (${currency})`]: item.amount,
+            })),
+          },
+          {
+            name: 'Detalle ordenes',
+            rows: productDetails.flatMap((detail) =>
+              detail.orders.map((order) => ({
+                SKU: detail.sku,
+                Producto: detail.productName,
+                Orden: order.number,
+                Cliente: order.customerName,
+                Estado: orderStatusLabel(order.status),
+                [`Total (${currency})`]: order.total,
+                Fecha: new Date(order.createdAt).toLocaleDateString(),
+                Entregada: order.deliveredAt ? 'Si' : 'No',
+                Pagada: order.paidAt ? 'Si' : 'No',
+              })),
+            ),
+          },
+          metaSheet,
+        ])
+      } else if (tab === 'MARGINS') {
+        const { marginItems, marginDetails, totals, hasCostData } = await buildMarginsStructuredReport()
+        exportToXlsx(`reporte-ventas-margenes-${from}-${to}.xlsx`, [
+          {
+            name: 'Resumen',
+            rows: marginItems.map((item) => ({
+              SKU: item.sku,
+              Producto: item.name,
+              Unidades: item.qtySold,
+              [`Ingreso (${currency})`]: item.revenue,
+              [`Costo (${currency})`]: item.costTotal,
+              [`Utilidad (${currency})`]: item.profit,
+              'Margen %': item.marginPct,
+            })),
+          },
+          {
+            name: 'Detalle ordenes',
+            rows: marginDetails.flatMap((detail) =>
+              detail.orders.map((order) => ({
+                SKU: detail.sku,
+                Producto: detail.productName,
+                'Margen %': detail.marginPct,
+                Orden: order.number,
+                Cliente: order.customerName,
+                Estado: orderStatusLabel(order.status),
+                [`Total (${currency})`]: order.total,
+                Fecha: new Date(order.createdAt).toLocaleDateString(),
+                Entregada: order.deliveredAt ? 'Si' : 'No',
+                Pagada: order.paidAt ? 'Si' : 'No',
+              })),
+            ),
+          },
+          {
+            name: 'Totales',
+            rows: [
+              {
+                [`Ingreso (${currency})`]: totals.revenue,
+                [`Costo (${currency})`]: totals.costTotal,
+                [`Utilidad (${currency})`]: totals.profit,
+                'Margen promedio %': totals.avgMargin,
+                'Costo configurado': hasCostData ? 'Si' : 'No',
+              },
+            ],
+          },
+          metaSheet,
+        ])
+      } else if (tab === 'MONTH') {
+        const { monthItems } = await buildMonthStructuredReport()
+        exportToXlsx(`reporte-ventas-mes-${from}-${to}.xlsx`, [
+          {
+            name: 'Resumen diario',
+            rows: monthItems.map((item) => ({
+              Dia: new Date(item.day).toLocaleDateString(),
+              Ordenes: item.ordersCount,
+              Lineas: item.linesCount,
+              Unidades: item.quantity,
+              [`Total (${currency})`]: item.amount,
+            })),
+          },
+          metaSheet,
+        ])
+      } else if (tab === 'FUNNEL') {
+        const { funnelItems, totals } = await buildFunnelStructuredReport()
+        exportToXlsx(`reporte-ventas-embudo-${from}-${to}.xlsx`, [
+          {
+            name: 'Embudo',
+            rows: funnelItems.map((item, idx) => ({
+              Orden: idx + 1,
+              Etapa: item.label,
+              Cantidad: item.value,
+            })),
+          },
+          {
+            name: 'Totales',
+            rows: [
+              {
+                [`Entregado (${currency})`]: totals.amountFulfilled,
+                [`Cobrado (${currency})`]: totals.amountPaid,
+              },
+            ],
+          },
+          metaSheet,
+        ])
+      } else if (tab === 'COMPARISON') {
+        const { comparisonItems } = await buildComparisonStructuredReport()
+        exportToXlsx(`reporte-ventas-comparacion-${from}-${to}.xlsx`, [
+          {
+            name: 'Comparacion mensual',
+            rows: comparisonItems.map((item, idx) => {
+              const prev = comparisonItems[idx - 1]
+              const variation = prev && prev.total > 0 ? ((item.total - prev.total) / prev.total) * 100 : null
+              return {
+                Mes: item.month,
+                Ordenes: item.orderCount,
+                Lineas: item.linesCount,
+                Unidades: item.quantity,
+                [`Total (${currency})`]: item.total,
+                'Variacion %': variation,
+              }
+            }),
+          },
+          metaSheet,
+        ])
+      } else {
+        window.alert('La exportación estructurada a Excel ya está disponible para todas las pestañas de ventas.')
+        return
+      }
+    } catch (err) {
+      console.error('Error exportando Excel:', err)
+      window.alert('No se pudo generar el Excel')
+    } finally {
+      setExportingExcel(false)
+    }
   }
 
   const summaryQuery = useQuery({
@@ -465,7 +1314,54 @@ export function SalesReportsPage() {
     mutationFn: async () => {
       if (!reportRef.current) throw new Error('No se pudo generar el PDF')
       if (!emailTo.trim()) throw new Error('Ingresa un correo válido')
-      const blob = await pdfBlobFromElement(reportRef.current, { title })
+      let blob: Blob
+
+      if (tab === 'CITIES') {
+        const { cityItems, cityDetails } = await buildSalesByCityStructuredReport()
+        blob = await pdfBlobFromReactNode(
+          <SalesByCityDocument title={title} from={from} to={to} currency={currency} statusLabel={statusLabel(status)} items={cityItems} details={cityDetails} />,
+          { title, subtitle: `Período: ${from} a ${to} | Moneda: ${currency}`, companyName: tenant.branding?.tenantName ?? 'Empresa', headerColor: '#10B981', logoUrl: tenant.branding?.logoUrl ?? undefined, captureWidthPx: 1200 },
+        )
+      } else if (tab === 'CUSTOMERS') {
+        const { customerItems, customerDetails } = await buildSalesByCustomerStructuredReport()
+        blob = await pdfBlobFromReactNode(
+          <SalesByCustomerDocument title={title} from={from} to={to} currency={currency} statusLabel={statusLabel(status)} items={customerItems} details={customerDetails} />,
+          { title, subtitle: `Período: ${from} a ${to} | Moneda: ${currency}`, companyName: tenant.branding?.tenantName ?? 'Empresa', headerColor: '#10B981', logoUrl: tenant.branding?.logoUrl ?? undefined, captureWidthPx: 1200 },
+        )
+      } else if (tab === 'TOP_PRODUCTS') {
+        const { productItems, productDetails } = await buildTopProductsStructuredReport()
+        blob = await pdfBlobFromReactNode(
+          <SalesTopProductsDocument title={title} from={from} to={to} currency={currency} statusLabel={statusLabel(status)} items={productItems} details={productDetails} />,
+          { title, subtitle: `Período: ${from} a ${to} | Moneda: ${currency}`, companyName: tenant.branding?.tenantName ?? 'Empresa', headerColor: '#10B981', logoUrl: tenant.branding?.logoUrl ?? undefined, captureWidthPx: 1200 },
+        )
+      } else if (tab === 'MARGINS') {
+        const { marginItems, marginDetails, totals, hasCostData } = await buildMarginsStructuredReport()
+        blob = await pdfBlobFromReactNode(
+          <SalesMarginsDocument title={title} from={from} to={to} currency={currency} statusLabel={statusLabel(status)} hasCostData={hasCostData} totals={totals} items={marginItems} details={marginDetails} />,
+          { title, subtitle: `Período: ${from} a ${to} | Moneda: ${currency}`, companyName: tenant.branding?.tenantName ?? 'Empresa', headerColor: '#10B981', logoUrl: tenant.branding?.logoUrl ?? undefined, captureWidthPx: 1200 },
+        )
+      } else if (tab === 'MONTH') {
+        const { monthItems } = await buildMonthStructuredReport()
+        blob = await pdfBlobFromReactNode(
+          <SalesMonthDocument title={title} from={from} to={to} currency={currency} statusLabel={statusLabel(status)} items={monthItems} />,
+          { title, subtitle: `Período: ${from} a ${to} | Moneda: ${currency}`, companyName: tenant.branding?.tenantName ?? 'Empresa', headerColor: '#10B981', logoUrl: tenant.branding?.logoUrl ?? undefined, captureWidthPx: 1200 },
+        )
+      } else if (tab === 'FUNNEL') {
+        const { funnelItems, totals } = await buildFunnelStructuredReport()
+        blob = await pdfBlobFromReactNode(
+          <SalesFunnelDocument title={title} from={from} to={to} currency={currency} items={funnelItems} totals={totals} />,
+          { title, subtitle: `Período: ${from} a ${to} | Moneda: ${currency}`, companyName: tenant.branding?.tenantName ?? 'Empresa', headerColor: '#10B981', logoUrl: tenant.branding?.logoUrl ?? undefined, captureWidthPx: 1200 },
+        )
+      } else if (tab === 'COMPARISON') {
+        const { comparisonItems } = await buildComparisonStructuredReport()
+        blob = await pdfBlobFromReactNode(
+          <SalesComparisonDocument title={title} from={from} to={to} currency={currency} statusLabel={statusLabel(status)} items={comparisonItems} />,
+          { title, subtitle: `Período: ${from} a ${to} | Moneda: ${currency}`, companyName: tenant.branding?.tenantName ?? 'Empresa', headerColor: '#10B981', logoUrl: tenant.branding?.logoUrl ?? undefined, captureWidthPx: 1200 },
+        )
+      } else {
+        blob = await pdfBlobFromElement(reportRef.current, { title })
+      }
+
       const pdfBase64 = await blobToBase64(blob)
       await sendSalesReportEmail(auth.accessToken!, {
         to: emailTo.trim(),
@@ -569,19 +1465,13 @@ export function SalesReportsPage() {
               <Button
                 size="sm"
                 variant="ghost"
-                onClick={async () => {
-                  if (!reportRef.current) return
-                  await exportElementToPdf(reportRef.current, {
-                    filename: exportFilename,
-                    title,
-                    subtitle: `Período: ${from} a ${to} | Moneda: ${currency}`,
-                    companyName: tenant.branding?.tenantName ?? 'Empresa',
-                    headerColor: '#10B981',
-                    logoUrl: tenant.branding?.logoUrl ?? undefined,
-                  })
-                }}
+                loading={exportingPdf}
+                onClick={handleExportPdf}
               >
                 ⬇️ PDF
+              </Button>
+              <Button size="sm" variant="ghost" loading={exportingExcel} onClick={handleExportExcel}>
+                ⬇️ Excel
               </Button>
               <Button size="sm" variant="ghost" onClick={() => setEmailModalOpen(true)}>
                 ✉️ Enviar
@@ -710,7 +1600,7 @@ export function SalesReportsPage() {
                   </div>
 
                   {/* Gráfico mejorado con área y gradiente */}
-                  <div className="mx-auto h-[400px] w-full min-w-0 max-w-5xl rounded-lg bg-gradient-to-br from-slate-50 to-white p-4 dark:from-slate-900 dark:to-slate-800">
+                  <div className="mx-auto h-[400px] w-full min-w-0 max-w-5xl overflow-hidden rounded-lg bg-gradient-to-br from-slate-50 to-white p-4 dark:from-slate-900 dark:to-slate-800">
                     <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={300}>
                       <AreaChart
                         data={(summaryQuery.data?.items ?? []).map((i) => ({
@@ -800,7 +1690,7 @@ export function SalesReportsPage() {
                   </div>
 
                   {/* Gráfico de barras mejorado */}
-                  <div className="mx-auto mb-6 h-[400px] w-full min-w-0 max-w-5xl rounded-lg bg-gradient-to-br from-slate-50 to-white p-4 dark:from-slate-900 dark:to-slate-800">
+                  <div className="mx-auto mb-6 h-[400px] w-full min-w-0 max-w-5xl overflow-hidden rounded-lg bg-gradient-to-br from-slate-50 to-white p-4 dark:from-slate-900 dark:to-slate-800">
                     <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={300}>
                       <BarChart
                         data={(byCustomerQuery.data?.items ?? []).slice(0, 15).map((i) => ({
@@ -914,7 +1804,7 @@ export function SalesReportsPage() {
 
                   <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
                     {/* Gráfico de torta mejorado */}
-                    <div className="h-[400px] rounded-lg bg-gradient-to-br from-slate-50 to-white p-4 dark:from-slate-900 dark:to-slate-800">
+                    <div className="h-[400px] w-full min-w-0 overflow-hidden rounded-lg bg-gradient-to-br from-slate-50 to-white p-4 dark:from-slate-900 dark:to-slate-800">
                       <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={300}>
                         <PieChart>
                           <Pie
@@ -953,6 +1843,8 @@ export function SalesReportsPage() {
                         columns={[
                           {
                             header: '🏅 Ciudad',
+                            className: 'wrap',
+                            width: '28%',
                             accessor: (r, idx) => (
                               <div className="flex items-center gap-2">
                                 {idx < 3 && <span className="text-lg">{['🥇', '🥈', '🥉'][idx]}</span>}
@@ -960,10 +1852,12 @@ export function SalesReportsPage() {
                               </div>
                             ),
                           },
-                          { header: '📋 Órdenes', accessor: (r) => String(r.ordersCount) },
-                          { header: '📦 Cantidad', accessor: (r) => toNumber(r.quantity).toFixed(0) },
+                          { header: '📋 Órdenes', width: '12%', accessor: (r) => String(r.ordersCount) },
+                          { header: '📦 Cantidad', width: '14%', accessor: (r) => toNumber(r.quantity).toFixed(0) },
                           {
                             header: `💰 Total (${currency})`,
+                            className: 'wrap',
+                            width: '20%',
                             accessor: (r) => (
                               <span className="font-semibold text-green-600 dark:text-green-400">
                                 {money(toNumber(r.amount))}
@@ -972,17 +1866,16 @@ export function SalesReportsPage() {
                           },
                           {
                             header: '% del Total',
+                            className: 'wrap',
+                            width: '26%',
                             accessor: (r) => {
                               const total = (byCityQuery.data?.items ?? []).reduce((sum, i) => sum + toNumber(i.amount), 0)
                               const pct = total > 0 ? (toNumber(r.amount) / total) * 100 : 0
                               const pctSafe = Number.isFinite(pct) ? pct : 0
                               return (
                                 <div className="flex items-center gap-2">
-                                  <div className="h-2 w-16 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
-                                    <div
-                                      className="h-full bg-blue-500"
-                                      style={{ width: `${pctSafe}%` }}
-                                    />
+                                  <div className="h-2 w-full max-w-24 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
+                                    <div className="h-full bg-blue-500" style={{ width: `${pctSafe}%` }} />
                                   </div>
                                   <span className="text-sm">{pctSafe.toFixed(1)}%</span>
                                 </div>
@@ -1046,7 +1939,7 @@ export function SalesReportsPage() {
                   </div>
 
                   {/* Gráfico mejorado con barras horizontales y colores */}
-                  <div className="mx-auto mb-6 h-[450px] max-w-5xl rounded-lg bg-gradient-to-br from-slate-50 to-white p-4 dark:from-slate-900 dark:to-slate-800">
+                  <div className="mx-auto mb-6 h-[450px] w-full min-w-0 max-w-5xl overflow-hidden rounded-lg bg-gradient-to-br from-slate-50 to-white p-4 dark:from-slate-900 dark:to-slate-800">
                     <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={350}>
                       <BarChart
                         data={(topProductsQuery.data?.items ?? []).slice(0, 12).map((i) => ({
@@ -1161,7 +2054,7 @@ export function SalesReportsPage() {
                   </div>
 
                   {/* Gráfico de embudo visual */}
-                  <div className="mx-auto mb-6 h-[400px] max-w-5xl rounded-lg bg-gradient-to-br from-slate-50 to-white p-4 dark:from-slate-900 dark:to-slate-800">
+                  <div className="mx-auto mb-6 h-[400px] w-full min-w-0 max-w-5xl overflow-hidden rounded-lg bg-gradient-to-br from-slate-50 to-white p-4 dark:from-slate-900 dark:to-slate-800">
                     <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={300}>
                       <BarChart
                         data={(funnelQuery.data?.items ?? []).map((i, idx) => ({
@@ -1263,7 +2156,7 @@ export function SalesReportsPage() {
                     </div>
 
                     {/* Gráfico de líneas comparativo */}
-                    <div className="mb-6 h-[350px] rounded-lg bg-gradient-to-br from-slate-50 to-white p-4 dark:from-slate-900 dark:to-slate-800">
+                    <div className="mb-6 h-[350px] w-full min-w-0 overflow-hidden rounded-lg bg-gradient-to-br from-slate-50 to-white p-4 dark:from-slate-900 dark:to-slate-800">
                       <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={280}>
                         <AreaChart data={items} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
                           <CartesianGrid {...chartGridStyle} />
@@ -1281,30 +2174,44 @@ export function SalesReportsPage() {
                       </ResponsiveContainer>
                     </div>
 
-                    {/* Tabla de meses */}
-                    <Table
-                      data={items.map((i, idx) => ({ ...i, idx: idx + 1 }))}
-                      keyExtractor={(item) => item.idx.toString()}
-                      columns={[
-                        { header: 'Mes', accessor: (item) => item.month },
-                        { header: 'Órdenes', accessor: (item) => item.orderCount, className: 'text-right' },
-                        { header: `Total (${currency})`, accessor: (r) => money(r.total), className: 'text-right' },
-                        { 
-                          header: 'Variación', 
-                          accessor: (r, idx) => {
-                            const prev = items[idx - 1]
-                            if (!prev) return '-'
-                            const pct = prev.total > 0 ? ((r.total - prev.total) / prev.total) * 100 : 0
-                            return (
-                              <span className={pct >= 0 ? 'text-green-600' : 'text-red-600'}>
-                                {pct >= 0 ? '↑' : '↓'} {Math.abs(pct).toFixed(1)}%
-                              </span>
-                            )
+                    {/* Tabla de meses - clickeable para drill-down */}
+                    <div className="rounded-lg border border-slate-200 dark:border-slate-700">
+                      <div className="bg-blue-50 dark:bg-blue-900/20 px-4 py-2 text-xs text-blue-700 dark:text-blue-300">
+                        💡 Haz click en un mes para ver las órdenes de ese período
+                      </div>
+                      <Table
+                        data={items.map((i, idx) => ({ ...i, idx: idx + 1 }))}
+                        keyExtractor={(item) => item.idx.toString()}
+                        columns={[
+                          { header: 'Mes', accessor: (item) => item.month },
+                          { header: 'Órdenes', accessor: (item) => item.orderCount, className: 'text-right' },
+                          { header: `Total (${currency})`, accessor: (r) => money(r.total), className: 'text-right' },
+                          { 
+                            header: 'Variación', 
+                            accessor: (r, idx) => {
+                              const prev = items[idx - 1]
+                              if (!prev) return '-'
+                              const pct = prev.total > 0 ? ((r.total - prev.total) / prev.total) * 100 : 0
+                              return (
+                                <span className={pct >= 0 ? 'text-green-600' : 'text-red-600'}>
+                                  {pct >= 0 ? '↑' : '↓'} {Math.abs(pct).toFixed(1)}%
+                                </span>
+                              )
+                            },
+                            className: 'text-right'
                           },
-                          className: 'text-right'
-                        },
-                      ]}
-                    />
+                        ]}
+                        onRowClick={(r) => {
+                          const [y, m] = r.month.split('-').map(Number)
+                          const monthFrom = `${y}-${String(m).padStart(2, '0')}-01`
+                          const next = new Date(y, m, 1)
+                          const monthTo = toIsoDate(next)
+                          setFrom(monthFrom)
+                          setTo(monthTo)
+                          setTab('MONTH')
+                        }}
+                      />
+                    </div>
                   </>
                 )
               })()}
@@ -1372,7 +2279,7 @@ export function SalesReportsPage() {
                     </div>
 
                     {/* Gráfico de márgenes por producto */}
-                    <div className="mb-6 h-[400px] rounded-lg bg-gradient-to-br from-slate-50 to-white p-4 dark:from-slate-900 dark:to-slate-800">
+                    <div className="mb-6 h-[400px] w-full min-w-0 overflow-hidden rounded-lg bg-gradient-to-br from-slate-50 to-white p-4 dark:from-slate-900 dark:to-slate-800">
                       <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={300}>
                         <BarChart
                           data={items.slice(0, 10).map((i) => ({
@@ -1401,19 +2308,25 @@ export function SalesReportsPage() {
                       </ResponsiveContainer>
                     </div>
 
-                    {/* Tabla de productos con márgenes */}
-                    <Table
-                      data={items}
-                      keyExtractor={(item) => item.name}
-                      columns={[
-                        { header: 'Producto', accessor: (item) => item.name },
-                        { header: 'Unidades', accessor: (item) => item.qtySold, className: 'text-right' },
-                        { header: `Ingreso (${currency})`, accessor: (r) => money(r.revenue), className: 'text-right' },
-                        { header: `Costo`, accessor: (r) => money(r.costTotal), className: 'text-right text-slate-500' },
-                        { header: `Utilidad`, accessor: (r) => <span className={r.profit >= 0 ? 'text-green-600 font-medium' : 'text-red-600 font-medium'}>{money(r.profit)}</span>, className: 'text-right' },
-                        { header: 'Margen %', accessor: (r) => <span className={r.marginPct >= 0 ? 'text-green-600' : 'text-red-600'}>{r.marginPct.toFixed(1)}%</span>, className: 'text-right' },
-                      ]}
-                    />
+                    {/* Tabla de productos con márgenes - clickeable para drill-down */}
+                    <div className="rounded-lg border border-slate-200 dark:border-slate-700">
+                      <div className="bg-blue-50 dark:bg-blue-900/20 px-4 py-2 text-xs text-blue-700 dark:text-blue-300">
+                        💡 Haz click en un producto para ver sus órdenes detalladas
+                      </div>
+                      <Table
+                        data={items}
+                        keyExtractor={(item) => item.productId}
+                        columns={[
+                          { header: 'Producto', accessor: (item) => item.name },
+                          { header: 'Unidades', accessor: (item) => item.qtySold, className: 'text-right' },
+                          { header: `Ingreso (${currency})`, accessor: (r) => money(r.revenue), className: 'text-right' },
+                          { header: `Costo`, accessor: (r) => money(r.costTotal), className: 'text-right text-slate-500' },
+                          { header: `Utilidad`, accessor: (r) => <span className={r.profit >= 0 ? 'text-green-600 font-medium' : 'text-red-600 font-medium'}>{money(r.profit)}</span>, className: 'text-right' },
+                          { header: 'Margen %', accessor: (r) => <span className={r.marginPct >= 0 ? 'text-green-600' : 'text-red-600'}>{r.marginPct.toFixed(1)}%</span>, className: 'text-right' },
+                        ]}
+                        onRowClick={(r) => openDrillDown('product', r.productId, `Órdenes de ${r.name}`)}
+                      />
+                    </div>
                   </>
                 )
               })()}
@@ -1445,7 +2358,6 @@ export function SalesReportsPage() {
 
         <Modal isOpen={scheduleModalOpen} onClose={() => setScheduleModalOpen(false)} title="Programar envíos" maxWidth="xl">
           <div className="flex flex-col max-h-[70vh]">
-            <div className="flex-shrink-0 space-y-4">
               <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
                 El backend enviará un correo con el enlace del reporte (con filtros y rango). Desde la vista puedes exportar a PDF.
               </div>
@@ -1505,7 +2417,6 @@ export function SalesReportsPage() {
                   Refrescar
                 </Button>
               </div>
-            </div>
 
             <div className="flex-1 overflow-auto">
               <div className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
@@ -1577,9 +2488,10 @@ export function SalesReportsPage() {
             setDrillDownParam('')
           }} 
           title={drillDownTitle} 
-          maxWidth="xl"
+          maxWidth="6xl"
         >
-          <div className="flex flex-col h-[80vh]">
+          <div className="space-y-4">
+            <div ref={drillDownRef} className="space-y-4">
             <div className="flex-shrink-0 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-700 dark:border-blue-700 dark:bg-blue-900/20 dark:text-blue-300">
               📋 Detalle de órdenes para el período {from} - {to}
             </div>
@@ -1617,10 +2529,15 @@ export function SalesReportsPage() {
               if (isLoading) return null
               if (items.length === 0) return <div className="flex-shrink-0"><EmptyState message="No hay órdenes en este filtro" /></div>
 
+              const topCustomerMix = drillDownType === 'city' || drillDownType === 'product' ? buildTopCustomerMix(items) : []
+              const topCustomerTotal = topCustomerMix.reduce((sum, item) => sum + item.total, 0)
+              const customerStatusMix = drillDownType === 'customer' ? buildStatusMix(items) : []
+              const customerStatusTotal = customerStatusMix.reduce((sum, item) => sum + item.total, 0)
+
               return (
-                <div className="flex flex-col flex-1 min-h-0">
+                <div className="space-y-4">
                   {/* Resumen */}
-                  <div className="grid grid-cols-2 gap-4 md:grid-cols-4 flex-shrink-0 mt-4">
+                  <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
                     <div className="rounded-lg bg-slate-100 p-3 text-center dark:bg-slate-800">
                       <div className="text-2xl font-bold text-slate-900 dark:text-white">{items.length}</div>
                       <div className="text-xs text-slate-600 dark:text-slate-400">Órdenes</div>
@@ -1645,12 +2562,156 @@ export function SalesReportsPage() {
                     </div>
                   </div>
 
+                  {(drillDownType === 'city' || drillDownType === 'product') && topCustomerMix.length > 0 ? (
+                    <div className="grid grid-cols-1 gap-4 xl:grid-cols-[380px_minmax(0,1fr)]">
+                      <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900">
+                        <div className="mb-3 text-sm font-semibold text-slate-900 dark:text-white">
+                          Participación por cliente
+                        </div>
+                        <div className="flex justify-center">
+                          <PieChart width={340} height={260}>
+                            <Pie
+                              data={topCustomerMix.map((item) => ({ name: item.label, value: item.total }))}
+                              dataKey="value"
+                              nameKey="name"
+                              cx="50%"
+                              cy="50%"
+                              innerRadius={55}
+                              outerRadius={95}
+                              paddingAngle={4}
+                              label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}
+                              isAnimationActive={false}
+                            >
+                              {topCustomerMix.map((item) => (
+                                <Cell key={item.label} fill={item.color} />
+                              ))}
+                            </Pie>
+                            <Tooltip
+                              {...chartTooltipStyle}
+                              formatter={(value: number | string | undefined) => [`${money(Number(value ?? 0))} ${currency}`, 'Facturación']}
+                            />
+                          </PieChart>
+                        </div>
+                      </div>
+
+                      <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+                        <div className="mb-3 text-sm font-semibold text-slate-900 dark:text-white">
+                          {drillDownType === 'city' ? 'Top clientes de la ciudad' : 'Top clientes del producto'}
+                        </div>
+                        <div className="space-y-3">
+                          {topCustomerMix.map((item) => {
+                            const pct = topCustomerTotal > 0 ? (item.total / topCustomerTotal) * 100 : 0
+                            const pctSafe = Number.isFinite(pct) ? pct : 0
+                            return (
+                              <div key={item.label} className="rounded-lg border border-slate-100 p-3 dark:border-slate-800">
+                                <div className="mb-2 flex items-start justify-between gap-3">
+                                  <div>
+                                    <div className="flex items-center gap-2 text-sm font-medium text-slate-900 dark:text-white">
+                                      <span className="inline-block h-3 w-3 rounded-sm" style={{ backgroundColor: item.color }} />
+                                      <span>{item.label}</span>
+                                    </div>
+                                    <div className="text-xs text-slate-500 dark:text-slate-400">
+                                      {item.ordersCount} órdenes
+                                    </div>
+                                  </div>
+                                  <div className="text-right">
+                                    <div className="text-sm font-semibold text-green-600 dark:text-green-400">
+                                      {money(item.total)} {currency}
+                                    </div>
+                                    <div className="text-xs text-slate-500 dark:text-slate-400">
+                                      {pctSafe.toFixed(1)}%
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="h-2 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
+                                  <div className="h-full rounded-full" style={{ width: `${pctSafe}%`, backgroundColor: item.color }} />
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {drillDownType === 'customer' && customerStatusMix.length > 0 ? (
+                    <div className="grid grid-cols-1 gap-4 xl:grid-cols-[380px_minmax(0,1fr)]">
+                      <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900">
+                        <div className="mb-3 text-sm font-semibold text-slate-900 dark:text-white">
+                          Participación por estado
+                        </div>
+                        <div className="flex justify-center">
+                          <PieChart width={340} height={260}>
+                            <Pie
+                              data={customerStatusMix.map((item) => ({ name: item.label, value: item.total }))}
+                              dataKey="value"
+                              nameKey="name"
+                              cx="50%"
+                              cy="50%"
+                              innerRadius={55}
+                              outerRadius={95}
+                              paddingAngle={4}
+                              label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}
+                              isAnimationActive={false}
+                            >
+                              {customerStatusMix.map((item) => (
+                                <Cell key={item.label} fill={item.color} />
+                              ))}
+                            </Pie>
+                            <Tooltip
+                              {...chartTooltipStyle}
+                              formatter={(value: number | string | undefined) => [`${money(Number(value ?? 0))} ${currency}`, 'Facturación']}
+                            />
+                          </PieChart>
+                        </div>
+                      </div>
+
+                      <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+                        <div className="mb-3 text-sm font-semibold text-slate-900 dark:text-white">
+                          Resumen por estado
+                        </div>
+                        <div className="space-y-3">
+                          {customerStatusMix.map((item) => {
+                            const pct = customerStatusTotal > 0 ? (item.total / customerStatusTotal) * 100 : 0
+                            const pctSafe = Number.isFinite(pct) ? pct : 0
+                            return (
+                              <div key={item.label} className="rounded-lg border border-slate-100 p-3 dark:border-slate-800">
+                                <div className="mb-2 flex items-start justify-between gap-3">
+                                  <div>
+                                    <div className="flex items-center gap-2 text-sm font-medium text-slate-900 dark:text-white">
+                                      <span className="inline-block h-3 w-3 rounded-sm" style={{ backgroundColor: item.color }} />
+                                      <span>{item.label}</span>
+                                    </div>
+                                    <div className="text-xs text-slate-500 dark:text-slate-400">
+                                      {item.ordersCount} órdenes
+                                    </div>
+                                  </div>
+                                  <div className="text-right">
+                                    <div className="text-sm font-semibold text-green-600 dark:text-green-400">
+                                      {money(item.total)} {currency}
+                                    </div>
+                                    <div className="text-xs text-slate-500 dark:text-slate-400">
+                                      {pctSafe.toFixed(1)}%
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="h-2 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
+                                  <div className="h-full rounded-full" style={{ width: `${pctSafe}%`, backgroundColor: item.color }} />
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+
                   {/* Tabla de órdenes */}
-                  <div className="flex-1 min-h-0 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-700 mt-4">
+                  <div className="rounded-lg border border-slate-200 dark:border-slate-700">
                     <Table
                       columns={[
-                        { header: '# Orden', accessor: (o) => <span className="font-mono text-xs">{o.number}</span>, width: '100px' },
-                        { header: 'Cliente', accessor: (o) => o.customerName, width: '200px' },
+                        { header: '# Orden', accessor: (o) => <span className="font-mono text-xs">{o.number}</span>, width: '12%' },
+                        { header: 'Cliente', accessor: (o) => o.customerName, width: '30%', className: 'wrap' },
                         { 
                           header: 'Estado', 
                           accessor: (o) => {
@@ -1666,7 +2727,7 @@ export function SalesReportsPage() {
                               </span>
                             )
                           },
-                          width: '120px'
+                          width: '16%'
                         },
                         { 
                           header: `Total (${currency})`, 
@@ -1675,18 +2736,18 @@ export function SalesReportsPage() {
                               {money(o.total || 0)}
                             </span>
                           ),
-                          width: '120px'
+                          width: '16%'
                         },
-                        { header: 'Fecha', accessor: (o) => new Date(o.createdAt).toLocaleDateString(), width: '100px' },
+                        { header: 'Fecha', accessor: (o) => new Date(o.createdAt).toLocaleDateString(), width: '12%' },
                         { 
                           header: '✓ Entrega', 
                           accessor: (o) => o.deliveredAt ? '✅' : '⏳',
-                          width: '80px'
+                          width: '7%'
                         },
                         { 
                           header: '💰 Pago', 
                           accessor: (o) => o.paidAt ? '✅' : '⏳',
-                          width: '80px'
+                          width: '7%'
                         },
                       ]}
                       data={items}
@@ -1697,11 +2758,32 @@ export function SalesReportsPage() {
               )
             })()}
 
-            <div className="flex justify-end flex-shrink-0 border-t border-slate-200 pt-3 dark:border-slate-700">
+            <div className="flex justify-end flex-shrink-0 border-t border-slate-200 pt-3 dark:border-slate-700 gap-2 pdf-hide">
+              <Button variant="outline" size="sm" onClick={handleExportDrillDownExcel}>
+                ⬇️ Excel
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={async () => {
+                  if (!drillDownRef.current) return
+                  await exportModalContentToPdf(drillDownRef.current, {
+                    filename: `detalle-${(drillDownType ?? 'reporte').toLowerCase()}-${from}-${to}.pdf`,
+                    title: drillDownTitle,
+                    subtitle: `Período: ${from} a ${to} | Moneda: ${currency}`,
+                    companyName: tenant.branding?.tenantName ?? 'Empresa',
+                    headerColor: '#10B981',
+                    logoUrl: tenant.branding?.logoUrl ?? undefined,
+                  })
+                }}
+              >
+                ⬇️ Exportar PDF
+              </Button>
               <Button variant="ghost" onClick={() => setDrillDownOpen(false)}>
                 Cerrar
               </Button>
             </div>
+            </div>{/* close drillDownRef */}
           </div>
         </Modal>
       </PageContainer>

@@ -257,6 +257,10 @@ async function deactivateProductPresentation(token: string, presentationId: stri
   }
 }
 
+function buildPresentationDuplicateKey(name: string, unitsPerPresentation: number) {
+  return `${name.trim().toLowerCase()}::${Math.trunc(unitsPerPresentation)}`
+}
+
 async function createBatch(
   token: string,
   productId: string,
@@ -1145,6 +1149,16 @@ export function ProductDetailPage() {
         })
         .filter(Boolean)
 
+      const seenPresentationKeys = new Set<string>()
+      for (const presentation of presPayload as Array<{ name: string; unitsPerPresentation: number }>) {
+        const key = buildPresentationDuplicateKey(presentation.name, presentation.unitsPerPresentation)
+        if (seenPresentationKeys.has(key)) {
+          alert(`Ya existe una presentación repetida con ${presentation.name} y ${presentation.unitsPerPresentation} unidades`)
+          return
+        }
+        seenPresentationKeys.add(key)
+      }
+
       if ((presPayload as any[]).length > 0) {
         payload.presentations = presPayload
       }
@@ -1852,14 +1866,17 @@ export function ProductDetailPage() {
                               return
                             }
 
-                            const existingNames = (presentationsQuery.data?.items ?? []).map((p) => p.name.trim().toLowerCase())
-                            if (existingNames.includes(name.toLowerCase())) {
-                              alert('Ya existe una presentación con ese nombre')
+                            const normalizedUnits = Math.trunc(units)
+                            const duplicateExists = (presentationsQuery.data?.items ?? []).some(
+                              (p) => buildPresentationDuplicateKey(p.name, Number(p.unitsPerPresentation)) === buildPresentationDuplicateKey(name, normalizedUnits),
+                            )
+                            if (duplicateExists) {
+                              alert(`Ya existe una presentación ${name} con ${normalizedUnits} unidades`)
                               return
                             }
                             const discNum = toNumberOrNull(newPresentationDiscountPct)
                             const computed = computePresentationPrice({
-                              unitsPerPresentation: Math.trunc(units),
+                              unitsPerPresentation: normalizedUnits,
                               discountPct: discNum,
                             })
                             const shouldSendOverride = discNum !== null && discNum > 0
@@ -1869,7 +1886,7 @@ export function ProductDetailPage() {
                             }
                             createPresentationMutation.mutate({
                               name,
-                              unitsPerPresentation: Math.trunc(units),
+                              unitsPerPresentation: normalizedUnits,
                               isDefault: newPresentationIsDefault,
                               priceOverride: shouldSendOverride ? computed : null,
                             })

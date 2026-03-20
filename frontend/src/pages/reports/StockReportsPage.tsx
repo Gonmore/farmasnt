@@ -3,11 +3,12 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { ResponsiveContainer, BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip, Legend, PieChart, Pie, Cell } from 'recharts'
 import { MainLayout, PageContainer, Button, IconButton, Input, Loading, ErrorState, EmptyState, Modal, Table } from '../../components'
-import { KPICard, ReportSection, reportColors, getChartColor, chartTooltipStyle, chartGridStyle, chartAxisStyle } from '../../components/reports'
+import { KPICard, ReportSection, StockExpiryDocument, StockInputsDocument, StockLowStockDocument, StockOpsDocument, StockRotationDocument, StockTransfersDocument, reportColors, getChartColor, chartTooltipStyle, chartGridStyle, chartAxisStyle } from '../../components/reports'
 import { useNavigation } from '../../hooks'
 import { apiFetch } from '../../lib/api'
 import { formatDateOnlyUtc } from '../../lib/date'
-import { blobToBase64, exportElementToPdf, pdfBlobFromElement } from '../../lib/exportPdf'
+import { blobToBase64, exportElementToPdf, exportModalContentToPdf, exportReactNodeToPdf, pdfBlobFromElement, pdfBlobFromReactNode } from '../../lib/exportPdf'
+import { exportToXlsx } from '../../lib/exportXlsx'
 import { getProductLabel } from '../../lib/productName'
 import { exportPickingToPdf, exportLabelToPdf } from '../../lib/movementRequestDocsPdf'
 import { useAuth } from '../../providers/AuthProvider'
@@ -72,12 +73,50 @@ type ExpiryAlertItem = {
   productId: string
   sku: string
   name: string
+  warehouseId: string
+  warehouseCode: string | null
+  warehouseName: string | null
   locationId: string
   locationName: string | null
   lotNumber: string | null
   expiryDate: string | null
   quantity: number
   daysUntilExpiry: number | null
+}
+
+type BalanceExpandedItem = {
+  id: string
+  quantity: string
+  reservedQuantity: string
+  updatedAt: string
+  productId: string
+  batchId: string | null
+  locationId: string
+  product: { sku: string; name: string }
+  batch: { batchNumber: string; expiresAt: string | null; status: string } | null
+  location: {
+    id: string
+    code: string
+    warehouse: { id: string; code: string; name: string }
+  }
+}
+
+type MovementExpandedItem = {
+  id: string
+  createdAt: string
+  type: 'IN' | 'OUT' | 'TRANSFER' | 'ADJUSTMENT'
+  productId: string
+  batchId: string | null
+  fromLocationId: string | null
+  toLocationId: string | null
+  quantity: string
+  referenceType: string | null
+  referenceId: string | null
+  note: string | null
+  product: { sku: string; name: string }
+  batch: { batchNumber: string; expiresAt: string | null; status: string } | null
+  fromLocation: { id: string; code: string; warehouse: { id: string; code: string; name: string } } | null
+  toLocation: { id: string; code: string; warehouse: { id: string; code: string; name: string } } | null
 }
 
 type MovementRequestsSummary = {
@@ -238,6 +277,65 @@ function formatWarehouseLabel(wh: { code: string | null; name: string | null } |
   return `${wh.code ?? ''} ${wh.name ?? ''}`.trim() || '—'
 }
 
+function formatLocationWithWarehouse(location: { code: string | null; warehouse: { code: string | null; name: string | null } | null } | null | undefined): string {
+  if (!location) return '—'
+  const warehouse = formatWarehouseLabel(location.warehouse)
+  return location.code ? `${warehouse} · ${location.code}` : warehouse
+}
+
+function buildTraceProductComparison(trace: MovementRequestTraceResponse): Array<{
+  productId: string
+  product: string
+  presentation: string
+  requestedQty: number
+  sentQty: number
+  differenceQty: number
+}> {
+  const map = new Map<string, { productId: string; product: string; presentation: string; requestedQty: number; sentQty: number }>()
+
+  for (const item of trace.requestedItems ?? []) {
+    map.set(item.productId, {
+      productId: item.productId,
+      product: getProductLabel({ sku: item.productSku ?? '—', name: item.productName ?? '—', genericName: item.genericName ?? null }),
+      presentation: formatPresentationLabel(item.presentation),
+      requestedQty: Number(item.requestedQuantity ?? 0),
+      sentQty: 0,
+    })
+  }
+
+  for (const line of trace.sentLines ?? []) {
+    const existing = map.get(line.productId) ?? {
+      productId: line.productId,
+      product: getProductLabel({ sku: line.productSku ?? '—', name: line.productName ?? '—', genericName: line.genericName ?? null }),
+      presentation: formatPresentationLabel(line.presentation),
+      requestedQty: 0,
+      sentQty: 0,
+    }
+    existing.sentQty += Number(line.quantity ?? 0)
+    if (existing.presentation === '—') existing.presentation = formatPresentationLabel(line.presentation)
+    map.set(line.productId, existing)
+  }
+
+  return Array.from(map.values())
+    .map((item) => ({ ...item, differenceQty: item.sentQty - item.requestedQty }))
+    .sort((a, b) => Math.max(b.requestedQty, b.sentQty) - Math.max(a.requestedQty, a.sentQty))
+}
+
+function buildTraceOriginMix(trace: MovementRequestTraceResponse): Array<{ label: string; quantity: number; linesCount: number; color: string }> {
+  const map = new Map<string, { label: string; quantity: number; linesCount: number }>()
+  for (const line of trace.sentLines ?? []) {
+    const label = formatLocationWithWarehouse(line.fromLocation)
+    const existing = map.get(label) ?? { label, quantity: 0, linesCount: 0 }
+    existing.quantity += Number(line.quantity ?? 0)
+    existing.linesCount += 1
+    map.set(label, existing)
+  }
+
+  return Array.from(map.values())
+    .sort((a, b) => b.quantity - a.quantity)
+    .map((item, idx) => ({ ...item, color: getChartColor(idx, 'rainbow') }))
+}
+
 async function fetchInputsByProduct(token: string, q: { from?: string; to?: string; take: number }): Promise<{ items: StockInputsItem[] }> {
   const params = new URLSearchParams({ take: String(q.take) })
   if (q.from) params.set('from', q.from)
@@ -250,6 +348,20 @@ async function fetchTransfers(token: string, q: { from?: string; to?: string; ta
   if (q.from) params.set('from', q.from)
   if (q.to) params.set('to', q.to)
   return apiFetch(`/api/v1/reports/stock/transfers-between-warehouses?${params}`, { token })
+}
+
+async function fetchBalancesExpanded(token: string, q: { take: number; productId?: string }): Promise<{ items: BalanceExpandedItem[] }> {
+  const params = new URLSearchParams({ take: String(q.take) })
+  if (q.productId) params.set('productId', q.productId)
+  return apiFetch(`/api/v1/reports/stock/balances-expanded?${params}`, { token })
+}
+
+async function fetchMovementsExpanded(token: string, q: { from?: string; to?: string; take: number; productId?: string }): Promise<{ items: MovementExpandedItem[] }> {
+  const params = new URLSearchParams({ take: String(q.take) })
+  if (q.from) params.set('from', q.from)
+  if (q.to) params.set('to', q.to)
+  if (q.productId) params.set('productId', q.productId)
+  return apiFetch(`/api/v1/reports/stock/movements-expanded?${params}`, { token })
 }
 
 async function sendStockReportEmail(token: string, input: { to: string; subject: string; filename: string; pdfBase64: string; message?: string }) {
@@ -408,6 +520,7 @@ export function StockReportsPage() {
   }, [location.key])
 
   const reportRef = useRef<HTMLDivElement | null>(null)
+  const traceRef = useRef<HTMLDivElement | null>(null)
 
   const [emailModalOpen, setEmailModalOpen] = useState(false)
   const [emailTo, setEmailTo] = useState('')
@@ -423,6 +536,8 @@ export function StockReportsPage() {
 
   const [traceRequestId, setTraceRequestId] = useState<string | null>(null)
   const [fulfilledFilter, setFulfilledFilter] = useState('')
+  const [exportingPdf, setExportingPdf] = useState(false)
+  const [exportingExcel, setExportingExcel] = useState(false)
 
   const title = useMemo(() => {
     const period = `${from} a ${to}`
@@ -473,6 +588,18 @@ export function StockReportsPage() {
     enabled: !!auth.accessToken && tab === 'EXPIRY',
   })
 
+  const stockBalancesExpandedQuery = useQuery({
+    queryKey: ['reports', 'stock', 'balancesExpanded', { tab }],
+    queryFn: () => fetchBalancesExpanded(auth.accessToken!, { take: 5000 }),
+    enabled: !!auth.accessToken && ['INPUTS', 'ROTATION', 'NOMOVEMENT', 'LOWSTOCK'].includes(tab),
+  })
+
+  const stockMovementsExpandedQuery = useQuery({
+    queryKey: ['reports', 'stock', 'movementsExpanded', { from, to, tab }],
+    queryFn: () => fetchMovementsExpanded(auth.accessToken!, { from, to, take: 5000 }),
+    enabled: !!auth.accessToken && ['INPUTS', 'ROTATION', 'NOMOVEMENT'].includes(tab),
+  })
+
   const movementRequestsSummaryQuery = useQuery({
     queryKey: ['reports', 'stock', 'movementRequestsSummary', { from, to }],
     queryFn: () => fetchMovementRequestsSummary(auth.accessToken!, { from, to }),
@@ -515,11 +642,310 @@ export function StockReportsPage() {
     enabled: !!auth.accessToken && tab === 'OPS',
   })
 
+  const buildOpsStructuredReport = async () => {
+    if (!auth.accessToken) throw new Error('Sesión no disponible para exportar')
+
+    const summary = movementRequestsSummaryQuery.data ?? {
+      total: 0,
+      open: 0,
+      fulfilled: 0,
+      cancelled: 0,
+      pending: 0,
+      accepted: 0,
+      rejected: 0,
+    }
+
+    const byCity = (movementRequestsByCityQuery.data?.items ?? []).map((item) => ({
+      city: item.city ?? '(sin ciudad)',
+      total: item.total,
+      open: item.open,
+      fulfilled: item.fulfilled,
+      cancelled: item.cancelled,
+      pending: item.pending,
+      accepted: item.accepted,
+      rejected: item.rejected,
+    }))
+
+    const flows = (movementRequestFlowsQuery.data?.items ?? []).map((item) => ({
+      origin: item.fromWarehouse ? `${item.fromWarehouse.code ?? ''} ${item.fromWarehouse.name ?? ''}`.trim() || item.fromWarehouse.id || '—' : '—',
+      destination: item.toWarehouse ? `${item.toWarehouse.code ?? ''} ${item.toWarehouse.name ?? ''}`.trim() || item.toWarehouse.id || '—' : '—',
+      requestsCount: item.requestsCount,
+      avgMinutes: item.avgMinutes,
+    }))
+
+    const fulfilled = (fulfilledMovementRequestsQuery.data?.items ?? []).map((item) => ({
+      id: item.id,
+      destination: item.destinationWarehouse ? `${item.destinationWarehouse.code ?? ''} ${item.destinationWarehouse.name ?? ''}`.trim() || item.destinationWarehouse.id : item.requestedCity ?? '—',
+      origin: item.fromWarehouseCodes ? (item.fromLocationCodes ? `${item.fromWarehouseCodes} · ${item.fromLocationCodes}` : item.fromWarehouseCodes) : '—',
+      requestedByName: item.requestedByName ?? '—',
+      createdAt: item.createdAt,
+      fulfilledAt: item.fulfilledAt,
+      minutesToFulfill: item.minutesToFulfill,
+      itemsCount: item.itemsCount,
+      movementsCount: item.movementsCount,
+    }))
+
+    const traces = await Promise.all(
+      (fulfilledMovementRequestsQuery.data?.items ?? []).map(async (item) => {
+        const response = await fetchMovementRequestTrace(auth.accessToken!, item.id)
+        return {
+          requestId: response.request.id,
+          destination: response.request.warehouse ? `${response.request.warehouse.code ?? ''} ${response.request.warehouse.name ?? ''}`.trim() || response.request.requestedCity : response.request.requestedCity,
+          requestedAt: response.request.createdAt,
+          fulfilledAt: response.request.fulfilledAt,
+          minutesToFulfill: response.request.fulfilledAt ? (new Date(response.request.fulfilledAt).getTime() - new Date(response.request.createdAt).getTime()) / 60000 : null,
+          requestedByName: response.request.requestedByName ?? '—',
+          fulfilledByName: response.request.fulfilledByName ?? '—',
+          requestedItems: (response.requestedItems ?? []).map((requestedItem) => ({
+            id: requestedItem.id,
+            product: getProductLabel({ sku: requestedItem.productSku ?? '—', name: requestedItem.productName ?? '—', genericName: requestedItem.genericName ?? null }),
+            presentation: formatPresentationLabel(requestedItem.presentation ? { name: requestedItem.presentation.name, unitsPerPresentation: requestedItem.presentation.unitsPerPresentation } : null),
+            requestedQuantity: requestedItem.requestedQuantity ?? 0,
+          })),
+          sentLines: (response.sentLines ?? []).map((sentLine) => ({
+            id: sentLine.id,
+            createdAt: sentLine.createdAt,
+            origin: (() => {
+              const warehouse = sentLine.fromLocation?.warehouse
+              const warehouseLabel = warehouse ? `${warehouse.code ?? ''} ${warehouse.name ?? ''}`.trim() : '—'
+              return sentLine.fromLocation?.code ? `${warehouseLabel} · ${sentLine.fromLocation.code}` : warehouseLabel
+            })(),
+            destination: (() => {
+              const warehouse = sentLine.toLocation?.warehouse
+              const warehouseLabel = warehouse ? `${warehouse.code ?? ''} ${warehouse.name ?? ''}`.trim() : '—'
+              return sentLine.toLocation?.code ? `${warehouseLabel} · ${sentLine.toLocation.code}` : warehouseLabel
+            })(),
+            product: getProductLabel({ sku: sentLine.productSku ?? '—', name: sentLine.productName ?? '—', genericName: sentLine.genericName ?? null }),
+            batchNumber: sentLine.batchNumber ?? null,
+            expiresAt: sentLine.expiresAt ?? null,
+            quantity: sentLine.quantity ?? 0,
+          })),
+        }
+      }),
+    )
+
+    const returnsSummary = {
+      returnsCount: returnsSummaryQuery.data?.returnsCount ?? 0,
+      itemsCount: returnsSummaryQuery.data?.itemsCount ?? 0,
+      quantity: toNumber(returnsSummaryQuery.data?.quantity),
+    }
+
+    const returnsByWarehouse = (returnsByWarehouseQuery.data?.items ?? []).map((item) => ({
+      warehouse: `${item.warehouse.code ?? ''} ${item.warehouse.name ?? ''}`.trim() || item.warehouse.id,
+      city: item.warehouse.city ?? '-',
+      returnsCount: item.returnsCount,
+      itemsCount: item.itemsCount,
+      quantity: toNumber(item.quantity),
+    }))
+
+    return { summary, byCity, flows, fulfilled, traces, returnsSummary, returnsByWarehouse }
+  }
+
+  const buildInputsStructuredReport = async () => {
+    const items = (inputsQuery.data?.items ?? []).map((item) => ({
+      sku: item.sku,
+      name: item.name,
+      quantity: toNumber(item.quantity),
+      movementsCount: item.movementsCount,
+    }))
+
+    const byWarehouse = new Map<string, { warehouse: string; totalQuantity: number; items: Map<string, { sku: string; name: string; quantity: number; movementsCount: number }> }>()
+    for (const movement of stockMovementsExpandedQuery.data?.items ?? []) {
+      if (movement.type !== 'IN') continue
+      const warehouse = movement.toLocation?.warehouse
+      if (!warehouse) continue
+      const warehouseLabel = `${warehouse.code ?? ''} ${warehouse.name ?? ''}`.trim()
+      const warehouseEntry = byWarehouse.get(warehouseLabel) ?? { warehouse: warehouseLabel, totalQuantity: 0, items: new Map() }
+      const productEntry = warehouseEntry.items.get(movement.productId) ?? { sku: movement.product.sku, name: movement.product.name, quantity: 0, movementsCount: 0 }
+      productEntry.quantity += toNumber(movement.quantity)
+      productEntry.movementsCount += 1
+      warehouseEntry.totalQuantity += toNumber(movement.quantity)
+      warehouseEntry.items.set(movement.productId, productEntry)
+      byWarehouse.set(warehouseLabel, warehouseEntry)
+    }
+
+    const warehouses = Array.from(byWarehouse.values())
+      .map((entry) => ({
+        warehouse: entry.warehouse,
+        totalQuantity: entry.totalQuantity,
+        items: Array.from(entry.items.values()).sort((a, b) => b.quantity - a.quantity),
+      }))
+      .sort((a, b) => b.totalQuantity - a.totalQuantity)
+
+    return { items, warehouses }
+  }
+
+  const buildTransfersStructuredReport = async () => {
+    const routes = (transfersQuery.data?.items ?? []).map((item) => ({
+      origin: item.fromWarehouse ? `${item.fromWarehouse.code ?? ''} ${item.fromWarehouse.name ?? ''}`.trim() || item.fromWarehouse.id : '—',
+      destination: item.toWarehouse ? `${item.toWarehouse.code ?? ''} ${item.toWarehouse.name ?? ''}`.trim() || item.toWarehouse.id : '—',
+      quantity: toNumber(item.quantity),
+      movementsCount: item.movementsCount,
+    }))
+    return { routes }
+  }
+
+  const buildRotationStructuredReport = async () => {
+    const items = (rotationQuery.data?.items ?? []).map((item) => ({
+      productId: item.productId,
+      sku: item.sku,
+      name: item.name,
+      movementsIn: item.movementsIn,
+      movementsOut: item.movementsOut,
+      totalMovements: item.totalMovements,
+      currentStock: item.currentStock,
+    }))
+
+    const stockByWarehouseProduct = new Map<string, number>()
+    for (const balance of stockBalancesExpandedQuery.data?.items ?? []) {
+      const warehouse = balance.location?.warehouse
+      if (!warehouse) continue
+      const key = `${warehouse.id}:${balance.productId}`
+      stockByWarehouseProduct.set(key, (stockByWarehouseProduct.get(key) ?? 0) + Math.max(0, toNumber(balance.quantity) - toNumber(balance.reservedQuantity)))
+    }
+
+    const byWarehouse = new Map<string, { warehouse: string; items: Map<string, { productId: string; sku: string; name: string; movementsIn: number; movementsOut: number; totalMovements: number; currentStock: number }> }>()
+    for (const movement of stockMovementsExpandedQuery.data?.items ?? []) {
+      const productKeySeed = { productId: movement.productId, sku: movement.product.sku, name: movement.product.name }
+
+      if (movement.type === 'IN' || (movement.type === 'ADJUSTMENT' && movement.toLocation)) {
+        const warehouse = movement.toLocation?.warehouse
+        if (warehouse) {
+          const label = `${warehouse.code ?? ''} ${warehouse.name ?? ''}`.trim()
+          const group = byWarehouse.get(label) ?? { warehouse: label, items: new Map() }
+          const existing = group.items.get(movement.productId) ?? { ...productKeySeed, movementsIn: 0, movementsOut: 0, totalMovements: 0, currentStock: stockByWarehouseProduct.get(`${warehouse.id}:${movement.productId}`) ?? 0 }
+          existing.movementsIn += 1
+          existing.totalMovements += 1
+          group.items.set(movement.productId, existing)
+          byWarehouse.set(label, group)
+        }
+      }
+
+      if (movement.type === 'OUT' || (movement.type === 'ADJUSTMENT' && !movement.toLocation)) {
+        const warehouse = movement.fromLocation?.warehouse
+        if (warehouse) {
+          const label = `${warehouse.code ?? ''} ${warehouse.name ?? ''}`.trim()
+          const group = byWarehouse.get(label) ?? { warehouse: label, items: new Map() }
+          const existing = group.items.get(movement.productId) ?? { ...productKeySeed, movementsIn: 0, movementsOut: 0, totalMovements: 0, currentStock: stockByWarehouseProduct.get(`${warehouse.id}:${movement.productId}`) ?? 0 }
+          existing.movementsOut += 1
+          existing.totalMovements += 1
+          group.items.set(movement.productId, existing)
+          byWarehouse.set(label, group)
+        }
+      }
+    }
+
+    for (const balance of stockBalancesExpandedQuery.data?.items ?? []) {
+      const warehouse = balance.location?.warehouse
+      if (!warehouse) continue
+      const label = `${warehouse.code ?? ''} ${warehouse.name ?? ''}`.trim()
+      const group = byWarehouse.get(label) ?? { warehouse: label, items: new Map() }
+      const existing = group.items.get(balance.productId) ?? { productId: balance.productId, sku: balance.product.sku, name: balance.product.name, movementsIn: 0, movementsOut: 0, totalMovements: 0, currentStock: 0 }
+      existing.currentStock = stockByWarehouseProduct.get(`${warehouse.id}:${balance.productId}`) ?? existing.currentStock
+      group.items.set(balance.productId, existing)
+      byWarehouse.set(label, group)
+    }
+
+    const warehouses = Array.from(byWarehouse.values())
+      .map((entry) => ({
+        warehouse: entry.warehouse,
+        items: Array.from(entry.items.values()).sort((a, b) => b.totalMovements - a.totalMovements),
+      }))
+      .sort((a, b) => a.warehouse.localeCompare(b.warehouse))
+
+    return { items, warehouses }
+  }
+
+  const buildLowStockStructuredReport = async () => {
+    const items = lowStockQuery.data?.items ?? []
+    const itemIds = new Set(items.map((item) => item.productId))
+    const byWarehouse = new Map<string, Array<{ productId: string; sku: string; name: string; currentStock: number }>>()
+
+    for (const balance of stockBalancesExpandedQuery.data?.items ?? []) {
+      if (!itemIds.has(balance.productId)) continue
+      const warehouse = balance.location?.warehouse
+      if (!warehouse) continue
+      const label = `${warehouse.code ?? ''} ${warehouse.name ?? ''}`.trim()
+      const entry = byWarehouse.get(label) ?? []
+      const existing = entry.find((item) => item.productId === balance.productId)
+      const available = Math.max(0, toNumber(balance.quantity) - toNumber(balance.reservedQuantity))
+      if (existing) {
+        existing.currentStock += available
+      } else {
+        entry.push({ productId: balance.productId, sku: balance.product.sku, name: balance.product.name, currentStock: available })
+      }
+      byWarehouse.set(label, entry)
+    }
+
+    const warehouses = Array.from(byWarehouse.entries())
+      .map(([warehouse, warehouseItems]) => ({
+        warehouse,
+        items: warehouseItems.sort((a, b) => a.currentStock - b.currentStock),
+      }))
+      .filter((section) => section.items.length > 0)
+
+    return { items, warehouses }
+  }
+
+  const buildExpiryStructuredReport = async () => {
+    const items = (expiryQuery.data?.items ?? []).map((item) => ({
+      productId: item.productId,
+      sku: item.sku,
+      name: item.name,
+      warehouse: `${item.warehouseCode ?? ''} ${item.warehouseName ?? ''}`.trim() || item.warehouseId,
+      locationName: item.locationName ?? '—',
+      lotNumber: item.lotNumber,
+      expiryDate: item.expiryDate,
+      quantity: item.quantity,
+      daysUntilExpiry: item.daysUntilExpiry,
+    }))
+
+    const byWarehouse = new Map<string, typeof items>()
+    for (const item of items) {
+      const group = byWarehouse.get(item.warehouse) ?? []
+      group.push(item)
+      byWarehouse.set(item.warehouse, group)
+    }
+
+    const warehouses = Array.from(byWarehouse.entries()).map(([warehouse, warehouseItems]) => ({
+      warehouse,
+      items: warehouseItems.sort((a, b) => (a.daysUntilExpiry ?? 9999) - (b.daysUntilExpiry ?? 9999)),
+    }))
+
+    return { items, warehouses }
+  }
+
   const emailMutation = useMutation({
     mutationFn: async () => {
       if (!reportRef.current) throw new Error('No se pudo generar el PDF')
       if (!emailTo.trim()) throw new Error('Ingresa un correo válido')
-      const blob = await pdfBlobFromElement(reportRef.current, { title })
+      let blob: Blob
+
+      if (tab === 'OPS') {
+        const report = await buildOpsStructuredReport()
+        blob = await pdfBlobFromReactNode(<StockOpsDocument title={title} from={from} to={to} summary={report.summary} byCity={report.byCity} flows={report.flows} fulfilled={report.fulfilled} traces={report.traces} returnsSummary={report.returnsSummary} returnsByWarehouse={report.returnsByWarehouse} />, { title, subtitle: `Período: ${from} a ${to}`, companyName: tenant.branding?.tenantName ?? 'Empresa', headerColor: '#3B82F6', logoUrl: tenant.branding?.logoUrl ?? undefined, captureWidthPx: 1240 })
+      } else if (tab === 'INPUTS') {
+        const report = await buildInputsStructuredReport()
+        blob = await pdfBlobFromReactNode(<StockInputsDocument title={title} from={from} to={to} items={report.items} warehouses={report.warehouses} />, { title, subtitle: `Período: ${from} a ${to}`, companyName: tenant.branding?.tenantName ?? 'Empresa', headerColor: '#3B82F6', logoUrl: tenant.branding?.logoUrl ?? undefined, captureWidthPx: 1240 })
+      } else if (tab === 'TRANSFERS') {
+        const report = await buildTransfersStructuredReport()
+        blob = await pdfBlobFromReactNode(<StockTransfersDocument title={title} from={from} to={to} routes={report.routes} />, { title, subtitle: `Período: ${from} a ${to}`, companyName: tenant.branding?.tenantName ?? 'Empresa', headerColor: '#3B82F6', logoUrl: tenant.branding?.logoUrl ?? undefined, captureWidthPx: 1240 })
+      } else if (tab === 'ROTATION') {
+        const report = await buildRotationStructuredReport()
+        blob = await pdfBlobFromReactNode(<StockRotationDocument title={title} from={from} to={to} items={report.items} warehouses={report.warehouses} mode="ROTATION" />, { title, subtitle: `Período: ${from} a ${to}`, companyName: tenant.branding?.tenantName ?? 'Empresa', headerColor: '#3B82F6', logoUrl: tenant.branding?.logoUrl ?? undefined, captureWidthPx: 1240 })
+      } else if (tab === 'NOMOVEMENT') {
+        const report = await buildRotationStructuredReport()
+        blob = await pdfBlobFromReactNode(<StockRotationDocument title={title} from={from} to={to} items={report.items} warehouses={report.warehouses} mode="NOMOVEMENT" />, { title, subtitle: `Período: ${from} a ${to}`, companyName: tenant.branding?.tenantName ?? 'Empresa', headerColor: '#3B82F6', logoUrl: tenant.branding?.logoUrl ?? undefined, captureWidthPx: 1240 })
+      } else if (tab === 'LOWSTOCK') {
+        const report = await buildLowStockStructuredReport()
+        blob = await pdfBlobFromReactNode(<StockLowStockDocument title={title} from={from} to={to} items={report.items} warehouses={report.warehouses} />, { title, subtitle: `Período: ${from} a ${to}`, companyName: tenant.branding?.tenantName ?? 'Empresa', headerColor: '#3B82F6', logoUrl: tenant.branding?.logoUrl ?? undefined, captureWidthPx: 1240 })
+      } else if (tab === 'EXPIRY') {
+        const report = await buildExpiryStructuredReport()
+        blob = await pdfBlobFromReactNode(<StockExpiryDocument title={title} from={from} to={to} items={report.items} warehouses={report.warehouses} />, { title, subtitle: `Período: ${from} a ${to}`, companyName: tenant.branding?.tenantName ?? 'Empresa', headerColor: '#3B82F6', logoUrl: tenant.branding?.logoUrl ?? undefined, captureWidthPx: 1240 })
+      } else {
+        blob = await pdfBlobFromElement(reportRef.current, { title })
+      }
+
       const pdfBase64 = await blobToBase64(blob)
       await sendStockReportEmail(auth.accessToken!, {
         to: emailTo.trim(),
@@ -584,6 +1010,254 @@ export function StockReportsPage() {
     },
   })
 
+  const exportLegacyPdf = async () => {
+    if (!reportRef.current) return
+
+    await exportElementToPdf(reportRef.current, {
+      filename: exportFilename,
+      title,
+      subtitle: `Período: ${formatDate(new Date(from))} - ${formatDate(new Date(to))}`,
+      companyName: tenant.branding?.tenantName ?? 'Empresa',
+      headerColor: '#3B82F6',
+      logoUrl: tenant.branding?.logoUrl ?? undefined,
+    })
+  }
+
+  const handleExportPdf = async () => {
+    setExportingPdf(true)
+    try {
+      if (tab === 'OPS') {
+        const report = await buildOpsStructuredReport()
+        await exportReactNodeToPdf(
+          <StockOpsDocument
+            title={title}
+            from={from}
+            to={to}
+            summary={report.summary}
+            byCity={report.byCity}
+            flows={report.flows}
+            fulfilled={report.fulfilled}
+            traces={report.traces}
+            returnsSummary={report.returnsSummary}
+            returnsByWarehouse={report.returnsByWarehouse}
+          />,
+          {
+            filename: exportFilename,
+            title,
+            subtitle: `Período: ${from} a ${to}`,
+            companyName: tenant.branding?.tenantName ?? 'Empresa',
+            headerColor: '#3B82F6',
+            logoUrl: tenant.branding?.logoUrl ?? undefined,
+            captureWidthPx: 1240,
+          },
+        )
+        return
+      }
+
+      if (tab === 'INPUTS') {
+        const report = await buildInputsStructuredReport()
+        await exportReactNodeToPdf(<StockInputsDocument title={title} from={from} to={to} items={report.items} warehouses={report.warehouses} />, { filename: exportFilename, title, subtitle: `Período: ${from} a ${to}`, companyName: tenant.branding?.tenantName ?? 'Empresa', headerColor: '#3B82F6', logoUrl: tenant.branding?.logoUrl ?? undefined, captureWidthPx: 1240 })
+        return
+      }
+
+      if (tab === 'TRANSFERS') {
+        const report = await buildTransfersStructuredReport()
+        await exportReactNodeToPdf(<StockTransfersDocument title={title} from={from} to={to} routes={report.routes} />, { filename: exportFilename, title, subtitle: `Período: ${from} a ${to}`, companyName: tenant.branding?.tenantName ?? 'Empresa', headerColor: '#3B82F6', logoUrl: tenant.branding?.logoUrl ?? undefined, captureWidthPx: 1240 })
+        return
+      }
+
+      if (tab === 'ROTATION') {
+        const report = await buildRotationStructuredReport()
+        await exportReactNodeToPdf(<StockRotationDocument title={title} from={from} to={to} items={report.items} warehouses={report.warehouses} mode="ROTATION" />, { filename: exportFilename, title, subtitle: `Período: ${from} a ${to}`, companyName: tenant.branding?.tenantName ?? 'Empresa', headerColor: '#3B82F6', logoUrl: tenant.branding?.logoUrl ?? undefined, captureWidthPx: 1240 })
+        return
+      }
+
+      if (tab === 'NOMOVEMENT') {
+        const report = await buildRotationStructuredReport()
+        await exportReactNodeToPdf(<StockRotationDocument title={title} from={from} to={to} items={report.items} warehouses={report.warehouses} mode="NOMOVEMENT" />, { filename: exportFilename, title, subtitle: `Período: ${from} a ${to}`, companyName: tenant.branding?.tenantName ?? 'Empresa', headerColor: '#3B82F6', logoUrl: tenant.branding?.logoUrl ?? undefined, captureWidthPx: 1240 })
+        return
+      }
+
+      if (tab === 'LOWSTOCK') {
+        const report = await buildLowStockStructuredReport()
+        await exportReactNodeToPdf(<StockLowStockDocument title={title} from={from} to={to} items={report.items} warehouses={report.warehouses} />, { filename: exportFilename, title, subtitle: `Período: ${from} a ${to}`, companyName: tenant.branding?.tenantName ?? 'Empresa', headerColor: '#3B82F6', logoUrl: tenant.branding?.logoUrl ?? undefined, captureWidthPx: 1240 })
+        return
+      }
+
+      if (tab === 'EXPIRY') {
+        const report = await buildExpiryStructuredReport()
+        await exportReactNodeToPdf(<StockExpiryDocument title={title} from={from} to={to} items={report.items} warehouses={report.warehouses} />, { filename: exportFilename, title, subtitle: `Período: ${from} a ${to}`, companyName: tenant.branding?.tenantName ?? 'Empresa', headerColor: '#3B82F6', logoUrl: tenant.branding?.logoUrl ?? undefined, captureWidthPx: 1240 })
+        return
+      }
+
+      await exportLegacyPdf()
+    } finally {
+      setExportingPdf(false)
+    }
+  }
+
+  const handleExportExcel = async () => {
+    setExportingExcel(true)
+    try {
+      if (tab !== 'OPS') {
+        if (tab === 'INPUTS') {
+          const report = await buildInputsStructuredReport()
+          exportToXlsx(`reporte-stock-ingresos-${from}-${to}.xlsx`, [
+            { name: 'Resumen', rows: report.items.map((item) => ({ SKU: item.sku, Producto: item.name, Movimientos: item.movementsCount, Unidades: item.quantity })) },
+            { name: 'Por sucursal', rows: report.warehouses.flatMap((section) => section.items.map((item) => ({ Sucursal: section.warehouse, SKU: item.sku, Producto: item.name, Movimientos: item.movementsCount, Unidades: item.quantity }))) },
+            { name: 'Meta', rows: [{ Reporte: title, Desde: from, Hasta: to, Generado: new Date().toLocaleString() }] },
+          ])
+          return
+        }
+
+        if (tab === 'TRANSFERS') {
+          const report = await buildTransfersStructuredReport()
+          exportToXlsx(`reporte-stock-traspasos-${from}-${to}.xlsx`, [
+            { name: 'Rutas', rows: report.routes.map((item) => ({ Origen: item.origin, Destino: item.destination, Movimientos: item.movementsCount, Unidades: item.quantity })) },
+            { name: 'Meta', rows: [{ Reporte: title, Desde: from, Hasta: to, Generado: new Date().toLocaleString() }] },
+          ])
+          return
+        }
+
+        if (tab === 'ROTATION' || tab === 'NOMOVEMENT') {
+          const report = await buildRotationStructuredReport()
+          const filtered = tab === 'NOMOVEMENT' ? report.items.filter((item) => item.totalMovements <= 1) : report.items
+          exportToXlsx(`reporte-stock-${tab === 'ROTATION' ? 'rotacion' : 'sin-movimiento'}-${from}-${to}.xlsx`, [
+            { name: 'Resumen', rows: filtered.map((item) => ({ SKU: item.sku, Producto: item.name, Entradas: item.movementsIn, Salidas: item.movementsOut, Movimientos: item.totalMovements, StockActual: item.currentStock })) },
+            { name: 'Por sucursal', rows: report.warehouses.flatMap((section) => section.items.filter((item) => tab === 'ROTATION' || item.totalMovements <= 1).map((item) => ({ Sucursal: section.warehouse, SKU: item.sku, Producto: item.name, Entradas: item.movementsIn, Salidas: item.movementsOut, Movimientos: item.totalMovements, StockActual: item.currentStock }))) },
+            { name: 'Meta', rows: [{ Reporte: title, Desde: from, Hasta: to, Generado: new Date().toLocaleString() }] },
+          ])
+          return
+        }
+
+        if (tab === 'LOWSTOCK') {
+          const report = await buildLowStockStructuredReport()
+          exportToXlsx(`reporte-stock-bajo-${from}-${to}.xlsx`, [
+            { name: 'Resumen', rows: report.items.map((item) => ({ SKU: item.sku, Producto: item.name, StockActual: item.currentStock, Minimo: item.minStock, VentaDiaria: item.avgDailySales, DiasStock: item.daysOfStock })) },
+            { name: 'Por sucursal', rows: report.warehouses.flatMap((section) => section.items.map((item) => ({ Sucursal: section.warehouse, SKU: item.sku, Producto: item.name, StockLocal: item.currentStock }))) },
+            { name: 'Meta', rows: [{ Reporte: title, Desde: from, Hasta: to, Generado: new Date().toLocaleString() }] },
+          ])
+          return
+        }
+
+        if (tab === 'EXPIRY') {
+          const report = await buildExpiryStructuredReport()
+          exportToXlsx(`reporte-stock-vencimiento-${from}-${to}.xlsx`, [
+            { name: 'Resumen', rows: report.items.map((item) => ({ Sucursal: item.warehouse, SKU: item.sku, Producto: item.name, Ubicacion: item.locationName, Lote: item.lotNumber ?? '—', Vence: item.expiryDate ?? '—', Unidades: item.quantity, Dias: item.daysUntilExpiry })) },
+            { name: 'Meta', rows: [{ Reporte: title, Desde: from, Hasta: to, Generado: new Date().toLocaleString() }] },
+          ])
+          return
+        }
+      }
+
+      const report = await buildOpsStructuredReport()
+      exportToXlsx(`reporte-stock-ops-${from}-${to}.xlsx`, [
+        {
+          name: 'Resumen',
+          rows: [
+            {
+              TotalSolicitudes: report.summary.total,
+              Abiertas: report.summary.open,
+              Atendidas: report.summary.fulfilled,
+              Canceladas: report.summary.cancelled,
+              Pendientes: report.summary.pending,
+              Aceptadas: report.summary.accepted,
+              Rechazadas: report.summary.rejected,
+              Devoluciones: report.returnsSummary.returnsCount,
+              ItemsDevolucion: report.returnsSummary.itemsCount,
+              UnidadesDevueltas: report.returnsSummary.quantity,
+            },
+          ],
+        },
+        {
+          name: 'Solicitudes ciudad',
+          rows: report.byCity.map((item) => ({ Ciudad: item.city, Total: item.total, Abiertas: item.open, Atendidas: item.fulfilled, Canceladas: item.cancelled, Pendientes: item.pending, Aceptadas: item.accepted, Rechazadas: item.rejected })),
+        },
+        { name: 'Flujos', rows: report.flows.map((item) => ({ Origen: item.origin, Destino: item.destination, Completadas: item.requestsCount, TiempoPromedioMin: item.avgMinutes ?? 0 })) },
+        { name: 'Atendidas', rows: report.fulfilled.map((item) => ({ Solicitud: item.id, Destino: item.destination, Origen: item.origin, Solicitante: item.requestedByName, Solicitada: new Date(item.createdAt).toLocaleString(), Atendida: new Date(item.fulfilledAt).toLocaleString(), TiempoMin: item.minutesToFulfill, Items: item.itemsCount, Envios: item.movementsCount })) },
+        { name: 'Trace solicitado', rows: report.traces.flatMap((trace) => trace.requestedItems.map((item) => ({ Solicitud: trace.requestId, Destino: trace.destination, Solicitada: new Date(trace.requestedAt).toLocaleString(), Producto: item.product, Presentacion: item.presentation, CantidadSolicitada: item.requestedQuantity }))) },
+        { name: 'Trace enviado', rows: report.traces.flatMap((trace) => trace.sentLines.map((item) => ({ Solicitud: trace.requestId, DestinoSolicitud: trace.destination, Fecha: new Date(item.createdAt).toLocaleString(), Origen: item.origin, Destino: item.destination, Producto: item.product, Lote: item.batchNumber ?? '—', Vence: item.expiresAt ? formatDateOnlyUtc(item.expiresAt) : '—', CantidadEnviada: item.quantity }))) },
+        { name: 'Devoluciones', rows: report.returnsByWarehouse.map((item) => ({ Sucursal: item.warehouse, Ciudad: item.city, Devoluciones: item.returnsCount, Items: item.itemsCount, Unidades: item.quantity })) },
+        { name: 'Meta', rows: [{ Reporte: title, Desde: from, Hasta: to, Generado: new Date().toLocaleString() }] },
+      ])
+    } catch (err) {
+      console.error('Error exportando Excel:', err)
+      window.alert('No se pudo generar el Excel')
+    } finally {
+      setExportingExcel(false)
+    }
+  }
+
+  const handleExportTraceExcel = () => {
+    const trace = movementRequestTraceQuery.data
+    if (!trace || !traceRequestId) {
+      window.alert('No hay trazabilidad para exportar')
+      return
+    }
+
+    const comparison = buildTraceProductComparison(trace)
+    const origins = buildTraceOriginMix(trace)
+    const requestedUnits = comparison.reduce((sum, item) => sum + item.requestedQty, 0)
+    const sentUnits = comparison.reduce((sum, item) => sum + item.sentQty, 0)
+
+    exportToXlsx(`trazabilidad-${trace.request.id}.xlsx`, [
+      {
+        name: 'Resumen',
+        rows: [{
+          Solicitud: trace.request.id,
+          Destino: trace.request.warehouse ? `${trace.request.warehouse.code ?? ''} ${trace.request.warehouse.name ?? ''}`.trim() || trace.request.requestedCity : trace.request.requestedCity,
+          Solicitante: trace.request.requestedByName ?? '—',
+          Atendio: trace.request.fulfilledByName ?? '—',
+          Solicitado: new Date(trace.request.createdAt).toLocaleString(),
+          Atendido: trace.request.fulfilledAt ? new Date(trace.request.fulfilledAt).toLocaleString() : '—',
+          Tiempo: trace.request.fulfilledAt ? formatMinutes((new Date(trace.request.fulfilledAt).getTime() - new Date(trace.request.createdAt).getTime()) / 60000) : '—',
+          Productos: comparison.length,
+          UnidadesSolicitadas: requestedUnits,
+          UnidadesEnviadas: sentUnits,
+        }],
+      },
+      {
+        name: 'Comparativo producto',
+        rows: comparison.map((item) => ({
+          Producto: item.product,
+          Presentacion: item.presentation,
+          Solicitado: item.requestedQty,
+          Enviado: item.sentQty,
+          Diferencia: item.differenceQty,
+        })),
+      },
+      {
+        name: 'Origenes',
+        rows: origins.map((item) => ({
+          Origen: item.label,
+          Lineas: item.linesCount,
+          Unidades: item.quantity,
+        })),
+      },
+      {
+        name: 'Solicitado',
+        rows: (trace.requestedItems ?? []).map((item) => ({
+          Producto: getProductLabel({ sku: item.productSku ?? '—', name: item.productName ?? '—', genericName: item.genericName ?? null }),
+          Presentacion: formatPresentationLabel(item.presentation),
+          CantidadSolicitada: Number(item.requestedQuantity ?? 0),
+        })),
+      },
+      {
+        name: 'Enviado',
+        rows: (trace.sentLines ?? []).map((line) => ({
+          Fecha: new Date(line.createdAt).toLocaleString(),
+          Origen: formatLocationWithWarehouse(line.fromLocation),
+          Destino: formatLocationWithWarehouse(line.toLocation),
+          Producto: getProductLabel({ sku: line.productSku ?? '—', name: line.productName ?? '—', genericName: line.genericName ?? null }),
+          Presentacion: formatPresentationLabel(line.presentation),
+          Lote: line.batchNumber ?? '—',
+          Vence: line.expiresAt ? formatDateOnlyUtc(line.expiresAt) : '—',
+          CantidadEnviada: Number(line.quantity ?? 0),
+        })),
+      },
+    ])
+  }
+
   return (
     <MainLayout navGroups={navGroups}>
       <PageContainer title="📦 Reportes de Stock">
@@ -622,19 +1296,13 @@ export function StockReportsPage() {
               <Button
                 size="sm"
                 variant="ghost"
-                onClick={async () => {
-                  if (!reportRef.current) return
-                  await exportElementToPdf(reportRef.current, {
-                    filename: exportFilename,
-                    title,
-                    subtitle: `Período: ${formatDate(new Date(from))} - ${formatDate(new Date(to))}`,
-                    companyName: tenant.branding?.tenantName ?? 'Empresa',
-                    headerColor: '#3B82F6',
-                    logoUrl: tenant.branding?.logoUrl ?? undefined,
-                  })
-                }}
+                loading={exportingPdf}
+                onClick={handleExportPdf}
               >
                 ⬇️ PDF
+              </Button>
+              <Button size="sm" variant="ghost" loading={exportingExcel} onClick={handleExportExcel}>
+                ⬇️ Excel
               </Button>
               <Button size="sm" variant="ghost" onClick={() => setEmailModalOpen(true)}>
                 ✉️ Enviar
@@ -752,7 +1420,7 @@ export function StockReportsPage() {
                   </div>
 
                   {/* Gráfico mejorado */}
-                  <div className="mx-auto mb-6 h-[450px] max-w-5xl rounded-lg bg-gradient-to-br from-slate-50 to-white p-4 dark:from-slate-900 dark:to-slate-800">
+                  <div className="mx-auto mb-6 h-[450px] w-full min-w-0 max-w-5xl overflow-hidden rounded-lg bg-gradient-to-br from-slate-50 to-white p-4 dark:from-slate-900 dark:to-slate-800">
                     <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={350}>
                       <BarChart
                         data={(inputsQuery.data?.items ?? []).slice(0, 15).map((i) => ({
@@ -888,7 +1556,7 @@ export function StockReportsPage() {
 
                   <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
                     {/* Gráfico de torta para rutas más activas */}
-                    <div className="h-[400px] rounded-lg bg-gradient-to-br from-slate-50 to-white p-4 dark:from-slate-900 dark:to-slate-800">
+                    <div className="h-[400px] w-full min-w-0 overflow-hidden rounded-lg bg-gradient-to-br from-slate-50 to-white p-4 dark:from-slate-900 dark:to-slate-800">
                       <h4 className="mb-4 text-center text-sm font-semibold text-slate-700 dark:text-slate-300">
                         Distribución por Ruta
                       </h4>
@@ -919,7 +1587,7 @@ export function StockReportsPage() {
                     </div>
 
                     {/* Gráfico de barras */}
-                    <div className="h-[400px] rounded-lg bg-gradient-to-br from-slate-50 to-white p-4 dark:from-slate-900 dark:to-slate-800">
+                    <div className="h-[400px] w-full min-w-0 overflow-hidden rounded-lg bg-gradient-to-br from-slate-50 to-white p-4 dark:from-slate-900 dark:to-slate-800">
                       <h4 className="mb-4 text-center text-sm font-semibold text-slate-700 dark:text-slate-300">
                         Top Rutas por Volumen
                       </h4>
@@ -1367,6 +2035,34 @@ export function StockReportsPage() {
                     rejected: 0,
                   }
 
+                  const statusPieData = [
+                    { name: 'Abiertas', value: s.open, color: '#3B82F6' },
+                    { name: 'Atendidas', value: s.fulfilled, color: '#10B981' },
+                    { name: 'Canceladas', value: s.cancelled, color: '#F59E0B' },
+                  ].filter((d) => d.value > 0)
+
+                  const confirmPieData = [
+                    { name: 'Pendientes', value: s.pending, color: '#6366F1' },
+                    { name: 'Aceptadas', value: s.accepted, color: '#10B981' },
+                    { name: 'Rechazadas', value: s.rejected, color: '#EF4444' },
+                  ].filter((d) => d.value > 0)
+
+                  const cityItems = movementRequestsByCityQuery.data?.items ?? []
+                  const cityBarData = cityItems.map((c) => ({
+                    city: c.city ?? '(sin ciudad)',
+                    total: c.total,
+                    fulfilled: c.fulfilled,
+                    open: c.open,
+                    cancelled: c.cancelled,
+                  }))
+
+                  const flowItems = movementRequestFlowsQuery.data?.items ?? []
+                  const flowBarData = flowItems.map((f) => ({
+                    route: `${f.fromWarehouse?.code ?? '?'} → ${f.toWarehouse?.code ?? '?'}`,
+                    completadas: f.requestsCount,
+                    tiempoProm: Math.round(f.avgMinutes ?? 0),
+                  }))
+
                   return (
                     <>
                       <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
@@ -1382,8 +2078,85 @@ export function StockReportsPage() {
                         <KPICard icon="👎" label="Rechazadas" value={String(s.rejected)} color="warning" subtitle="REJECTED" />
                       </div>
 
+                      {/* Gráficas de estado */}
+                      <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-2">
+                        {/* Pie: estado de solicitudes */}
+                        {statusPieData.length > 0 && (
+                          <div className="w-full min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+                            <h3 className="mb-3 text-sm font-semibold text-slate-900 dark:text-white">Distribución por estado</h3>
+                            <ResponsiveContainer width="100%" height={260}>
+                              <PieChart>
+                                <Pie data={statusPieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90} label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}>
+                                  {statusPieData.map((entry, i) => (
+                                    <Cell key={i} fill={entry.color} />
+                                  ))}
+                                </Pie>
+                                <Tooltip {...chartTooltipStyle} />
+                                <Legend />
+                              </PieChart>
+                            </ResponsiveContainer>
+                          </div>
+                        )}
+
+                        {/* Pie: confirmación */}
+                        {confirmPieData.length > 0 && (
+                          <div className="w-full min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+                            <h3 className="mb-3 text-sm font-semibold text-slate-900 dark:text-white">Estado de confirmación</h3>
+                            <ResponsiveContainer width="100%" height={260}>
+                              <PieChart>
+                                <Pie data={confirmPieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90} label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}>
+                                  {confirmPieData.map((entry, i) => (
+                                    <Cell key={i} fill={entry.color} />
+                                  ))}
+                                </Pie>
+                                <Tooltip {...chartTooltipStyle} />
+                                <Legend />
+                              </PieChart>
+                            </ResponsiveContainer>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Gráfica: solicitudes por ciudad */}
+                      {cityBarData.length > 0 && (
+                        <div className="mb-6 w-full min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+                          <h3 className="mb-3 text-sm font-semibold text-slate-900 dark:text-white">Solicitudes por ciudad</h3>
+                          <ResponsiveContainer width="100%" height={Math.max(260, cityBarData.length * 40)}>
+                            <BarChart data={cityBarData} layout="vertical" margin={{ left: 80 }}>
+                              <CartesianGrid {...chartGridStyle} />
+                              <XAxis type="number" {...chartAxisStyle} />
+                              <YAxis type="category" dataKey="city" width={75} {...chartAxisStyle} />
+                              <Tooltip {...chartTooltipStyle} />
+                              <Legend />
+                              <Bar dataKey="fulfilled" name="Atendidas" fill="#10B981" stackId="a" />
+                              <Bar dataKey="open" name="Abiertas" fill="#3B82F6" stackId="a" />
+                              <Bar dataKey="cancelled" name="Cancel." fill="#F59E0B" stackId="a" />
+                            </BarChart>
+                          </ResponsiveContainer>
+                        </div>
+                      )}
+
+                      {/* Gráfica: flujos completados */}
+                      {flowBarData.length > 0 && (
+                        <div className="mb-6 w-full min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+                          <h3 className="mb-3 text-sm font-semibold text-slate-900 dark:text-white">Flujos completados y tiempo promedio</h3>
+                          <ResponsiveContainer width="100%" height={Math.max(260, flowBarData.length * 45)}>
+                            <BarChart data={flowBarData} layout="vertical" margin={{ left: 100 }}>
+                              <CartesianGrid {...chartGridStyle} />
+                              <XAxis type="number" {...chartAxisStyle} />
+                              <YAxis type="category" dataKey="route" width={95} {...chartAxisStyle} tick={{ fontSize: 11 }} />
+                              <Tooltip {...chartTooltipStyle} formatter={(value: number | string | undefined, name: string | number | undefined) => name === 'Tiempo prom. (min)' ? `${Number(value ?? 0)} min` : Number(value ?? 0)} />
+                              <Legend />
+                              <Bar dataKey="completadas" name="Completadas" fill={getChartColor(0)} />
+                              <Bar dataKey="tiempoProm" name="Tiempo prom. (min)" fill={getChartColor(3)} />
+                            </BarChart>
+                          </ResponsiveContainer>
+                        </div>
+                      )}
+
+                      {/* Tabla: por ciudad */}
                       <div className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
-                        <h3 className="mb-2 text-sm font-semibold text-slate-900 dark:text-white">Por ciudad</h3>
+                        <h3 className="mb-2 text-sm font-semibold text-slate-900 dark:text-white">Detalle por ciudad</h3>
 
                         {movementRequestsByCityQuery.isLoading && <Loading />}
                         {movementRequestsByCityQuery.isError && (
@@ -1412,6 +2185,7 @@ export function StockReportsPage() {
                         )}
                       </div>
 
+                      {/* Tabla: flujos completados */}
                       <div className="mt-4 rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
                         <h3 className="mb-2 text-sm font-semibold text-slate-900 dark:text-white">Flujos completados (de dónde → a dónde)</h3>
 
@@ -1566,6 +2340,13 @@ export function StockReportsPage() {
                   const avgItems = s.returnsCount > 0 ? (s.itemsCount / s.returnsCount).toFixed(1) : '0.0'
                   const qty = toNumber(s.quantity).toFixed(0)
 
+                  const returnsByWhItems = returnsByWarehouseQuery.data?.items ?? []
+                  const returnsBarData = returnsByWhItems.map((r) => ({
+                    sucursal: `${r.warehouse.code ?? ''} ${r.warehouse.name ?? ''}`.trim() || r.warehouse.id,
+                    devoluciones: r.returnsCount,
+                    unidades: toNumber(r.quantity),
+                  }))
+
                   return (
                     <>
                       <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
@@ -1575,8 +2356,26 @@ export function StockReportsPage() {
                         <KPICard icon="📊" label="Promedio" value={avgItems} color="info" subtitle="ítems/devolución" />
                       </div>
 
+                      {/* Gráfica de devoluciones por sucursal */}
+                      {returnsBarData.length > 0 && (
+                        <div className="mb-6 w-full min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+                          <h3 className="mb-3 text-sm font-semibold text-slate-900 dark:text-white">Devoluciones por sucursal</h3>
+                          <ResponsiveContainer width="100%" height={Math.max(240, returnsBarData.length * 40)}>
+                            <BarChart data={returnsBarData} layout="vertical" margin={{ left: 80 }}>
+                              <CartesianGrid {...chartGridStyle} />
+                              <XAxis type="number" {...chartAxisStyle} />
+                              <YAxis type="category" dataKey="sucursal" width={75} {...chartAxisStyle} />
+                              <Tooltip {...chartTooltipStyle} />
+                              <Legend />
+                              <Bar dataKey="devoluciones" name="Devoluciones" fill="#EF4444" />
+                              <Bar dataKey="unidades" name="Unidades" fill="#F59E0B" />
+                            </BarChart>
+                          </ResponsiveContainer>
+                        </div>
+                      )}
+
                       <div className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
-                        <h3 className="mb-2 text-sm font-semibold text-slate-900 dark:text-white">Por sucursal</h3>
+                        <h3 className="mb-2 text-sm font-semibold text-slate-900 dark:text-white">Detalle por sucursal</h3>
 
                         {returnsByWarehouseQuery.isLoading && <Loading />}
                         {returnsByWarehouseQuery.isError && (
@@ -1619,7 +2418,7 @@ export function StockReportsPage() {
             isOpen={!!traceRequestId}
             onClose={() => setTraceRequestId(null)}
             title={traceRequestId ? `Trazabilidad · ${traceRequestId}` : 'Trazabilidad'}
-            maxWidth="xl"
+            maxWidth="6xl"
           >
             {movementRequestTraceQuery.isLoading && <Loading />}
             {movementRequestTraceQuery.isError && (
@@ -1677,9 +2476,29 @@ export function StockReportsPage() {
               }
 
               return (
-                <div className="space-y-4">
+                <div ref={traceRef} className="space-y-4">
                   <div className="rounded-md border border-slate-200 p-3 text-sm dark:border-slate-700">
-                    <div className="mb-2 flex flex-col gap-2 md:flex-row md:items-center md:justify-end">
+                    <div className="mb-2 flex flex-col gap-2 md:flex-row md:items-center md:justify-end pdf-hide">
+                      <Button size="sm" variant="outline" onClick={handleExportTraceExcel}>
+                        ⬇️ Excel
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          if (!traceRef.current) return
+                          exportModalContentToPdf(traceRef.current, {
+                            title: `Trazabilidad · ${d.request.id}`,
+                            subtitle: `Período: ${formatDate(new Date(from))} - ${formatDate(new Date(to))}`,
+                            companyName: tenant.branding?.tenantName ?? 'Empresa',
+                            headerColor: '#3B82F6',
+                            logoUrl: tenant.branding?.logoUrl ?? undefined,
+                            filename: `trazabilidad-${d.request.id}.pdf`,
+                          })
+                        }}
+                      >
+                        ⬇️ Exportar PDF
+                      </Button>
                       <Button size="sm" variant="outline" disabled={!canExportPicking} onClick={onExportPicking}>
                         Exportar picking (PDF)
                       </Button>
@@ -1721,6 +2540,118 @@ export function StockReportsPage() {
                       {d.request.fulfilledByName ?? '—'}
                     </div>
                   </div>
+
+                  {(() => {
+                    const comparison = buildTraceProductComparison(d)
+                    const origins = buildTraceOriginMix(d)
+                    const requestedUnits = comparison.reduce((sum, item) => sum + item.requestedQty, 0)
+                    const sentUnits = comparison.reduce((sum, item) => sum + item.sentQty, 0)
+                    const fillRate = requestedUnits > 0 ? (sentUnits / requestedUnits) * 100 : 0
+
+                    return (
+                      <>
+                        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+                          <div className="rounded-lg bg-slate-100 p-3 text-center dark:bg-slate-800">
+                            <div className="text-2xl font-bold text-slate-900 dark:text-white">{comparison.length}</div>
+                            <div className="text-xs text-slate-600 dark:text-slate-400">Productos</div>
+                          </div>
+                          <div className="rounded-lg bg-blue-100 p-3 text-center dark:bg-blue-900/20">
+                            <div className="text-2xl font-bold text-blue-700 dark:text-blue-400">{requestedUnits}</div>
+                            <div className="text-xs text-blue-600 dark:text-blue-400">Unid. solicitadas</div>
+                          </div>
+                          <div className="rounded-lg bg-green-100 p-3 text-center dark:bg-green-900/20">
+                            <div className="text-2xl font-bold text-green-700 dark:text-green-400">{sentUnits}</div>
+                            <div className="text-xs text-green-600 dark:text-green-400">Unid. enviadas</div>
+                          </div>
+                          <div className="rounded-lg bg-amber-100 p-3 text-center dark:bg-amber-900/20">
+                            <div className="text-2xl font-bold text-amber-700 dark:text-amber-400">{fillRate.toFixed(0)}%</div>
+                            <div className="text-xs text-amber-600 dark:text-amber-400">Cumplimiento</div>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.2fr)_380px]">
+                          <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+                            <h4 className="mb-3 text-sm font-semibold text-slate-900 dark:text-white">Solicitado vs enviado por producto</h4>
+                            <ResponsiveContainer width="100%" height={Math.max(260, Math.min(420, comparison.slice(0, 8).length * 52))}>
+                              <BarChart
+                                data={comparison.slice(0, 8).map((item) => ({
+                                  product: item.product.length > 26 ? `${item.product.slice(0, 26)}...` : item.product,
+                                  requestedQty: item.requestedQty,
+                                  sentQty: item.sentQty,
+                                }))}
+                                layout="vertical"
+                                margin={{ left: 110, right: 20 }}
+                              >
+                                <CartesianGrid {...chartGridStyle} />
+                                <XAxis type="number" {...chartAxisStyle} />
+                                <YAxis type="category" dataKey="product" width={100} {...chartAxisStyle} tick={{ fontSize: 11 }} />
+                                <Tooltip {...chartTooltipStyle} />
+                                <Bar dataKey="requestedQty" name="Solicitado" fill="#3B82F6" radius={[0, 6, 6, 0]} />
+                                <Bar dataKey="sentQty" name="Enviado" fill="#10B981" radius={[0, 6, 6, 0]} />
+                              </BarChart>
+                            </ResponsiveContainer>
+                            <div className="mt-3 flex flex-wrap gap-4 text-sm text-slate-700 dark:text-slate-300">
+                              <div className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded-sm bg-blue-500" />Solicitado</div>
+                              <div className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded-sm bg-emerald-500" />Enviado</div>
+                            </div>
+                          </div>
+
+                          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900">
+                            <h4 className="mb-3 text-sm font-semibold text-slate-900 dark:text-white">Distribución por origen</h4>
+                            {origins.length === 0 ? (
+                              <EmptyState message="Sin movimientos asociados" />
+                            ) : (
+                              <>
+                                <div className="flex justify-center">
+                                  <PieChart width={340} height={260}>
+                                    <Pie
+                                      data={origins.map((item) => ({ name: item.label, value: item.quantity }))}
+                                      dataKey="value"
+                                      nameKey="name"
+                                      cx="50%"
+                                      cy="50%"
+                                      innerRadius={55}
+                                      outerRadius={95}
+                                      paddingAngle={4}
+                                      label={({ percent }) => `${((percent ?? 0) * 100).toFixed(0)}%`}
+                                      isAnimationActive={false}
+                                    >
+                                      {origins.map((item) => (
+                                        <Cell key={item.label} fill={item.color} />
+                                      ))}
+                                    </Pie>
+                                    <Tooltip {...chartTooltipStyle} formatter={(value: number | string | undefined) => [Number(value ?? 0), 'Unidades']} />
+                                  </PieChart>
+                                </div>
+                                <div className="space-y-2">
+                                  {origins.map((item) => {
+                                    const pct = sentUnits > 0 ? (item.quantity / sentUnits) * 100 : 0
+                                    return (
+                                      <div key={item.label} className="rounded-lg border border-slate-100 bg-white p-3 dark:border-slate-800 dark:bg-slate-950/40">
+                                        <div className="flex items-start justify-between gap-3">
+                                          <div className="min-w-0">
+                                            <div className="flex items-center gap-2 text-sm font-medium text-slate-900 dark:text-white">
+                                              <span className="inline-block h-3 w-3 rounded-sm" style={{ backgroundColor: item.color }} />
+                                              <span className="truncate">{item.label}</span>
+                                            </div>
+                                            <div className="text-xs text-slate-500 dark:text-slate-400">{item.linesCount} líneas</div>
+                                          </div>
+                                          <div className="text-right">
+                                            <div className="text-sm font-semibold text-green-600 dark:text-green-400">{item.quantity} u</div>
+                                            <div className="text-xs text-slate-500 dark:text-slate-400">{pct.toFixed(1)}%</div>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    )
+                                  })}
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </>
+                    )
+                  })()}
 
                   <div>
                     <h4 className="mb-2 text-sm font-semibold text-slate-900 dark:text-white">Lo solicitado</h4>

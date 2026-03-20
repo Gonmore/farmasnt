@@ -121,41 +121,82 @@ export function Table<T>({ columns, data, keyExtractor, rowClassName, onRowClick
 
   return (
     <div ref={rootRef} className="w-full">
-      <div ref={scrollRef} className={`overflow-x-auto ${scrollbarClasses}`}>
-        <table className="w-full min-w-max" style={{ tableLayout: hasExplicitWidths ? 'fixed' : 'auto' }}>
-        <thead className="bg-slate-50 dark:bg-slate-800">
-          <tr className="border-b-2 border-slate-200 dark:border-slate-700">
-            {columns.map((col, idx) => (
-              <th
-                key={idx}
-                className={`px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-300 ${col.className ?? ''}`}
-                style={{ width: col.width }}
-              >
-                <div className="whitespace-nowrap">{col.header}</div>
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody className="bg-white dark:bg-slate-900">
-          {data.map((item, rowIndex) => (
-            <tr
-              key={keyExtractor(item)}
-              className={`border-b border-slate-100 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800/50 ${onRowClick ? 'cursor-pointer' : ''} ${rowClassName ? rowClassName(item) : ''}`}
-              onClick={onRowClick ? () => onRowClick(item) : undefined}
+      <div className="space-y-3 md:hidden">
+        {data.map((item, rowIndex) => {
+          const key = keyExtractor(item)
+          const content = (
+            <div
+              className={`rounded-lg border border-slate-200 bg-white p-4 text-sm shadow-sm dark:border-slate-700 dark:bg-slate-900 ${rowClassName ? rowClassName(item) : ''}`}
             >
+              <div className="space-y-3">
+                {columns.map((col, idx) => (
+                  <div key={idx} className="grid grid-cols-[minmax(0,110px)_1fr] gap-3 border-b border-slate-100 pb-3 last:border-b-0 last:pb-0 dark:border-slate-800">
+                    <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                      {col.header}
+                    </div>
+                    <div className={`min-w-0 break-words text-slate-900 dark:text-slate-100 ${col.className ?? ''}`}>
+                      {col.accessor(item, rowIndex)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )
+
+          if (onRowClick) {
+            return (
+              <button
+                key={key}
+                type="button"
+                className="block w-full text-left"
+                onClick={() => onRowClick(item)}
+              >
+                {content}
+              </button>
+            )
+          }
+
+          return <div key={key}>{content}</div>
+        })}
+      </div>
+
+      <div className="hidden md:block">
+        <div ref={scrollRef} className={`overflow-x-auto ${scrollbarClasses}`}>
+          <table className={`w-full ${hasExplicitWidths ? '' : 'min-w-max'}`} style={{ tableLayout: hasExplicitWidths ? 'fixed' : 'auto' }}>
+          <thead className="bg-slate-50 dark:bg-slate-800">
+            <tr className="border-b-2 border-slate-200 dark:border-slate-700">
               {columns.map((col, idx) => (
-                <td 
-                  key={idx} 
-                  className={`px-4 py-3 text-sm text-slate-900 dark:text-slate-100 ${col.className ?? ''}`}
+                <th
+                  key={idx}
+                  className={`px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-300 ${col.className ?? ''}`}
                   style={{ width: col.width }}
                 >
-                  <div className={`whitespace-nowrap ${col.className?.includes('wrap') ? 'whitespace-normal' : ''}`}>{col.accessor(item, rowIndex)}</div>
-                </td>
+                  <div className={`whitespace-nowrap ${col.className?.includes('wrap') ? 'whitespace-normal break-words' : ''}`}>{col.header}</div>
+                </th>
               ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody className="bg-white dark:bg-slate-900">
+            {data.map((item, rowIndex) => (
+              <tr
+                key={keyExtractor(item)}
+                className={`border-b border-slate-100 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800/50 ${onRowClick ? 'cursor-pointer' : ''} ${rowClassName ? rowClassName(item) : ''}`}
+                onClick={onRowClick ? () => onRowClick(item) : undefined}
+              >
+                {columns.map((col, idx) => (
+                  <td 
+                    key={idx} 
+                    className={`px-4 py-3 text-sm text-slate-900 dark:text-slate-100 ${col.className ?? ''}`}
+                    style={{ width: col.width }}
+                  >
+                    <div className={`whitespace-nowrap ${col.className?.includes('wrap') ? 'whitespace-normal break-words' : ''}`}>{col.accessor(item, rowIndex)}</div>
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        </div>
       </div>
 
       {alwaysVisibleHorizontalScroll && showSticky && isInView && (
