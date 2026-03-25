@@ -2,6 +2,28 @@
 
 Este documento está pensado para validar **end-to-end** (UI + API) y confirmar resultados **en base de datos**, porque algunos cambios no se ven mucho en frontend.
 
+## Versión 2.0 — pruebas específicas multi-empresa
+
+### Flujo M — Configuración multi-marca
+- Login como platform admin.
+- Crear un grupo de empresas desde `Sistema > Grupos de Empresas` con al menos dos tenants.
+- Verificar que el grupo aparece listado y que ambas empresas figuran como miembros.
+
+### Flujo N — Grants por usuario
+- Ingresar como tenant admin del tenant base.
+- Ir a `Administración > Usuarios`.
+- Abrir `Empresas` sobre un usuario del tenant.
+- Otorgar acceso a una empresa hermana del grupo y guardar.
+- Verificar que el guardado responde `200` y que al reabrir el modal persiste el check correcto.
+
+### Flujo O — Cambio de empresa
+- Iniciar sesión con un usuario que tenga acceso cruzado.
+- Confirmar que el menú de cuenta muestra ambas empresas.
+- Cambiar de empresa A a B.
+- Confirmar que el tenant activo cambia y sigue apareciendo la opción de volver.
+- Volver de B a A.
+- Confirmar que no hay `400/401/403` y que el selector marca correctamente la empresa activa.
+
 ## Pre-requisitos
 
 1) BD al día

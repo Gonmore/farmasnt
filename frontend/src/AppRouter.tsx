@@ -36,6 +36,7 @@ import {
   BrandingPage,
   TenantsPage,
   ContactSettingsPage,
+  TenantGroupsPage,
   LaboratoriesPage,
   LabProductionPage,
   LabSuppliesPage,
@@ -483,6 +484,14 @@ export function AppRouter() {
           element={
             <ProtectedRoute requiredPermissions={['platform:tenants:manage']}>
               <TenantsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/platform/tenant-groups"
+          element={
+            <ProtectedRoute requiredPermissions={['platform:tenants:manage']}>
+              <TenantGroupsPage />
             </ProtectedRoute>
           }
         />

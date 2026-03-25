@@ -1101,4 +1101,203 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
       return reply.send(updated)
     },
   )
+
+  // ─── Tenant Groups (Multi-Brand) ─────────────────────────────────────────────
+
+  const createGroupSchema = z.object({
+    name: z.string().trim().min(2).max(200),
+    tenantIds: z.array(uuidLike).min(2).max(10),
+  })
+
+  const addGroupMemberSchema = z.object({
+    tenantId: uuidLike,
+  })
+
+  // List all tenant groups
+  app.get('/api/v1/platform/tenant-groups', { preHandler: guard }, async (request, reply) => {
+    const items = await db.tenantGroup.findMany({
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        name: true,
+        createdAt: true,
+        members: {
+          select: {
+            tenant: {
+              select: { id: true, name: true, isActive: true, logoUrl: true },
+            },
+          },
+        },
+      },
+    })
+
+    const mapped = items.map((g) => ({
+      id: g.id,
+      name: g.name,
+      createdAt: g.createdAt,
+      tenants: g.members.map((m) => m.tenant),
+    }))
+
+    return reply.send({ items: mapped })
+  })
+
+  // Create a tenant group
+  app.post('/api/v1/platform/tenant-groups', { preHandler: guard }, async (request, reply) => {
+    const parsed = createGroupSchema.safeParse(request.body)
+    if (!parsed.success) return reply.status(400).send({ message: 'Invalid request', issues: parsed.error.issues })
+
+    const actor = request.auth!
+    const { name, tenantIds } = parsed.data
+
+    // Verify all tenants exist
+    const tenants = await db.tenant.findMany({
+      where: { id: { in: tenantIds } },
+      select: { id: true, name: true },
+    })
+    if (tenants.length !== tenantIds.length) {
+      return reply.status(400).send({ message: 'Uno o más tenants no existen' })
+    }
+
+    // Verify none are already in a group
+    const existing = await db.tenantGroupMember.findMany({
+      where: { tenantId: { in: tenantIds } },
+      select: { tenantId: true, group: { select: { name: true } } },
+    })
+    if (existing.length > 0) {
+      const names = existing.map((e) => e.group.name).join(', ')
+      return reply.status(409).send({ message: `Alguno de los tenants ya pertenece a un grupo: ${names}` })
+    }
+
+    const group = await db.$transaction(async (tx) => {
+      const g = await tx.tenantGroup.create({
+        data: { name, createdBy: actor.userId },
+        select: { id: true, name: true },
+      })
+
+      for (const tid of tenantIds) {
+        await tx.tenantGroupMember.create({
+          data: { groupId: g.id, tenantId: tid },
+        })
+      }
+
+      return g
+    })
+
+    await audit.append({
+      tenantId: actor.tenantId,
+      actorUserId: actor.userId,
+      action: 'platform.tenant_group.create',
+      entityType: 'TenantGroup',
+      entityId: group.id,
+      metadata: { name, tenantIds },
+    })
+
+    return reply.status(201).send({ id: group.id, name: group.name })
+  })
+
+  // Add tenant to group
+  app.post('/api/v1/platform/tenant-groups/:groupId/members', { preHandler: guard }, async (request, reply) => {
+    const groupId = (request.params as any).groupId as string
+    const parsed = addGroupMemberSchema.safeParse(request.body)
+    if (!parsed.success) return reply.status(400).send({ message: 'Invalid request', issues: parsed.error.issues })
+
+    const actor = request.auth!
+    const { tenantId } = parsed.data
+
+    const group = await db.tenantGroup.findUnique({ where: { id: groupId }, select: { id: true } })
+    if (!group) return reply.status(404).send({ message: 'Grupo no encontrado' })
+
+    const tenant = await db.tenant.findFirst({ where: { id: tenantId }, select: { id: true } })
+    if (!tenant) return reply.status(404).send({ message: 'Tenant no encontrado' })
+
+    const existing = await db.tenantGroupMember.findFirst({ where: { tenantId }, select: { groupId: true } })
+    if (existing) return reply.status(409).send({ message: 'El tenant ya pertenece a un grupo' })
+
+    await db.tenantGroupMember.create({ data: { groupId, tenantId } })
+
+    await audit.append({
+      tenantId: actor.tenantId,
+      actorUserId: actor.userId,
+      action: 'platform.tenant_group.member.add',
+      entityType: 'TenantGroup',
+      entityId: groupId,
+      metadata: { tenantId },
+    })
+
+    return reply.status(201).send({ ok: true })
+  })
+
+  // Remove tenant from group
+  app.delete('/api/v1/platform/tenant-groups/:groupId/members/:tenantId', { preHandler: guard }, async (request, reply) => {
+    const groupId = (request.params as any).groupId as string
+    const tenantId = (request.params as any).tenantId as string
+    const actor = request.auth!
+
+    const member = await db.tenantGroupMember.findFirst({ where: { groupId, tenantId }, select: { groupId: true } })
+    if (!member) return reply.status(404).send({ message: 'Miembro no encontrado' })
+
+    await db.$transaction(async (tx) => {
+      // Remove member
+      await tx.tenantGroupMember.delete({ where: { groupId_tenantId: { groupId, tenantId } } })
+      // Revoke cross-tenant access for users of this tenant to other group tenants
+      await tx.userTenantAccess.deleteMany({ where: { tenantId } })
+      // Also revoke access that other users had to this tenant
+      await tx.userTenantAccess.deleteMany({
+        where: {
+          tenantId,
+          user: { tenantId: { not: tenantId } },
+        },
+      })
+    })
+
+    await audit.append({
+      tenantId: actor.tenantId,
+      actorUserId: actor.userId,
+      action: 'platform.tenant_group.member.remove',
+      entityType: 'TenantGroup',
+      entityId: groupId,
+      metadata: { tenantId },
+    })
+
+    return reply.send({ ok: true })
+  })
+
+  // Delete group
+  app.delete('/api/v1/platform/tenant-groups/:groupId', { preHandler: guard }, async (request, reply) => {
+    const groupId = (request.params as any).groupId as string
+    const actor = request.auth!
+
+    const group = await db.tenantGroup.findUnique({
+      where: { id: groupId },
+      select: { id: true, name: true, members: { select: { tenantId: true } } },
+    })
+    if (!group) return reply.status(404).send({ message: 'Grupo no encontrado' })
+
+    await db.$transaction(async (tx) => {
+      // Revoke all cross-tenant access for tenants in this group
+      const tenantIds = group.members.map((m) => m.tenantId)
+      if (tenantIds.length > 0) {
+        await tx.userTenantAccess.deleteMany({
+          where: {
+            OR: [
+              { tenantId: { in: tenantIds } },
+              { user: { tenantId: { in: tenantIds } } },
+            ],
+          },
+        })
+      }
+      await tx.tenantGroup.delete({ where: { id: groupId } })
+    })
+
+    await audit.append({
+      tenantId: actor.tenantId,
+      actorUserId: actor.userId,
+      action: 'platform.tenant_group.delete',
+      entityType: 'TenantGroup',
+      entityId: groupId,
+      metadata: { name: group.name },
+    })
+
+    return reply.send({ ok: true })
+  })
 }

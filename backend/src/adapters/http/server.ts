@@ -114,12 +114,34 @@ export async function createHttpServer() {
       return
     }
 
+    // Look up user by ID only — the JWT tenantId may be a cross-tenant target,
+    // not the tenant where the user record lives.
     const user = await db.user.findFirst({
-      where: { id: claims.sub, tenantId: claims.tenantId, isActive: true, tenant: { isActive: true } },
-      select: { id: true, tenantId: true, warehouseId: true, warehouse: { select: { city: true } } },
+      where: { id: claims.sub, isActive: true },
+      select: { id: true, tenantId: true, warehouseId: true, warehouse: { select: { city: true } }, tenant: { select: { isActive: true } } },
     })
 
     if (!user) return
+
+    // Verify the active tenant context from the token
+    if (user.tenantId !== claims.tenantId) {
+      // Cross-tenant access: user's record lives in a different tenant.
+      // Require an explicit UserTenantAccess grant and an active target tenant.
+      const [access, targetTenant] = await Promise.all([
+        db.userTenantAccess.findFirst({
+          where: { userId: user.id, tenantId: claims.tenantId },
+          select: { userId: true },
+        }),
+        db.tenant.findFirst({
+          where: { id: claims.tenantId, isActive: true },
+          select: { id: true },
+        }),
+      ])
+      if (!access || !targetTenant) return
+    } else {
+      // Home tenant: must be active
+      if (!user.tenant.isActive) return
+    }
 
     const permissions = await loadUserPermissions(db, user.id)
 
@@ -129,7 +151,7 @@ export async function createHttpServer() {
     }))
     request.auth = {
       userId: user.id,
-      tenantId: user.tenantId,
+      tenantId: claims.tenantId,  // Use the active/target tenant from the JWT
       permissions,
       warehouseId: (user as any).warehouseId ?? null,
       warehouseCity: (user as any).warehouse?.city ?? null,

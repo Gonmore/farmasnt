@@ -1,5 +1,17 @@
 # API Reference — PharmaFlow Bolivia (MVP)
 
+## Versión 2.0
+
+Esta referencia ya contempla la ampliación **multi-marca / multi-empresa** de la versión `2.0`.
+
+Cambios relevantes en 2.0:
+- `GET /api/v1/auth/me` devuelve `availableTenants` y `activeTenantId` cuando el usuario tiene acceso a más de una empresa.
+- `POST /api/v1/auth/switch-tenant` permite cambiar el contexto activo del JWT a otra empresa autorizada, incluyendo retorno al tenant base.
+- `GET /api/v1/admin/group-tenants` lista empresas hermanas del grupo actual.
+- `GET /api/v1/admin/users/:userId/tenant-access` lista accesos cruzados por usuario.
+- `PUT /api/v1/admin/users/:userId/tenant-access` reemplaza accesos cruzados por usuario.
+- `GET|POST|DELETE /api/v1/platform/tenant-groups...` administra grupos de empresas desde plataforma.
+
 Base URL (dev): `http://127.0.0.1:6000`
 
 OpenAPI/Swagger:
@@ -57,6 +69,29 @@ Response 200
 
 ## Auth
 
+### POST /api/v1/auth/switch-tenant
+Requiere JWT.
+
+Body
+```json
+{
+  "targetTenantId": "<uuid>"
+}
+```
+
+Response 200
+```json
+{
+  "accessToken": "<jwt>",
+  "refreshToken": "<opaque>"
+}
+```
+
+Notas
+- Si `targetTenantId` es el tenant activo actual, reemite tokens para el mismo contexto.
+- Si `targetTenantId` es el tenant base del usuario, permite volver sin requerir grant adicional.
+- Si `targetTenantId` es un tenant cruzado, exige registro en `UserTenantAccess`.
+
 ### POST /api/v1/auth/login
 Sin JWT.
 
@@ -78,6 +113,7 @@ Response 200
 
 Notas (multi-tenant + dominios)
 - El backend intenta resolver el tenant por `Host`/`X-Forwarded-Host` usando `TenantDomain` (solo dominios verificados).
+- `GET /api/v1/auth/me` puede incluir `availableTenants` y `activeTenantId` para el selector multi-empresa del frontend.
 - Si no se puede resolver tenant por dominio y el email existe en múltiples tenants, el login responde `409` con un mensaje de ambigüedad.
 - Si la tabla `TenantDomain` aún no existe (BD sin migrar), el login funciona en modo “legacy” (sin resolución por dominio).
 

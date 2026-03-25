@@ -4,7 +4,7 @@ import { apiFetch } from '../../lib/api'
 import { useAuth } from '../../providers/AuthProvider'
 import { MainLayout, PageContainer, Button, Table, Loading, ErrorState, EmptyState, Modal, Input } from '../../components'
 import { useNavigation } from '../../hooks'
-import { UserGroupIcon, PowerIcon, KeyIcon, PlusIcon } from '@heroicons/react/24/outline'
+import { UserGroupIcon, PowerIcon, KeyIcon, PlusIcon, BuildingOffice2Icon } from '@heroicons/react/24/outline'
 
 type AdminUserListItem = {
   id: string
@@ -43,6 +43,9 @@ export function UsersPage() {
 
   const [selectedRoleId, setSelectedRoleId] = useState<string>('')
 
+  const [tenantAccessOpen, setTenantAccessOpen] = useState<{ userId: string; email: string } | null>(null)
+  const [tenantAccessIds, setTenantAccessIds] = useState<string[]>([])
+
   const usersQuery = useQuery({
     queryKey: ['admin-users'],
     queryFn: () => fetchUsers(auth.accessToken!),
@@ -54,6 +57,39 @@ export function UsersPage() {
     queryFn: () => fetchRoles(auth.accessToken!),
     enabled: !!auth.accessToken,
   })
+
+  // Cross-tenant: group tenants available for this tenant's group
+  const groupTenantsQuery = useQuery<{ items: Array<{ id: string; name: string; logoUrl: string | null }> }>({
+    queryKey: ['admin', 'group-tenants'],
+    queryFn: () => apiFetch('/api/v1/admin/group-tenants', { token: auth.accessToken! }),
+    enabled: !!auth.accessToken,
+  })
+
+  // Cross-tenant: access for a specific user (loaded on demand)
+  const userTenantAccessQuery = useQuery<{ items: Array<{ id: string; name: string }> }>({
+    queryKey: ['admin', 'user-tenant-access', tenantAccessOpen?.userId],
+    queryFn: () =>
+      apiFetch(`/api/v1/admin/users/${encodeURIComponent(tenantAccessOpen!.userId)}/tenant-access`, {
+        token: auth.accessToken!,
+      }),
+    enabled: !!tenantAccessOpen?.userId && !!auth.accessToken,
+  })
+
+  const saveTenantAccessMutation = useMutation({
+    mutationFn: async ({ userId, tenantIds }: { userId: string; tenantIds: string[] }) => {
+      return apiFetch(`/api/v1/admin/users/${encodeURIComponent(userId)}/tenant-access`, {
+        method: 'PUT',
+        token: auth.accessToken!,
+        body: JSON.stringify({ tenantIds }),
+      })
+    },
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ['admin', 'user-tenant-access'] })
+      setTenantAccessOpen(null)
+    },
+  })
+
+  const hasGroupTenants = (groupTenantsQuery.data?.items?.length ?? 0) > 0
 
   const createMutation = useMutation({
     mutationFn: async () => {
@@ -176,6 +212,19 @@ export function UsersPage() {
                       >
                         Reset
                       </Button>
+                      {hasGroupTenants && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          icon={<BuildingOffice2Icon className="w-4 h-4" />}
+                          onClick={() => {
+                            setTenantAccessOpen({ userId: u.id, email: u.email })
+                            setTenantAccessIds([])
+                          }}
+                        >
+                          Empresas
+                        </Button>
+                      )}
                     </div>
                   ),
                 },
@@ -319,6 +368,84 @@ export function UsersPage() {
                 {(resetMutation.error as any)?.message ?? 'Error al resetear la contraseña'}
               </div>
             )}
+          </div>
+        </Modal>
+
+        {/* Cross-Tenant Access Modal */}
+        <Modal
+          isOpen={!!tenantAccessOpen}
+          onClose={() => setTenantAccessOpen(null)}
+          title={tenantAccessOpen ? `Acceso multi-empresa: ${tenantAccessOpen.email}` : 'Acceso multi-empresa'}
+        >
+          <div className="space-y-4">
+            <p className="text-sm text-slate-600 dark:text-slate-400">
+              Seleccione las empresas del grupo a las que este usuario tendrá acceso.
+              El usuario podrá cambiar entre empresas desde su menú de cuenta.
+            </p>
+
+            {userTenantAccessQuery.isLoading && <Loading />}
+
+            {!userTenantAccessQuery.isLoading && (
+              <div className="max-h-60 overflow-auto rounded border border-slate-200 p-2 dark:border-slate-700">
+                {(groupTenantsQuery.data?.items ?? []).map((t) => {
+                  const isChecked = tenantAccessIds.length > 0
+                    ? tenantAccessIds.includes(t.id)
+                    : (userTenantAccessQuery.data?.items ?? []).some((a) => a.id === t.id)
+                  return (
+                    <label key={t.id} className="flex items-center gap-2 py-1.5 text-sm text-slate-800 dark:text-slate-200">
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={() => {
+                          const current = tenantAccessIds.length > 0
+                            ? tenantAccessIds
+                            : (userTenantAccessQuery.data?.items ?? []).map((a) => a.id)
+                          setTenantAccessIds(
+                            current.includes(t.id)
+                              ? current.filter((x) => x !== t.id)
+                              : [...current, t.id],
+                          )
+                        }}
+                      />
+                      <span className="flex items-center gap-1.5">
+                        {t.logoUrl ? (
+                          <img src={t.logoUrl} alt="" className="h-5 w-5 rounded object-contain" />
+                        ) : (
+                          <span className="flex h-5 w-5 items-center justify-center rounded bg-slate-200 text-[10px] font-bold dark:bg-slate-700">
+                            {t.name.charAt(0)}
+                          </span>
+                        )}
+                        {t.name}
+                      </span>
+                    </label>
+                  )
+                })}
+              </div>
+            )}
+
+            {saveTenantAccessMutation.error && (
+              <div className="rounded bg-red-50 p-3 text-sm text-red-600 dark:bg-red-900/20 dark:text-red-400">
+                {(saveTenantAccessMutation.error as any)?.message ?? 'Error al guardar acceso'}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" onClick={() => setTenantAccessOpen(null)} disabled={saveTenantAccessMutation.isPending}>
+                Cancelar
+              </Button>
+              <Button
+                onClick={() => {
+                  if (!tenantAccessOpen) return
+                  const ids = tenantAccessIds.length > 0
+                    ? tenantAccessIds
+                    : (userTenantAccessQuery.data?.items ?? []).map((a) => a.id)
+                  saveTenantAccessMutation.mutate({ userId: tenantAccessOpen.userId, tenantIds: ids })
+                }}
+                disabled={saveTenantAccessMutation.isPending}
+              >
+                {saveTenantAccessMutation.isPending ? 'Guardando...' : 'Guardar'}
+              </Button>
+            </div>
           </div>
         </Modal>
       </PageContainer>

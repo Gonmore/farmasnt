@@ -149,6 +149,8 @@ model Tenant {
   modules TenantModule[]
   domains TenantDomain[]
   passwordResetTokens PasswordResetToken[]
+  groupMembership TenantGroupMember?
+  userTenantAccess UserTenantAccess[]
 
   @@index([isActive])
   @@index([subscriptionExpiresAt])
@@ -203,6 +205,7 @@ model User {
   refreshTokens RefreshToken[]
   passwordResetTokens PasswordResetToken[]
   auditEvents  AuditEvent[] @relation("AuditActor")
+  tenantAccess UserTenantAccess[]
 
   @@unique([tenantId, email])
   @@index([tenantId])
@@ -1420,4 +1423,42 @@ model LabProductionRunWaste {
   @@index([runId])
   @@index([supplyId])
   @@index([lotId])
+}
+
+// ─── Multi-Brand / Tenant Group ───────────────────────────────────────────────
+
+model TenantGroup {
+  id        String   @id @default(uuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  createdBy String?
+
+  members TenantGroupMember[]
+}
+
+model TenantGroupMember {
+  groupId  String
+  tenantId String @unique // A tenant can only belong to one group
+
+  group  TenantGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  tenant Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@id([groupId, tenantId])
+  @@index([groupId])
+}
+
+model UserTenantAccess {
+  userId   String
+  tenantId String
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  createdBy String?
+
+  @@id([userId, tenantId])
+  @@index([userId])
+  @@index([tenantId])
 }

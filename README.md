@@ -2,6 +2,29 @@
 
 MVP: **Almacén + Ventas B2B** · SaaS **multi-tenant** (row-level `tenantId`) con auditoría (GxP-friendly).
 
+## Versión 2.0
+
+Estado actual de la raíz del proyecto:
+- Versión operativa objetivo: `2.0`.
+- Incluye soporte **multi-marca / multi-empresa** con grupos de tenants, grants por usuario y cambio de empresa desde el menú de cuenta.
+- El flujo de cambio de empresa ya contempla ida y vuelta entre tenant base y tenants cruzados.
+- `deploy.sh` queda como mecanismo previsto para actualización manual de producción.
+
+### Novedades principales de la 2.0
+- `TenantGroup` y `TenantGroupMember` para agrupar empresas relacionadas.
+- `UserTenantAccess` para otorgar acceso cruzado por usuario.
+- Endpoints platform para crear, listar y administrar grupos de empresas.
+- Endpoints admin para asignar empresas disponibles a un usuario del tenant.
+- Endpoint auth para `switch-tenant` con refresh de tokens y contexto activo correcto.
+- Selector de empresa en frontend con marca activa visible y retorno al tenant principal.
+
+### Checklist antes de desplegar a producción
+- Migraciones Prisma incluidas en repositorio y probadas en local.
+- Backend resolviendo contexto activo por JWT para multi-empresa.
+- Frontend refrescando estado de auth/tenant al cambiar de empresa.
+- `deploy.sh` construye imágenes versionadas, publica, corre migraciones y reinicia servicios remotos.
+- Despliegue final: manual, ejecutando `bash deploy.sh` desde la raíz del repo.
+
 ## Funcionalidades clave (stock)
 - Almacenes: listado + ubicaciones.
 - Ver stock por almacén: lista de existencias (producto + lote + ubicación + cantidad).

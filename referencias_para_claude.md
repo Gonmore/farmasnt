@@ -2,6 +2,16 @@
 
 Este documento es un “handoff” para que Claude pueda construir **todas las interfaces visuales** del frontend **sin tocar la lógica del backend** ni romper multi‑tenant por dominio.
 
+## Versión 2.0
+
+Esta referencia ya debe asumirse sobre la base funcional `2.0`.
+
+UI agregada o ya esperada en 2.0:
+- Pantalla platform para `Grupos de Empresas`.
+- Modal admin `Empresas` por usuario para grants cruzados.
+- Selector de empresa en el menú de cuenta.
+- Estado visual correcto del tenant activo y soporte de cambio ida/vuelta entre empresa base y empresa hermana.
+
 ## 1) Objetivo
 
 Construir una SPA completa (React/Vite/Tailwind) para operar el MVP:

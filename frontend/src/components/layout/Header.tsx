@@ -3,7 +3,7 @@ import { useAuth } from '../../providers/AuthProvider'
 import { useNotifications } from '../../providers/NotificationsProvider'
 import { useTenant } from '../../providers/TenantProvider'
 import { useTheme } from '../../providers/ThemeProvider'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Modal, Button, Input, ImageUpload } from '../../components'
 import { apiFetch } from '../../lib/api'
@@ -34,6 +34,7 @@ export function Header({ onMenuClick, showMenuButton = false }: HeaderProps) {
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [profileError, setProfileError] = useState<string | null>(null)
+  const [switchingTenant, setSwitchingTenant] = useState(false)
 
   type PresignResponse = { uploadUrl: string; publicUrl: string; key: string; method: 'PUT' | string }
 
@@ -166,6 +167,19 @@ export function Header({ onMenuClick, showMenuButton = false }: HeaderProps) {
       queryClient.invalidateQueries({ queryKey: ['auth', 'me'] })
     },
   })
+
+  const handleSwitchTenant = useCallback(async (targetTenantId: string) => {
+    if (switchingTenant) return
+    setSwitchingTenant(true)
+    setUserMenuOpen(false)
+    try {
+      await auth.switchTenant(targetTenantId)
+    } catch {
+      // If switch fails, stay on current tenant
+    } finally {
+      setSwitchingTenant(false)
+    }
+  }, [auth, switchingTenant])
 
   useEffect(() => {
     if (tenant.branding?.logoUrl) {
@@ -401,6 +415,42 @@ export function Header({ onMenuClick, showMenuButton = false }: HeaderProps) {
                       {me.user?.fullName ? <div className="font-semibold text-slate-900 dark:text-slate-100">{me.user.fullName}</div> : null}
                       <div className="truncate">{me.user?.email ?? ''}</div>
                     </div>
+                    {me.availableTenants.length > 1 && (
+                      <div className="border-b border-slate-200 dark:border-slate-700">
+                        <div className="px-3 py-1.5 text-[11px] font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">
+                          Empresa
+                        </div>
+                        {me.availableTenants.map((t) => {
+                          const isActive = t.id === (me.activeTenantId ?? me.user?.tenantId)
+                          return (
+                            <button
+                              key={t.id}
+                              disabled={isActive || switchingTenant}
+                              className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm ${
+                                isActive
+                                  ? 'bg-blue-50 font-medium text-blue-700 dark:bg-blue-900/20 dark:text-blue-300'
+                                  : 'text-slate-700 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800'
+                              } ${switchingTenant ? 'opacity-50' : ''}`}
+                              onClick={() => handleSwitchTenant(t.id)}
+                            >
+                              {t.logoUrl ? (
+                                <img src={t.logoUrl} alt="" className="h-5 w-5 rounded object-contain" />
+                              ) : (
+                                <span className="flex h-5 w-5 items-center justify-center rounded bg-slate-200 text-[10px] font-bold text-slate-600 dark:bg-slate-700 dark:text-slate-300">
+                                  {t.name.charAt(0).toUpperCase()}
+                                </span>
+                              )}
+                              <span className="truncate">{t.name}</span>
+                              {isActive && (
+                                <svg className="ml-auto h-4 w-4 flex-shrink-0 text-blue-600 dark:text-blue-400" viewBox="0 0 20 20" fill="currentColor">
+                                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                </svg>
+                              )}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )}
                     <button
                       className="w-full px-3 py-2 text-left text-sm hover:bg-slate-50 dark:hover:bg-slate-800"
                       onClick={() => {

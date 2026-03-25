@@ -10,6 +10,7 @@ import {
   setAccessToken,
   setRefreshToken,
 } from '../lib/auth'
+import { apiFetch } from '../lib/api'
 
 export type AuthContextValue = {
   accessToken: string | null
@@ -18,6 +19,7 @@ export type AuthContextValue = {
   login: (email: string, password: string) => Promise<void>
   logout: () => void
   refresh: () => Promise<void>
+  switchTenant: (targetTenantId: string) => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
@@ -124,6 +126,21 @@ export function AuthProvider(props: { children: React.ReactNode }) {
         // Invalidar queries después de refresh
         queryClient.invalidateQueries({ queryKey: ['auth'] })
         queryClient.invalidateQueries({ queryKey: ['tenant'] })
+      },
+      switchTenant: async (targetTenantId: string) => {
+        const token = getAccessToken()
+        if (!token) throw new Error('No autenticado')
+        const res = await apiFetch<{ accessToken: string; refreshToken: string }>('/api/v1/auth/switch-tenant', {
+          method: 'POST',
+          body: JSON.stringify({ targetTenantId }),
+          token,
+        })
+        setAccessToken(res.accessToken)
+        setRefreshToken(res.refreshToken)
+        setAccessTokenState(res.accessToken)
+        setRefreshTokenState(res.refreshToken)
+        // Clear all cached data and re-fetch everything for the new tenant
+        queryClient.clear()
       },
     }
   }, [accessTokenState, refreshTokenState, queryClient])

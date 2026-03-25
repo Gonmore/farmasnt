@@ -10,6 +10,10 @@ import { requireAuth, requirePermission } from '../../../application/security/rb
 import { Permissions } from '../../../application/security/permissions.js'
 import { getEnv } from '../../../shared/env.js'
 
+const uuidLike = z
+  .string()
+  .regex(/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/, 'Invalid UUID')
+
 const errorResponseSchema = {
   type: 'object',
   properties: {
@@ -1089,4 +1093,136 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
       return reply.send({ uploadUrl, publicUrl, key, expiresInSeconds, method: 'PUT' })
     },
   )
+
+  // ─── Cross-Tenant Access (Multi-Brand) ──────────────────────────────────────
+
+  // GET /api/v1/admin/users/:userId/tenant-access - List cross-tenant access for a user
+  app.get('/api/v1/admin/users/:userId/tenant-access', { preHandler: guard }, async (request, reply) => {
+    const tenantId = request.auth!.tenantId
+    const userId = (request.params as any).userId as string
+
+    const user = await db.user.findFirst({
+      where: { id: userId, tenantId },
+      select: { id: true },
+    })
+    if (!user) return reply.status(404).send({ message: 'Usuario no encontrado' })
+
+    const items = await db.userTenantAccess.findMany({
+      where: { userId },
+      select: {
+        tenantId: true,
+        createdAt: true,
+        tenant: { select: { id: true, name: true, logoUrl: true, isActive: true } },
+      },
+    })
+
+    return reply.send({ items: items.map((i) => ({ ...i.tenant, grantedAt: i.createdAt })) })
+  })
+
+  // GET /api/v1/admin/group-tenants - List tenants in the same group as the current tenant
+  app.get('/api/v1/admin/group-tenants', { preHandler: guard }, async (request, reply) => {
+    const tenantId = request.auth!.tenantId
+
+    let groupTenants: Array<{ id: string; name: string; logoUrl: string | null }> = []
+    try {
+      const membership = await db.tenantGroupMember.findUnique({
+        where: { tenantId },
+        select: {
+          group: {
+            select: {
+              members: {
+                select: {
+                  tenant: { select: { id: true, name: true, logoUrl: true, isActive: true } },
+                },
+              },
+            },
+          },
+        },
+      })
+
+      if (membership) {
+        groupTenants = membership.group.members
+          .filter((m) => m.tenant.isActive && m.tenant.id !== tenantId)
+          .map((m) => ({ id: m.tenant.id, name: m.tenant.name, logoUrl: m.tenant.logoUrl }))
+      }
+    } catch {
+      // Table may not exist yet
+    }
+
+    return reply.send({ items: groupTenants })
+  })
+
+  // PUT /api/v1/admin/users/:userId/tenant-access - Set cross-tenant access for a user
+  app.put('/api/v1/admin/users/:userId/tenant-access', { preHandler: guard }, async (request, reply) => {
+    const actor = request.auth!
+    const tenantId = actor.tenantId
+    const userId = (request.params as any).userId as string
+
+    const bodySchema = z.object({
+      tenantIds: z.array(uuidLike),
+    })
+
+    const parsed = bodySchema.safeParse(request.body)
+    if (!parsed.success) return reply.status(400).send({ message: 'Invalid request', issues: parsed.error.issues })
+
+    // Verify the user belongs to this tenant
+    const user = await db.user.findFirst({
+      where: { id: userId, tenantId },
+      select: { id: true },
+    })
+    if (!user) return reply.status(404).send({ message: 'Usuario no encontrado' })
+
+    // Verify that the target tenants are in the same group as the current tenant
+    const membership = await db.tenantGroupMember.findUnique({
+      where: { tenantId },
+      select: {
+        groupId: true,
+        group: {
+          select: {
+            members: { select: { tenantId: true } },
+          },
+        },
+      },
+    })
+
+    if (!membership) {
+      return reply.status(400).send({ message: 'Tu empresa no pertenece a un grupo multi-marca' })
+    }
+
+    const allowedTenantIds = new Set(
+      membership.group.members.map((m) => m.tenantId).filter((id) => id !== tenantId)
+    )
+
+    for (const tid of parsed.data.tenantIds) {
+      if (!allowedTenantIds.has(tid)) {
+        return reply.status(400).send({ message: `Tenant ${tid} no pertenece al mismo grupo` })
+      }
+    }
+
+    // Replace existing cross-tenant access
+    await db.$transaction(async (tx) => {
+      // Remove existing cross-tenant access (only for tenants in this group, not the home tenant)
+      await tx.userTenantAccess.deleteMany({
+        where: { userId, tenantId: { in: Array.from(allowedTenantIds) } },
+      })
+
+      // Add new access entries
+      for (const tid of parsed.data.tenantIds) {
+        await tx.userTenantAccess.create({
+          data: { userId, tenantId: tid, createdBy: actor.userId },
+        })
+      }
+    })
+
+    await audit.append({
+      tenantId,
+      actorUserId: actor.userId,
+      action: 'admin.user.tenant_access.update',
+      entityType: 'User',
+      entityId: userId,
+      metadata: { grantedTenantIds: parsed.data.tenantIds },
+    })
+
+    return reply.send({ ok: true })
+  })
 }

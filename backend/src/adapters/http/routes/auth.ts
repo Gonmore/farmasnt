@@ -11,6 +11,10 @@ import { getEnv } from '../../../shared/env.js'
 import { getMailer } from '../../../shared/mailer.js'
 import { requireAuth } from '../../../application/security/rbac.js'
 
+const uuidLike = z
+  .string()
+  .regex(/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/, 'Invalid UUID')
+
 const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(6),
@@ -295,6 +299,92 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
     return reply.send({ message: 'Password updated' })
   })
 
+  // POST /api/v1/auth/switch-tenant - Switch to a different tenant within the same user group
+  const switchTenantSchema = z.object({
+    targetTenantId: uuidLike,
+  })
+
+  app.post('/api/v1/auth/switch-tenant', { preHandler: [requireAuth()] }, async (request, reply) => {
+    const actor = request.auth!
+    const parsed = switchTenantSchema.safeParse(request.body)
+    if (!parsed.success) return reply.status(400).send({ message: 'Invalid request', issues: parsed.error.issues })
+
+    const { targetTenantId } = parsed.data
+
+    const user = await db.user.findUnique({
+      where: { id: actor.userId },
+      select: { tenantId: true },
+    })
+    if (!user) return reply.status(404).send({ message: 'User not found' })
+
+    // If switching to own tenant, just re-issue tokens
+    if (targetTenantId === actor.tenantId) {
+      const accessToken = await signAccessToken({
+        userId: actor.userId,
+        tenantId: actor.tenantId,
+        secret: env.JWT_ACCESS_SECRET,
+      })
+      const refreshTokenValue = generateOpaqueToken()
+      await db.refreshToken.create({
+        data: {
+          tenantId: actor.tenantId,
+          userId: actor.userId,
+          tokenHash: sha256Hex(refreshTokenValue),
+          expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+          createdBy: actor.userId,
+        },
+      })
+      return reply.send({ accessToken, refreshToken: refreshTokenValue })
+    }
+
+    if (targetTenantId !== user.tenantId) {
+      // Cross-tenant targets require an explicit access grant.
+      const access = await db.userTenantAccess.findFirst({
+        where: { userId: actor.userId, tenantId: targetTenantId },
+        select: { userId: true },
+      })
+      if (!access) return reply.status(403).send({ message: 'No tienes acceso a este tenant' })
+    }
+
+    // Verify target tenant is active
+    const targetTenant = await db.tenant.findFirst({
+      where: { id: targetTenantId, isActive: true },
+      select: { id: true },
+    })
+    if (!targetTenant) return reply.status(404).send({ message: 'Tenant no encontrado o inactivo' })
+
+    // Issue new tokens with the target tenant context
+    const accessToken = await signAccessToken({
+      userId: actor.userId,
+      tenantId: targetTenantId,
+      secret: env.JWT_ACCESS_SECRET,
+    })
+
+    const refreshTokenValue = generateOpaqueToken()
+    const refreshTokenHash = sha256Hex(refreshTokenValue)
+
+    await db.refreshToken.create({
+      data: {
+        tenantId: targetTenantId,
+        userId: actor.userId,
+        tokenHash: refreshTokenHash,
+        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        createdBy: actor.userId,
+      },
+    })
+
+    await audit.append({
+      tenantId: targetTenantId,
+      actorUserId: actor.userId,
+      action: 'auth.switch_tenant',
+      entityType: 'User',
+      entityId: actor.userId,
+      metadata: { fromTenantId: actor.tenantId, toTenantId: targetTenantId },
+    })
+
+    return reply.send({ accessToken, refreshToken: refreshTokenValue })
+  })
+
   // POST /api/v1/auth/me/photo-upload - Presign avatar upload
   app.post('/api/v1/auth/me/photo-upload', { preHandler: [requireAuth()] }, async (request, reply) => {
     const actor = request.auth!
@@ -573,6 +663,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
               id: true,
               name: true,
               isActive: true,
+              logoUrl: true,
             },
           },
           roles: {
@@ -620,6 +711,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
               id: true,
               name: true,
               isActive: true,
+              logoUrl: true,
             },
           },
           roles: {
@@ -666,6 +758,33 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
     // Determinar si es Platform Admin
     const isPlatformAdmin = permissionCodes.includes('platform:tenants:manage')
 
+    // Fetch available tenants for multi-brand switching
+    let availableTenants: Array<{ id: string; name: string; logoUrl: string | null }> = []
+    try {
+      const extraAccess = await db.userTenantAccess.findMany({
+        where: { userId: actor.userId },
+        select: {
+          tenant: {
+            select: { id: true, name: true, logoUrl: true, isActive: true },
+          },
+        },
+      })
+      // Include the user's home tenant + any extra tenants they have access to
+      const homeTenant = user.tenant
+      const allTenants = [
+        { id: homeTenant.id, name: homeTenant.name, logoUrl: (homeTenant as any).logoUrl ?? null },
+        ...extraAccess
+          .filter((a) => a.tenant.isActive && a.tenant.id !== user.tenantId)
+          .map((a) => ({ id: a.tenant.id, name: a.tenant.name, logoUrl: a.tenant.logoUrl })),
+      ]
+      // Only return the list if user has access to more than one tenant
+      if (allTenants.length > 1) {
+        availableTenants = allTenants
+      }
+    } catch {
+      // Table may not exist yet; ignore gracefully
+    }
+
     return reply.send({
       user: {
         id: user.id,
@@ -686,6 +805,8 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
       permissions,
       permissionCodes,
       isPlatformAdmin,
+      availableTenants,
+      activeTenantId: actor.tenantId,
     })
   })
 }

@@ -31,6 +31,7 @@ export function useNavigation(): NavGroup[] {
       title: 'Sistema',
       items: [
         { to: '/platform/tenants', label: '🏢 Tenants' },
+        { to: '/platform/tenant-groups', label: '🔗 Grupos de Empresas' },
         { to: '/platform/contact', label: '📞 Configuración Contacto' },
       ],
     });

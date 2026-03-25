@@ -42,6 +42,8 @@ export interface AuthMeResponse {
   permissions: Permission[];
   permissionCodes: string[];
   isPlatformAdmin: boolean;
+  availableTenants: Array<{ id: string; name: string; logoUrl: string | null }>;
+  activeTenantId?: string;
 }
 
 export function usePermissions() {
@@ -84,6 +86,8 @@ export function usePermissions() {
     roles: data?.roles ?? [],
     permissions: data?.permissions ?? [],
     permissionCodes: data?.permissionCodes ?? [],
+    availableTenants: data?.availableTenants ?? [],
+    activeTenantId: data?.activeTenantId,
     
     // Helpers
     hasPermission,

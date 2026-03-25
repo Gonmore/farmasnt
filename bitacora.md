@@ -2,6 +2,31 @@
 
 Este documento resume (a alto nivel) decisiones, hitos y cambios relevantes que se fueron incorporando al repositorio para llegar al estado actual del MVP.
 
+## **[25 Mar 2026] Versión 2.0 — Multi-marca / multi-empresa**
+
+### Objetivo alcanzado
+- Se cerró la primera versión operativa del flujo multi-marca con cambio de empresa desde sesión autenticada.
+- La versión objetivo de esta entrega pasa a ser `2.0`.
+
+### Backend
+- Se agregaron `TenantGroup`, `TenantGroupMember` y `UserTenantAccess` al esquema Prisma.
+- Se incorporó la migración `20260324120000_tenant_groups_multi_brand`.
+- Se sumaron endpoints platform para crear/listar/eliminar grupos y administrar miembros.
+- Se sumaron endpoints admin para listar y guardar accesos cruzados por usuario.
+- Se agregó `POST /api/v1/auth/switch-tenant`.
+- Se corrigió el auth hook para aceptar JWTs cuyo tenant activo difiere del tenant base del usuario.
+- Se corrigió el retorno al tenant principal para que no requiera grant explícito en `UserTenantAccess`.
+
+### Frontend
+- Se agregó pantalla de grupos de empresas para platform admin.
+- Se agregó modal de empresas por usuario en administración.
+- Se agregó selector de empresa en el menú del usuario.
+- Se corrigió el marcado de tenant activo para usar el contexto actual y no siempre el tenant base.
+
+### Operación
+- La base local quedó migrada y validada.
+- `deploy.sh` permanece como flujo manual previsto para subir la versión 2.0 a producción.
+
 ## Objetivo del producto
 SaaS **multi-tenant** con **single DB** (row-level `tenantId`), backend Node.js/TypeScript (estilo Clean/Hex), frontend React/Vite/Tailwind/TanStack Query, PostgreSQL, **auditoría GxP-friendly inmutable** (append-only), **Socket.io** para eventos en tiempo real, **RBAC** estricto por permisos, y búsqueda rápida.
 
