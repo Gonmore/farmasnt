@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { apiFetch } from '../../lib/api'
+import { formatPresentationLabel, formatPresentationQuantityLabel } from '../../lib/productPresentation'
 import { exportQuoteToPDF } from '../../lib/quotePdf'
 import { MainLayout, PageContainer, Button, Loading, ErrorState, Table, Input, Select, CustomerSelector, ProductSelector } from '../../components'
 import { useNavigation } from '../../hooks'
@@ -34,6 +35,7 @@ type QuoteDetail = {
     productId: string
     productName: string
     productSku: string
+    baseUnitAbbreviation?: string | null
     presentationId?: string | null
     presentationName?: string | null
     unitsPerPresentation?: number | null
@@ -61,6 +63,7 @@ type DraftLine = {
   productId: string | null
   productSku: string
   productName: string
+  baseUnitAbbreviation?: string | null
   presentations: ProductPresentation[]
   presentationId: string | null
   presentationQuantity: number
@@ -101,6 +104,7 @@ function buildDraftFromQuote(q: QuoteDetail, presentationsByProduct?: Map<string
         productId: l.productId,
         productSku: l.productSku,
         productName: l.productName,
+        baseUnitAbbreviation: l.baseUnitAbbreviation ?? 'u',
         presentations: pres,
         presentationId: l.presentationId ?? null,
         presentationQuantity: toNumberSafe(l.presentationQuantity ?? l.quantity, 1),
@@ -143,13 +147,6 @@ function pickDefaultPresentationId(presentations: ProductPresentation[]): string
   const sorted = [...presentations].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
   const def = sorted.find((p) => !!p.isDefault)
   return (def ?? sorted[0] ?? null)?.id ?? null
-}
-
-function presentationLabel(name: string | null | undefined, unitsPerPresentation: number | null | undefined): string {
-  const n = String(name ?? '').trim()
-  const units = Number(unitsPerPresentation ?? 1)
-  if (!n || n.toLowerCase() === 'unidad' || !Number.isFinite(units) || units <= 1) return 'Unidad'
-  return `${n} (${Math.trunc(units)}u)`
 }
 
 function unitsPerFor(presentations: ProductPresentation[], presentationId: string | null): number {
@@ -351,6 +348,7 @@ export function QuoteDetailPage() {
                           productId: p.id,
                           productSku: p.sku,
                           productName: p.name,
+                          baseUnitAbbreviation: p.baseUnitAbbreviation ?? 'u',
                           presentations,
                           presentationId: presId,
                           presentationQuantity: 1,
@@ -370,7 +368,14 @@ export function QuoteDetailPage() {
         accessor: (row: DraftLine) => {
           const options = [
             { value: '', label: 'Unidad' },
-            ...row.presentations.map((p) => ({ value: p.id, label: presentationLabel(p.name, Number(p.unitsPerPresentation)) })),
+            ...row.presentations.map((p) => ({
+              value: p.id,
+              label: formatPresentationLabel({
+                name: p.name,
+                unitsPerPresentation: Number(p.unitsPerPresentation),
+                baseUnitAbbreviation: row.baseUnitAbbreviation ?? 'u',
+              }),
+            })),
           ]
           return (
             <Select
@@ -557,11 +562,13 @@ export function QuoteDetailPage() {
                         const unitPriceForDisplay = isNonUnitPres ? l.unitPrice * unitsPer : l.unitPrice
                         const lineTotal = unitPriceForDisplay * qtyForPricing * (1 - disc)
 
-                        const qtyLabel = hasPres
-                          ? isNonUnitPres
-                            ? `${pQty} ${pName} (${Math.trunc(unitsPer)}u)`
-                            : `${pQty} ${pName}`
-                          : String(l.quantity)
+                        const qtyLabel = formatPresentationQuantityLabel({
+                          quantity: l.quantity,
+                          presentationName: pName,
+                          presentationQuantity: pQty,
+                          unitsPerPresentation: unitsPer,
+                          baseUnitAbbreviation: l.baseUnitAbbreviation ?? 'u',
+                        })
 
                         return {
                           sku: l.productSku,
@@ -621,11 +628,13 @@ export function QuoteDetailPage() {
                           const unitPriceForDisplay = isNonUnitPres ? l.unitPrice * unitsPer : l.unitPrice
                           const lineTotal = unitPriceForDisplay * qtyForPricing * (1 - disc)
 
-                          const qtyLabel = hasPres
-                            ? isNonUnitPres
-                              ? `${pQty} ${pName} (${Math.trunc(unitsPer)}u)`
-                              : `${pQty} ${pName}`
-                            : String(l.quantity)
+                          const qtyLabel = formatPresentationQuantityLabel({
+                            quantity: l.quantity,
+                            presentationName: pName,
+                            presentationQuantity: pQty,
+                            unitsPerPresentation: unitsPer,
+                            baseUnitAbbreviation: l.baseUnitAbbreviation ?? 'u',
+                          })
 
                           return {
                             sku: l.productSku,

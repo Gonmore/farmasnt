@@ -12,6 +12,12 @@ Cambios relevantes en 2.0:
 - `PUT /api/v1/admin/users/:userId/tenant-access` reemplaza accesos cruzados por usuario.
 - `GET|POST|DELETE /api/v1/platform/tenant-groups...` administra grupos de empresas desde plataforma.
 
+Cambios recientes en catálogo y documentos:
+- `Product` incorpora `baseUnitAbbreviation` para definir la abreviatura visible de unidad base por producto.
+- `GET /api/v1/catalog/search` devuelve `baseUnitAbbreviation` en cada producto listado.
+- Las respuestas de cotizaciones, órdenes y reservas que devuelven datos de producto incluyen `baseUnitAbbreviation` cuando corresponde.
+- La representación PDF en frontend consume este campo para renderizar etiquetas de presentación y cantidad sin asumir `u`.
+
 Base URL (dev): `http://127.0.0.1:6000`
 
 OpenAPI/Swagger:

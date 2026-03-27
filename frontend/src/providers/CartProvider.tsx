@@ -5,6 +5,7 @@ export type CartItem = {
   productId: string
   sku: string
   name: string
+  baseUnitAbbreviation?: string | null
   price: number
   // Base units quantity (used for totals/math).
   quantity: number

@@ -10,6 +10,7 @@ import { Permissions } from '../../../application/security/permissions.js'
 import { createStockMovementTx } from '../../../application/stock/stockMovementService.js'
 import { currentYearUtc, nextSequence } from '../../../application/shared/sequence.js'
 import { getEnv } from '../../../shared/env.js'
+import { formatPresentationLabel } from '../../../shared/productUnits.js'
 
 const movementCreateSchema = z.object({
   type: z.enum(['IN', 'OUT', 'TRANSFER', 'ADJUSTMENT']),
@@ -4171,7 +4172,7 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
               select: {
                 requestedQuantity: true,
                 presentation: { select: { name: true, unitsPerPresentation: true } },
-                product: { select: { sku: true, name: true, genericName: true } },
+                product: { select: { sku: true, name: true, genericName: true, baseUnitAbbreviation: true } },
               },
             },
           },
@@ -4189,11 +4190,11 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
         requestedItems = (req?.items ?? []).map((it) => {
           const presName = String(it.presentation?.name ?? '').trim()
           const presUnits = Number(it.presentation?.unitsPerPresentation ?? 1)
-          const presentationLabel = presName
-            ? Number.isFinite(presUnits) && presUnits > 1
-              ? `${presName} (${presUnits}u)`
-              : presName
-            : '—'
+          const presentationLabel = formatPresentationLabel({
+            name: presName,
+            unitsPerPresentation: presUnits,
+            baseUnitAbbreviation: it.product?.baseUnitAbbreviation ?? 'u',
+          })
 
           const quantityUnits = Number(it.requestedQuantity ?? 0)
           const u = unitsPer(presUnits)
@@ -4233,11 +4234,11 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
         const presName = String(b?.presentation?.name ?? '').trim()
         const presUnits = Number(b?.presentation?.unitsPerPresentation ?? 1)
         const u = unitsPer(presUnits)
-        const presentationLabel = presName
-          ? Number.isFinite(presUnits) && presUnits > 1
-            ? `${presName} (${presUnits}u)`
-            : presName
-          : '—'
+        const presentationLabel = formatPresentationLabel({
+          name: presName,
+          unitsPerPresentation: presUnits,
+          baseUnitAbbreviation: (p as any)?.baseUnitAbbreviation ?? 'u',
+        })
 
         const quantityUnits = Number(m.quantity ?? 0)
         const quantityPresentations = u > 1 ? quantityUnits / u : quantityUnits

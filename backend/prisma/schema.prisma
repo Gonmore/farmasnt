@@ -340,6 +340,7 @@ model Product {
   name        String
   genericName String?
   description String?
+  baseUnitAbbreviation String @default("u")
   presentationWrapper String?
   presentationQuantity Decimal?
   presentationFormat String?

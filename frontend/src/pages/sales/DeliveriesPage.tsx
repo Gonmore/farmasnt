@@ -55,6 +55,7 @@ type ReservationRow = {
   productSku: string | null
   productName: string | null
   genericName: string | null
+  baseUnitAbbreviation?: string | null
   batchId: string | null
   batchNumber: string | null
   expiresAt: string | null
@@ -371,6 +372,7 @@ export function DeliveriesPage() {
                                 presentationName: r.presentationName ?? undefined,
                                 presentationQuantity: r.presentationQuantity ?? undefined,
                                 unitsPerPresentation: r.unitsPerPresentation ?? undefined,
+                                baseUnitAbbreviation: r.baseUnitAbbreviation ?? 'u',
                               }))
                               await exportDeliveryNoteToPDF({
                                 orderNumber: o.number,

@@ -10,6 +10,7 @@ type CatalogSearchItem = {
   sku: string
   name: string
   genericName?: string | null
+  baseUnitAbbreviation?: string | null
   photoUrl?: string | null
   price?: string | null
   presentations?: Array<{

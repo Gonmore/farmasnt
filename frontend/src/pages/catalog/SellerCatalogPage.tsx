@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { apiFetch } from '../../lib/api'
 import { getProductDisplayName } from '../../lib/productName'
+import { formatPresentationLabel, formatPresentationQuantityLabel } from '../../lib/productPresentation'
 import { useAuth, useCart, useTenant, useTheme } from '../../providers'
 import {
   MainLayout,
@@ -29,6 +30,7 @@ type Product = {
   sku: string
   name: string
   genericName?: string | null
+  baseUnitAbbreviation?: string | null
   photoUrl?: string | null
   price?: string | null
   isActive: boolean
@@ -45,16 +47,6 @@ type Product = {
 type ListResponse = { items: Product[]; nextCursor: string | null }
 
 type ProductPresentation = NonNullable<Product['presentations']>[number]
-
-function presentationLabel(pres: ProductPresentation | null | undefined): string {
-  if (!pres) return 'Unidad'
-  const name = String(pres.name ?? '').trim()
-  const unitsRaw = String(pres.unitsPerPresentation ?? '').trim()
-  const units = Number(unitsRaw)
-
-  if (name.toLowerCase() === 'unidad' || !Number.isFinite(units) || units <= 1) return 'Unidad'
-  return `${name} (${Math.trunc(units)}u)`
-}
 
 function pickDefaultPresentation(p: Product): ProductPresentation | null {
   const list = Array.isArray(p.presentations) ? p.presentations : []
@@ -412,9 +404,10 @@ export function SellerCatalogPage() {
       productId: product.id,
       sku: product.sku,
       name: getProductDisplayName(product),
+      baseUnitAbbreviation: product.baseUnitAbbreviation ?? 'u',
       price: unitPrice,
       presentationId: presId,
-      presentationName: presentationLabel(pres),
+      presentationName: pres?.name ?? 'Unidad',
       unitsPerPresentation: Number.isFinite(unitsPer) && unitsPer > 0 ? unitsPer : 1,
       presentationQuantity: presentationQty,
       photoUrl: product.photoUrl || null,
@@ -504,6 +497,7 @@ export function SellerCatalogPage() {
         presentationId: (line as any).presentationId ?? null,
         presentationName: (line as any).presentationName ?? 'Unidad',
         unitsPerPresentation: Number((line as any).unitsPerPresentation ?? 1) || 1,
+        baseUnitAbbreviation: (line as any).baseUnitAbbreviation ?? 'u',
         presentationQuantity: Number((line as any).presentationQuantity ?? line.quantity) || 1,
         discountPct: line.discountPct,
         photoUrl: null,
@@ -620,11 +614,13 @@ export function SellerCatalogPage() {
           const unitPriceForDisplay = isNonUnitPres ? l.unitPrice * unitsPer : l.unitPrice
           const lineTotal = unitPriceForDisplay * qtyForPricing * (1 - disc)
 
-          const qtyLabel = hasPres
-            ? isNonUnitPres
-              ? `${pQty} ${pName} (${Math.trunc(unitsPer)}u)`
-              : `${pQty} ${pName}`
-            : String(l.quantity)
+          const qtyLabel = formatPresentationQuantityLabel({
+            quantity: l.quantity,
+            presentationName: pName,
+            presentationQuantity: pQty,
+            unitsPerPresentation: unitsPer,
+            baseUnitAbbreviation: (l as any).baseUnitAbbreviation ?? 'u',
+          })
           return {
             sku: l.productSku,
             name: l.productName,
@@ -859,7 +855,14 @@ export function SellerCatalogPage() {
                             onChange={(e) => setPresentationByProduct((prev) => ({ ...prev, [p.id]: e.target.value }))}
                             options={
                               (p.presentations ?? []).length
-                                ? (p.presentations ?? []).map((pr: ProductPresentation) => ({ value: pr.id, label: presentationLabel(pr) }))
+                                ? (p.presentations ?? []).map((pr: ProductPresentation) => ({
+                                    value: pr.id,
+                                    label: formatPresentationLabel({
+                                      name: pr.name,
+                                      unitsPerPresentation: pr.unitsPerPresentation,
+                                      baseUnitAbbreviation: p.baseUnitAbbreviation,
+                                    }),
+                                  }))
                                 : [{ value: 'BASE', label: 'Unidad' }]
                             }
                           />
@@ -885,7 +888,7 @@ export function SellerCatalogPage() {
 
                           {!!unitsPer && unitsPer > 1 && (
                             <div className="text-[11px] text-slate-600 dark:text-slate-300">
-                              1 {selectedPres?.name ?? 'Caja'} = {unitsPer} unidades
+                                1 {selectedPres?.name ?? 'Caja'} = {unitsPer} {p.baseUnitAbbreviation ?? 'u'}
                             </div>
                           )}
                         </div>
@@ -1319,7 +1322,11 @@ export function SellerCatalogPage() {
                     const linePresentation = unitPresentation * presQty * (1 - disc)
 
                     const presName = (i.presentationName ?? 'Unidad').trim()
-                    const presentationLabel = presName === 'Unidad' || unitsPer <= 1 ? presName : `${presName} (${unitsPer}u)`
+                    const presentationLabel = formatPresentationLabel({
+                      name: presName,
+                      unitsPerPresentation: unitsPer,
+                      baseUnitAbbreviation: (i as any).baseUnitAbbreviation ?? 'u',
+                    })
                     return {
                       cartLineId: i.id,
                       productId: i.productId,

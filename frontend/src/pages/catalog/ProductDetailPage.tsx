@@ -5,6 +5,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { apiFetch, getApiBaseUrl } from '../../lib/api'
 import { formatDateOnlyUtc } from '../../lib/date'
 import { getProductDisplayName } from '../../lib/productName'
+import { formatPresentationSummaryLabel, normalizeBaseUnitAbbreviation } from '../../lib/productPresentation'
 import { useAuth } from '../../providers/AuthProvider'
 import { MainLayout, PageContainer, Button, Input, Select, Loading, ErrorState, ImageUpload, Table, Modal } from '../../components'
 import { useNavigation, usePermissions } from '../../hooks'
@@ -16,6 +17,7 @@ type Product = {
   name: string
   genericName?: string | null
   description: string | null
+  baseUnitAbbreviation?: string | null
   presentationWrapper?: string | null
   presentationQuantity?: string | null
   presentationFormat?: string | null
@@ -165,6 +167,7 @@ async function createProduct(
     sku: string
     name: string
     genericName?: string
+    baseUnitAbbreviation?: string
     description?: string
     presentationFormat?: string
     cost?: number
@@ -186,6 +189,7 @@ async function updateProduct(
     version: number
     name?: string
     genericName?: string | null
+    baseUnitAbbreviation?: string | null
     description?: string | null
     presentationWrapper?: string | null
     presentationQuantity?: number | null
@@ -434,6 +438,7 @@ export function ProductDetailPage() {
   const [description, setDescription] = useState('')
   const [cost, setCost] = useState('')
   const [price, setPrice] = useState('')
+  const [baseUnitAbbreviation, setBaseUnitAbbreviation] = useState('u')
   const [presentationFormat, setPresentationFormat] = useState('')
   const [isActive, setIsActive] = useState(true)
 
@@ -686,6 +691,7 @@ export function ProductDetailPage() {
       setName(productQuery.data.name)
       setGenericName(productQuery.data.genericName ?? '')
       setDescription(productQuery.data.description || '')
+      setBaseUnitAbbreviation(normalizeBaseUnitAbbreviation(productQuery.data.baseUnitAbbreviation))
       setCost(productQuery.data.cost || '')
       setPrice(productQuery.data.price || '')
       setPresentationFormat(productQuery.data.presentationFormat ?? '')
@@ -1120,6 +1126,7 @@ export function ProductDetailPage() {
     if (isNew) {
       const payload: any = { sku, name, description: description || undefined }
       if (genericName.trim()) payload.genericName = genericName.trim()
+      payload.baseUnitAbbreviation = normalizeBaseUnitAbbreviation(baseUnitAbbreviation)
       if (presentationFormat.trim()) payload.presentationFormat = presentationFormat.trim()
       if (cost) payload.cost = parseFloat(cost)
       if (price) payload.price = parseFloat(price)
@@ -1192,6 +1199,7 @@ export function ProductDetailPage() {
         version: productQuery.data.version,
         name,
         genericName: genericName.trim() ? genericName.trim() : null,
+        baseUnitAbbreviation: normalizeBaseUnitAbbreviation(baseUnitAbbreviation),
         description: description || null,
         presentationFormat: presentationFormat.trim() ? presentationFormat.trim() : null,
         isActive,
@@ -1417,7 +1425,7 @@ export function ProductDetailPage() {
                 />
               </div>
               
-              <div className="grid gap-4 md:grid-cols-3 items-start">
+              <div className="grid gap-4 md:grid-cols-4 items-start">
                 <div className="group">
                   <Input
                     label="Costo (opcional)"
@@ -1438,6 +1446,17 @@ export function ProductDetailPage() {
                     value={price}
                     onChange={(e) => setPrice(e.target.value)}
                     placeholder="0.00"
+                    disabled={createMutation.isPending || updateMutation.isPending}
+                    className="transition-all duration-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+                <div className="group">
+                  <Input
+                    label="Unidad base"
+                    value={baseUnitAbbreviation}
+                    onChange={(e) => setBaseUnitAbbreviation(normalizeBaseUnitAbbreviation(e.target.value))}
+                    placeholder="u"
+                    maxLength={8}
                     disabled={createMutation.isPending || updateMutation.isPending}
                     className="transition-all duration-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   />
@@ -1692,7 +1711,8 @@ export function ProductDetailPage() {
 
                 <p className="mb-4 text-sm text-slate-600 dark:text-slate-400">
                   Define cómo se vende el producto (p.ej. <span className="font-medium">Caja</span> = 100 unidades).
-                  La <span className="font-medium">Unidad</span> es la base (stock y totales).
+                  La <span className="font-medium">Unidad</span> es la base (stock y totales), pero su abreviatura visible puede ser
+                  <span className="font-medium"> {normalizeBaseUnitAbbreviation(baseUnitAbbreviation)}</span>.
                 </p>
 
                 {presentationsQuery.isLoading && <p className="text-sm text-slate-600 dark:text-slate-400">Cargando…</p>}
@@ -1971,7 +1991,13 @@ export function ProductDetailPage() {
                                   <div className="mt-0.5 text-xs text-slate-600 dark:text-slate-400">
                                     {(() => {
                                       const pres = activePresentations.find((p) => p.id === (b.presentationId ?? ''))
-                                      return pres ? `Presentación: ${pres.name} · ${pres.unitsPerPresentation} u.` : 'Presentación: —'
+                                      return pres
+                                        ? `Presentación: ${formatPresentationSummaryLabel({
+                                            name: pres.name,
+                                            unitsPerPresentation: pres.unitsPerPresentation,
+                                            baseUnitAbbreviation,
+                                          })}`
+                                        : 'Presentación: —'
                                     })()}
                                   </div>
                                 </button>
@@ -2232,7 +2258,11 @@ export function ProductDetailPage() {
                                             onChange={(e) => setRepackSourcePresentationId(e.target.value)}
                                             options={activePresentations.map((p) => ({
                                               value: p.id,
-                                              label: `${p.name} · ${p.unitsPerPresentation} u.`,
+                                              label: formatPresentationSummaryLabel({
+                                                name: p.name,
+                                                unitsPerPresentation: p.unitsPerPresentation,
+                                                baseUnitAbbreviation,
+                                              }),
                                             }))}
                                           />
                                           <Input
@@ -2248,7 +2278,11 @@ export function ProductDetailPage() {
                                             onChange={(e) => setRepackTargetPresentationId(e.target.value)}
                                             options={repackTargetOptions.map((p) => ({
                                               value: p.id,
-                                              label: `${p.name} · ${p.unitsPerPresentation} u.`,
+                                              label: formatPresentationSummaryLabel({
+                                                name: p.name,
+                                                unitsPerPresentation: p.unitsPerPresentation,
+                                                baseUnitAbbreviation,
+                                              }),
                                             }))}
                                           />
                                           <Input
@@ -2477,7 +2511,17 @@ export function ProductDetailPage() {
                         }}
                         options={(presentationsQuery.data?.items ?? [])
                           .filter((p) => p.isActive !== false)
-                          .map((p) => ({ value: p.id, label: `${p.name}${p.isDefault ? ' (default)' : ''} · ${p.unitsPerPresentation} u.` }))}
+                          .map((p) => ({
+                            value: p.id,
+                            label: formatPresentationSummaryLabel(
+                              {
+                                name: p.name,
+                                unitsPerPresentation: p.unitsPerPresentation,
+                                baseUnitAbbreviation,
+                              },
+                              { includeDefaultBadge: true, isDefault: p.isDefault },
+                            ),
+                          }))}
                         disabled={batchMutation.isPending || presentationsQuery.isLoading}
                       />
                       <Input
@@ -2593,7 +2637,13 @@ export function ProductDetailPage() {
                     const batch = (productBatchesQuery.data?.items ?? []).find((x) => x.id === addingStockBatchId) ?? null
                     const locs = batch?.locations ?? []
                     const pres = activePresentations.find((p) => p.id === (batch?.presentationId ?? '')) ?? null
-                    const presLabel = pres ? `${pres.name} · ${pres.unitsPerPresentation} u.` : '—'
+                    const presLabel = pres
+                      ? formatPresentationSummaryLabel({
+                          name: pres.name,
+                          unitsPerPresentation: pres.unitsPerPresentation,
+                          baseUnitAbbreviation,
+                        })
+                      : '—'
                     return (
                       <div className="grid gap-3 md:grid-cols-2">
                         <div className="md:col-span-2 rounded-md border border-slate-200 bg-slate-50 p-2 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
@@ -2685,7 +2735,11 @@ export function ProductDetailPage() {
                       { value: '', label: 'Sin presentación' },
                       ...activePresentations.map((p) => ({
                         value: p.id,
-                        label: `${p.name} · ${p.unitsPerPresentation} u.`,
+                        label: formatPresentationSummaryLabel({
+                          name: p.name,
+                          unitsPerPresentation: p.unitsPerPresentation,
+                          baseUnitAbbreviation,
+                        }),
                       })),
                     ]}
                   />

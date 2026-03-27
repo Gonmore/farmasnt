@@ -8,6 +8,7 @@ import { AuditService } from '../../../application/audit/auditService.js'
 import { requireAuth, requirePermission } from '../../../application/security/rbac.js'
 import { Permissions } from '../../../application/security/permissions.js'
 import { getEnv } from '../../../shared/env.js'
+import { normalizeBaseUnitAbbreviation } from '../../../shared/productUnits.js'
 import { createStockMovementTx } from '../../../application/stock/stockMovementService.js'
 import { currentYearUtc, nextSequence } from '../../../application/shared/sequence.js'
 
@@ -68,6 +69,7 @@ const productCreateSchema = z
     name: z.string().trim().min(1).max(200).optional(),
     commercialName: z.string().trim().min(1).max(200).optional(),
     genericName: z.string().trim().min(1).max(200).optional(),
+  baseUnitAbbreviation: z.string().trim().min(1).max(8).optional(),
   description: z.string().trim().max(2000).optional(),
   presentationWrapper: z.string().trim().min(1).max(64).optional(),
   presentationQuantity: z.coerce.number().positive().optional(),
@@ -111,6 +113,7 @@ const productUpdateSchema = z.object({
   name: z.string().trim().min(1).max(200).optional(),
   commercialName: z.string().trim().min(1).max(200).optional(),
   genericName: z.string().trim().min(1).max(200).nullable().optional(),
+  baseUnitAbbreviation: z.string().trim().min(1).max(8).nullable().optional(),
   description: z.string().trim().max(2000).nullable().optional(),
   presentationWrapper: z.string().trim().min(1).max(64).nullable().optional(),
   presentationQuantity: z.coerce.number().positive().nullable().optional(),
@@ -362,6 +365,7 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
       try {
         const commercialName = (parsed.data.commercialName ?? parsed.data.name ?? '').trim()
         const description = parsed.data.description ?? null
+        const baseUnitAbbreviation = normalizeBaseUnitAbbreviation(parsed.data.baseUnitAbbreviation)
         const presentationWrapper = parsed.data.presentationWrapper ?? null
         const presentationQuantity = parsed.data.presentationQuantity ?? null
         const presentationFormat = parsed.data.presentationFormat ?? null
@@ -376,6 +380,7 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
               name: commercialName,
               genericName,
               description,
+              baseUnitAbbreviation,
               presentationWrapper,
               presentationQuantity,
               presentationFormat,
@@ -388,6 +393,7 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
               sku: true,
               name: true,
               genericName: true,
+              baseUnitAbbreviation: true,
               presentationWrapper: true,
               presentationQuantity: true,
               presentationFormat: true,
@@ -498,6 +504,7 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
           sku: true,
           name: true,
           genericName: true,
+          baseUnitAbbreviation: true,
           presentationWrapper: true,
           presentationQuantity: true,
           presentationFormat: true,
@@ -564,7 +571,7 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
 
       const product = await db.product.findFirst({
         where: { id: productId, tenantId },
-        select: { id: true, presentationWrapper: true, presentationQuantity: true, presentationFormat: true },
+        select: { id: true, baseUnitAbbreviation: true, presentationWrapper: true, presentationQuantity: true, presentationFormat: true },
       })
       if (!product) return reply.status(404).send({ message: 'Not found' })
 
@@ -726,7 +733,7 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
 
       const product = await db.product.findFirst({
         where: { id, tenantId },
-        select: { id: true, sku: true, name: true, genericName: true, description: true, presentationWrapper: true, presentationQuantity: true, presentationFormat: true, photoUrl: true, cost: true, price: true, isActive: true, version: true, updatedAt: true },
+        select: { id: true, sku: true, name: true, genericName: true, description: true, baseUnitAbbreviation: true, presentationWrapper: true, presentationQuantity: true, presentationFormat: true, photoUrl: true, cost: true, price: true, isActive: true, version: true, updatedAt: true },
       })
 
       if (!product) return reply.status(404).send({ message: 'Not found' })
@@ -973,7 +980,7 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
 
       const before = await db.product.findFirst({
         where: { id, tenantId },
-        select: { id: true, sku: true, name: true, genericName: true, description: true, presentationWrapper: true, presentationQuantity: true, presentationFormat: true, isActive: true, version: true },
+        select: { id: true, sku: true, name: true, genericName: true, description: true, baseUnitAbbreviation: true, presentationWrapper: true, presentationQuantity: true, presentationFormat: true, isActive: true, version: true },
       })
       if (!before) return reply.status(404).send({ message: 'Not found' })
 
@@ -1011,6 +1018,9 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
       if (Object.prototype.hasOwnProperty.call(parsed.data, 'genericName')) {
         updateData.genericName = (parsed.data as any).genericName
       }
+      if (Object.prototype.hasOwnProperty.call(parsed.data, 'baseUnitAbbreviation')) {
+        updateData.baseUnitAbbreviation = normalizeBaseUnitAbbreviation((parsed.data as any).baseUnitAbbreviation)
+      }
       if (parsed.data.description !== undefined) updateData.description = parsed.data.description
       if ((parsed.data as any).presentationWrapper !== undefined) updateData.presentationWrapper = (parsed.data as any).presentationWrapper
       if ((parsed.data as any).presentationQuantity !== undefined) updateData.presentationQuantity = (parsed.data as any).presentationQuantity
@@ -1024,7 +1034,7 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
       const updated = await db.product.update({
         where: { id },
         data: updateData,
-        select: { id: true, sku: true, name: true, genericName: true, description: true, presentationWrapper: true, presentationQuantity: true, presentationFormat: true, photoUrl: true, cost: true, price: true, isActive: true, version: true, updatedAt: true },
+        select: { id: true, sku: true, name: true, genericName: true, description: true, baseUnitAbbreviation: true, presentationWrapper: true, presentationQuantity: true, presentationFormat: true, photoUrl: true, cost: true, price: true, isActive: true, version: true, updatedAt: true },
       })
 
       await audit.append({

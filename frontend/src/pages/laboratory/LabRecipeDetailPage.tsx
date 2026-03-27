@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
 import { apiFetch } from '../../lib/api'
+import { formatPresentationLabel } from '../../lib/productPresentation'
 import { useAuth } from '../../providers/AuthProvider'
 import { useNavigation, usePermissions } from '../../hooks'
 import { MainLayout, PageContainer, Loading, ErrorState, Button, Input, Select, Modal } from '../../components'
@@ -101,14 +102,6 @@ async function createSupply(
   return apiFetch('/api/v1/laboratory/supplies', { token, method: 'POST', body: JSON.stringify(body) })
 }
 
-function presentationLabel(pres: ProductPresentation | null | undefined): string {
-  if (!pres) return 'Unidad'
-  const name = String(pres.name ?? '').trim()
-  const units = Number(pres.unitsPerPresentation) || 0
-  if (!name || name.toLowerCase() === 'unidad' || !units || units <= 1) return 'Unidad'
-  return `${name} (${Math.trunc(units)}u)`
-}
-
 export function LabRecipeDetailPage() {
   const auth = useAuth()
   const navGroups = useNavigation()
@@ -165,7 +158,11 @@ export function LabRecipeDetailPage() {
   const outputUnitOptions = useMemo(() => {
     const options = activePresentations.map((p) => ({
       value: p.id,
-      label: presentationLabel(p),
+      label: formatPresentationLabel({
+        name: p.name,
+        unitsPerPresentation: p.unitsPerPresentation,
+        baseUnitAbbreviation: product?.baseUnitAbbreviation,
+      }),
     }))
     options.push({ value: 'other', label: 'Otro' })
     return options
@@ -211,7 +208,14 @@ export function LabRecipeDetailPage() {
   useEffect(() => {
     // When presentations load and we have an existing outputUnit, try to match it
     if (activePresentations.length > 0 && outputUnitCustom && !outputUnit) {
-      const matchingPresentation = activePresentations.find(p => presentationLabel(p) === outputUnitCustom)
+      const matchingPresentation = activePresentations.find(
+        (p) =>
+          formatPresentationLabel({
+            name: p.name,
+            unitsPerPresentation: p.unitsPerPresentation,
+            baseUnitAbbreviation: product?.baseUnitAbbreviation,
+          }) === outputUnitCustom,
+      )
       if (matchingPresentation) {
         setOutputUnit(matchingPresentation.id)
         setOutputUnitCustom('')
@@ -243,7 +247,11 @@ export function LabRecipeDetailPage() {
       const outUnit = isCustomUnit
         ? (outputUnitCustom.trim() || null)
         : selectedPresentation
-        ? presentationLabel(selectedPresentation)
+        ? formatPresentationLabel({
+            name: selectedPresentation.name,
+            unitsPerPresentation: selectedPresentation.unitsPerPresentation,
+            baseUnitAbbreviation: product?.baseUnitAbbreviation,
+          })
         : outputUnit.trim() || null
 
       if (isNew) {

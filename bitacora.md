@@ -2,6 +2,27 @@
 
 Este documento resume (a alto nivel) decisiones, hitos y cambios relevantes que se fueron incorporando al repositorio para llegar al estado actual del MVP.
 
+## **[27 Mar 2026] Catálogo y ventas: unidad base configurable + PDFs autoajustables**
+
+### Objetivo alcanzado
+- Se resolvió el solapamiento en PDFs de cotización y nota de entrega reemplazando el render fijo por filas con altura variable y textos envueltos.
+- Se incorporó una abreviatura de unidad base configurable por producto para que la UI y los documentos ya no dependan de `u` como sufijo fijo.
+
+### Backend
+- Se agregó `Product.baseUnitAbbreviation` con default `u` en Prisma.
+- Se incorporó la migración `20260327120000_product_base_unit_abbreviation`.
+- Se normalizó la abreviatura en altas y ediciones de productos.
+- Se expuso el nuevo campo en respuestas de catálogo, productos, cotizaciones, órdenes y stock donde aplica.
+
+### Frontend
+- `/catalog/products` permite editar la abreviatura de unidad base del producto.
+- Se centralizó el formateo de presentaciones y cantidades para reutilizarlo en catálogo, carrito, cotizaciones, entregas, stock y laboratorio.
+- La exportación PDF ahora distribuye mejor columnas y calcula la altura real de cada fila antes de dibujarla.
+
+### Operación
+- La migración quedó aplicada y validada en el entorno Docker local.
+- El estado del repo quedó listo para deploy manual usando `deploy.sh`.
+
 ## **[25 Mar 2026] Versión 2.0 — Multi-marca / multi-empresa**
 
 ### Objetivo alcanzado

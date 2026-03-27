@@ -47,6 +47,7 @@ export async function registerCatalogRoutes(app: FastifyInstance): Promise<void>
           sku: true,
           name: true,
           genericName: true,
+          baseUnitAbbreviation: true,
           photoUrl: true,
           price: true,
           ...(includePresentations

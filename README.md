@@ -10,6 +10,12 @@ Estado actual de la raíz del proyecto:
 - El flujo de cambio de empresa ya contempla ida y vuelta entre tenant base y tenants cruzados.
 - `deploy.sh` queda como mecanismo previsto para actualización manual de producción.
 
+### Ajustes recientes al catálogo y documentos comerciales
+- Cada producto ahora permite definir una abreviatura de unidad base configurable (`u`, `lt`, `ml`, `gr`, etc.) desde `/catalog/products`.
+- La abreviatura se propaga a catálogo, cotizaciones, entregas y otras vistas operativas donde se renderiza la presentación.
+- La exportación PDF de cotizaciones y notas de entrega ahora usa filas autoajustables para evitar solapamientos entre cantidad, descuento y totales.
+- La migración Prisma `20260327120000_product_base_unit_abbreviation` ya fue aplicada y validada en Docker local.
+
 ### Novedades principales de la 2.0
 - `TenantGroup` y `TenantGroupMember` para agrupar empresas relacionadas.
 - `UserTenantAccess` para otorgar acceso cruzado por usuario.
@@ -24,6 +30,11 @@ Estado actual de la raíz del proyecto:
 - Frontend refrescando estado de auth/tenant al cambiar de empresa.
 - `deploy.sh` construye imágenes versionadas, publica, corre migraciones y reinicia servicios remotos.
 - Despliegue final: manual, ejecutando `bash deploy.sh` desde la raíz del repo.
+
+### Estado para despliegue manual
+- Backend y frontend sin errores de editor en los archivos tocados.
+- La migración nueva ya quedó probada contra `postgres-local` usando `docker compose -f docker-compose.local.yml --profile tools run --rm backend-migrate`.
+- El repositorio queda listo para que el deploy manual publique imágenes, ejecute migraciones remotas y reinicie servicios con `deploy.sh`.
 
 ## Funcionalidades clave (stock)
 - Almacenes: listado + ubicaciones.

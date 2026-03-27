@@ -714,7 +714,7 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
             customer: { select: { name: true } },
             lines: {
               include: {
-                product: { select: { name: true, sku: true, genericName: true } },
+                product: { select: { name: true, sku: true, genericName: true, baseUnitAbbreviation: true } },
                 presentation: { select: { id: true, name: true, unitsPerPresentation: true } },
               },
             },
@@ -767,6 +767,7 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
           productName: line.product.name,
           productGenericName: (line.product as any).genericName ?? null,
           productSku: line.product.sku,
+          baseUnitAbbreviation: (line.product as any).baseUnitAbbreviation ?? 'u',
           presentationId: line.presentationId ?? null,
           presentationName: line.presentation?.name ?? null,
           unitsPerPresentation: line.presentation?.unitsPerPresentation ? Number(line.presentation.unitsPerPresentation) : null,
@@ -929,7 +930,7 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
               line: {
                 select: {
                   productId: true,
-                  product: { select: { name: true, sku: true, genericName: true } },
+                  product: { select: { name: true, sku: true, genericName: true, baseUnitAbbreviation: true } },
                 },
               },
               balance: {
@@ -1285,7 +1286,7 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
           customer: { select: { name: true, businessName: true, address: true, phone: true } },
           lines: {
             include: {
-              product: { select: { name: true, sku: true, genericName: true } },
+              product: { select: { name: true, sku: true, genericName: true, baseUnitAbbreviation: true } },
               presentation: { select: { id: true, name: true, unitsPerPresentation: true } },
             },
           },
@@ -1335,6 +1336,7 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
           productName: line.product.name,
           productGenericName: (line.product as any).genericName ?? null,
           productSku: line.product.sku,
+          baseUnitAbbreviation: (line.product as any).baseUnitAbbreviation ?? 'u',
           presentationId: line.presentationId ?? null,
           presentationName: line.presentation?.name ?? null,
           unitsPerPresentation: line.presentation?.unitsPerPresentation ? Number(line.presentation.unitsPerPresentation) : null,
@@ -1542,7 +1544,7 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
             customer: { select: { name: true } },
             lines: {
               include: {
-                product: { select: { name: true, sku: true, genericName: true } },
+                product: { select: { name: true, sku: true, genericName: true, baseUnitAbbreviation: true } },
                 presentation: { select: { id: true, name: true, unitsPerPresentation: true } },
               },
             },
@@ -1568,7 +1570,7 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
         const updatedLines = await tx.quoteLine.findMany({
           where: { quoteId: id },
           include: {
-            product: { select: { name: true, sku: true, genericName: true } },
+            product: { select: { name: true, sku: true, genericName: true, baseUnitAbbreviation: true } },
             presentation: { select: { id: true, name: true, unitsPerPresentation: true } },
           },
         })
@@ -1623,6 +1625,7 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
           productName: line.product.name,
           productGenericName: (line.product as any).genericName ?? null,
           productSku: line.product.sku,
+          baseUnitAbbreviation: (line.product as any).baseUnitAbbreviation ?? 'u',
           presentationId: line.presentationId ?? null,
           presentationName: line.presentation?.name ?? null,
           unitsPerPresentation: line.presentation?.unitsPerPresentation ? Number(line.presentation.unitsPerPresentation) : null,

@@ -2,6 +2,24 @@
 
 Este documento está pensado para validar **end-to-end** (UI + API) y confirmar resultados **en base de datos**, porque algunos cambios no se ven mucho en frontend.
 
+## Versión 2.0 — pruebas específicas de unidad base configurable y PDFs
+
+### Flujo P — Producto con unidad base visible personalizada
+- Ir a `Catálogo > Productos`.
+- Crear o editar un producto y definir `Unidad base` con un valor como `lt`, `ml` o `gr`.
+- Guardar.
+- Verificar que el detalle del producto conserva la abreviatura y que las presentaciones muestran el nuevo sufijo visible, por ejemplo `Bidón (20lt)`.
+
+### Flujo Q — Cotización PDF sin solapamientos
+- Crear o editar una cotización con al menos una línea larga en nombre de producto y una cantidad con presentación no unitaria.
+- Exportar la cotización a PDF.
+- Verificar que las columnas `Cant.`, `Desc.%`, `Precio Unit.` y `Total` no se montan entre sí y que los renglones crecen cuando el contenido requiere más altura.
+
+### Flujo R — Nota de entrega PDF con presentación correcta
+- Abrir una orden con reservas o entregas para un producto cuya unidad base visible no sea `u`.
+- Exportar la nota de entrega a PDF.
+- Verificar que la columna `Presentación` use la abreviatura configurada del producto y que el nombre del producto no invada columnas vecinas.
+
 ## Versión 2.0 — pruebas específicas multi-empresa
 
 ### Flujo M — Configuración multi-marca
@@ -28,6 +46,7 @@ Este documento está pensado para validar **end-to-end** (UI + API) y confirmar 
 
 1) BD al día
 - Backend: `npx prisma migrate status` → debe decir `Database schema is up to date!`
+- Si usás Docker local: `docker compose -f docker-compose.local.yml --profile tools run --rm backend-migrate` no debe mostrar migraciones pendientes.
 
 2) Backend y frontend levantados
 - Backend: `npm --prefix backend run dev`

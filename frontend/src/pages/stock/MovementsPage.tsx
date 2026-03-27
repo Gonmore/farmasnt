@@ -4,6 +4,7 @@ import { EyeIcon, PencilSquareIcon, TrashIcon } from '@heroicons/react/24/outlin
 import { apiFetch } from '../../lib/api'
 import { formatDateOnlyUtc } from '../../lib/date'
 import { getProductLabel } from '../../lib/productName'
+import { formatPresentationSummaryLabel } from '../../lib/productPresentation'
 import { matchesSearchQuery } from '../../lib/search'
 import { useAuth } from '../../providers/AuthProvider'
 import { MainLayout, PageContainer, Select, Input, Button, Table, Loading, ErrorState, Modal } from '../../components'
@@ -63,6 +64,7 @@ type ProductListItem = {
   sku: string
   name: string
   genericName?: string | null
+  baseUnitAbbreviation?: string | null
   isActive: boolean
 }
 
@@ -700,6 +702,7 @@ export function MovementsPage() {
   const selectableStockRows = stockRows.filter((r) => Number(r.availableQuantity || '0') > 0)
 
   const activePresentations = (presentationsQuery.data?.items ?? []).filter((p) => p.isActive !== false)
+  const currentProduct = (productsQuery.data?.items ?? []).find((p) => p.id === productId) ?? null
   const sourcePresentation = activePresentations.find((p) => p.id === repackSourcePresentationId) ?? null
   const targetPresentation = activePresentations.find((p) => p.id === repackTargetPresentationId) ?? null
 
@@ -1375,7 +1378,14 @@ export function MovementsPage() {
                         { value: '', label: 'Selecciona presentación' },
                         ...((presentationsQuery.data?.items ?? [])
                           .filter((p) => p.isActive !== false)
-                          .map((p) => ({ value: p.id, label: `${p.name} · ${p.unitsPerPresentation} u.` }))),
+                          .map((p) => ({
+                            value: p.id,
+                            label: formatPresentationSummaryLabel({
+                              name: p.name,
+                              unitsPerPresentation: p.unitsPerPresentation,
+                              baseUnitAbbreviation: currentProduct?.baseUnitAbbreviation,
+                            }),
+                          }))),
                       ]}
                       disabled={presentationsQuery.isLoading || batchMutation.isPending}
                     />
@@ -1528,7 +1538,11 @@ export function MovementsPage() {
                               { value: '', label: 'Selecciona presentación' },
                               ...activePresentations.map((p) => ({
                                 value: p.id,
-                                label: `${p.name} · ${p.unitsPerPresentation} u.`,
+                                label: formatPresentationSummaryLabel({
+                                  name: p.name,
+                                  unitsPerPresentation: p.unitsPerPresentation,
+                                  baseUnitAbbreviation: currentProduct?.baseUnitAbbreviation,
+                                }),
                               })),
                             ]}
                             disabled
@@ -1549,7 +1563,11 @@ export function MovementsPage() {
                               { value: '', label: 'Selecciona presentación' },
                               ...activePresentations.map((p) => ({
                                 value: p.id,
-                                label: `${p.name} · ${p.unitsPerPresentation} u.`,
+                                label: formatPresentationSummaryLabel({
+                                  name: p.name,
+                                  unitsPerPresentation: p.unitsPerPresentation,
+                                  baseUnitAbbreviation: currentProduct?.baseUnitAbbreviation,
+                                }),
                               })),
                             ]}
                             disabled={presentationsQuery.isLoading}

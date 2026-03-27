@@ -1,10 +1,12 @@
 import jsPDF from 'jspdf'
+import { formatPresentationLabel } from './productPresentation'
 
 export type QuotePdfItem = {
   sku: string
   name: string
   quantity: number
   quantityLabel?: string
+  baseUnitAbbreviation?: string
   discountPct: number
   unitPrice: number
   lineTotal: number
@@ -39,6 +41,7 @@ export type DeliveryNotePdfItem = {
   presentationName?: string
   presentationQuantity?: number
   unitsPerPresentation?: number
+  baseUnitAbbreviation?: string
 }
 
 export type DeliveryNotePdfData = {
@@ -60,6 +63,72 @@ function money(n: number): string {
 
 function sanitizePdfText(value: string): string {
   return (value ?? '').replace(/[^\x20-\x7E]/g, '').trim()
+}
+
+type TableAlign = 'left' | 'right' | 'center'
+
+type TableColumn = {
+  header: string
+  width: number
+  align?: TableAlign
+}
+
+type PreparedTableRow = {
+  linesByColumn: string[][]
+  height: number
+}
+
+function splitCellText(pdf: jsPDF, text: string, width: number): string[] {
+  const sanitized = sanitizePdfText(text) || '—'
+  const maxWidth = Math.max(8, width - 3)
+  const lines = pdf.splitTextToSize(sanitized, maxWidth)
+  return Array.isArray(lines) ? lines.map((line) => String(line)) : [String(lines)]
+}
+
+function prepareTableRow(pdf: jsPDF, columns: TableColumn[], values: string[]): PreparedTableRow {
+  const linesByColumn = values.map((value, index) => splitCellText(pdf, value, columns[index]?.width ?? 20))
+  const maxLines = Math.max(...linesByColumn.map((lines) => lines.length), 1)
+  return {
+    linesByColumn,
+    height: maxLines * 4 + 3,
+  }
+}
+
+function drawTableHeader(pdf: jsPDF, columns: TableColumn[], startX: number, y: number) {
+  let x = startX
+  pdf.setFont('helvetica', 'bold')
+  pdf.setFontSize(9)
+  columns.forEach((column) => {
+    const textX = column.align === 'right' ? x + column.width - 1.5 : x + 1.5
+    pdf.text(column.header, textX, y, column.align === 'right' ? { align: 'right' } : undefined)
+    x += column.width
+  })
+  pdf.line(startX, y + 2, startX + columns.reduce((sum, column) => sum + column.width, 0), y + 2)
+}
+
+function drawPreparedRow(pdf: jsPDF, columns: TableColumn[], row: PreparedTableRow, startX: number, y: number) {
+  let x = startX
+  pdf.setFont('helvetica', 'normal')
+  pdf.setFontSize(9)
+
+  columns.forEach((column, columnIndex) => {
+    const lines = row.linesByColumn[columnIndex] ?? ['—']
+    lines.forEach((line, lineIndex) => {
+      const textY = y + 1.5 + lineIndex * 4
+      const textX =
+        column.align === 'right'
+          ? x + column.width - 1.5
+          : column.align === 'center'
+            ? x + column.width / 2
+            : x + 1.5
+      const options =
+        column.align === 'right' ? { align: 'right' as const } : column.align === 'center' ? { align: 'center' as const } : undefined
+      pdf.text(line, textX, textY, options)
+    })
+    x += column.width
+  })
+
+  pdf.line(startX, y + row.height - 0.5, startX + columns.reduce((sum, column) => sum + column.width, 0), y + row.height - 0.5)
 }
 
 export async function exportQuoteToPDF(quoteData: QuotePdfData): Promise<void> {
@@ -151,88 +220,38 @@ export async function exportQuoteToPDF(quoteData: QuotePdfData): Promise<void> {
 
   yPosition += 18 // More space between header and body
 
-  // Products table
-  const colWidths = [35, 50, 20, 20, 30, 30]
-  const headers = ['SKU', 'Producto', 'Cant.', 'Desc.%', 'Precio Unit.', 'Total']
+  const tableWidth = pageWidth - margin * 2
+  const quoteColumns: TableColumn[] = [
+    { header: 'SKU', width: tableWidth * 0.16 },
+    { header: 'Producto', width: tableWidth * 0.3 },
+    { header: 'Cant.', width: tableWidth * 0.18 },
+    { header: 'Desc.%', width: tableWidth * 0.09, align: 'right' },
+    { header: 'Precio Unit.', width: tableWidth * 0.13, align: 'right' },
+    { header: 'Total', width: tableWidth * 0.14, align: 'right' },
+  ]
 
-  pdf.setFontSize(9)
-  pdf.setFont('helvetica', 'bold')
-  headers.forEach((header, i) => {
-    let x = margin
-    for (let j = 0; j < i; j++) x += colWidths[j]
-    pdf.text(header, x, yPosition)
-  })
+  drawTableHeader(pdf, quoteColumns, margin, yPosition)
   yPosition += 6
 
-  pdf.line(margin, yPosition, pageWidth - margin, yPosition)
-  yPosition += 4
-
-  pdf.setFont('helvetica', 'normal')
   quoteData.items.forEach((item: QuotePdfItem) => {
-    if (yPosition > pageHeight - margin - 20) {
-      pdf.addPage()
-      yPosition = margin
-    }
-
-    const skuText = sanitizePdfText(item.sku)
-    const skuLines = []
-    if (skuText.length > 10) {
-      // Split SKU into two lines if longer than 10 chars
-      const mid = Math.ceil(skuText.length / 2)
-      skuLines.push(skuText.substring(0, mid), skuText.substring(mid))
-    } else {
-      skuLines.push(skuText)
-    }
-    const nameText = sanitizePdfText(item.name)
-    const nameLines = []
-    if (nameText.length > 30) {
-      // Split into two lines
-      const words = nameText.split(' ')
-      let line1 = ''
-      let line2 = ''
-      for (const word of words) {
-        if ((line1 + ' ' + word).length <= 30) {
-          line1 += (line1 ? ' ' : '') + word
-        } else if ((line2 + ' ' + word).length <= 30) {
-          line2 += (line2 ? ' ' : '') + word
-        } else {
-          // If still too long, truncate
-          line2 = line2.substring(0, 27) + '...'
-          break
-        }
-      }
-      nameLines.push(line1, line2)
-    } else {
-      nameLines.push(nameText)
-    }
-
-    const rowData = [
-      '', // SKU handled separately
-      '', // Name handled separately
-      sanitizePdfText(item.quantityLabel ? String(item.quantityLabel) : String(item.quantity)),
+    const row = prepareTableRow(pdf, quoteColumns, [
+      item.sku,
+      item.name,
+      item.quantityLabel ? String(item.quantityLabel) : String(item.quantity),
       String(item.discountPct),
       `${money(item.unitPrice)} ${sanitizePdfText(quoteData.currency)}`,
       `${money(item.lineTotal)} ${sanitizePdfText(quoteData.currency)}`,
-    ]
+    ])
 
-    const maxLines = Math.max(skuLines.length, nameLines.length)
-
-    // Draw SKU lines
-    skuLines.forEach((line, idx) => {
-      pdf.text(line, margin, yPosition + idx * 4)
-    })
-    // Draw product name lines
-    nameLines.forEach((line, idx) => {
-      pdf.text(line, margin + colWidths[0], yPosition + idx * 4)
-    })
-    // Draw other columns at the first line position
-    for (let i = 2; i < rowData.length; i++) {
-      let x = margin
-      for (let j = 0; j < i; j++) x += colWidths[j]
-      pdf.text(rowData[i], x, yPosition)
+    if (yPosition + row.height > pageHeight - margin - 20) {
+      pdf.addPage()
+      yPosition = margin
+      drawTableHeader(pdf, quoteColumns, margin, yPosition)
+      yPosition += 6
     }
 
-    yPosition += maxLines * 5
+    drawPreparedRow(pdf, quoteColumns, row, margin, yPosition)
+    yPosition += row.height
   })
 
   yPosition += 5
@@ -367,78 +386,40 @@ export async function exportDeliveryNoteToPDF(deliveryData: DeliveryNotePdfData)
 
   yPosition += 18 // More space between header and body
 
-  // Products table
-  const colWidths = [50, 35, 35, 25, 35]
-  const headers = ['Producto', 'Lote', 'Vencimiento', 'Cantidad', 'Presentación']
+  const deliveryTableWidth = pageWidth - margin * 2
+  const deliveryColumns: TableColumn[] = [
+    { header: 'Producto', width: deliveryTableWidth * 0.28 },
+    { header: 'Lote', width: deliveryTableWidth * 0.16 },
+    { header: 'Vencimiento', width: deliveryTableWidth * 0.17 },
+    { header: 'Cantidad', width: deliveryTableWidth * 0.12, align: 'right' },
+    { header: 'Presentación', width: deliveryTableWidth * 0.27 },
+  ]
 
-  pdf.setFontSize(9)
-  pdf.setFont('helvetica', 'bold')
-  headers.forEach((header, i) => {
-    let x = margin
-    for (let j = 0; j < i; j++) x += colWidths[j]
-    pdf.text(header, x, yPosition)
-  })
+  drawTableHeader(pdf, deliveryColumns, margin, yPosition)
   yPosition += 6
 
-  pdf.line(margin, yPosition, pageWidth - margin, yPosition)
-  yPosition += 4
-
-  pdf.setFont('helvetica', 'normal')
   deliveryData.items.forEach((item) => {
-    if (yPosition > pageHeight - margin - 40) { // More space for signature table
+    const row = prepareTableRow(pdf, deliveryColumns, [
+      item.productName,
+      item.batchNumber,
+      item.expiresAt,
+      String(item.quantity),
+      formatPresentationLabel({
+        name: item.presentationName ?? null,
+        unitsPerPresentation: item.unitsPerPresentation ?? null,
+        baseUnitAbbreviation: item.baseUnitAbbreviation ?? 'u',
+      }),
+    ])
+
+    if (yPosition + row.height > pageHeight - margin - 40) {
       pdf.addPage()
       yPosition = margin
+      drawTableHeader(pdf, deliveryColumns, margin, yPosition)
+      yPosition += 6
     }
 
-    const productText = sanitizePdfText(item.productName)
-    const productLines = []
-    if (productText.length > 35) {
-      // Split into two lines
-      const words = productText.split(' ')
-      let line1 = ''
-      let line2 = ''
-      for (const word of words) {
-        if ((line1 + ' ' + word).length <= 35) {
-          line1 += (line1 ? ' ' : '') + word
-        } else if ((line2 + ' ' + word).length <= 35) {
-          line2 += (line2 ? ' ' : '') + word
-        } else {
-          // If still too long, truncate
-          line2 = line2.substring(0, 32) + '...'
-          break
-        }
-      }
-      productLines.push(line1, line2)
-    } else {
-      productLines.push(productText)
-    }
-
-    const rowData = [
-      '', // Product handled separately
-      sanitizePdfText(item.batchNumber),
-      sanitizePdfText(item.expiresAt),
-      String(item.quantity),
-      item.presentationName && item.presentationQuantity && item.unitsPerPresentation
-        ? item.unitsPerPresentation > 1
-          ? `${item.presentationName.toLowerCase()} de ${item.unitsPerPresentation}u`
-          : `Unidades`
-        : '—',
-    ]
-
-    const maxLines = productLines.length
-
-    // Draw product name lines
-    productLines.forEach((line, idx) => {
-      pdf.text(line, margin, yPosition + idx * 4)
-    })
-    // Draw other columns at the first line position
-    for (let i = 1; i < rowData.length; i++) {
-      let x = margin
-      for (let j = 0; j < i; j++) x += colWidths[j]
-      pdf.text(rowData[i], x, yPosition)
-    }
-
-    yPosition += maxLines * 5
+    drawPreparedRow(pdf, deliveryColumns, row, margin, yPosition)
+    yPosition += row.height
   })
 
   yPosition += 10
