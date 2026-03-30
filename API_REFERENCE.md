@@ -17,6 +17,7 @@ Cambios recientes en catálogo y documentos:
 - `GET /api/v1/catalog/search` devuelve `baseUnitAbbreviation` en cada producto listado.
 - Las respuestas de cotizaciones, órdenes y reservas que devuelven datos de producto incluyen `baseUnitAbbreviation` cuando corresponde.
 - La representación PDF en frontend consume este campo para renderizar etiquetas de presentación y cantidad sin asumir `u`.
+- Los PDFs de documentos y reportes mantienen el detalle sin separadores horizontales por fila, por una decisión visual del frontend de exportación.
 
 Base URL (dev): `http://127.0.0.1:6000`
 

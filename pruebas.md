@@ -14,11 +14,13 @@ Este documento está pensado para validar **end-to-end** (UI + API) y confirmar 
 - Crear o editar una cotización con al menos una línea larga en nombre de producto y una cantidad con presentación no unitaria.
 - Exportar la cotización a PDF.
 - Verificar que las columnas `Cant.`, `Desc.%`, `Precio Unit.` y `Total` no se montan entre sí y que los renglones crecen cuando el contenido requiere más altura.
+- Verificar además que no aparezcan líneas horizontales separando cada registro del detalle.
 
 ### Flujo R — Nota de entrega PDF con presentación correcta
 - Abrir una orden con reservas o entregas para un producto cuya unidad base visible no sea `u`.
 - Exportar la nota de entrega a PDF.
 - Verificar que la columna `Presentación` use la abreviatura configurada del producto y que el nombre del producto no invada columnas vecinas.
+- Verificar además que la tabla no dibuje separadores horizontales entre filas de productos.
 
 ## Versión 2.0 — pruebas específicas multi-empresa
 

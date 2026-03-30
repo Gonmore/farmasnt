@@ -127,8 +127,6 @@ function drawPreparedRow(pdf: jsPDF, columns: TableColumn[], row: PreparedTableR
     })
     x += column.width
   })
-
-  pdf.line(startX, y + row.height - 0.5, startX + columns.reduce((sum, column) => sum + column.width, 0), y + row.height - 0.5)
 }
 
 export async function exportQuoteToPDF(quoteData: QuotePdfData): Promise<void> {

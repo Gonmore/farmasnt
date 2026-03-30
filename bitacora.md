@@ -18,6 +18,7 @@ Este documento resume (a alto nivel) decisiones, hitos y cambios relevantes que 
 - `/catalog/products` permite editar la abreviatura de unidad base del producto.
 - Se centralizó el formateo de presentaciones y cantidades para reutilizarlo en catálogo, carrito, cotizaciones, entregas, stock y laboratorio.
 - La exportación PDF ahora distribuye mejor columnas y calcula la altura real de cada fila antes de dibujarla.
+- Se eliminó el trazado de líneas horizontales entre registros en los PDFs exportados, tanto en documentos manuales con jsPDF como en reportes capturados desde HTML.
 
 ### Operación
 - La migración quedó aplicada y validada en el entorno Docker local.

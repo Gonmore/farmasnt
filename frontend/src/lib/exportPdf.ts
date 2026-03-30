@@ -59,6 +59,13 @@ export async function pdfBlobFromElement(el: HTMLElement, opts?: PdfOptions): Pr
       vertical-align: top !important;
     }
 
+    [${exportAttr}="true"] tbody tr,
+    [${exportAttr}="true"] tbody td,
+    [${exportAttr}="true"] tbody th {
+      border-bottom-width: 0 !important;
+      border-bottom-color: transparent !important;
+    }
+
     [${exportAttr}="true"] th > div,
     [${exportAttr}="true"] td > div,
     [${exportAttr}="true"] th span,

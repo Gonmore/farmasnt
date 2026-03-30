@@ -14,6 +14,7 @@ Estado actual de la raíz del proyecto:
 - Cada producto ahora permite definir una abreviatura de unidad base configurable (`u`, `lt`, `ml`, `gr`, etc.) desde `/catalog/products`.
 - La abreviatura se propaga a catálogo, cotizaciones, entregas y otras vistas operativas donde se renderiza la presentación.
 - La exportación PDF de cotizaciones y notas de entrega ahora usa filas autoajustables para evitar solapamientos entre cantidad, descuento y totales.
+- Los PDFs exportados ya no dibujan separadores horizontales por fila en tablas de detalle, para mantener una salida más limpia y consistente entre documentos y reportes.
 - La migración Prisma `20260327120000_product_base_unit_abbreviation` ya fue aplicada y validada en Docker local.
 
 ### Novedades principales de la 2.0
