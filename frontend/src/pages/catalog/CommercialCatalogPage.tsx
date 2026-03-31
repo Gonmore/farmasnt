@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { apiFetch } from '../../lib/api'
 import { getProductDisplayName } from '../../lib/productName'
 import { formatPresentationLabel } from '../../lib/productPresentation'
+import { sortProductsByDisplayName } from '../../lib/productSorting'
 import { useAuth, useCart, useTenant } from '../../providers'
 import { MainLayout, PageContainer, Button, Loading, ErrorState, EmptyState, CatalogSearch, ProductPhoto, PaginationCursor, Select, Input } from '../../components'
 import { useNavigation } from '../../hooks'
@@ -215,7 +216,7 @@ export function CommercialCatalogPage() {
   }
 
   // Determine which products to display
-  const displayProducts = searchResults || productsQuery.data?.items.filter(p => p.isActive) || []
+  const displayProducts = sortProductsByDisplayName(searchResults || productsQuery.data?.items.filter(p => p.isActive) || [])
 
   return (
     <MainLayout navGroups={navGroups}>

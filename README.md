@@ -2,19 +2,20 @@
 
 MVP: **Almacén + Ventas B2B** · SaaS **multi-tenant** (row-level `tenantId`) con auditoría (GxP-friendly).
 
-## Versión 2.0
+## Versión 2.0.1
 
 Estado actual de la raíz del proyecto:
-- Versión operativa objetivo: `2.0`.
+- Versión operativa objetivo: `2.0.1`.
 - Incluye soporte **multi-marca / multi-empresa** con grupos de tenants, grants por usuario y cambio de empresa desde el menú de cuenta.
 - El flujo de cambio de empresa ya contempla ida y vuelta entre tenant base y tenants cruzados.
 - `deploy.sh` queda como mecanismo previsto para actualización manual de producción.
 
-### Ajustes recientes al catálogo y documentos comerciales
+### Ajustes recientes al catálogo, stock y documentos comerciales
 - Cada producto ahora permite definir una abreviatura de unidad base configurable (`u`, `lt`, `ml`, `gr`, etc.) desde `/catalog/products`.
 - La abreviatura se propaga a catálogo, cotizaciones, entregas y otras vistas operativas donde se renderiza la presentación.
 - La exportación PDF de cotizaciones y notas de entrega ahora usa filas autoajustables para evitar solapamientos entre cantidad, descuento y totales.
 - Los PDFs exportados ya no dibujan separadores horizontales por fila en tablas de detalle, para mantener una salida más limpia y consistente entre documentos y reportes.
+- Los listados de productos en `/catalog/products`, `/catalog/commercial`, `/catalog/seller` y `/stock/inventory` ahora se ordenan alfabéticamente por nombre visible para mejorar la navegación operativa.
 - La migración Prisma `20260327120000_product_base_unit_abbreviation` ya fue aplicada y validada en Docker local.
 
 ### Novedades principales de la 2.0
@@ -35,6 +36,7 @@ Estado actual de la raíz del proyecto:
 ### Estado para despliegue manual
 - Backend y frontend sin errores de editor en los archivos tocados.
 - La migración nueva ya quedó probada contra `postgres-local` usando `docker compose -f docker-compose.local.yml --profile tools run --rm backend-migrate`.
+- Esta entrega `2.0.1` no agrega migraciones nuevas ni cambios de infraestructura respecto a la versión ya validada.
 - El repositorio queda listo para que el deploy manual publique imágenes, ejecute migraciones remotas y reinicie servicios con `deploy.sh`.
 
 ## Funcionalidades clave (stock)

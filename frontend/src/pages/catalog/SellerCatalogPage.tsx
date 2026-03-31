@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { apiFetch } from '../../lib/api'
 import { getProductDisplayName } from '../../lib/productName'
 import { formatPresentationLabel, formatPresentationQuantityLabel } from '../../lib/productPresentation'
+import { sortProductsByDisplayName } from '../../lib/productSorting'
 import { useAuth, useCart, useTenant, useTheme } from '../../providers'
 import {
   MainLayout,
@@ -648,7 +649,7 @@ export function SellerCatalogPage() {
     },
   })
 
-  const activeProducts = searchResults || productsQuery.data?.items.filter((p) => p.isActive) || []
+  const activeProducts = sortProductsByDisplayName(searchResults || productsQuery.data?.items.filter((p) => p.isActive) || [])
 
   const stockByProduct = useMemo(() => {
     const map = new Map<string, StockSummary>()

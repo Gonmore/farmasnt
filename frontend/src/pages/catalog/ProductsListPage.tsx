@@ -3,6 +3,7 @@ import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { apiFetch } from '../../lib/api'
 import { getProductDisplayName } from '../../lib/productName'
+import { sortProductsByDisplayName } from '../../lib/productSorting'
 import { useAuth } from '../../providers/AuthProvider'
 import { MainLayout, PageContainer, Button, Table, Loading, ErrorState, EmptyState, PaginationCursor, Modal, CatalogSearch } from '../../components'
 import { useNavigation } from '../../hooks'
@@ -264,23 +265,23 @@ export function ProductsListPage() {
     if (!searchResults) return null
     if (!searchEnrichmentQuery.data) {
       // Return search results with default enrichment values
-      return searchResults.map(product => ({
+      return sortProductsByDisplayName(searchResults.map(product => ({
         ...product,
         batches: [],
         presentations: []
-      }))
+      })))
     }
 
     const enrichmentMap = new Map(searchEnrichmentQuery.data.map(e => [e.id, e]))
 
-    return searchResults.map(product => {
+    return sortProductsByDisplayName(searchResults.map(product => {
       const enrichment = enrichmentMap.get(product.id)
       return enrichment ? { ...product, ...enrichment } : {
         ...product,
         batches: [],
         presentations: []
       }
-    })
+    }))
   }, [searchResults, searchEnrichmentQuery.data])
 
   // Combine the data
@@ -290,11 +291,11 @@ export function ProductsListPage() {
       // Return products with default enrichment values
       return {
         ...productsQuery.data,
-        items: productsQuery.data.items.map(product => ({
+        items: sortProductsByDisplayName(productsQuery.data.items.map(product => ({
           ...product,
           batches: [],
           presentations: []
-        }))
+        })))
       }
     }
 
@@ -302,7 +303,7 @@ export function ProductsListPage() {
 
     return {
       ...productsQuery.data,
-      items: productsQuery.data.items.map(product => {
+      items: sortProductsByDisplayName(productsQuery.data.items.map(product => {
         const enrichment = enrichmentMap.get(product.id)
         return enrichment ? { ...product, ...enrichment } : {
           ...product,
@@ -311,7 +312,7 @@ export function ProductsListPage() {
           batches: [],
           presentations: []
         }
-      })
+      }))
     }
   }, [productsQuery.data, enrichmentQuery.data])
 

@@ -2,6 +2,26 @@
 
 Este documento está pensado para validar **end-to-end** (UI + API) y confirmar resultados **en base de datos**, porque algunos cambios no se ven mucho en frontend.
 
+## Versión 2.0.1 — pruebas específicas de orden alfabético
+
+### Flujo S — Catálogo de productos ordenado por nombre
+- Ir a `Catálogo > Productos`.
+- Verificar que la tabla principal esté ordenada alfabéticamente por nombre visible del producto.
+- Ejecutar una búsqueda desde el buscador de catálogo.
+- Verificar que los resultados filtrados mantengan el orden alfabético por nombre.
+
+### Flujo T — Catálogo comercial y de vendedor ordenados por nombre
+- Ir a `Catálogo > Comercial`.
+- Verificar que las tarjetas de productos se muestren en orden alfabético por nombre.
+- Ir a `Catálogo > Seller`.
+- Verificar el mismo criterio sobre las tarjetas de productos y sobre los resultados de búsqueda.
+
+### Flujo U — Inventario ordenado por nombre y por sucursal
+- Ir a `Stock > Inventario`.
+- En la vista `Por Producto`, verificar que el listado esté ordenado alfabéticamente por nombre de producto.
+- Cambiar a la vista `Por Sucursal`.
+- Verificar que las sucursales estén ordenadas por nombre y que, dentro de cada sucursal expandida, los productos también aparezcan en orden alfabético por nombre.
+
 ## Versión 2.0 — pruebas específicas de unidad base configurable y PDFs
 
 ### Flujo P — Producto con unidad base visible personalizada

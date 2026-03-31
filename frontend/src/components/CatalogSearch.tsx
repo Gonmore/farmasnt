@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import React, { useState, useEffect } from 'react'
 import { apiFetch } from '../lib/api'
+import { sortProductsByDisplayName } from '../lib/productSorting'
 import { useAuth } from '../providers/AuthProvider'
 import { Input, Button } from './common'
 import { MagnifyingGlassIcon, XMarkIcon } from '@heroicons/react/24/outline'
@@ -61,7 +62,7 @@ export function CatalogSearch({ onSearchResults, className = '' }: CatalogSearch
   // Notificar resultados de búsqueda a la página padre
   useEffect(() => {
     if (searchQuery.data) {
-      onSearchResults?.(searchQuery.data.items)
+      onSearchResults?.(sortProductsByDisplayName(searchQuery.data.items))
     } else if (!searchTerm || searchQuery.error) {
       onSearchResults?.(null)
     }

@@ -2,6 +2,22 @@
 
 Este documento resume (a alto nivel) decisiones, hitos y cambios relevantes que se fueron incorporando al repositorio para llegar al estado actual del MVP.
 
+## **[31 Mar 2026] Versión 2.0.1 — orden alfabético en catálogo e inventario**
+
+### Objetivo alcanzado
+- Se homogenizó el orden visual de productos en pantallas operativas clave para que el usuario vea los listados en orden alfabético por nombre.
+- La entrega se considera versión `2.0.1` por tratarse de un ajuste funcional y de usabilidad sin cambios de esquema.
+
+### Frontend
+- `/catalog/products` ordena alfabéticamente tanto el listado normal como los resultados de búsqueda.
+- `/catalog/commercial` y `/catalog/seller` ordenan alfabéticamente los productos visibles antes de renderizarlos.
+- `/stock/inventory` ordena alfabéticamente la vista por producto y también los productos dentro de cada sucursal en la vista por sucursal.
+- Se centralizó el criterio en un helper compartido de ordenamiento para evitar divergencias entre pantallas.
+
+### Operación
+- No se agregaron migraciones Prisma ni cambios de despliegue.
+- El estado del repo queda listo para deploy manual usando `deploy.sh`.
+
 ## **[27 Mar 2026] Catálogo y ventas: unidad base configurable + PDFs autoajustables**
 
 ### Objetivo alcanzado

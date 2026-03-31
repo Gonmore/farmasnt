@@ -4,6 +4,7 @@ import { apiFetch } from '../../lib/api'
 import { formatDateOnlyUtc } from '../../lib/date'
 import { exportToXlsx } from '../../lib/exportXlsx'
 import { getProductLabel } from '../../lib/productName'
+import { sortProductsByDisplayName } from '../../lib/productSorting'
 import { useAuth } from '../../providers/AuthProvider'
 import {
   MainLayout,
@@ -820,7 +821,7 @@ export function InventoryPage() {
       })
     }
 
-    return Array.from(map.values()).sort((a, b) => a.sku.localeCompare(b.sku))
+    return sortProductsByDisplayName(Array.from(map.values()))
   }, [balancesQuery.data])
 
   const warehouseGroups = useMemo<WarehouseGroup[]>(() => {
@@ -894,7 +895,16 @@ export function InventoryPage() {
       })
     }
 
-    return Array.from(map.values()).sort((a, b) => a.warehouseCode.localeCompare(b.warehouseCode))
+    for (const warehouse of map.values()) {
+      warehouse.products = sortProductsByDisplayName(warehouse.products)
+    }
+
+    return Array.from(map.values()).sort((a, b) =>
+      a.warehouseName.localeCompare(b.warehouseName, 'es', {
+        sensitivity: 'base',
+        numeric: true,
+      }),
+    )
   }, [balancesQuery.data])
 
   const activeWarehouses = useMemo(
