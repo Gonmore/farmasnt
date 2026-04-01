@@ -2,6 +2,30 @@
 
 Este documento resume (a alto nivel) decisiones, hitos y cambios relevantes que se fueron incorporando al repositorio para llegar al estado actual del MVP.
 
+## **[01 Abr 2026] Versión 2.1.0 — branding numérico + existencias + salida de muestra**
+
+### Objetivo alcanzado
+- Se consolidó una entrega operativa `2.1.0` enfocada en consistencia numérica, trazabilidad de stock y mejora del flujo manual de movimientos.
+- La release incorpora cambios funcionales visibles para branding, reportes y salidas de stock sin alterar el mecanismo de despliegue manual basado en `deploy.sh`.
+
+### Backend
+- `Tenant` ahora persiste `thousandSeparator` y se incluye la migración `20260331110000_tenant_thousand_separator`.
+- Los endpoints de branding/admin/tenant exponen y toleran correctamente el nuevo campo incluso frente a entornos que aún no migraron.
+- `POST /api/v1/stock/movements` valida `MANUAL_SALE`, `MANUAL_DISCARD` y `PRODUCT_SAMPLE` con sus reglas de negocio.
+- `GET /api/v1/products/:id/batches` expone `warehouseCity` por ubicación para habilitar restricciones por ciudad en frontend.
+- Se agregó `GET /api/v1/reports/stock/existencias` para consolidar stock actual y movimientos del período.
+
+### Frontend
+- Branding por tenant permite elegir separador de miles y el formato se reutiliza en reportes, ventas, catálogo y documentos PDF.
+- `Reportes > Stock` agrega la pestaña `Existencias` con KPIs, tablas por sucursal y exportación PDF/XLSX.
+- `/stock/movements` agrega `Salida producto de muestra` como flujo independiente, con selección de cliente final y restricción a clientes de Cochabamba cuando el lote pertenece a esa ciudad.
+- Se redujo el retardo al seleccionar lote memoizando el armado de filas de stock y evitando consultas de clientes prematuras.
+
+### Operación
+- Frontend compilado correctamente con `npm --prefix frontend run build`.
+- Backend compilado correctamente con `npm --prefix backend run build`.
+- La entrega queda lista para deploy manual; al ejecutarse `deploy.sh` debe aplicar la nueva migración antes de reiniciar servicios.
+
 ## **[31 Mar 2026] Versión 2.0.1 — orden alfabético en catálogo e inventario**
 
 ### Objetivo alcanzado

@@ -1172,7 +1172,7 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
                 select: {
                   id: true,
                   code: true,
-                  warehouse: { select: { id: true, code: true, name: true } },
+                  warehouse: { select: { id: true, code: true, name: true, city: true } },
                 },
               },
             },
@@ -1204,6 +1204,7 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
                 warehouseId: x.location.warehouse.id,
                 warehouseCode: x.location.warehouse.code,
                 warehouseName: x.location.warehouse.name,
+              warehouseCity: x.location.warehouse.city,
                 locationId: x.location.id,
                 locationCode: x.location.code,
                 quantity: x.quantity,

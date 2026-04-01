@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useAuth } from './AuthProvider'
 import { apiFetch } from '../lib/api'
+import { DEFAULT_THOUSAND_SEPARATOR, normalizeThousandSeparator } from '../lib/numberFormat'
 
 // Helper para ajustar brillo de colores hex
 function adjustBrightness(hex: string, percent: number): string {
@@ -21,6 +22,7 @@ export type TenantBranding = {
   brandTertiary: string | null
   defaultTheme: 'LIGHT' | 'DARK'
   currency: string
+  thousandSeparator: '.' | ',' | ' '
   country?: string | null
 }
 
@@ -109,9 +111,10 @@ export function TenantProvider(props: { children: React.ReactNode }) {
 
   useEffect(() => {
     const data = effectiveBranding
-    if (!data) return
-
     const root = document.documentElement
+    root.dataset.pfThousandsSeparator = normalizeThousandSeparator(data?.thousandSeparator ?? DEFAULT_THOUSAND_SEPARATOR)
+
+    if (!data) return
     
     if (data.brandPrimary) {
       root.style.setProperty('--pf-primary', data.brandPrimary)
@@ -150,6 +153,7 @@ export function TenantProvider(props: { children: React.ReactNode }) {
         brandTertiary: null,
         defaultTheme: 'LIGHT' as const,
         currency: 'BOB',
+        thousandSeparator: DEFAULT_THOUSAND_SEPARATOR,
         country: 'BOLIVIA'
       } : publicBranding
 

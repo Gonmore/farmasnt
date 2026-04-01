@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { apiFetch } from '../../lib/api'
+import { formatMoney } from '../../lib/numberFormat'
 import { getProductDisplayName } from '../../lib/productName'
 import { formatPresentationLabel } from '../../lib/productPresentation'
 import { sortProductsByDisplayName } from '../../lib/productSorting'
@@ -274,7 +275,7 @@ export function CommercialCatalogPage() {
                       </div>
 
                       <div className="text-xl font-bold text-transparent bg-gradient-to-r from-green-600 to-emerald-600 bg-clip-text drop-shadow-sm">
-                        {effectivePresentationPrice !== null ? `${effectivePresentationPrice.toFixed(2)} ${currency}` : 'Precio no disponible'}
+                        {effectivePresentationPrice !== null ? `${formatMoney(effectivePresentationPrice)} ${currency}` : 'Precio no disponible'}
                       </div>
 
                       <div className="space-y-2">
@@ -412,7 +413,7 @@ export function CommercialCatalogPage() {
                     {/* Precio destacado */}
                     <div className="bg-gradient-to-r from-green-500 to-emerald-600 rounded-xl p-6 text-center shadow-lg">
                       <div className="text-4xl font-bold text-white drop-shadow-lg">
-                        {parseFloat(productDetailQuery.data.price || '0').toFixed(2)} {currency}
+                        {formatMoney(parseFloat(productDetailQuery.data.price || '0'))} {currency}
                       </div>
                       <div className="text-green-100 mt-1 text-sm">Precio final</div>
                     </div>

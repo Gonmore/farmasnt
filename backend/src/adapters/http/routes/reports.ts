@@ -94,6 +94,10 @@ const stockInputsByProductQuerySchema = dateRangeQuerySchema.extend({
   take: z.coerce.number().int().min(1).max(200).default(25),
 })
 
+const stockExistenciasQuerySchema = dateRangeQuerySchema.extend({
+  take: z.coerce.number().int().min(1).max(5000).default(500),
+})
+
 const stockTransfersBetweenWarehousesQuerySchema = dateRangeQuerySchema.extend({
   take: z.coerce.number().int().min(1).max(200).default(50),
 })
@@ -1337,6 +1341,274 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
       }))
 
       return reply.send({ items })
+    },
+  )
+
+  app.get(
+    '/api/v1/reports/stock/existencias',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requireStockReportOrBranchAccess()],
+    },
+    async (request, reply) => {
+      const parsed = stockExistenciasQuerySchema.safeParse(request.query)
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
+
+      const tenantId = request.auth!.tenantId
+      const branchCity = branchCityOf(request)
+      if (branchCity === '__MISSING__') return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+
+      const { from, to, take } = parsed.data
+
+      let allowedWarehouseIds: string[] | undefined
+      if (branchCity && !request.auth?.isTenantAdmin) {
+        const branchWarehouses = await db.warehouse.findMany({
+          where: { tenantId, city: { equals: branchCity, mode: 'insensitive' as const } },
+          select: { id: true },
+        })
+        allowedWarehouseIds = branchWarehouses.map((warehouse) => warehouse.id)
+      }
+
+      const allowedLocations = allowedWarehouseIds
+        ? await db.location.findMany({
+            where: { tenantId, warehouseId: { in: allowedWarehouseIds } },
+            select: { id: true },
+          })
+        : []
+      const allowedLocationIds = allowedWarehouseIds ? allowedLocations.map((location) => location.id) : undefined
+
+      const createdAtFilter: { gte?: Date; lt?: Date } = {}
+      if (from) createdAtFilter.gte = from
+      if (to) createdAtFilter.lt = to
+
+      const balances = await db.inventoryBalance.findMany({
+        where: {
+          tenantId,
+          ...(allowedWarehouseIds
+            ? {
+                location: {
+                  warehouseId: { in: allowedWarehouseIds },
+                },
+              }
+            : {}),
+        },
+        select: {
+          productId: true,
+          quantity: true,
+          reservedQuantity: true,
+          product: { select: { sku: true, name: true } },
+          location: {
+            select: {
+              warehouse: { select: { id: true, code: true, name: true } },
+            },
+          },
+        },
+      })
+
+      const movements = await db.stockMovement.findMany({
+        where: {
+          tenantId,
+          ...(Object.keys(createdAtFilter).length > 0 ? { createdAt: createdAtFilter } : {}),
+          ...(allowedLocationIds
+            ? {
+                OR: [
+                  { fromLocationId: { in: allowedLocationIds } },
+                  { toLocationId: { in: allowedLocationIds } },
+                ],
+              }
+            : {}),
+        },
+        select: {
+          productId: true,
+          type: true,
+          quantity: true,
+          referenceType: true,
+          fromLocationId: true,
+          toLocationId: true,
+          product: { select: { sku: true, name: true } },
+        },
+      })
+
+      const movementLocationIds = Array.from(
+        new Set(
+          movements.flatMap((movement) => [movement.fromLocationId, movement.toLocationId].filter((id): id is string => !!id)),
+        ),
+      )
+      const movementLocations = movementLocationIds.length
+        ? await db.location.findMany({
+            where: { tenantId, id: { in: movementLocationIds } },
+            select: { id: true, warehouse: { select: { id: true, code: true, name: true } } },
+          })
+        : []
+      const movementLocationMap = new Map(movementLocations.map((location) => [location.id, location]))
+
+      type ExistenciaMetrics = {
+        productId: string
+        sku: string
+        name: string
+        currentPhysical: number
+        currentReserved: number
+        currentAvailable: number
+        periodInputs: number
+        periodOutputs: number
+        salesOutputs: number
+        discardOutputs: number
+        sampleOutputs: number
+        transferIn: number
+        transferOut: number
+        adjustmentIn: number
+        adjustmentOut: number
+      }
+
+      const createMetrics = (productId: string, sku: string, name: string): ExistenciaMetrics => ({
+        productId,
+        sku,
+        name,
+        currentPhysical: 0,
+        currentReserved: 0,
+        currentAvailable: 0,
+        periodInputs: 0,
+        periodOutputs: 0,
+        salesOutputs: 0,
+        discardOutputs: 0,
+        sampleOutputs: 0,
+        transferIn: 0,
+        transferOut: 0,
+        adjustmentIn: 0,
+        adjustmentOut: 0,
+      })
+
+      const productMap = new Map<string, ExistenciaMetrics>()
+      const warehouseMap = new Map<string, { warehouseId: string; warehouseCode: string | null; warehouseName: string | null; items: Map<string, ExistenciaMetrics> }>()
+
+      const ensureProductMetrics = (productId: string, sku: string, name: string) => {
+        const existing = productMap.get(productId)
+        if (existing) return existing
+        const created = createMetrics(productId, sku, name)
+        productMap.set(productId, created)
+        return created
+      }
+
+      const ensureWarehouseMetrics = (warehouse: { id: string; code: string | null; name: string | null } | null | undefined, productId: string, sku: string, name: string) => {
+        if (!warehouse?.id) return null
+        const warehouseEntry = warehouseMap.get(warehouse.id) ?? {
+          warehouseId: warehouse.id,
+          warehouseCode: warehouse.code,
+          warehouseName: warehouse.name,
+          items: new Map<string, ExistenciaMetrics>(),
+        }
+        const metrics = warehouseEntry.items.get(productId) ?? createMetrics(productId, sku, name)
+        warehouseEntry.items.set(productId, metrics)
+        warehouseMap.set(warehouse.id, warehouseEntry)
+        return metrics
+      }
+
+      for (const balance of balances) {
+        const sku = balance.product.sku
+        const name = balance.product.name
+        const physical = Number(balance.quantity ?? '0')
+        const reserved = Number(balance.reservedQuantity ?? '0')
+        const available = Math.max(0, physical - reserved)
+
+        const consolidated = ensureProductMetrics(balance.productId, sku, name)
+        consolidated.currentPhysical += physical
+        consolidated.currentReserved += reserved
+        consolidated.currentAvailable += available
+
+        const warehouseMetrics = ensureWarehouseMetrics(balance.location?.warehouse, balance.productId, sku, name)
+        if (warehouseMetrics) {
+          warehouseMetrics.currentPhysical += physical
+          warehouseMetrics.currentReserved += reserved
+          warehouseMetrics.currentAvailable += available
+        }
+      }
+
+      for (const movement of movements) {
+        const qty = Number(movement.quantity ?? '0')
+        if (!Number.isFinite(qty) || qty <= 0) continue
+
+        const sku = movement.product.sku
+        const name = movement.product.name
+        const referenceType = String(movement.referenceType ?? '').trim().toUpperCase()
+        const fromWarehouse = movement.fromLocationId ? movementLocationMap.get(movement.fromLocationId)?.warehouse ?? null : null
+        const toWarehouse = movement.toLocationId ? movementLocationMap.get(movement.toLocationId)?.warehouse ?? null : null
+        const consolidated = ensureProductMetrics(movement.productId, sku, name)
+
+        if (movement.type === 'IN') {
+          consolidated.periodInputs += qty
+          const warehouseMetrics = ensureWarehouseMetrics(toWarehouse, movement.productId, sku, name)
+          if (warehouseMetrics) warehouseMetrics.periodInputs += qty
+          continue
+        }
+
+        if (movement.type === 'OUT') {
+          consolidated.periodOutputs += qty
+          if (referenceType === 'MANUAL_SALE' || referenceType === 'SALES_ORDER') consolidated.salesOutputs += qty
+          if (referenceType === 'MANUAL_DISCARD') consolidated.discardOutputs += qty
+          if (referenceType === 'PRODUCT_SAMPLE') consolidated.sampleOutputs += qty
+
+          const warehouseMetrics = ensureWarehouseMetrics(fromWarehouse, movement.productId, sku, name)
+          if (warehouseMetrics) {
+            warehouseMetrics.periodOutputs += qty
+            if (referenceType === 'MANUAL_SALE' || referenceType === 'SALES_ORDER') warehouseMetrics.salesOutputs += qty
+            if (referenceType === 'MANUAL_DISCARD') warehouseMetrics.discardOutputs += qty
+            if (referenceType === 'PRODUCT_SAMPLE') warehouseMetrics.sampleOutputs += qty
+          }
+          continue
+        }
+
+        if (movement.type === 'TRANSFER') {
+          consolidated.transferOut += qty
+          consolidated.transferIn += qty
+
+          const fromWarehouseMetrics = ensureWarehouseMetrics(fromWarehouse, movement.productId, sku, name)
+          if (fromWarehouseMetrics) fromWarehouseMetrics.transferOut += qty
+          const toWarehouseMetrics = ensureWarehouseMetrics(toWarehouse, movement.productId, sku, name)
+          if (toWarehouseMetrics) toWarehouseMetrics.transferIn += qty
+          continue
+        }
+
+        if (movement.type === 'ADJUSTMENT') {
+          if (toWarehouse) {
+            consolidated.periodInputs += qty
+            consolidated.adjustmentIn += qty
+            const warehouseMetrics = ensureWarehouseMetrics(toWarehouse, movement.productId, sku, name)
+            if (warehouseMetrics) {
+              warehouseMetrics.periodInputs += qty
+              warehouseMetrics.adjustmentIn += qty
+            }
+          } else {
+            consolidated.periodOutputs += qty
+            consolidated.adjustmentOut += qty
+            const warehouseMetrics = ensureWarehouseMetrics(fromWarehouse, movement.productId, sku, name)
+            if (warehouseMetrics) {
+              warehouseMetrics.periodOutputs += qty
+              warehouseMetrics.adjustmentOut += qty
+            }
+          }
+        }
+      }
+
+      const items = Array.from(productMap.values())
+        .filter((item) => item.currentPhysical > 0 || item.currentReserved > 0 || item.periodInputs > 0 || item.periodOutputs > 0 || item.transferIn > 0 || item.transferOut > 0)
+        .sort((a, b) => a.name.localeCompare(b.name, 'es'))
+        .slice(0, take)
+
+      const includedIds = new Set(items.map((item) => item.productId))
+
+      const warehouses = Array.from(warehouseMap.values())
+        .map((warehouse) => ({
+          warehouseId: warehouse.warehouseId,
+          warehouseCode: warehouse.warehouseCode,
+          warehouseName: warehouse.warehouseName,
+          items: Array.from(warehouse.items.values())
+            .filter((item) => includedIds.has(item.productId))
+            .filter((item) => item.currentPhysical > 0 || item.currentReserved > 0 || item.periodInputs > 0 || item.periodOutputs > 0 || item.transferIn > 0 || item.transferOut > 0)
+            .sort((a, b) => a.name.localeCompare(b.name, 'es')),
+        }))
+        .filter((warehouse) => warehouse.items.length > 0)
+        .sort((a, b) => `${a.warehouseCode ?? ''} ${a.warehouseName ?? ''}`.trim().localeCompare(`${b.warehouseCode ?? ''} ${b.warehouseName ?? ''}`.trim(), 'es'))
+
+      return reply.send({ items, warehouses })
     },
   )
 

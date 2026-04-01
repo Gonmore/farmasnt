@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { EyeIcon, PencilSquareIcon, TrashIcon } from '@heroicons/react/24/outline'
 import { apiFetch } from '../../lib/api'
 import { formatDateOnlyUtc } from '../../lib/date'
@@ -72,6 +72,7 @@ type WarehouseListItem = {
   id: string
   code: string
   name: string
+  city?: string | null
   isActive: boolean
 }
 
@@ -91,6 +92,7 @@ type ProductBatchListItem = {
     warehouseId: string
     warehouseCode: string
     warehouseName: string
+    warehouseCity?: string | null
     locationId: string
     locationCode: string
     quantity: string
@@ -110,6 +112,7 @@ type ProductPresentation = {
 type ClientListItem = {
   id: string
   name: string
+  city?: string | null
   isActive: boolean
 }
 
@@ -130,8 +133,11 @@ async function listWarehouseLocations(token: string, warehouseId: string): Promi
   return apiFetch(`/api/v1/warehouses/${warehouseId}/locations?take=100`, { token })
 }
 
-async function listClients(token: string): Promise<{ items: ClientListItem[] }> {
-  return apiFetch(`/api/v1/customers?take=50`, { token })
+async function listClients(token: string, cities?: string[]): Promise<{ items: ClientListItem[] }> {
+  const params = new URLSearchParams({ take: '50' })
+  const normalizedCities = (cities ?? []).map((city) => city.trim()).filter(Boolean)
+  if (normalizedCities.length > 0) params.set('cities', normalizedCities.join(','))
+  return apiFetch(`/api/v1/customers?${params}`, { token })
 }
 
 async function fetchProductPresentations(token: string, productId: string): Promise<{ items: ProductPresentation[] }> {
@@ -356,7 +362,7 @@ export function MovementsPage() {
   const warehousesQuery = useQuery({
     queryKey: ['warehouses', 'forMovements'],
     queryFn: () => listWarehouses(auth.accessToken!),
-    enabled: !!auth.accessToken && (type === 'TRANSFER' || type === 'IN'),
+    enabled: !!auth.accessToken && (type === 'TRANSFER' || type === 'IN' || type === 'OUT_SAMPLE'),
   })
 
   const locationsQuery = useQuery({
@@ -365,10 +371,28 @@ export function MovementsPage() {
     enabled: !!auth.accessToken && !!toWarehouseId,
   })
 
+  const selectedStockCityForClients = useMemo(() => {
+    if (type !== 'OUT_SAMPLE' || !selectedStockKey) return ''
+
+    for (const batch of productBatchesQuery.data?.items ?? []) {
+      for (const location of batch.locations ?? []) {
+        if (`${batch.id}::${location.locationId}` === selectedStockKey) {
+          return String(location.warehouseCity ?? '').trim().toUpperCase()
+        }
+      }
+    }
+
+    return ''
+  }, [productBatchesQuery.data?.items, selectedStockKey, type])
+
   const clientsQuery = useQuery({
-    queryKey: ['clients', 'forMovements'],
-    queryFn: () => listClients(auth.accessToken!),
-    enabled: !!auth.accessToken && (type === 'OUT' && outReasonType === 'SALE'),
+    queryKey: ['clients', 'forMovements', type, outReasonType, selectedStockCityForClients || 'ALL'],
+    queryFn: () =>
+      listClients(
+        auth.accessToken!,
+        type === 'OUT_SAMPLE' && selectedStockCityForClients === 'COCHABAMBA' ? ['COCHABAMBA'] : undefined,
+      ),
+    enabled: !!auth.accessToken && !!selectedStockKey && ((type === 'OUT' && outReasonType === 'SALE') || type === 'OUT_SAMPLE'),
   })
 
   const movementRequestsQuery = useQuery({
@@ -479,13 +503,29 @@ export function MovementsPage() {
       const available = Number(selectedRow.availableQuantity || '0')
       if (qtyNum > available + 1e-9) throw new Error(`No podés sacar más de lo disponible (${available}).`)
 
-      if (!outReasonType) throw new Error('Seleccioná el tipo de salida')
-      if (outReasonType === 'SALE' && !clientId) throw new Error('Seleccioná un cliente')
-      if (outReasonType === 'DISCARD' && !discardReason.trim()) throw new Error('Ingresá el motivo de la baja')
+      const isSampleOut = type === 'OUT_SAMPLE'
+      if (!isSampleOut && !outReasonType) throw new Error('Seleccioná el tipo de salida')
+      if ((isSampleOut || outReasonType === 'SALE') && !clientId) throw new Error('Seleccioná un cliente')
+      if (!isSampleOut && outReasonType === 'DISCARD' && !discardReason.trim()) {
+        throw new Error('Ingresá el motivo de la baja')
+      }
 
-      const baseNote = outReasonType === 'DISCARD' ? `Baja: ${discardReason.trim()}` : undefined
-      const referenceType = outReasonType === 'SALE' ? 'MANUAL_SALE' : 'MANUAL_DISCARD'
-      const referenceId = outReasonType === 'SALE' ? clientId : undefined
+      if (isSampleOut && selectedStockCity === 'COCHABAMBA') {
+        const selectedClient = (clientsQuery.data?.items ?? []).find((client) => client.id === clientId)
+        const clientCity = String(selectedClient?.city ?? '').trim().toUpperCase()
+        if (clientCity !== 'COCHABAMBA') {
+          throw new Error('Para lotes de Cochabamba solo podés elegir clientes de Cochabamba')
+        }
+      }
+
+      const selectedClient = (clientsQuery.data?.items ?? []).find((client) => client.id === clientId)
+      const baseNote = isSampleOut
+        ? `Salida producto muestra${selectedClient?.name ? ` para ${selectedClient.name}` : ''}`
+        : outReasonType === 'DISCARD'
+          ? `Baja: ${discardReason.trim()}`
+          : undefined
+      const referenceType = isSampleOut ? 'PRODUCT_SAMPLE' : outReasonType === 'SALE' ? 'MANUAL_SALE' : 'MANUAL_DISCARD'
+      const referenceId = (isSampleOut || outReasonType === 'SALE') ? clientId : undefined
 
       const payload: any = {
         type: 'OUT',
@@ -670,7 +710,7 @@ export function MovementsPage() {
 
 
   // Obtener existencias por lote/ubicación para mostrar en tabla
-  const stockRows = (() => {
+  const stockRows = useMemo(() => {
     const data = productBatchesQuery.data
     if (!data?.hasStockRead) return []
 
@@ -690,6 +730,7 @@ export function MovementsPage() {
           reservedQuantity: String(Math.max(0, reserved)),
           availableQuantity: String(Math.max(0, available)),
           warehouse: `${loc.warehouseCode} - ${loc.warehouseName}`,
+          warehouseCity: loc.warehouseCity ?? null,
           location: loc.locationCode,
           batchId: batch.id,
           locationId: loc.locationId,
@@ -697,9 +738,14 @@ export function MovementsPage() {
       }
     }
     return rows.filter((r) => Number(r.totalQuantity || '0') > 0)
-  })()
+  }, [productBatchesQuery.data])
 
-  const selectableStockRows = stockRows.filter((r) => Number(r.availableQuantity || '0') > 0)
+  const selectableStockRows = useMemo(
+    () => stockRows.filter((r) => Number(r.availableQuantity || '0') > 0),
+    [stockRows],
+  )
+  const selectedStockRow = useMemo(() => stockRows.find((r) => r.id === selectedStockKey) ?? null, [stockRows, selectedStockKey])
+  const selectedStockCity = String(selectedStockRow?.warehouseCity ?? '').trim().toUpperCase()
 
   const activePresentations = (presentationsQuery.data?.items ?? []).filter((p) => p.isActive !== false)
   const currentProduct = (productsQuery.data?.items ?? []).find((p) => p.id === productId) ?? null
@@ -1327,6 +1373,7 @@ export function MovementsPage() {
               { value: 'TRANSFER', label: '🔄 Transferencia (cambiar ubicación de existencias)' },
               { value: 'REPACK', label: '📦 Reempaque (armar/desarmar presentación)' },
               { value: 'OUT', label: '📤 Salida (venta o baja de existencias)' },
+              { value: 'OUT_SAMPLE', label: '🧪 Salida producto de muestra' },
               { value: 'ADJUSTMENT', label: '⚖️ Ajuste (modificar lote)' },
             ]}
           />
@@ -1828,9 +1875,9 @@ export function MovementsPage() {
             )}
 
             {/* SALIDA */}
-            {type === 'OUT' && (
+            {(type === 'OUT' || type === 'OUT_SAMPLE') && (
               <div className="space-y-4 border-t border-slate-200 pt-6 dark:border-slate-700">
-                <h3 className="font-semibold text-slate-900 dark:text-slate-100">Registrar Salida de Stock</h3>
+                <h3 className="font-semibold text-slate-900 dark:text-slate-100">{type === 'OUT_SAMPLE' ? 'Registrar Salida de Producto de Muestra' : 'Registrar Salida de Stock'}</h3>
 
                 {/* Selector de producto */}
                 <Select
@@ -1942,6 +1989,7 @@ export function MovementsPage() {
                       />
                     )}
 
+                    {type === 'OUT' && (
                     <div>
                       <label className="mb-2 block text-sm font-medium text-slate-900 dark:text-slate-100">
                         Tipo de Salida
@@ -1973,23 +2021,30 @@ export function MovementsPage() {
                         </label>
                       </div>
                     </div>
+                    )}
 
-                    {outReasonType === 'SALE' && (
+                    {(type === 'OUT_SAMPLE' || outReasonType === 'SALE') && (
                       <Select
-                        label="Cliente"
+                        label={type === 'OUT_SAMPLE' ? 'Cliente final' : 'Cliente'}
                         value={clientId}
                         onChange={(e) => setClientId(e.target.value)}
                         options={[
-                          { value: '', label: 'Selecciona cliente' },
+                          { value: '', label: type === 'OUT_SAMPLE' ? 'Selecciona cliente final' : 'Selecciona cliente' },
                           ...(clientsQuery.data?.items ?? [])
                             .filter((c) => c.isActive)
-                            .map((c) => ({ value: c.id, label: c.name })),
+                            .map((c) => ({ value: c.id, label: c.city ? `${c.name} (${c.city})` : c.name })),
                         ]}
                         disabled={clientsQuery.isLoading}
                       />
                     )}
 
-                    {outReasonType === 'DISCARD' && (
+                    {type === 'OUT_SAMPLE' && selectedStockCity === 'COCHABAMBA' && (
+                      <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-700 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-200">
+                        Este lote pertenece a Cochabamba, por lo tanto solo se pueden elegir clientes de Cochabamba.
+                      </div>
+                    )}
+
+                    {type === 'OUT' && outReasonType === 'DISCARD' && (
                       <Input
                         label="Motivo de la Baja"
                         type="text"
@@ -2006,7 +2061,7 @@ export function MovementsPage() {
                       </div>
                     )}
 
-                    {((outReasonType === 'SALE' && clientId) || (outReasonType === 'DISCARD' && discardReason)) && (
+                    {((type === 'OUT_SAMPLE' && clientId) || (type === 'OUT' && outReasonType === 'SALE' && clientId) || (type === 'OUT' && outReasonType === 'DISCARD' && discardReason.trim())) && (
                       <Button
                         type="button"
                         className="w-full"
@@ -2014,7 +2069,7 @@ export function MovementsPage() {
                         loading={outMutation.isPending}
                         disabled={outMutation.isPending}
                       >
-                        Registrar Salida
+                        {type === 'OUT_SAMPLE' ? 'Registrar Salida de Muestra' : 'Registrar Salida'}
                       </Button>
                     )}
                   </div>

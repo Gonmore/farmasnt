@@ -1,6 +1,7 @@
 import { Bar, BarChart, CartesianGrid, Cell, Tooltip, XAxis, YAxis } from 'recharts'
 import { ExportLegend } from './ExportLegend'
 import { getChartColor } from './chartTheme'
+import { formatInteger, formatMoney } from '../../lib/numberFormat'
 
 export type SalesMarginsDocumentItem = {
   productId: string
@@ -53,8 +54,7 @@ type Props = {
 }
 
 function money(n: number): string {
-  if (!Number.isFinite(n)) return '0.00'
-  return n.toFixed(2)
+  return formatMoney(n)
 }
 
 function orderStatusLabel(status: string): string {
@@ -160,7 +160,7 @@ export function SalesMarginsDocument({ title, from, to, currency, statusLabel, h
                 <tr key={item.productId} className="border-b border-slate-100 align-top">
                   <td className="px-3 py-3 font-mono text-xs">{item.sku}</td>
                   <td className="px-3 py-3 font-medium">{item.name}</td>
-                  <td className="px-3 py-3 text-right tabular-nums">{item.qtySold.toFixed(0)}</td>
+                  <td className="px-3 py-3 text-right tabular-nums">{formatInteger(item.qtySold)}</td>
                   <td className="px-3 py-3 text-right tabular-nums">{money(item.revenue)} {currency}</td>
                   <td className="px-3 py-3 text-right text-slate-600 tabular-nums">{money(item.costTotal)} {currency}</td>
                   <td className={`px-3 py-3 text-right font-semibold tabular-nums ${item.profit >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>{money(item.profit)} {currency}</td>
@@ -179,7 +179,7 @@ export function SalesMarginsDocument({ title, from, to, currency, statusLabel, h
             <div className="border-b border-slate-200 bg-slate-50 px-5 py-4">
               <div className="text-base font-semibold">{detail.productName}</div>
               <div className="mt-1 text-sm text-slate-600">
-                SKU {detail.sku} · {detail.qtySold.toFixed(0)} unidades · ingreso {money(detail.revenue)} {currency} · costo {money(detail.costTotal)} {currency} · utilidad {money(detail.profit)} {currency} · margen {detail.marginPct.toFixed(1)}%
+                SKU {detail.sku} · {formatInteger(detail.qtySold)} unidades · ingreso {money(detail.revenue)} {currency} · costo {money(detail.costTotal)} {currency} · utilidad {money(detail.profit)} {currency} · margen {detail.marginPct.toFixed(1)}%
               </div>
             </div>
             <table className="w-full table-fixed border-collapse text-sm">

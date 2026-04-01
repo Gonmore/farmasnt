@@ -132,6 +132,7 @@ model Tenant {
   defaultTheme ThemeMode @default(LIGHT)
   branchLimit Int    @default(1)
   currency String   @default("BOB")
+  thousandSeparator String @default(".")
   
   // Subscription Management Fields
   contactName   String?

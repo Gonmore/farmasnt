@@ -22,6 +22,7 @@ import { useNavigation } from '../../hooks'
 import { apiFetch } from '../../lib/api'
 import { blobToBase64, exportElementToPdf, exportModalContentToPdf, exportReactNodeToPdf, pdfBlobFromElement, pdfBlobFromReactNode } from '../../lib/exportPdf'
 import { exportToXlsx } from '../../lib/exportXlsx'
+import { formatInteger, formatMoney } from '../../lib/numberFormat'
 import { useAuth } from '../../providers/AuthProvider'
 import { useTenant } from '../../providers/TenantProvider'
 
@@ -135,8 +136,7 @@ function startOfNextMonth(d: Date): Date {
 }
 
 function money(n: number): string {
-  if (!Number.isFinite(n)) return '0.00'
-  return n.toFixed(2)
+  return formatMoney(n)
 }
 
 function toNumber(value: string | number | null | undefined): number {
@@ -1730,7 +1730,7 @@ export function SalesReportsPage() {
                         },
                         { header: '🏙️ Ciudad', accessor: (r) => r.city ?? '-' },
                         { header: '📋 Órdenes', accessor: (r) => String(r.ordersCount) },
-                        { header: '📦 Cantidad', accessor: (r) => toNumber(r.quantity).toFixed(0) },
+                        { header: '📦 Cantidad', accessor: (r) => formatInteger(toNumber(r.quantity)) },
                         { 
                           header: `💰 Total (${currency})`, 
                           accessor: (r) => (
@@ -1853,7 +1853,7 @@ export function SalesReportsPage() {
                             ),
                           },
                           { header: '📋 Órdenes', width: '12%', accessor: (r) => String(r.ordersCount) },
-                          { header: '📦 Cantidad', width: '14%', accessor: (r) => toNumber(r.quantity).toFixed(0) },
+                          { header: '📦 Cantidad', width: '14%', accessor: (r) => formatInteger(toNumber(r.quantity)) },
                           {
                             header: `💰 Total (${currency})`,
                             className: 'wrap',
@@ -1921,13 +1921,13 @@ export function SalesReportsPage() {
                       icon="⭐"
                       label="Producto Estrella"
                       value={(topProductsQuery.data?.items ?? [])[0]?.name?.slice(0, 15) ?? '-'}
-                      subtitle={`${toNumber((topProductsQuery.data?.items ?? [])[0]?.quantity).toFixed(0)} unidades`}
+                      subtitle={`${formatInteger(toNumber((topProductsQuery.data?.items ?? [])[0]?.quantity))} unidades`}
                       color="warning"
                     />
                     <KPICard
                       icon="📊"
                       label="Unidades Totales"
-                      value={(topProductsQuery.data?.items ?? []).reduce((sum, i) => sum + toNumber(i.quantity), 0).toFixed(0)}
+                      value={formatInteger((topProductsQuery.data?.items ?? []).reduce((sum, i) => sum + toNumber(i.quantity), 0))}
                       color="info"
                     />
                     <KPICard
@@ -1955,7 +1955,7 @@ export function SalesReportsPage() {
                         <YAxis yAxisId="right" orientation="right" {...chartAxisStyle} label={{ value: 'Unidades', angle: 90, position: 'insideRight' }} />
                         <Tooltip
                           {...chartTooltipStyle}
-                          formatter={(v: any, name: any) => [name === 'amount' ? `${money(Number(v))} ${currency}` : `${Number(v).toFixed(0)} unid.`, name === 'amount' ? 'Facturado' : 'Cantidad']}
+                          formatter={(v: any, name: any) => [name === 'amount' ? `${money(Number(v))} ${currency}` : `${formatInteger(Number(v))} unid.`, name === 'amount' ? 'Facturado' : 'Cantidad']}
                         />
                         <Legend />
                         <Bar yAxisId="left" dataKey="amount" fill={reportColors.success[0]} name="Monto Facturado" radius={[8, 8, 0, 0]} />
@@ -1987,7 +1987,7 @@ export function SalesReportsPage() {
                         },
                         { header: '🔖 SKU', accessor: (r) => <span className="font-mono text-xs">{r.sku}</span> },
                         { header: '📦 Producto', accessor: (r) => <span className="font-medium">{r.name}</span> },
-                        { header: '📊 Cantidad', accessor: (r) => <span className="tabular-nums">{toNumber(r.quantity).toFixed(0)}</span> },
+                        { header: '📊 Cantidad', accessor: (r) => <span className="tabular-nums">{formatInteger(toNumber(r.quantity))}</span> },
                         {
                           header: `💰 Total (${currency})`,
                           accessor: (r) => (

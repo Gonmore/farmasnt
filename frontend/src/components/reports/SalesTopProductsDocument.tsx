@@ -1,6 +1,7 @@
 import { Bar, BarChart, CartesianGrid, Cell, Tooltip, XAxis, YAxis } from 'recharts'
 import { ExportLegend } from './ExportLegend'
 import { getChartColor } from './chartTheme'
+import { formatInteger, formatMoney } from '../../lib/numberFormat'
 
 export type SalesTopProductsDocumentItem = {
   sku: string
@@ -37,8 +38,7 @@ type Props = {
 }
 
 function money(n: number): string {
-  if (!Number.isFinite(n)) return '0.00'
-  return n.toFixed(2)
+  return formatMoney(n)
 }
 
 function orderStatusLabel(status: string): string {
@@ -86,7 +86,7 @@ export function SalesTopProductsDocument({ title, from, to, currency, statusLabe
         <div className="rounded-xl border border-slate-200 bg-white px-4 py-4">
           <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">Producto lider</div>
           <div className="mt-2 text-xl font-bold">{leadProduct?.name ?? '-'}</div>
-          <div className="mt-1 text-sm text-slate-600">{leadProduct?.quantity.toFixed(0) ?? '0'} unidades</div>
+          <div className="mt-1 text-sm text-slate-600">{formatInteger(leadProduct?.quantity ?? 0)} unidades</div>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white px-4 py-4">
           <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">Facturacion total</div>
@@ -95,7 +95,7 @@ export function SalesTopProductsDocument({ title, from, to, currency, statusLabe
         </div>
         <div className="rounded-xl border border-slate-200 bg-white px-4 py-4">
           <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">Unidades vendidas</div>
-          <div className="mt-2 text-3xl font-bold">{totalQuantity.toFixed(0)}</div>
+          <div className="mt-2 text-3xl font-bold">{formatInteger(totalQuantity)}</div>
           <div className="mt-1 text-sm text-slate-600">Acumulado del ranking</div>
         </div>
       </div>
@@ -109,7 +109,7 @@ export function SalesTopProductsDocument({ title, from, to, currency, statusLabe
                 <XAxis dataKey="name" angle={-35} textAnchor="end" interval={0} height={80} tick={{ fontSize: 11, fill: '#475569' }} />
                 <YAxis yAxisId="left" tick={{ fontSize: 11, fill: '#475569' }} />
                 <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11, fill: '#475569' }} />
-                <Tooltip formatter={(value: number | string | undefined, name: string | number | undefined) => [name === 'amount' ? `${money(Number(value ?? 0))} ${currency}` : `${Number(value ?? 0).toFixed(0)} unid.`, name === 'amount' ? 'Facturado' : 'Cantidad']} />
+                <Tooltip formatter={(value: number | string | undefined, name: string | number | undefined) => [name === 'amount' ? `${money(Number(value ?? 0))} ${currency}` : `${formatInteger(Number(value ?? 0))} unid.`, name === 'amount' ? 'Facturado' : 'Cantidad']} />
                 <Bar yAxisId="left" dataKey="amount" name="Facturado" radius={[6, 6, 0, 0]} isAnimationActive={false}>
                   {chartItems.map((_, idx) => (
                     <Cell key={idx} fill={getChartColor(idx, 'rainbow')} />
@@ -137,7 +137,7 @@ export function SalesTopProductsDocument({ title, from, to, currency, statusLabe
                 <tr key={`${item.sku}-${item.name}`} className="border-b border-slate-100 align-top">
                   <td className="px-3 py-3 font-mono text-xs">{item.sku}</td>
                   <td className="px-3 py-3 font-medium">{item.name}</td>
-                  <td className="px-3 py-3 text-right tabular-nums">{item.quantity.toFixed(0)}</td>
+                  <td className="px-3 py-3 text-right tabular-nums">{formatInteger(item.quantity)}</td>
                   <td className="px-3 py-3 text-right font-semibold text-emerald-700 tabular-nums">{money(item.amount)} {currency}</td>
                 </tr>
               ))}

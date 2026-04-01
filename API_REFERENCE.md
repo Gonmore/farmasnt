@@ -1,8 +1,8 @@
 # API Reference — PharmaFlow Bolivia (MVP)
 
-## Versión 2.0.1
+## Versión 2.1.0
 
-Esta referencia ya contempla la ampliación **multi-marca / multi-empresa** de la versión `2.0` y los ajustes operativos de la versión `2.0.1`.
+Esta referencia ya contempla la ampliación **multi-marca / multi-empresa** de la versión `2.0`, los ajustes operativos de la versión `2.0.1` y la consolidación funcional de la versión `2.1.0`.
 
 Cambios relevantes en 2.0:
 - `GET /api/v1/auth/me` devuelve `availableTenants` y `activeTenantId` cuando el usuario tiene acceso a más de una empresa.
@@ -13,12 +13,19 @@ Cambios relevantes en 2.0:
 - `GET|POST|DELETE /api/v1/platform/tenant-groups...` administra grupos de empresas desde plataforma.
 
 Cambios recientes en catálogo y documentos:
+- `Tenant` incorpora `thousandSeparator` para parametrizar el formato numérico visible por empresa.
+- `GET /api/v1/tenant/current` y endpoints de branding exponen `thousandSeparator`.
 - `Product` incorpora `baseUnitAbbreviation` para definir la abreviatura visible de unidad base por producto.
 - `GET /api/v1/catalog/search` devuelve `baseUnitAbbreviation` en cada producto listado.
 - Las respuestas de cotizaciones, órdenes y reservas que devuelven datos de producto incluyen `baseUnitAbbreviation` cuando corresponde.
 - La representación PDF en frontend consume este campo para renderizar etiquetas de presentación y cantidad sin asumir `u`.
 - Los PDFs de documentos y reportes mantienen el detalle sin separadores horizontales por fila, por una decisión visual del frontend de exportación.
 - Los listados operativos del frontend consumen estas respuestas aplicando orden alfabético por nombre visible en catálogo e inventario, sin cambios de contrato API.
+
+Cambios recientes en stock y reportes:
+- `POST /api/v1/stock/movements` acepta `referenceType='PRODUCT_SAMPLE'` para salidas de muestra, validando nota obligatoria.
+- `GET /api/v1/products/:id/batches` devuelve `warehouseCity` por ubicación para soportar reglas de cliente por ciudad en frontend.
+- `GET /api/v1/reports/stock/existencias` devuelve stock físico, reservado, disponible, entradas, salidas, bajas, muestras y traspasos para el período.
 
 Base URL (dev): `http://127.0.0.1:6000`
 

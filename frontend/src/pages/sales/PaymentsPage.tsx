@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { MainLayout, PageContainer, Button, Table, Loading, ErrorState, EmptyState, Badge, Modal, Input, Select, ImageUpload } from '../../components'
 import { apiFetch } from '../../lib/api'
+import { formatMoney } from '../../lib/numberFormat'
 import { useNavigation } from '../../hooks'
 import { useAuth } from '../../providers/AuthProvider'
 import { useTenant } from '../../providers/TenantProvider'
@@ -32,8 +33,7 @@ type PaymentReceiptType = 'CASH' | 'TRANSFER_QR'
 type PaymentProofUpload = { uploadUrl: string; publicUrl: string; key: string; method?: string }
 
 function money(n: number): string {
-  if (!Number.isFinite(n)) return '0.00'
-  return n.toFixed(2)
+  return formatMoney(n)
 }
 
 function daysUntil(dateIso: string): number {

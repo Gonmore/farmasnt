@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { apiFetch } from '../../lib/api'
+import { formatMoney } from '../../lib/numberFormat'
 import { getProductDisplayName } from '../../lib/productName'
 import { formatPresentationLabel, formatPresentationQuantityLabel } from '../../lib/productPresentation'
 import { sortProductsByDisplayName } from '../../lib/productSorting'
@@ -283,8 +284,7 @@ type StockSummary = {
 }
 
 function money(n: number): string {
-  if (!Number.isFinite(n)) return '0.00'
-  return n.toFixed(2)
+  return formatMoney(n)
 }
 
 function clampPct(value: number): number {

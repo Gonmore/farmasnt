@@ -2476,6 +2476,26 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
         }
       }
 
+      const normalizedReferenceType = String(input.referenceType ?? '').trim().toUpperCase()
+      if (normalizedReferenceType === 'MANUAL_SALE') {
+        if (input.type !== 'OUT') return reply.status(400).send({ message: 'MANUAL_SALE only supports OUT movements' })
+        if (!String(input.referenceId ?? '').trim()) {
+          return reply.status(400).send({ message: 'referenceId is required for MANUAL_SALE' })
+        }
+      }
+      if (normalizedReferenceType === 'MANUAL_DISCARD') {
+        if (input.type !== 'OUT') return reply.status(400).send({ message: 'MANUAL_DISCARD only supports OUT movements' })
+        if (!String(input.note ?? '').trim()) {
+          return reply.status(400).send({ message: 'note is required for MANUAL_DISCARD' })
+        }
+      }
+      if (normalizedReferenceType === 'PRODUCT_SAMPLE') {
+        if (input.type !== 'OUT') return reply.status(400).send({ message: 'PRODUCT_SAMPLE only supports OUT movements' })
+        if (!String(input.note ?? '').trim()) {
+          return reply.status(400).send({ message: 'note is required for PRODUCT_SAMPLE' })
+        }
+      }
+
       try {
         const result = await db.$transaction(async (tx) => {
           let baseQty = resolved.baseQuantity

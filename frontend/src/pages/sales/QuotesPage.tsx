@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { apiFetch } from '../../lib/api'
+import { formatMoney } from '../../lib/numberFormat'
 import { useAuth } from '../../providers/AuthProvider'
 import { MainLayout, PageContainer, Button, Table, PaginationCursor, Input, Badge, Modal } from '../../components'
 import { useNavigation } from '../../hooks'
@@ -204,7 +205,7 @@ export function QuotesPage() {
                   { header: 'Fecha', accessor: (q) => new Date(q.createdAt).toLocaleString('es-ES', { timeZone: 'America/La_Paz' }) },
                   {
                     header: 'TOTAL(BOB)',
-                    accessor: (q) => q.total.toLocaleString('es-BO', { style: 'currency', currency: 'BOB', minimumFractionDigits: 2 })
+                    accessor: (q) => `${formatMoney(q.total)} BOB`
                   },
                   {
                     header: 'Acciones',

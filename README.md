@@ -2,21 +2,24 @@
 
 MVP: **Almacén + Ventas B2B** · SaaS **multi-tenant** (row-level `tenantId`) con auditoría (GxP-friendly).
 
-## Versión 2.0.1
+## Versión 2.1.0
 
 Estado actual de la raíz del proyecto:
-- Versión operativa objetivo: `2.0.1`.
+- Versión operativa objetivo: `2.1.0`.
 - Incluye soporte **multi-marca / multi-empresa** con grupos de tenants, grants por usuario y cambio de empresa desde el menú de cuenta.
 - El flujo de cambio de empresa ya contempla ida y vuelta entre tenant base y tenants cruzados.
 - `deploy.sh` queda como mecanismo previsto para actualización manual de producción.
 
-### Ajustes recientes al catálogo, stock y documentos comerciales
+### Ajustes recientes al catálogo, stock, ventas y documentos
+- Branding por tenant ahora permite definir separador de miles y el frontend lo propaga a precios, KPIs, reportes y documentos exportados.
 - Cada producto ahora permite definir una abreviatura de unidad base configurable (`u`, `lt`, `ml`, `gr`, etc.) desde `/catalog/products`.
 - La abreviatura se propaga a catálogo, cotizaciones, entregas y otras vistas operativas donde se renderiza la presentación.
 - La exportación PDF de cotizaciones y notas de entrega ahora usa filas autoajustables para evitar solapamientos entre cantidad, descuento y totales.
 - Los PDFs exportados ya no dibujan separadores horizontales por fila en tablas de detalle, para mantener una salida más limpia y consistente entre documentos y reportes.
 - Los listados de productos en `/catalog/products`, `/catalog/commercial`, `/catalog/seller` y `/stock/inventory` ahora se ordenan alfabéticamente por nombre visible para mejorar la navegación operativa.
-- La migración Prisma `20260327120000_product_base_unit_abbreviation` ya fue aplicada y validada en Docker local.
+- `/stock/movements` incorpora la salida independiente `Salida producto de muestra`, con cliente final y restricción por ciudad para lotes de Cochabamba.
+- `Reportes > Stock` incorpora la vista `Existencias`, consolidando stock actual, entradas, salidas, muestras y traspasos por período.
+- La migración Prisma `20260331110000_tenant_thousand_separator` queda incluida para persistir el separador de miles por tenant.
 
 ### Novedades principales de la 2.0
 - `TenantGroup` y `TenantGroupMember` para agrupar empresas relacionadas.
@@ -35,8 +38,9 @@ Estado actual de la raíz del proyecto:
 
 ### Estado para despliegue manual
 - Backend y frontend sin errores de editor en los archivos tocados.
-- La migración nueva ya quedó probada contra `postgres-local` usando `docker compose -f docker-compose.local.yml --profile tools run --rm backend-migrate`.
-- Esta entrega `2.0.1` no agrega migraciones nuevas ni cambios de infraestructura respecto a la versión ya validada.
+- Frontend validado con `npm run build`.
+- Backend validado por compilación TypeScript (`npm run build`).
+- Esta entrega `2.1.0` agrega la migración `20260331110000_tenant_thousand_separator`, por lo que el deploy manual debe ejecutar migraciones remotas como parte normal de `deploy.sh`.
 - El repositorio queda listo para que el deploy manual publique imágenes, ejecute migraciones remotas y reinicie servicios con `deploy.sh`.
 
 ## Funcionalidades clave (stock)

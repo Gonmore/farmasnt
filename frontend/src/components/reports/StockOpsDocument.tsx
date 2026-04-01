@@ -1,6 +1,7 @@
 import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, Tooltip, XAxis, YAxis } from 'recharts'
 import { ExportLegend } from './ExportLegend'
 import { getChartColor } from './chartTheme'
+import { formatInteger } from '../../lib/numberFormat'
 
 export type StockOpsDocumentSummary = {
   total: number
@@ -150,7 +151,7 @@ export function StockOpsDocument({ title, from, to, summary, byCity, flows, fulf
         <div className="rounded-xl border border-slate-200 bg-white px-4 py-4">
           <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">Devoluciones</div>
           <div className="mt-2 text-3xl font-bold text-rose-700">{returnsSummary.returnsCount}</div>
-          <div className="mt-1 text-sm text-slate-600">{returnsSummary.itemsCount} lineas · {returnsSummary.quantity.toFixed(0)} unidades</div>
+          <div className="mt-1 text-sm text-slate-600">{formatInteger(returnsSummary.itemsCount)} lineas · {formatInteger(returnsSummary.quantity)} unidades</div>
         </div>
       </div>
 
@@ -164,7 +165,7 @@ export function StockOpsDocument({ title, from, to, summary, byCity, flows, fulf
                     <Cell key={idx} fill={entry.color} />
                   ))}
                 </Pie>
-                <Tooltip formatter={(value: number | string | undefined) => [Number(value ?? 0), 'Solicitudes']} />
+                <Tooltip formatter={(value: number | string | undefined) => [formatInteger(Number(value ?? 0)), 'Solicitudes']} />
               </PieChart>
           </div>
           <ExportLegend items={statusPieData.map((item) => ({ label: item.name, color: item.color }))} />
@@ -252,13 +253,13 @@ export function StockOpsDocument({ title, from, to, summary, byCity, flows, fulf
               {byCity.map((item) => (
                 <tr key={item.city} className="border-b border-slate-100 align-top">
                   <td className="px-3 py-3">{item.city}</td>
-                  <td className="px-3 py-3 text-right tabular-nums">{item.total}</td>
-                  <td className="px-3 py-3 text-right tabular-nums">{item.open}</td>
-                  <td className="px-3 py-3 text-right tabular-nums">{item.fulfilled}</td>
-                  <td className="px-3 py-3 text-right tabular-nums">{item.cancelled}</td>
-                  <td className="px-3 py-3 text-right tabular-nums">{item.pending}</td>
-                  <td className="px-3 py-3 text-right tabular-nums">{item.accepted}</td>
-                  <td className="px-3 py-3 text-right tabular-nums">{item.rejected}</td>
+                    <td className="px-3 py-3 text-right tabular-nums">{formatInteger(item.total)}</td>
+                    <td className="px-3 py-3 text-right tabular-nums">{formatInteger(item.open)}</td>
+                    <td className="px-3 py-3 text-right tabular-nums">{formatInteger(item.fulfilled)}</td>
+                    <td className="px-3 py-3 text-right tabular-nums">{formatInteger(item.cancelled)}</td>
+                    <td className="px-3 py-3 text-right tabular-nums">{formatInteger(item.pending)}</td>
+                    <td className="px-3 py-3 text-right tabular-nums">{formatInteger(item.accepted)}</td>
+                    <td className="px-3 py-3 text-right tabular-nums">{formatInteger(item.rejected)}</td>
                 </tr>
               ))}
             </tbody>
@@ -285,8 +286,8 @@ export function StockOpsDocument({ title, from, to, summary, byCity, flows, fulf
                   <td className="px-3 py-3">{item.destination}</td>
                   <td className="px-3 py-3">{item.origin}</td>
                   <td className="px-3 py-3 text-right tabular-nums">{formatMinutes(item.minutesToFulfill)}</td>
-                  <td className="px-3 py-3 text-right tabular-nums">{item.itemsCount}</td>
-                  <td className="px-3 py-3 text-right tabular-nums">{item.movementsCount}</td>
+                  <td className="px-3 py-3 text-right tabular-nums">{formatInteger(item.itemsCount)}</td>
+                  <td className="px-3 py-3 text-right tabular-nums">{formatInteger(item.movementsCount)}</td>
                 </tr>
               ))}
             </tbody>
@@ -311,9 +312,9 @@ export function StockOpsDocument({ title, from, to, summary, byCity, flows, fulf
               <tr key={`${item.warehouse}-${item.city}`} className="border-b border-slate-100 align-top">
                 <td className="px-3 py-3">{item.warehouse}</td>
                 <td className="px-3 py-3">{item.city}</td>
-                <td className="px-3 py-3 text-right tabular-nums">{item.returnsCount}</td>
-                <td className="px-3 py-3 text-right tabular-nums">{item.itemsCount}</td>
-                <td className="px-3 py-3 text-right tabular-nums">{item.quantity.toFixed(0)}</td>
+                <td className="px-3 py-3 text-right tabular-nums">{formatInteger(item.returnsCount)}</td>
+                <td className="px-3 py-3 text-right tabular-nums">{formatInteger(item.itemsCount)}</td>
+                <td className="px-3 py-3 text-right tabular-nums">{formatInteger(item.quantity)}</td>
               </tr>
             ))}
           </tbody>
@@ -348,7 +349,7 @@ export function StockOpsDocument({ title, from, to, summary, byCity, flows, fulf
                       <tr key={item.id} className="border-b border-slate-100 align-top">
                         <td className="py-2 pr-2">{item.product}</td>
                         <td className="py-2 pr-2">{item.presentation}</td>
-                        <td className="py-2 text-right tabular-nums">{item.requestedQuantity}</td>
+                        <td className="py-2 text-right tabular-nums">{formatInteger(item.requestedQuantity)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -377,7 +378,7 @@ export function StockOpsDocument({ title, from, to, summary, byCity, flows, fulf
                         <td className="py-2 pr-2">{item.destination}</td>
                         <td className="py-2 pr-2">{item.product}</td>
                         <td className="py-2 pr-2">{item.batchNumber ?? '—'}</td>
-                        <td className="py-2 text-right tabular-nums">{item.quantity}</td>
+                        <td className="py-2 text-right tabular-nums">{formatInteger(item.quantity)}</td>
                       </tr>
                     ))}
                   </tbody>

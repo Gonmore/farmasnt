@@ -89,23 +89,6 @@ export function useNavigation(): NavGroup[] {
     });
   }
 
-  // Laboratorio (MVP: reutiliza permisos de stock, pero excluir branch admins y sellers)
-  if (hasPermission('stock:read') && !isBranchAdmin && !isBranchSeller) {
-    const labItems = [] as Array<{ to: string; label: string }>
-    labItems.push({ to: '/laboratory/labs', label: '🧪 Configuración' })
-    labItems.push({ to: '/laboratory/production', label: '🏭 Producción' })
-    labItems.push({ to: '/laboratory/maintenance-supplies', label: '🧫 Repuestos y materiales' })
-    labItems.push({ to: '/laboratory/receipts', label: '📥 Recepciones' })
-    labItems.push({ to: '/laboratory/wip', label: '🧪 Producto en proceso' })
-    labItems.push({ to: '/laboratory/production-runs', label: '🏭 Corridas' })
-    labItems.push({ to: '/laboratory/qc', label: '✅ QC (Cuarentena)' })
-
-    groups.push({
-      title: 'Laboratorio',
-      items: labItems,
-    })
-  }
-
   // Ventas
   if (hasPermission('sales:order:read') || hasPermission('sales:delivery:read')) {
     const salesItems = [] as Array<{ to: string; label: string }>
@@ -139,6 +122,23 @@ export function useNavigation(): NavGroup[] {
   if (hasPermission('report:stock:read') || (isBranchAdmin && hasPermission('stock:read'))) reportItems.push({ to: '/reports/stock', label: '📦 Stock' })
   if (reportItems.length > 0) {
     groups.push({ title: 'Reportes', items: reportItems })
+  }
+
+  // Laboratorio (MVP: reutiliza permisos de stock, pero excluir branch admins y sellers)
+  if (hasPermission('stock:read') && !isBranchAdmin && !isBranchSeller) {
+    const labItems = [] as Array<{ to: string; label: string }>
+    labItems.push({ to: '/laboratory/labs', label: '🧪 Configuración' })
+    labItems.push({ to: '/laboratory/production', label: '🏭 Producción' })
+    labItems.push({ to: '/laboratory/maintenance-supplies', label: '🧫 Repuestos y materiales' })
+    labItems.push({ to: '/laboratory/receipts', label: '📥 Recepciones' })
+    labItems.push({ to: '/laboratory/wip', label: '🧪 Producto en proceso' })
+    labItems.push({ to: '/laboratory/production-runs', label: '🏭 Corridas' })
+    labItems.push({ to: '/laboratory/qc', label: '✅ QC (Cuarentena)' })
+
+    groups.push({
+      title: 'Laboratorio',
+      items: labItems,
+    })
   }
 
   // Sistema (solo Tenant Admin)

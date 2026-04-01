@@ -1,4 +1,5 @@
 import jsPDF from 'jspdf'
+import { formatMoney } from './numberFormat'
 import { formatPresentationLabel } from './productPresentation'
 
 export type QuotePdfItem = {
@@ -57,8 +58,7 @@ export type DeliveryNotePdfData = {
 }
 
 function money(n: number): string {
-  if (!Number.isFinite(n)) return '0.00'
-  return n.toFixed(2)
+  return formatMoney(n)
 }
 
 function sanitizePdfText(value: string): string {

@@ -125,6 +125,28 @@ const userRolesReplaceSchema = z.object({
 })
 
 const hexColorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Invalid hex color (#RRGGBB)')
+const thousandSeparatorSchema = z.enum(['.', ',', ' '])
+
+function isMissingThousandSeparatorColumn(error: unknown): boolean {
+  const err: any = error
+  const code = String(err?.code ?? '')
+  if (code === 'P2022') return true
+  const message = String(err?.message ?? '')
+  return /thousandSeparator/i.test(message) && /does not exist|no existe|column/i.test(message)
+}
+
+const adminTenantBrandingBaseSelect = {
+  id: true,
+  name: true,
+  logoUrl: true,
+  brandPrimary: true,
+  brandSecondary: true,
+  brandTertiary: true,
+  defaultTheme: true,
+  currency: true,
+  version: true,
+  updatedAt: true,
+} as const
 
 const tenantBrandingUpdateSchema = z.object({
   logoUrl: z.string().url().nullable().optional(),
@@ -133,6 +155,7 @@ const tenantBrandingUpdateSchema = z.object({
   brandTertiary: hexColorSchema.nullable().optional(),
   defaultTheme: z.enum(['LIGHT', 'DARK']).optional(),
   currency: z.string().trim().min(3).max(3).optional(),
+  thousandSeparator: thousandSeparatorSchema.optional(),
 })
 
 const tenantLogoPresignSchema = z.object({
@@ -881,10 +904,11 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
               brandTertiary: { type: 'string', nullable: true },
               defaultTheme: { type: 'string' },
               currency: { type: 'string' },
+              thousandSeparator: { type: 'string' },
               version: { type: 'integer' },
               updatedAt: { type: 'string', format: 'date-time' },
             },
-            required: ['tenantId', 'tenantName', 'defaultTheme', 'version', 'updatedAt'],
+            required: ['tenantId', 'tenantName', 'defaultTheme', 'currency', 'thousandSeparator', 'version', 'updatedAt'],
             additionalProperties: false,
           },
         },
@@ -893,21 +917,23 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
     async (request, reply) => {
       const tenantId = request.auth!.tenantId
 
-      const tenant = await db.tenant.findFirst({
-        where: { id: tenantId },
-        select: {
-          id: true,
-          name: true,
-          logoUrl: true,
-          brandPrimary: true,
-          brandSecondary: true,
-          brandTertiary: true,
-          defaultTheme: true,
-          currency: true,
-          version: true,
-          updatedAt: true,
-        },
-      })
+      let tenant: any
+      try {
+        tenant = await db.tenant.findFirst({
+          where: { id: tenantId },
+          select: {
+            ...adminTenantBrandingBaseSelect,
+            thousandSeparator: true,
+          },
+        })
+      } catch (error) {
+        if (!isMissingThousandSeparatorColumn(error)) throw error
+        tenant = await db.tenant.findFirst({
+          where: { id: tenantId },
+          select: adminTenantBrandingBaseSelect,
+        })
+        tenant = tenant ? { ...tenant, thousandSeparator: '.' as const } : null
+      }
 
       if (!tenant) {
         const err = new Error('Tenant not found') as Error & { statusCode?: number }
@@ -924,6 +950,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
         brandTertiary: tenant.brandTertiary,
         defaultTheme: tenant.defaultTheme,
         currency: tenant.currency,
+        thousandSeparator: tenant.thousandSeparator,
         version: tenant.version,
         updatedAt: tenant.updatedAt.toISOString(),
       })
@@ -946,6 +973,8 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
             brandSecondary: { type: 'string', nullable: true },
             brandTertiary: { type: 'string', nullable: true },
             defaultTheme: { type: 'string' },
+            currency: { type: 'string' },
+            thousandSeparator: { type: 'string', enum: ['.', ',', ' '] },
           },
           additionalProperties: false,
         },
@@ -971,38 +1000,73 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
       const tenantId = request.auth!.tenantId
       const actorUserId = request.auth!.userId
 
-      const before = await db.tenant.findFirst({
-        where: { id: tenantId },
-        select: {
-          id: true,
-          logoUrl: true,
-          brandPrimary: true,
-          brandSecondary: true,
-          brandTertiary: true,
-          defaultTheme: true,
-          version: true,
-        },
-      })
+      let before: any
+      try {
+        before = await db.tenant.findFirst({
+          where: { id: tenantId },
+          select: {
+            id: true,
+            logoUrl: true,
+            brandPrimary: true,
+            brandSecondary: true,
+            brandTertiary: true,
+            defaultTheme: true,
+            currency: true,
+            thousandSeparator: true,
+            version: true,
+          },
+        })
+      } catch (error) {
+        if (!isMissingThousandSeparatorColumn(error)) throw error
+        before = await db.tenant.findFirst({
+          where: { id: tenantId },
+          select: {
+            id: true,
+            logoUrl: true,
+            brandPrimary: true,
+            brandSecondary: true,
+            brandTertiary: true,
+            defaultTheme: true,
+            currency: true,
+            version: true,
+          },
+        })
+        before = before ? { ...before, thousandSeparator: '.' as const } : null
+      }
       if (!before) {
         const err = new Error('Tenant not found') as Error & { statusCode?: number }
         err.statusCode = 404
         throw err
       }
 
-      const updated = await db.tenant.update({
-        where: { id: tenantId },
-        data: {
-          ...(parsed.data.logoUrl !== undefined ? { logoUrl: parsed.data.logoUrl } : {}),
-          ...(parsed.data.brandPrimary !== undefined ? { brandPrimary: parsed.data.brandPrimary } : {}),
-          ...(parsed.data.brandSecondary !== undefined ? { brandSecondary: parsed.data.brandSecondary } : {}),
-          ...(parsed.data.brandTertiary !== undefined ? { brandTertiary: parsed.data.brandTertiary } : {}),
-          ...(parsed.data.defaultTheme !== undefined ? { defaultTheme: parsed.data.defaultTheme as any } : {}),
-          ...(parsed.data.currency !== undefined ? { currency: parsed.data.currency } : {}),
-          version: { increment: 1 },
-          createdBy: actorUserId,
-        },
-        select: { id: true, version: true, updatedAt: true },
-      })
+      const updateData = {
+        ...(parsed.data.logoUrl !== undefined ? { logoUrl: parsed.data.logoUrl } : {}),
+        ...(parsed.data.brandPrimary !== undefined ? { brandPrimary: parsed.data.brandPrimary } : {}),
+        ...(parsed.data.brandSecondary !== undefined ? { brandSecondary: parsed.data.brandSecondary } : {}),
+        ...(parsed.data.brandTertiary !== undefined ? { brandTertiary: parsed.data.brandTertiary } : {}),
+        ...(parsed.data.defaultTheme !== undefined ? { defaultTheme: parsed.data.defaultTheme as any } : {}),
+        ...(parsed.data.currency !== undefined ? { currency: parsed.data.currency } : {}),
+        ...(parsed.data.thousandSeparator !== undefined ? { thousandSeparator: parsed.data.thousandSeparator } : {}),
+        version: { increment: 1 },
+        createdBy: actorUserId,
+      }
+
+      let updated: any
+      try {
+        updated = await db.tenant.update({
+          where: { id: tenantId },
+          data: updateData,
+          select: { id: true, version: true, updatedAt: true },
+        })
+      } catch (error) {
+        if (!isMissingThousandSeparatorColumn(error)) throw error
+        const { thousandSeparator: _ignoredThousandSeparator, ...fallbackUpdateData } = updateData
+        updated = await db.tenant.update({
+          where: { id: tenantId },
+          data: fallbackUpdateData,
+          select: { id: true, version: true, updatedAt: true },
+        })
+      }
 
       await audit.append({
         tenantId,

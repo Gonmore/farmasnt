@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { MainLayout, PageContainer, Button, Input, Loading, ErrorState, CountrySelector, ImageUpload } from '../../components'
 import { useNavigation } from '../../hooks'
+import { formatMoney, normalizeThousandSeparator } from '../../lib/numberFormat'
 
 type BrandingData = {
   tenantId: string
@@ -13,6 +14,7 @@ type BrandingData = {
   brandTertiary: string | null
   defaultTheme: 'LIGHT' | 'DARK'
   currency: string
+  thousandSeparator: '.' | ',' | ' '
   country?: string | null
 }
 
@@ -70,6 +72,7 @@ export function BrandingPage() {
   const [brandTertiary, setBrandTertiary] = useState('#f59e0b')
   const [defaultTheme, setDefaultTheme] = useState<'LIGHT' | 'DARK'>('LIGHT')
   const [currency, setCurrency] = useState('BOB')
+  const [thousandSeparator, setThousandSeparator] = useState<'.' | ',' | ' '>('.')
   const [country, setCountry] = useState('BOLIVIA')
 
   const brandingQuery = useQuery<BrandingData>({
@@ -84,6 +87,7 @@ export function BrandingPage() {
       setBrandTertiary(data.brandTertiary || '#f59e0b')
       setDefaultTheme(data.defaultTheme)
       setCurrency(data.currency || 'BOB')
+      setThousandSeparator(normalizeThousandSeparator(data.thousandSeparator))
       setCountry(data.country || 'BOLIVIA')
       return data
     },
@@ -132,9 +136,12 @@ export function BrandingPage() {
       brandTertiary,
       defaultTheme,
       currency,
+      thousandSeparator,
       country: country || null,
     })
   }
+
+  const thousandSeparatorPreview = formatMoney(1234567.89, { thousandSeparator })
 
   if (brandingQuery.isLoading) {
     return (
@@ -341,6 +348,24 @@ export function BrandingPage() {
               </p>
             </div>
 
+            <div>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                Separador de miles
+              </label>
+              <select
+                value={thousandSeparator}
+                onChange={(e) => setThousandSeparator(normalizeThousandSeparator(e.target.value))}
+                className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+              >
+                <option value=".">Punto (.)</option>
+                <option value=",">Coma (,)</option>
+                <option value=" ">Espacio</option>
+              </select>
+              <p className="mt-1 text-xs text-slate-500">
+                Vista previa: {thousandSeparatorPreview} {currency}
+              </p>
+            </div>
+
             {/* País */}
             <div>
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
@@ -385,6 +410,7 @@ export function BrandingPage() {
                   setBrandTertiary(brandingQuery.data?.brandTertiary || '#f59e0b')
                   setDefaultTheme(brandingQuery.data?.defaultTheme || 'LIGHT')
                   setCurrency(brandingQuery.data?.currency || 'BOB')
+                  setThousandSeparator(normalizeThousandSeparator(brandingQuery.data?.thousandSeparator))
                   setCountry(brandingQuery.data?.country || 'BOLIVIA')
                 }}
                 disabled={updateMutation.isPending}

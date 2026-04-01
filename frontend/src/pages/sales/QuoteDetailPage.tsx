@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { apiFetch } from '../../lib/api'
+import { formatMoney } from '../../lib/numberFormat'
 import { formatPresentationLabel, formatPresentationQuantityLabel } from '../../lib/productPresentation'
 import { exportQuoteToPDF } from '../../lib/quotePdf'
 import { MainLayout, PageContainer, Button, Loading, ErrorState, Table, Input, Select, CustomerSelector, ProductSelector } from '../../components'
@@ -116,8 +117,7 @@ function buildDraftFromQuote(q: QuoteDetail, presentationsByProduct?: Map<string
 }
 
 function money(n: number): string {
-  if (!Number.isFinite(n)) return '0.00'
-  return n.toFixed(2)
+  return formatMoney(n)
 }
 
 function isNonUnitPresentation(name: string | null | undefined, unitsPerPresentation: number | null | undefined): boolean {

@@ -1,5 +1,6 @@
 import jsPDF from 'jspdf'
 import { formatDateOnlyUtc } from './date'
+import { formatInteger, formatNumber } from './numberFormat'
 
 export type PickingPdfRequestedLine = {
   productLabel: string
@@ -55,8 +56,8 @@ function sanitizePdfText(value: string): string {
 function formatPdfNumber(value: unknown): string {
   const n = Number(value)
   if (!Number.isFinite(n)) return '—'
-  if (Math.abs(n - Math.round(n)) < 1e-9) return String(Math.round(n))
-  return n.toFixed(2)
+  if (Math.abs(n - Math.round(n)) < 1e-9) return formatInteger(n)
+  return formatNumber(n, { decimals: 2 })
 }
 
 function savePdf(pdf: jsPDF, filename: string): void {
@@ -139,6 +140,31 @@ export function exportPickingToPdf(
     pdf.text(label, margin, y)
     pdf.setFont('helvetica', 'normal')
     return y + 6
+  }
+
+  const drawSignatureBlocks = (y: number) => {
+    const labels = ['Preparado por', 'Enviado por', 'Recibida por']
+    const gap = 10
+    const totalWidth = pageWidth - margin * 2
+    const columnWidth = (totalWidth - gap * (labels.length - 1)) / labels.length
+    const signatureLineY = y + 16
+    const labelY = signatureLineY + 5
+    const nameY = labelY + 7
+
+    pdf.setFont('helvetica', 'normal')
+    pdf.setFontSize(9)
+
+    labels.forEach((label, index) => {
+      const startX = margin + index * (columnWidth + gap)
+      const endX = startX + columnWidth
+      const centerX = startX + columnWidth / 2
+
+      pdf.line(startX, signatureLineY, endX, signatureLineY)
+      pdf.text(label, centerX, labelY, { align: 'center' })
+      pdf.text('Nombre:', startX, nameY)
+    })
+
+    return nameY + 8
   }
 
   let y = header()
@@ -253,6 +279,10 @@ export function exportPickingToPdf(
 
     y += rowH
   }
+
+  y += 10
+  y = ensureSpace(y, 40)
+  drawSignatureBlocks(y)
 
   savePdf(pdf, `picking-${sanitizePdfText(meta.requestId)}.pdf`)
 }

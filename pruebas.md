@@ -2,6 +2,32 @@
 
 Este documento está pensado para validar **end-to-end** (UI + API) y confirmar resultados **en base de datos**, porque algunos cambios no se ven mucho en frontend.
 
+## Versión 2.1.0 — pruebas específicas de branding numérico y stock operativo
+
+### Flujo V — Branding con separador de miles configurable
+- Ir a `Administración > Branding`.
+- Cambiar `Separador de miles` entre punto, coma y espacio.
+- Guardar.
+- Verificar que precios, KPIs y montos en catálogo/reportes/ventas reflejen el nuevo formato sin romper los decimales.
+
+### Flujo W — Reporte de existencias
+- Ir a `Reportes > Stock`.
+- Seleccionar la pestaña `Existencias`.
+- Verificar que el reporte muestre stock disponible, reservado, entradas, salidas, muestras y traspasos del período.
+- Exportar a PDF y XLSX.
+- Confirmar que ambas salidas respetan los datos visibles y que la sección por sucursal coincide con el consolidado.
+
+### Flujo X — Salida producto de muestra
+- Ir a `Stock > Movimientos`.
+- Elegir `Salida producto de muestra`.
+- Seleccionar un producto, un lote con stock, cantidad o lote completo y cliente final.
+- Confirmar que el movimiento se registra como salida sin requerir venta ni cotización.
+
+### Flujo Y — Restricción de clientes para Cochabamba
+- En `Stock > Movimientos`, elegir un lote cuya ubicación pertenezca a Cochabamba.
+- Confirmar que la lista de clientes solo muestra clientes de Cochabamba.
+- Intentar repetir con un lote de otra ciudad y verificar que la lista vuelve a cargar clientes sin esa restricción.
+
 ## Versión 2.0.1 — pruebas específicas de orden alfabético
 
 ### Flujo S — Catálogo de productos ordenado por nombre

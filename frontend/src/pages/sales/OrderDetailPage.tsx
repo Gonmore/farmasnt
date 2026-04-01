@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
 import { apiFetch } from '../../lib/api'
 import { formatDateOnlyUtc } from '../../lib/date'
+import { formatMoney } from '../../lib/numberFormat'
 import { getProductDisplayName } from '../../lib/productName'
 import { openWhatsAppShare } from '../../lib/whatsapp'
 import { MainLayout, PageContainer, Button, Loading, ErrorState, Table, Badge } from '../../components'
@@ -87,8 +88,7 @@ function toNumber(value: unknown): number {
 }
 
 function money(n: number): string {
-  if (!Number.isFinite(n)) return '0.00'
-  return n.toFixed(2)
+  return formatMoney(n)
 }
 
 async function fetchOrder(token: string, id: string): Promise<SalesOrderDetail> {

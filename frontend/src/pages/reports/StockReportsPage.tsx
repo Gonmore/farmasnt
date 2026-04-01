@@ -3,18 +3,42 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { ResponsiveContainer, BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip, Legend, PieChart, Pie, Cell } from 'recharts'
 import { MainLayout, PageContainer, Button, IconButton, Input, Loading, ErrorState, EmptyState, Modal, Table } from '../../components'
-import { KPICard, ReportSection, StockExpiryDocument, StockInputsDocument, StockLowStockDocument, StockOpsDocument, StockRotationDocument, StockTransfersDocument, reportColors, getChartColor, chartTooltipStyle, chartGridStyle, chartAxisStyle } from '../../components/reports'
+import { KPICard, ReportSection, StockExistenciasDocument, StockExpiryDocument, StockInputsDocument, StockLowStockDocument, StockOpsDocument, StockRotationDocument, StockTransfersDocument, reportColors, getChartColor, chartTooltipStyle, chartGridStyle, chartAxisStyle } from '../../components/reports'
 import { useNavigation } from '../../hooks'
 import { apiFetch } from '../../lib/api'
 import { formatDateOnlyUtc } from '../../lib/date'
 import { blobToBase64, exportElementToPdf, exportModalContentToPdf, exportReactNodeToPdf, pdfBlobFromElement, pdfBlobFromReactNode } from '../../lib/exportPdf'
 import { exportToXlsx } from '../../lib/exportXlsx'
 import { getProductLabel } from '../../lib/productName'
+import { formatInteger } from '../../lib/numberFormat'
 import { exportPickingToPdf, exportLabelToPdf } from '../../lib/movementRequestDocsPdf'
 import { useAuth } from '../../providers/AuthProvider'
 import { useTenant } from '../../providers/TenantProvider'
 
-type StockTab = 'INPUTS' | 'TRANSFERS' | 'ROTATION' | 'NOMOVEMENT' | 'LOWSTOCK' | 'EXPIRY' | 'OPS'
+type StockTab = 'EXISTENCIAS' | 'INPUTS' | 'TRANSFERS' | 'ROTATION' | 'NOMOVEMENT' | 'LOWSTOCK' | 'EXPIRY' | 'OPS'
+
+type StockExistenciasItem = {
+  productId: string
+  sku: string
+  name: string
+  currentPhysical: number
+  currentReserved: number
+  currentAvailable: number
+  periodInputs: number
+  periodOutputs: number
+  salesOutputs: number
+  discardOutputs: number
+  sampleOutputs: number
+  transferIn: number
+  transferOut: number
+}
+
+type StockExistenciasWarehouseSection = {
+  warehouseId: string
+  warehouseCode: string | null
+  warehouseName: string | null
+  items: StockExistenciasItem[]
+}
 
 type StockInputsItem = {
   productId: string
@@ -343,6 +367,13 @@ async function fetchInputsByProduct(token: string, q: { from?: string; to?: stri
   return apiFetch(`/api/v1/reports/stock/inputs-by-product?${params}`, { token })
 }
 
+async function fetchExistencias(token: string, q: { from?: string; to?: string; take: number }): Promise<{ items: StockExistenciasItem[]; warehouses: StockExistenciasWarehouseSection[] }> {
+  const params = new URLSearchParams({ take: String(q.take) })
+  if (q.from) params.set('from', q.from)
+  if (q.to) params.set('to', q.to)
+  return apiFetch(`/api/v1/reports/stock/existencias?${params}`, { token })
+}
+
 async function fetchTransfers(token: string, q: { from?: string; to?: string; take: number }): Promise<{ items: TransferItem[] }> {
   const params = new URLSearchParams({ take: String(q.take) })
   if (q.from) params.set('from', q.from)
@@ -501,7 +532,7 @@ export function StockReportsPage() {
   const location = useLocation()
 
   const today = new Date()
-  const [tab, setTab] = useState<StockTab>('INPUTS')
+  const [tab, setTab] = useState<StockTab>('EXISTENCIAS')
   const [from, setFrom] = useState<string>(toIsoDate(startOfMonth(today)))
   const [to, setTo] = useState<string>(toIsoDate(startOfNextMonth(today)))
 
@@ -511,7 +542,7 @@ export function StockReportsPage() {
     const qsFrom = sp.get('from')
     const qsTo = sp.get('to')
 
-    if (qsTab && ['INPUTS', 'TRANSFERS', 'ROTATION', 'NOMOVEMENT', 'LOWSTOCK', 'EXPIRY', 'OPS'].includes(qsTab)) {
+    if (qsTab && ['EXISTENCIAS', 'INPUTS', 'TRANSFERS', 'ROTATION', 'NOMOVEMENT', 'LOWSTOCK', 'EXPIRY', 'OPS'].includes(qsTab)) {
       setTab(qsTab as StockTab)
     }
     if (qsFrom && /^\d{4}-\d{2}-\d{2}$/.test(qsFrom)) setFrom(qsFrom)
@@ -542,6 +573,7 @@ export function StockReportsPage() {
   const title = useMemo(() => {
     const period = `${from} a ${to}`
     switch (tab) {
+      case 'EXISTENCIAS': return `Existencias (${period})`
       case 'INPUTS': return `Existencias ingresadas por producto (${period})`
       case 'TRANSFERS': return `Traspasos entre sucursales (${period})`
       case 'ROTATION': return `Rotación de inventario (${period})`
@@ -562,6 +594,12 @@ export function StockReportsPage() {
     queryKey: ['reports', 'stock', 'inputsByProduct', { from, to }],
     queryFn: () => fetchInputsByProduct(auth.accessToken!, { from, to, take: 25 }),
     enabled: !!auth.accessToken && tab === 'INPUTS',
+  })
+
+  const existenciasQuery = useQuery({
+    queryKey: ['reports', 'stock', 'existencias', { from, to }],
+    queryFn: () => fetchExistencias(auth.accessToken!, { from, to, take: 5000 }),
+    enabled: !!auth.accessToken && tab === 'EXISTENCIAS',
   })
 
   const transfersQuery = useQuery({
@@ -775,6 +813,15 @@ export function StockReportsPage() {
     return { items, warehouses }
   }
 
+  const buildExistenciasStructuredReport = async () => {
+    const items = existenciasQuery.data?.items ?? []
+    const warehouses = (existenciasQuery.data?.warehouses ?? []).map((section) => ({
+      warehouse: `${section.warehouseCode ?? ''} ${section.warehouseName ?? ''}`.trim() || section.warehouseId,
+      items: section.items,
+    }))
+    return { items, warehouses }
+  }
+
   const buildTransfersStructuredReport = async () => {
     const routes = (transfersQuery.data?.items ?? []).map((item) => ({
       origin: item.fromWarehouse ? `${item.fromWarehouse.code ?? ''} ${item.fromWarehouse.name ?? ''}`.trim() || item.fromWarehouse.id : '—',
@@ -924,6 +971,9 @@ export function StockReportsPage() {
       if (tab === 'OPS') {
         const report = await buildOpsStructuredReport()
         blob = await pdfBlobFromReactNode(<StockOpsDocument title={title} from={from} to={to} summary={report.summary} byCity={report.byCity} flows={report.flows} fulfilled={report.fulfilled} traces={report.traces} returnsSummary={report.returnsSummary} returnsByWarehouse={report.returnsByWarehouse} />, { title, subtitle: `Período: ${from} a ${to}`, companyName: tenant.branding?.tenantName ?? 'Empresa', headerColor: '#3B82F6', logoUrl: tenant.branding?.logoUrl ?? undefined, captureWidthPx: 1240 })
+      } else if (tab === 'EXISTENCIAS') {
+        const report = await buildExistenciasStructuredReport()
+        blob = await pdfBlobFromReactNode(<StockExistenciasDocument title={title} from={from} to={to} items={report.items} warehouses={report.warehouses} />, { title, subtitle: `Período: ${from} a ${to}`, companyName: tenant.branding?.tenantName ?? 'Empresa', headerColor: '#3B82F6', logoUrl: tenant.branding?.logoUrl ?? undefined, captureWidthPx: 1240 })
       } else if (tab === 'INPUTS') {
         const report = await buildInputsStructuredReport()
         blob = await pdfBlobFromReactNode(<StockInputsDocument title={title} from={from} to={to} items={report.items} warehouses={report.warehouses} />, { title, subtitle: `Período: ${from} a ${to}`, companyName: tenant.branding?.tenantName ?? 'Empresa', headerColor: '#3B82F6', logoUrl: tenant.branding?.logoUrl ?? undefined, captureWidthPx: 1240 })
@@ -1054,6 +1104,12 @@ export function StockReportsPage() {
         return
       }
 
+      if (tab === 'EXISTENCIAS') {
+        const report = await buildExistenciasStructuredReport()
+        await exportReactNodeToPdf(<StockExistenciasDocument title={title} from={from} to={to} items={report.items} warehouses={report.warehouses} />, { filename: exportFilename, title, subtitle: `Período: ${from} a ${to}`, companyName: tenant.branding?.tenantName ?? 'Empresa', headerColor: '#3B82F6', logoUrl: tenant.branding?.logoUrl ?? undefined, captureWidthPx: 1240 })
+        return
+      }
+
       if (tab === 'INPUTS') {
         const report = await buildInputsStructuredReport()
         await exportReactNodeToPdf(<StockInputsDocument title={title} from={from} to={to} items={report.items} warehouses={report.warehouses} />, { filename: exportFilename, title, subtitle: `Período: ${from} a ${to}`, companyName: tenant.branding?.tenantName ?? 'Empresa', headerColor: '#3B82F6', logoUrl: tenant.branding?.logoUrl ?? undefined, captureWidthPx: 1240 })
@@ -1100,6 +1156,16 @@ export function StockReportsPage() {
     setExportingExcel(true)
     try {
       if (tab !== 'OPS') {
+        if (tab === 'EXISTENCIAS') {
+          const report = await buildExistenciasStructuredReport()
+          exportToXlsx(`reporte-stock-existencias-${from}-${to}.xlsx`, [
+            { name: 'Resumen', rows: report.items.map((item) => ({ SKU: item.sku, Producto: item.name, StockDisponible: item.currentAvailable, StockReservado: item.currentReserved, EntradasPeriodo: item.periodInputs, SalidasPeriodo: item.periodOutputs, Ventas: item.salesOutputs, Bajas: item.discardOutputs, Muestras: item.sampleOutputs, TraspasosEntrada: item.transferIn, TraspasosSalida: item.transferOut })) },
+            { name: 'Por sucursal', rows: report.warehouses.flatMap((section) => section.items.map((item) => ({ Sucursal: section.warehouse, SKU: item.sku, Producto: item.name, StockDisponible: item.currentAvailable, EntradasPeriodo: item.periodInputs, SalidasPeriodo: item.periodOutputs, Muestras: item.sampleOutputs, TraspasosEntrada: item.transferIn, TraspasosSalida: item.transferOut }))) },
+            { name: 'Meta', rows: [{ Reporte: title, Desde: from, Hasta: to, Generado: new Date().toLocaleString() }] },
+          ])
+          return
+        }
+
         if (tab === 'INPUTS') {
           const report = await buildInputsStructuredReport()
           exportToXlsx(`reporte-stock-ingresos-${from}-${to}.xlsx`, [
@@ -1267,6 +1333,9 @@ export function StockReportsPage() {
             {/* Tipos de reporte - botones outline */}
             <div className="flex flex-wrap items-center gap-2">
               <span className="mr-2 text-sm font-medium text-slate-600 dark:text-slate-400">Tipo de reporte:</span>
+              <Button size="sm" variant={tab === 'EXISTENCIAS' ? 'primary' : 'outline'} onClick={() => setTab('EXISTENCIAS')}>
+                📦 Existencias
+              </Button>
               <Button size="sm" variant={tab === 'INPUTS' ? 'primary' : 'outline'} onClick={() => setTab('INPUTS')}>
                 📥 Ingresos
               </Button>
@@ -1377,6 +1446,112 @@ export function StockReportsPage() {
             </div>
           </div>
 
+          {tab === 'EXISTENCIAS' && (
+            <ReportSection
+              title="📦 Existencias"
+              subtitle="Stock disponible actual y movimientos del período"
+              icon="📦"
+            >
+              {existenciasQuery.isLoading && <Loading />}
+              {existenciasQuery.isError && <ErrorState message={(existenciasQuery.error as any)?.message ?? 'Error cargando reporte'} />}
+              {!existenciasQuery.isLoading && !existenciasQuery.isError && (existenciasQuery.data?.items?.length ?? 0) === 0 && (
+                <EmptyState message="No hay existencias ni movimientos para el rango seleccionado." />
+              )}
+              {!existenciasQuery.isLoading && !existenciasQuery.isError && (existenciasQuery.data?.items?.length ?? 0) > 0 && (() => {
+                const items = existenciasQuery.data?.items ?? []
+                const totalAvailable = items.reduce((sum, item) => sum + item.currentAvailable, 0)
+                const totalInputs = items.reduce((sum, item) => sum + item.periodInputs, 0)
+                const totalOutputs = items.reduce((sum, item) => sum + item.periodOutputs, 0)
+                const totalSamples = items.reduce((sum, item) => sum + item.sampleOutputs, 0)
+                const totalTransfers = items.reduce((sum, item) => sum + item.transferIn + item.transferOut, 0)
+                const chartItems = items
+                  .slice()
+                  .sort((a, b) => b.currentAvailable - a.currentAvailable)
+                  .slice(0, 12)
+                  .map((item) => ({ sku: item.sku, name: item.name, disponible: item.currentAvailable, entradas: item.periodInputs, salidas: item.periodOutputs }))
+
+                return (
+                  <>
+                    <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-5">
+                      <KPICard icon="📦" label="Productos" value={String(items.length)} color="primary" subtitle="Con stock o movimiento" />
+                      <KPICard icon="✅" label="Stock Disponible" value={formatInteger(totalAvailable)} color="success" subtitle="Actual" />
+                      <KPICard icon="📥" label="Entradas" value={formatInteger(totalInputs)} color="info" subtitle="Período" />
+                      <KPICard icon="📤" label="Salidas" value={formatInteger(totalOutputs)} color="warning" subtitle="Período" />
+                      <KPICard icon="🧪" label="Muestras" value={formatInteger(totalSamples)} color="primary" subtitle={`Traspasos ${formatInteger(totalTransfers)}`} />
+                    </div>
+
+                    <div className="mx-auto mb-6 h-[420px] w-full min-w-0 max-w-6xl overflow-hidden rounded-lg bg-gradient-to-br from-slate-50 to-white p-4 dark:from-slate-900 dark:to-slate-800">
+                      <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={320}>
+                        <BarChart data={chartItems} margin={{ left: 10, right: 20, bottom: 80 }}>
+                          <CartesianGrid {...chartGridStyle} />
+                          <XAxis dataKey="sku" angle={-45} textAnchor="end" height={90} {...chartAxisStyle} />
+                          <YAxis {...chartAxisStyle} />
+                          <Tooltip
+                            {...chartTooltipStyle}
+                            labelFormatter={(label, payload) => payload?.[0]?.payload?.name ?? label}
+                            formatter={(value: any, name: any) => [formatInteger(Number(value ?? 0)), name === 'disponible' ? 'Disponible' : name === 'entradas' ? 'Entradas' : 'Salidas']}
+                          />
+                          <Legend />
+                          <Bar dataKey="disponible" fill={reportColors.success[0]} name="Disponible" radius={[8, 8, 0, 0]} />
+                          <Bar dataKey="entradas" fill={reportColors.info[0]} name="Entradas" radius={[8, 8, 0, 0]} />
+                          <Bar dataKey="salidas" fill={reportColors.warning[0]} name="Salidas" radius={[8, 8, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+
+                    <div className="rounded-lg border border-slate-200 dark:border-slate-700">
+                      <Table
+                        columns={[
+                          { header: 'SKU', accessor: (r) => <span className="font-mono text-xs">{r.sku}</span> },
+                          { header: 'Producto', accessor: (r) => <span className="font-medium">{r.name}</span> },
+                          { header: 'Disponible', accessor: (r) => <span className="font-semibold text-emerald-600 dark:text-emerald-400">{formatInteger(r.currentAvailable)}</span>, className: 'text-right' },
+                          { header: 'Reservado', accessor: (r) => formatInteger(r.currentReserved), className: 'text-right' },
+                          { header: 'Entradas', accessor: (r) => formatInteger(r.periodInputs), className: 'text-right' },
+                          { header: 'Salidas', accessor: (r) => formatInteger(r.periodOutputs), className: 'text-right' },
+                          { header: 'Ventas', accessor: (r) => formatInteger(r.salesOutputs), className: 'text-right' },
+                          { header: 'Bajas', accessor: (r) => formatInteger(r.discardOutputs), className: 'text-right' },
+                          { header: 'Muestras', accessor: (r) => formatInteger(r.sampleOutputs), className: 'text-right' },
+                          { header: 'Traspasos', accessor: (r) => `${formatInteger(r.transferIn)} / ${formatInteger(r.transferOut)}`, className: 'text-right' },
+                        ]}
+                        data={items}
+                        keyExtractor={(r) => r.productId}
+                      />
+                    </div>
+
+                    {(existenciasQuery.data?.warehouses ?? []).length > 0 && (
+                      <div className="mt-6 space-y-4">
+                        <h4 className="font-semibold text-slate-700 dark:text-slate-300">🏢 Vista por sucursal</h4>
+                        {(existenciasQuery.data?.warehouses ?? []).map((section) => {
+                          const warehouseLabel = `${section.warehouseCode ?? ''} ${section.warehouseName ?? ''}`.trim() || section.warehouseId
+                          return (
+                            <div key={section.warehouseId} className="rounded-lg border border-slate-200 dark:border-slate-700">
+                              <div className="border-b border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                                {warehouseLabel}
+                              </div>
+                              <Table
+                                columns={[
+                                  { header: 'SKU', accessor: (r) => <span className="font-mono text-xs">{r.sku}</span> },
+                                  { header: 'Producto', accessor: (r) => r.name },
+                                  { header: 'Disponible', accessor: (r) => formatInteger(r.currentAvailable), className: 'text-right' },
+                                  { header: 'Entradas', accessor: (r) => formatInteger(r.periodInputs), className: 'text-right' },
+                                  { header: 'Salidas', accessor: (r) => formatInteger(r.periodOutputs), className: 'text-right' },
+                                  { header: 'Muestras', accessor: (r) => formatInteger(r.sampleOutputs), className: 'text-right' },
+                                  { header: 'Traspasos', accessor: (r) => `${formatInteger(r.transferIn)} / ${formatInteger(r.transferOut)}`, className: 'text-right' },
+                                ]}
+                                data={section.items}
+                                keyExtractor={(r) => `${section.warehouseId}-${r.productId}`}
+                              />
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </>
+                )
+              })()}
+            </ReportSection>
+          )}
+
           {tab === 'INPUTS' && (
             <ReportSection
               title="📦 Existencias Ingresadas"
@@ -1407,14 +1582,14 @@ export function StockReportsPage() {
                     <KPICard
                       icon="📥"
                       label="Unidades Totales"
-                      value={(inputsQuery.data?.items ?? []).reduce((sum, i) => sum + toNumber(i.quantity), 0).toFixed(0)}
+                      value={formatInteger((inputsQuery.data?.items ?? []).reduce((sum, i) => sum + toNumber(i.quantity), 0))}
                       color="success"
                     />
                     <KPICard
                       icon="⭐"
                       label="Producto Top"
                       value={(inputsQuery.data?.items ?? [])[0]?.name?.slice(0, 15) ?? '-'}
-                      subtitle={`${toNumber((inputsQuery.data?.items ?? [])[0]?.quantity).toFixed(0)} unidades`}
+                      subtitle={`${formatInteger(toNumber((inputsQuery.data?.items ?? [])[0]?.quantity))} unidades`}
                       color="warning"
                     />
                   </div>
@@ -1487,7 +1662,7 @@ export function StockReportsPage() {
                           header: '📥 Cantidad Ingresada',
                           accessor: (r) => (
                             <span className="font-semibold tabular-nums text-green-600 dark:text-green-400">
-                              {toNumber(r.quantity).toFixed(0)}
+                              {formatInteger(toNumber(r.quantity))}
                             </span>
                           ),
                         },
@@ -1549,7 +1724,7 @@ export function StockReportsPage() {
                     <KPICard
                       icon="📦"
                       label="Unidades Transferidas"
-                      value={(transfersQuery.data?.items ?? []).reduce((sum, i) => sum + toNumber(i.quantity), 0).toFixed(0)}
+                      value={formatInteger((transfersQuery.data?.items ?? []).reduce((sum, i) => sum + toNumber(i.quantity), 0))}
                       color="warning"
                     />
                   </div>
@@ -1580,7 +1755,7 @@ export function StockReportsPage() {
                               <Cell key={idx} fill={getChartColor(idx, 'rainbow')} />
                             ))}
                           </Pie>
-                          <Tooltip {...chartTooltipStyle} formatter={(v: any) => [`${Number(v).toFixed(0)} unid.`, 'Transferido']} />
+                          <Tooltip {...chartTooltipStyle} formatter={(v: any) => [`${formatInteger(Number(v))} unid.`, 'Transferido']} />
                           <Legend verticalAlign="bottom" height={36} />
                         </PieChart>
                       </ResponsiveContainer>
@@ -1658,7 +1833,7 @@ export function StockReportsPage() {
                           header: '📦 Cantidad Transferida',
                           accessor: (r) => (
                             <span className="font-semibold tabular-nums text-orange-600 dark:text-orange-400">
-                              {toNumber(r.quantity).toFixed(0)}
+                              {formatInteger(toNumber(r.quantity))}
                             </span>
                           ),
                         },
@@ -1732,7 +1907,7 @@ export function StockReportsPage() {
                           <span className="text-xl">🚀</span> Alta Rotación
                         </h4>
                         <p className="text-sm text-green-700 dark:text-green-300">
-                          {highRotation} productos con más de {avgRotation.toFixed(0)} movimientos
+                          {formatInteger(highRotation)} productos con más de {formatInteger(avgRotation)} movimientos
                         </p>
                         <ul className="mt-2 space-y-1 text-sm text-green-600 dark:text-green-400">
                           {items.filter(i => i.totalMovements > avgRotation).slice(0, 3).map((item, idx) => (
@@ -1859,7 +2034,7 @@ export function StockReportsPage() {
                               </div>
                               <div className="text-right">
                                 <p className="font-semibold text-amber-600 dark:text-amber-400">{item.totalMovements} mov.</p>
-                                <p className="text-xs text-slate-500">{toNumber(item.currentStock).toFixed(0)} unid.</p>
+                                <p className="text-xs text-slate-500">{formatInteger(toNumber(item.currentStock))} unid.</p>
                               </div>
                             </div>
                           ))}
@@ -2338,7 +2513,7 @@ export function StockReportsPage() {
                 {!returnsSummaryQuery.isLoading && !returnsSummaryQuery.isError && (() => {
                   const s = returnsSummaryQuery.data ?? { returnsCount: 0, itemsCount: 0, quantity: '0' }
                   const avgItems = s.returnsCount > 0 ? (s.itemsCount / s.returnsCount).toFixed(1) : '0.0'
-                  const qty = toNumber(s.quantity).toFixed(0)
+                  const qty = formatInteger(toNumber(s.quantity))
 
                   const returnsByWhItems = returnsByWarehouseQuery.data?.items ?? []
                   const returnsBarData = returnsByWhItems.map((r) => ({
@@ -2399,7 +2574,7 @@ export function StockReportsPage() {
                               { header: 'Ítems', accessor: (r: ReturnsByWarehouseItem) => r.itemsCount },
                               {
                                 header: 'Unidades',
-                                accessor: (r: ReturnsByWarehouseItem) => toNumber(r.quantity).toFixed(0),
+                                accessor: (r: ReturnsByWarehouseItem) => formatInteger(toNumber(r.quantity)),
                               },
                             ]}
                             data={returnsByWarehouseQuery.data?.items ?? []}

@@ -2,6 +2,52 @@ import type { FastifyInstance } from 'fastify'
 import { prisma } from '../../db/prisma.js'
 import { requireAuth } from '../../../application/security/rbac.js'
 
+const VALID_THOUSAND_SEPARATORS = new Set(['.', ',', ' '])
+
+function normalizeThousandSeparator(value: unknown): '.' | ',' | ' ' {
+  return typeof value === 'string' && VALID_THOUSAND_SEPARATORS.has(value) ? (value as '.' | ',' | ' ') : '.'
+}
+
+function isMissingThousandSeparatorColumn(error: unknown): boolean {
+  const err: any = error
+  const code = String(err?.code ?? '')
+  if (code === 'P2022') return true
+  const message = String(err?.message ?? '')
+  return /thousandSeparator/i.test(message) && /does not exist|no existe|column/i.test(message)
+}
+
+const tenantBrandingBaseSelect = {
+  id: true,
+  name: true,
+  logoUrl: true,
+  brandPrimary: true,
+  brandSecondary: true,
+  brandTertiary: true,
+  defaultTheme: true,
+  currency: true,
+  country: true,
+} as const
+
+async function findTenantBranding(db: ReturnType<typeof prisma>, where: { id: string; isActive?: true }) {
+  try {
+    const tenant = await db.tenant.findFirst({
+      where,
+      select: {
+        ...tenantBrandingBaseSelect,
+        thousandSeparator: true,
+      },
+    })
+    return tenant
+  } catch (error) {
+    if (!isMissingThousandSeparatorColumn(error)) throw error
+    const tenant = await db.tenant.findFirst({
+      where,
+      select: tenantBrandingBaseSelect,
+    })
+    return tenant ? { ...tenant, thousandSeparator: '.' as const } : null
+  }
+}
+
 function normalizeHost(raw: unknown): string | null {
   if (typeof raw !== 'string') return null
   const v = raw.trim().toLowerCase()
@@ -31,9 +77,10 @@ export async function registerTenantRoutes(app: FastifyInstance): Promise<void> 
               brandTertiary: { type: 'string', nullable: true },
               defaultTheme: { type: 'string' },
               currency: { type: 'string' },
+              thousandSeparator: { type: 'string' },
               country: { type: 'string', nullable: true },
             },
-            required: ['tenantId', 'tenantName', 'defaultTheme'],
+            required: ['tenantId', 'tenantName', 'defaultTheme', 'currency', 'thousandSeparator'],
             additionalProperties: false,
           },
         },
@@ -83,20 +130,7 @@ export async function registerTenantRoutes(app: FastifyInstance): Promise<void> 
         throw err
       }
 
-      const tenant = await db.tenant.findFirst({
-        where: { id: tenantId, isActive: true },
-        select: {
-          id: true,
-          name: true,
-          logoUrl: true,
-          brandPrimary: true,
-          brandSecondary: true,
-          brandTertiary: true,
-          defaultTheme: true,
-          currency: true,
-          country: true,
-        },
-      })
+      const tenant = await findTenantBranding(db, { id: tenantId, isActive: true })
 
       if (!tenant) {
         const err = new Error('Tenant not found') as Error & { statusCode?: number }
@@ -113,6 +147,7 @@ export async function registerTenantRoutes(app: FastifyInstance): Promise<void> 
         brandTertiary: tenant.brandTertiary,
         defaultTheme: tenant.defaultTheme,
         currency: tenant.currency,
+        thousandSeparator: tenant.thousandSeparator,
         country: tenant.country,
       }
     },
@@ -138,9 +173,10 @@ export async function registerTenantRoutes(app: FastifyInstance): Promise<void> 
               brandTertiary: { type: 'string', nullable: true },
               defaultTheme: { type: 'string' },
               currency: { type: 'string' },
+              thousandSeparator: { type: 'string' },
               country: { type: 'string', nullable: true },
             },
-            required: ['tenantId', 'tenantName', 'defaultTheme'],
+            required: ['tenantId', 'tenantName', 'defaultTheme', 'currency', 'thousandSeparator'],
             additionalProperties: false,
           },
         },
@@ -149,20 +185,7 @@ export async function registerTenantRoutes(app: FastifyInstance): Promise<void> 
     async (request) => {
       const tenantId = request.auth!.tenantId
 
-      const tenant = await db.tenant.findFirst({
-        where: { id: tenantId, isActive: true },
-        select: {
-          id: true,
-          name: true,
-          logoUrl: true,
-          brandPrimary: true,
-          brandSecondary: true,
-          brandTertiary: true,
-          defaultTheme: true,
-          currency: true,
-          country: true,
-        },
-      })
+      const tenant = await findTenantBranding(db, { id: tenantId, isActive: true })
 
       if (!tenant) {
         const err = new Error('Tenant not found') as Error & { statusCode?: number }
@@ -179,6 +202,7 @@ export async function registerTenantRoutes(app: FastifyInstance): Promise<void> 
         brandTertiary: tenant.brandTertiary,
         defaultTheme: tenant.defaultTheme,
         currency: tenant.currency,
+        thousandSeparator: tenant.thousandSeparator,
         country: tenant.country,
       }
     },
@@ -190,16 +214,20 @@ export async function registerTenantRoutes(app: FastifyInstance): Promise<void> 
     { preHandler: [requireAuth()] },
     async (request, reply) => {
       const actor = request.auth!
-      const { logoUrl, brandPrimary, brandSecondary, brandTertiary, defaultTheme, currency, country } = request.body as any
+      const { logoUrl, brandPrimary, brandSecondary, brandTertiary, defaultTheme, currency, thousandSeparator, country } = request.body as any
 
       // Validar que al menos un campo esté presente
-      if (!logoUrl && !brandPrimary && !brandSecondary && !brandTertiary && !defaultTheme && !currency && country === undefined) {
+      if (!logoUrl && !brandPrimary && !brandSecondary && !brandTertiary && !defaultTheme && !currency && thousandSeparator === undefined && country === undefined) {
         return reply.status(400).send({ message: 'At least one field must be provided' })
       }
 
       // Validar defaultTheme si está presente
       if (defaultTheme && !['LIGHT', 'DARK'].includes(defaultTheme)) {
         return reply.status(400).send({ message: 'defaultTheme must be LIGHT or DARK' })
+      }
+
+      if (thousandSeparator !== undefined && !VALID_THOUSAND_SEPARATORS.has(thousandSeparator)) {
+        return reply.status(400).send({ message: 'thousandSeparator must be one of ".", "," or " "' })
       }
 
       const updateData: any = {}
@@ -209,23 +237,46 @@ export async function registerTenantRoutes(app: FastifyInstance): Promise<void> 
       if (brandTertiary !== undefined) updateData.brandTertiary = brandTertiary
       if (defaultTheme !== undefined) updateData.defaultTheme = defaultTheme
       if (currency !== undefined) updateData.currency = currency
+      if (thousandSeparator !== undefined) updateData.thousandSeparator = normalizeThousandSeparator(thousandSeparator)
       if (country !== undefined) updateData.country = typeof country === 'string' ? country.trim().toUpperCase() || null : null
 
-      const tenant = await db.tenant.update({
-        where: { id: actor.tenantId },
-        data: updateData,
-        select: {
-          id: true,
-          name: true,
-          logoUrl: true,
-          brandPrimary: true,
-          brandSecondary: true,
-          brandTertiary: true,
-          defaultTheme: true,
-          currency: true,
-          country: true,
-        },
-      })
+      let tenant: {
+        id: string
+        name: string
+        logoUrl: string | null
+        brandPrimary: string | null
+        brandSecondary: string | null
+        brandTertiary: string | null
+        defaultTheme: string
+        currency: string
+        thousandSeparator: '.' | ',' | ' '
+        country: string | null
+      }
+
+      try {
+        const updatedTenant = await db.tenant.update({
+          where: { id: actor.tenantId },
+          data: updateData,
+          select: {
+            ...tenantBrandingBaseSelect,
+            thousandSeparator: true,
+          },
+        })
+        tenant = {
+          ...updatedTenant,
+          thousandSeparator: normalizeThousandSeparator(updatedTenant.thousandSeparator),
+        }
+      } catch (error) {
+        if (!isMissingThousandSeparatorColumn(error)) throw error
+
+        const { thousandSeparator: _ignoredThousandSeparator, ...fallbackUpdateData } = updateData
+        const updatedTenant = await db.tenant.update({
+          where: { id: actor.tenantId },
+          data: fallbackUpdateData,
+          select: tenantBrandingBaseSelect,
+        })
+        tenant = { ...updatedTenant, thousandSeparator: '.' as const }
+      }
 
       return reply.send({
         tenantId: tenant.id,
@@ -236,6 +287,7 @@ export async function registerTenantRoutes(app: FastifyInstance): Promise<void> 
         brandTertiary: tenant.brandTertiary,
         defaultTheme: tenant.defaultTheme,
         currency: tenant.currency,
+        thousandSeparator: tenant.thousandSeparator,
         country: tenant.country,
       })
     },

@@ -1,6 +1,7 @@
 import { Bar, BarChart, CartesianGrid, Cell, Tooltip, XAxis, YAxis } from 'recharts'
 import { ExportLegend } from './ExportLegend'
 import { getChartColor } from './chartTheme'
+import { formatInteger, formatMoney } from '../../lib/numberFormat'
 
 export type SalesByCustomerDocumentItem = {
   customerName: string
@@ -37,8 +38,7 @@ type Props = {
 }
 
 function money(n: number): string {
-  if (!Number.isFinite(n)) return '0.00'
-  return n.toFixed(2)
+  return formatMoney(n)
 }
 
 function orderStatusLabel(status: string): string {
@@ -96,8 +96,8 @@ export function SalesByCustomerDocument({ title, from, to, currency, statusLabel
         </div>
         <div className="rounded-xl border border-slate-200 bg-white px-4 py-4">
           <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">Volumen total</div>
-          <div className="mt-2 text-3xl font-bold">{totalQuantity.toFixed(0)}</div>
-          <div className="mt-1 text-sm text-slate-600">{totalOrders} ordenes</div>
+          <div className="mt-2 text-3xl font-bold">{formatInteger(totalQuantity)}</div>
+          <div className="mt-1 text-sm text-slate-600">{formatInteger(totalOrders)} ordenes</div>
         </div>
       </div>
 
@@ -139,8 +139,8 @@ export function SalesByCustomerDocument({ title, from, to, currency, statusLabel
                 <tr key={item.customerName} className="border-b border-slate-100 align-top">
                   <td className="px-3 py-3 font-medium">{item.customerName}</td>
                   <td className="px-3 py-3">{item.city ?? '-'}</td>
-                  <td className="px-3 py-3 text-right tabular-nums">{item.ordersCount}</td>
-                  <td className="px-3 py-3 text-right tabular-nums">{item.quantity.toFixed(0)}</td>
+                  <td className="px-3 py-3 text-right tabular-nums">{formatInteger(item.ordersCount)}</td>
+                  <td className="px-3 py-3 text-right tabular-nums">{formatInteger(item.quantity)}</td>
                   <td className="px-3 py-3 text-right font-semibold text-emerald-700 tabular-nums">{money(item.amount)} {currency}</td>
                 </tr>
               ))}

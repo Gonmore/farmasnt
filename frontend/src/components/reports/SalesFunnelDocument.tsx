@@ -1,5 +1,6 @@
 import { Bar, BarChart, CartesianGrid, Cell, Tooltip, XAxis, YAxis } from 'recharts'
 import { getChartColor } from './chartTheme'
+import { formatInteger, formatMoney } from '../../lib/numberFormat'
 
 export type SalesFunnelDocumentItem = {
   key: string
@@ -20,8 +21,7 @@ type Props = {
 }
 
 function money(n: number): string {
-  if (!Number.isFinite(n)) return '0.00'
-  return n.toFixed(2)
+  return formatMoney(n)
 }
 
 export function SalesFunnelDocument({ title, from, to, currency, items, totals }: Props) {
@@ -45,7 +45,7 @@ export function SalesFunnelDocument({ title, from, to, currency, items, totals }
               <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" />
               <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#475569' }} />
               <YAxis tick={{ fontSize: 11, fill: '#475569' }} />
-              <Tooltip formatter={(value: number | string | undefined) => [Number(value ?? 0), 'Cantidad']} />
+              <Tooltip formatter={(value: number | string | undefined) => [formatInteger(Number(value ?? 0)), 'Cantidad']} />
               <Bar dataKey="value" radius={[6, 6, 0, 0]} isAnimationActive={false}>
                 {items.map((_, idx) => <Cell key={idx} fill={getChartColor(idx, 'rainbow')} />)}
               </Bar>
@@ -60,7 +60,7 @@ export function SalesFunnelDocument({ title, from, to, currency, items, totals }
             {items.map((item, idx) => {
               const base = items[0]?.value || 0
               const pct = base > 0 ? (item.value / base) * 100 : 0
-              return <tr key={item.key} className="border-b border-slate-100"><td className="px-3 py-3">{idx + 1}. {item.label}</td><td className="px-3 py-3 text-right tabular-nums">{item.value}</td><td className="px-3 py-3 text-right tabular-nums">{pct.toFixed(1)}%</td></tr>
+              return <tr key={item.key} className="border-b border-slate-100"><td className="px-3 py-3">{idx + 1}. {item.label}</td><td className="px-3 py-3 text-right tabular-nums">{formatInteger(item.value)}</td><td className="px-3 py-3 text-right tabular-nums">{pct.toFixed(1)}%</td></tr>
             })}
           </tbody>
         </table>

@@ -1,5 +1,6 @@
 import { Area, AreaChart, CartesianGrid, Tooltip, XAxis, YAxis } from 'recharts'
 import { ExportLegend } from './ExportLegend'
+import { formatInteger, formatMoney } from '../../lib/numberFormat'
 
 export type SalesMonthDocumentItem = {
   day: string
@@ -19,8 +20,7 @@ type Props = {
 }
 
 function money(n: number): string {
-  if (!Number.isFinite(n)) return '0.00'
-  return n.toFixed(2)
+  return formatMoney(n)
 }
 
 export function SalesMonthDocument({ title, from, to, currency, statusLabel, items }: Props) {
@@ -50,17 +50,17 @@ export function SalesMonthDocument({ title, from, to, currency, statusLabel, ite
         </div>
         <div className="rounded-xl border border-slate-200 bg-white px-4 py-4">
           <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">Ordenes</div>
-          <div className="mt-2 text-3xl font-bold">{totalOrders}</div>
+          <div className="mt-2 text-3xl font-bold">{formatInteger(totalOrders)}</div>
           <div className="mt-1 text-sm text-slate-600">En el periodo</div>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white px-4 py-4">
           <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">Lineas</div>
-          <div className="mt-2 text-3xl font-bold">{totalLines}</div>
+          <div className="mt-2 text-3xl font-bold">{formatInteger(totalLines)}</div>
           <div className="mt-1 text-sm text-slate-600">Items vendidos</div>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white px-4 py-4">
           <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">Unidades</div>
-          <div className="mt-2 text-3xl font-bold">{totalQuantity.toFixed(0)}</div>
+          <div className="mt-2 text-3xl font-bold">{formatInteger(totalQuantity)}</div>
           <div className="mt-1 text-sm text-slate-600">Total despachado</div>
         </div>
       </div>
@@ -106,9 +106,9 @@ export function SalesMonthDocument({ title, from, to, currency, statusLabel, ite
               return (
                 <tr key={item.day} className="border-b border-slate-100 align-top">
                   <td className="px-3 py-3">{new Date(item.day).toLocaleDateString()}</td>
-                  <td className="px-3 py-3 text-right tabular-nums">{item.ordersCount}</td>
-                  <td className="px-3 py-3 text-right tabular-nums">{item.linesCount}</td>
-                  <td className="px-3 py-3 text-right tabular-nums">{item.quantity.toFixed(0)}</td>
+                  <td className="px-3 py-3 text-right tabular-nums">{formatInteger(item.ordersCount)}</td>
+                  <td className="px-3 py-3 text-right tabular-nums">{formatInteger(item.linesCount)}</td>
+                  <td className="px-3 py-3 text-right tabular-nums">{formatInteger(item.quantity)}</td>
                   <td className="px-3 py-3 text-right font-semibold text-emerald-700 tabular-nums">{money(item.amount)} {currency}</td>
                   <td className="px-3 py-3 text-right tabular-nums">{money(avgTicket)} {currency}</td>
                 </tr>
