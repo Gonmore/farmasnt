@@ -71,6 +71,11 @@ type ProductBatchListItem = {
   createdAt: string
   updatedAt: string
   canManage?: boolean
+  originWarehouseId?: string | null
+  originWarehouseCode?: string | null
+  originWarehouseName?: string | null
+  originLocationId?: string | null
+  originLocationCode?: string | null
   totalQuantity: string | null
   totalReservedQuantity?: string | null
   totalAvailableQuantity?: string | null
@@ -78,6 +83,7 @@ type ProductBatchListItem = {
     warehouseId: string
     warehouseCode: string
     warehouseName: string
+    warehouseCity?: string | null
     locationId: string
     locationCode: string
     quantity: string
@@ -478,8 +484,6 @@ export function ProductDetailPage() {
   const [editingBatchId, setEditingBatchId] = useState<string | null>(null)
   const [editingBatchVersion, setEditingBatchVersion] = useState<number>(1)
   const [editingBatchNumber, setEditingBatchNumber] = useState<string>('')
-  const [editingManufacturingDate, setEditingManufacturingDate] = useState<string>('')
-  const [editingExpiresAt, setEditingExpiresAt] = useState<string>('')
   const [editingPresentationId, setEditingPresentationId] = useState<string>('')
   const [editingAdjustLocationId, setEditingAdjustLocationId] = useState<string>('')
   const [editingAdjustTotalQty, setEditingAdjustTotalQty] = useState<string>('')
@@ -501,15 +505,14 @@ export function ProductDetailPage() {
     setEditingBatchId(b.id)
     setEditingBatchVersion(b.version)
     setEditingBatchNumber(b.batchNumber)
-    setEditingManufacturingDate(b.manufacturingDate ? String(b.manufacturingDate).slice(0, 10) : '')
-    setEditingExpiresAt(b.expiresAt ? String(b.expiresAt).slice(0, 10) : '')
 
     // Presentation is optional on batch; default to product default presentation if possible.
     const presId = b.presentationId ?? ''
     setEditingPresentationId(presId)
 
-    // Quantity editing is per-location; default to the first location.
-    const pickLoc = b.locations?.[0]
+    // Quantity editing is restricted to remaining stock in the original inbound warehouse.
+    const editableLocs = (b.locations ?? []).filter((location) => !b.originWarehouseId || location.warehouseId === b.originWarehouseId)
+    const pickLoc = editableLocs[0]
     setEditingAdjustLocationId(pickLoc?.locationId ?? '')
     setEditingAdjustTotalQty(pickLoc?.quantity ?? '')
     setEditingAdjustNote('')
@@ -840,8 +843,6 @@ export function ProductDetailPage() {
       data: {
         version: number
         batchNumber: string
-        manufacturingDate: string | null
-        expiresAt: string | null
         presentationId: string | null
       }
       adjust?: { locationId: string; deltaQty: number; note?: string }
@@ -1265,6 +1266,7 @@ export function ProductDetailPage() {
     }
 
     const presId = editingPresentationId.trim() ? editingPresentationId.trim() : null
+    const currentBatch = (productBatchesQuery.data?.items ?? []).find((x) => x.id === editingBatchId) ?? null
 
     // Optional quantity adjustment (only if we have stock read + a location selected)
     let adjust: { locationId: string; deltaQty: number; note?: string } | undefined = undefined
@@ -1277,7 +1279,14 @@ export function ProductDetailPage() {
           return
         }
 
-        const currentBatch = (productBatchesQuery.data?.items ?? []).find((x) => x.id === editingBatchId) ?? null
+        if (currentBatch?.originWarehouseId) {
+          const selectedLocation = currentBatch.locations?.find((location) => location.locationId === editingAdjustLocationId) ?? null
+          if (!selectedLocation || selectedLocation.warehouseId !== currentBatch.originWarehouseId) {
+            setBatchManageError('Solo podés ajustar existencias del almacén de ingreso original del lote.')
+            return
+          }
+        }
+
         const loc = currentBatch?.locations?.find((l) => l.locationId === editingAdjustLocationId) ?? null
         const currentNum = Number(loc?.quantity ?? '0')
         const reservedNum = Number(loc?.reservedQuantity ?? '0')
@@ -1311,8 +1320,6 @@ export function ProductDetailPage() {
       data: {
         version: editingBatchVersion,
         batchNumber: trimmed,
-        manufacturingDate: editingManufacturingDate.trim() ? dateOnlyToUtcIso(editingManufacturingDate) : null,
-        expiresAt: editingExpiresAt.trim() ? dateOnlyToUtcIso(editingExpiresAt) : null,
         presentationId: presId,
       },
       adjust,
@@ -2744,21 +2751,6 @@ export function ProductDetailPage() {
                     ]}
                   />
 
-                  <Input
-                    label="Fecha de Fabricación"
-                    type="date"
-                    value={editingManufacturingDate}
-                    onChange={(e) => setEditingManufacturingDate(e.target.value)}
-                    disabled={updateBatchMutation.isPending}
-                  />
-                  <Input
-                    label="Fecha de Vencimiento"
-                    type="date"
-                    value={editingExpiresAt}
-                    onChange={(e) => setEditingExpiresAt(e.target.value)}
-                    disabled={updateBatchMutation.isPending}
-                  />
-
                   {productBatchesQuery.data?.hasStockRead ? (
                     <div className="rounded-md border border-slate-200 p-3 dark:border-slate-700">
                       <div className="mb-2 text-sm font-semibold text-slate-900 dark:text-slate-100">Cantidad (ajuste)</div>
@@ -2768,11 +2760,18 @@ export function ProductDetailPage() {
 
                       {(() => {
                         const currentBatch = (productBatchesQuery.data?.items ?? []).find((x) => x.id === editingBatchId) ?? null
-                        const locs = currentBatch?.locations ?? []
+                        const locs = (currentBatch?.locations ?? []).filter((location) => !currentBatch?.originWarehouseId || location.warehouseId === currentBatch.originWarehouseId)
+                        const originWarehouseLabel = currentBatch?.originWarehouseCode || currentBatch?.originWarehouseName
+                          ? `${currentBatch?.originWarehouseCode ?? ''} ${currentBatch?.originWarehouseName ?? ''}`.trim()
+                          : null
                         return (
                           <div className="grid gap-3 md:grid-cols-2">
+                            <div className="md:col-span-2 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-200">
+                              Solo se puede ajustar el remanente que sigue en el almacén de ingreso original{originWarehouseLabel ? `: ${originWarehouseLabel}` : ''}. Las cantidades que ya fueron transferidas a otras sucursales deben seguir el flujo normal de solicitud, atención, envío y recepción.
+                            </div>
+
                             <Select
-                              label="Ubicación"
+                              label="Ubicación editable"
                               value={editingAdjustLocationId}
                               onChange={(e) => {
                                 const next = e.target.value
@@ -2802,6 +2801,12 @@ export function ProductDetailPage() {
                                 disabled={updateBatchMutation.isPending}
                               />
                             </div>
+
+                            {locs.length === 0 && (
+                              <div className="md:col-span-2 text-xs text-slate-600 dark:text-slate-400">
+                                Este lote ya no tiene existencias editables en el almacén de ingreso original.
+                              </div>
+                            )}
                           </div>
                         )
                       })()}

@@ -2,10 +2,10 @@
 
 MVP: **Almacén + Ventas B2B** · SaaS **multi-tenant** (row-level `tenantId`) con auditoría (GxP-friendly).
 
-## Versión 2.1.0
+## Versión 2.1.1
 
 Estado actual de la raíz del proyecto:
-- Versión operativa objetivo: `2.1.0`.
+- Versión operativa objetivo: `2.1.1`.
 - Incluye soporte **multi-marca / multi-empresa** con grupos de tenants, grants por usuario y cambio de empresa desde el menú de cuenta.
 - El flujo de cambio de empresa ya contempla ida y vuelta entre tenant base y tenants cruzados.
 - `deploy.sh` queda como mecanismo previsto para actualización manual de producción.
@@ -19,6 +19,9 @@ Estado actual de la raíz del proyecto:
 - Los listados de productos en `/catalog/products`, `/catalog/commercial`, `/catalog/seller` y `/stock/inventory` ahora se ordenan alfabéticamente por nombre visible para mejorar la navegación operativa.
 - `/stock/movements` incorpora la salida independiente `Salida producto de muestra`, con cliente final y restricción por ciudad para lotes de Cochabamba.
 - `Reportes > Stock` incorpora la vista `Existencias`, consolidando stock actual, entradas, salidas, muestras y traspasos por período.
+- El menú compartido de accesos rápidos de stock ahora muestra badges persistentes para `Atender solicitudes` y `Recepción/Devolución`, con detalle por sucursal en hover para solicitudes pendientes.
+- La edición de lotes en `/catalog/products/:id` ahora solo permite ajustar el remanente que sigue en el almacén del primer ingreso; las fechas de fabricación y vencimiento dejan de ser editables desde ese modal.
+- `GET /api/v1/products/:id/batches` ahora devuelve el almacén y ubicación de origen del lote para reforzar la trazabilidad operativa en frontend.
 - La migración Prisma `20260331110000_tenant_thousand_separator` queda incluida para persistir el separador de miles por tenant.
 
 ### Novedades principales de la 2.0
@@ -40,7 +43,7 @@ Estado actual de la raíz del proyecto:
 - Backend y frontend sin errores de editor en los archivos tocados.
 - Frontend validado con `npm run build`.
 - Backend validado por compilación TypeScript (`npm run build`).
-- Esta entrega `2.1.0` agrega la migración `20260331110000_tenant_thousand_separator`, por lo que el deploy manual debe ejecutar migraciones remotas como parte normal de `deploy.sh`.
+- Esta entrega `2.1.1` no agrega migraciones Prisma nuevas; el deploy manual puede seguir ejecutando el paso estándar de migraciones remotas sin cambios en el procedimiento.
 - El repositorio queda listo para que el deploy manual publique imágenes, ejecute migraciones remotas y reinicie servicios con `deploy.sh`.
 
 ## Funcionalidades clave (stock)

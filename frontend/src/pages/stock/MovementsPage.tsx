@@ -55,6 +55,7 @@ type MovementRequest = {
     batch?: { id: string; batchNumber: string; expiresAt: string | null } | null
     createdAt: string
     createdByName?: string | null
+    pendingQuantity?: number | null
   }>
   items: MovementRequestItem[]
 }
@@ -187,8 +188,10 @@ async function createTransferMovement(
   })
 }
 
-async function listMovementRequests(token: string): Promise<{ items: MovementRequest[] }> {
-  const response = await apiFetch<{ items: any[] }>('/api/v1/stock/movement-requests?take=50', { token })
+async function listMovementRequests(token: string, options?: { status?: 'OPEN' | 'SENT' | 'FULFILLED' | 'CANCELLED'; take?: number }): Promise<{ items: MovementRequest[] }> {
+  const params = new URLSearchParams({ take: String(options?.take ?? 50) })
+  if (options?.status) params.set('status', options.status)
+  const response = await apiFetch<{ items: any[] }>(`/api/v1/stock/movement-requests?${params.toString()}`, { token })
   return {
     items: response.items.map((req: any) => ({
       ...req,

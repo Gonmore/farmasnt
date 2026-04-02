@@ -2,6 +2,24 @@
 
 Este documento está pensado para validar **end-to-end** (UI + API) y confirmar resultados **en base de datos**, porque algunos cambios no se ven mucho en frontend.
 
+## Versión 2.1.1 — pruebas específicas de badges operativos y restricción de lotes
+
+### Flujo Z — Badges en accesos rápidos de stock
+- Ir a `Stock > Movimientos`, `Atender solicitudes`, `Realizados` y `Recepción/Devolución`.
+- Verificar que el menú compartido `Accesos rápidos` siga mostrando los círculos de conteo al cambiar entre vistas.
+- Confirmar que `Atender solicitudes` muestre la cantidad de solicitudes OPEN pendientes y que el número se vea en negrita.
+- Posicionar el cursor sobre ese badge y verificar el desglose por sucursal/ciudad visible para el usuario.
+- Confirmar que `Recepción/Devolución` muestre únicamente envíos pendientes de recepción o devolución para la sucursal del usuario autenticado.
+
+### Flujo AA — Edición restringida de lote distribuido
+- Ir a `Catálogo > Productos` y abrir el detalle de un producto con un lote que ya haya sido transferido a otra sucursal.
+- Abrir `Editar lote`.
+- Verificar que ya no existan campos editables para `Fecha de Fabricación` ni `Fecha de Vencimiento`.
+- Confirmar que el selector `Ubicación editable` solo ofrezca ubicaciones del almacén del primer ingreso del lote.
+- Si el lote conserva remanente en la sucursal original, ajustar una cantidad menor o mayor y guardar.
+- Confirmar que el ajuste solo afecte ese remanente local y que no sea posible seleccionar una ubicación de otra sucursal.
+- Si el lote ya no tiene remanente en el almacén original, verificar que el modal informe que no quedan existencias editables.
+
 ## Versión 2.1.0 — pruebas específicas de branding numérico y stock operativo
 
 ### Flujo V — Branding con separador de miles configurable

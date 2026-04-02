@@ -1,8 +1,8 @@
 # API Reference — PharmaFlow Bolivia (MVP)
 
-## Versión 2.1.0
+## Versión 2.1.1
 
-Esta referencia ya contempla la ampliación **multi-marca / multi-empresa** de la versión `2.0`, los ajustes operativos de la versión `2.0.1` y la consolidación funcional de la versión `2.1.0`.
+Esta referencia ya contempla la ampliación **multi-marca / multi-empresa** de la versión `2.0`, los ajustes operativos de la versión `2.0.1`, la consolidación funcional de la versión `2.1.0` y los refuerzos operativos de la versión `2.1.1`.
 
 Cambios relevantes en 2.0:
 - `GET /api/v1/auth/me` devuelve `availableTenants` y `activeTenantId` cuando el usuario tiene acceso a más de una empresa.
@@ -25,7 +25,9 @@ Cambios recientes en catálogo y documentos:
 Cambios recientes en stock y reportes:
 - `POST /api/v1/stock/movements` acepta `referenceType='PRODUCT_SAMPLE'` para salidas de muestra, validando nota obligatoria.
 - `GET /api/v1/products/:id/batches` devuelve `warehouseCity` por ubicación para soportar reglas de cliente por ciudad en frontend.
+- `GET /api/v1/products/:id/batches` también devuelve `originWarehouseId`, `originWarehouseCode`, `originWarehouseName`, `originLocationId` y `originLocationCode` para restringir ediciones del lote al almacén de ingreso original.
 - `GET /api/v1/reports/stock/existencias` devuelve stock físico, reservado, disponible, entradas, salidas, bajas, muestras y traspasos para el período.
+- `GET /api/v1/reports/stock/movement-requests/by-city` y `GET /api/v1/stock/movement-requests?status=OPEN|SENT` siguen siendo los endpoints base para los badges operativos del menú compartido de stock.
 
 Base URL (dev): `http://127.0.0.1:6000`
 

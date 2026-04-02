@@ -2,6 +2,27 @@
 
 Este documento resume (a alto nivel) decisiones, hitos y cambios relevantes que se fueron incorporando al repositorio para llegar al estado actual del MVP.
 
+## **[02 Abr 2026] Versión 2.1.1 — badges operativos + restricción de edición de lotes**
+
+### Objetivo alcanzado
+- Se cerró la entrega `2.1.1` para reforzar visibilidad operativa en stock y endurecer el control funcional sobre la edición manual de lotes ya distribuidos.
+- La release mantiene el mismo esquema de despliegue manual vía `deploy.sh` y no introduce migraciones Prisma nuevas.
+
+### Backend
+- `GET /api/v1/products/:id/batches` ahora deriva y devuelve `originWarehouseId`, `originWarehouseCode`, `originWarehouseName`, `originLocationId` y `originLocationCode` según el primer ingreso del lote.
+- Esa metadata se calcula a partir del movimiento inbound más antiguo con `toLocationId`, manteniendo el contrato suficiente para que frontend limite ajustes al almacén de origen.
+
+### Frontend
+- El menú compartido `Accesos rápidos` en stock ahora muestra badges persistentes para `Atender solicitudes` y `Recepción/Devolución` en todas las vistas que reutilizan el componente.
+- El badge de solicitudes pendientes muestra desglose por sucursal en hover y el de recepción/devolución respeta el scope del usuario autenticado.
+- El modal de edición de lotes en `/catalog/products/:id` ya no permite editar fechas de fabricación o vencimiento.
+- La edición de cantidades queda acotada al remanente todavía existente en el almacén del primer ingreso del lote, evitando saltarse el flujo normal de solicitud, atención, envío y recepción.
+
+### Operación
+- Frontend compilado correctamente con `npm --prefix frontend run build`.
+- Backend compilado correctamente con `npm --prefix backend run build`.
+- El estado del repo queda listo para deploy manual usando `deploy.sh`.
+
 ## **[01 Abr 2026] Versión 2.1.0 — branding numérico + existencias + salida de muestra**
 
 ### Objetivo alcanzado

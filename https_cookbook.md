@@ -2,13 +2,15 @@
 
 Este documento describe una receta práctica para pasar de HTTP a HTTPS con **Let’s Encrypt** en un **datacenter propio**, usando subdominios públicos bajo `supernovatel.com` y manteniendo MinIO (S3-compatible) para **logos públicos**.
 
-## Nota de versión 2.1.0
+## Nota de versión 2.1.1
 
-La versión `2.1.0` mantiene cambio de empresa en sesión y administración multi-marca, y suma branding numérico por tenant y reportes/flujo de stock ampliados. Para producción esto no cambia la arquitectura HTTPS recomendada, pero sí conviene mantener alineados:
+La versión `2.1.1` mantiene cambio de empresa en sesión y administración multi-marca, suma branding numérico por tenant y reportes/flujo de stock ampliados, y refuerza la operación de stock con badges compartidos y restricciones de edición por lote. Para producción esto no cambia la arquitectura HTTPS recomendada, pero sí conviene mantener alineados:
 - frontend SPA
 - backend API
 - dominios por tenant
 - despliegue coordinado de imágenes vía `deploy.sh`
+
+No hay requerimientos HTTPS adicionales para `2.1.1`: la release no introduce hosts nuevos ni cambia el patrón de publicación de assets, por lo que el procedimiento de deploy manual sigue igual.
 
 > Objetivo: evitar “mixed content”, mantener URLs estables de assets y que el backend pueda seguir generando presigned URLs.
 

@@ -1161,6 +1161,40 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
       }
 
       const batchIds = batches.map((b) => b.id)
+      const firstInboundMovements = batchIds.length
+        ? await db.stockMovement.findMany({
+            where: {
+              tenantId,
+              productId,
+              batchId: { in: batchIds },
+              toLocationId: { not: null },
+            },
+            orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+            select: { batchId: true, toLocationId: true },
+          })
+        : []
+
+      const originLocationIdByBatch = new Map<string, string>()
+      for (const movement of firstInboundMovements) {
+        if (!movement.batchId || !movement.toLocationId) continue
+        if (!originLocationIdByBatch.has(movement.batchId)) {
+          originLocationIdByBatch.set(movement.batchId, movement.toLocationId)
+        }
+      }
+
+      const originLocationIds = Array.from(new Set(originLocationIdByBatch.values()))
+      const originLocations = originLocationIds.length
+        ? await db.location.findMany({
+            where: { tenantId, id: { in: originLocationIds } },
+            select: {
+              id: true,
+              code: true,
+              warehouse: { select: { id: true, code: true, name: true, city: true } },
+            },
+          })
+        : []
+      const originLocationById = new Map(originLocations.map((location) => [location.id, location]))
+
       const balances = hasStockRead && batchIds.length
         ? await db.inventoryBalance.findMany({
             where: { tenantId, productId, batchId: { in: batchIds } },
@@ -1189,11 +1223,18 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
 
       const items = batches.map((b) => {
         const locs = balancesByBatch.get(b.id) ?? []
+        const originLocationId = originLocationIdByBatch.get(b.id) ?? null
+        const originLocation = originLocationId ? originLocationById.get(originLocationId) ?? null : null
         const total = locs.reduce((acc, x) => acc + Number(x.quantity || '0'), 0)
         const totalReserved = locs.reduce((acc, x) => acc + Number(x.reservedQuantity || '0'), 0)
         const totalAvailable = Math.max(0, total - totalReserved)
         return {
           ...b,
+          originWarehouseId: originLocation?.warehouse.id ?? null,
+          originWarehouseCode: originLocation?.warehouse.code ?? null,
+          originWarehouseName: originLocation?.warehouse.name ?? null,
+          originLocationId,
+          originLocationCode: originLocation?.code ?? null,
           presentationId: b.presentationId ?? derivedPresentationByBatchId.get(b.id) ?? null,
           canManage: !!b.createdBy && b.createdBy === userId,
           totalQuantity: hasStockRead ? String(total) : null,
