@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { apiFetch } from '../../lib/api'
 import { getProductLabel } from '../../lib/productName'
+import { formatPresentationLabel } from '../../lib/productPresentation'
 import { useAuth } from '../../providers/AuthProvider'
 import { useTenant } from '../../providers/TenantProvider'
 import { usePermissions } from '../../hooks/usePermissions'
@@ -22,8 +23,19 @@ type WarehouseStockRow = {
   productId: string
   batchId: string | null
   locationId: string
-  product: { sku: string; name: string; genericName?: string | null }
-  batch: { batchNumber: string; expiresAt: string | null; status: string } | null
+  product: {
+    sku: string
+    name: string
+    genericName?: string | null
+    presentations?: Array<{ id: string; name: string; unitsPerPresentation: string; isDefault: boolean }>
+  }
+  batch: {
+    batchNumber: string
+    expiresAt: string | null
+    status: string
+    presentationId?: string | null
+    presentation?: { id: string; name: string; unitsPerPresentation: string } | null
+  } | null
   location: { id: string; code: string; warehouse: { id: string; code: string; name: string } }
 }
 
@@ -35,13 +47,20 @@ type BulkTransferResponse = {
   items: Array<{ createdMovement: any; fromBalance: any; toBalance: any }>
 }
 
-const parsePresentationFromBatchNumber = (batchNumber: string): { name: string; unitsPerPresentation: string } | null => {
-  const match = batchNumber.match(/C(\d+)/i)
-  if (match) {
-    const units = parseInt(match[1], 10)
-    if (Number.isFinite(units) && units > 0) return { name: 'Caja', unitsPerPresentation: String(units) }
-  }
+function getRowPresentation(row: WarehouseStockRow): { name?: string | null; unitsPerPresentation?: string | number | null } | null {
+  if (row.batch?.presentation) return row.batch.presentation
+
+  const defaultPresentation = row.product.presentations?.find((presentation) => presentation.isDefault)
+  if (defaultPresentation && Number(defaultPresentation.unitsPerPresentation) > 1) return defaultPresentation
+
   return null
+}
+
+function getUnitsPerPresentation(row: WarehouseStockRow): number {
+  const presentation = getRowPresentation(row)
+  const unitsPerPresentation = Number(presentation?.unitsPerPresentation ?? 1)
+  if (!Number.isFinite(unitsPerPresentation) || unitsPerPresentation <= 1) return 1
+  return unitsPerPresentation
 }
 
 async function listWarehouses(token: string): Promise<{ items: WarehouseListItem[] }> {
@@ -148,9 +167,7 @@ export function BulkTransferPage() {
         const reserved = Number(r.reservedQuantity ?? '0')
         const available = Math.max(0, total - reserved)
 
-        // Get presentation units
-        const pres = r.batch?.batchNumber ? parsePresentationFromBatchNumber(r.batch.batchNumber) : null
-        const unitsPerPres = pres ? Number(pres.unitsPerPresentation) : 1
+        const unitsPerPres = getUnitsPerPresentation(r)
         if (!Number.isFinite(unitsPerPres) || unitsPerPres <= 0) throw new Error('Presentación inválida')
 
         const qtyRaw = (qtyByRowId[r.id] ?? '').trim()
@@ -210,8 +227,8 @@ export function BulkTransferPage() {
         },
         [],
         data.items.map((item: any) => {
-          const pres = parsePresentationFromBatchNumber(String(item.createdMovement.batch?.batchNumber ?? ''))
-          const presentationLabel = pres ? `${pres.name} (${pres.unitsPerPresentation}u)` : '—'
+          const sourceRow = selectedRows.find((row) => row.batchId === (item.createdMovement.batchId ?? null) && row.productId === item.createdMovement.productId)
+          const presentationLabel = formatPresentationLabel(getRowPresentation(sourceRow as WarehouseStockRow) ?? undefined)
           return {
             locationCode: fromLocation?.code ?? '—',
             productLabel: getProductLabel({
@@ -436,11 +453,7 @@ export function BulkTransferPage() {
                 { header: 'Lote', accessor: (r) => r.batch?.batchNumber ?? '—' },
                 {
                   header: 'Presentación',
-                  accessor: (r) => {
-                    if (!r.batch?.batchNumber) return 'Unidad'
-                    const pres = parsePresentationFromBatchNumber(r.batch.batchNumber)
-                    return pres ? `${pres.name} (${pres.unitsPerPresentation}u)` : 'Unidad'
-                  }
+                  accessor: (r) => formatPresentationLabel(getRowPresentation(r) ?? undefined),
                 },
                 {
                   header: 'Disponible',
@@ -448,11 +461,9 @@ export function BulkTransferPage() {
                     const total = Number(r.quantity || '0')
                     const reserved = Number(r.reservedQuantity ?? '0')
                     const available = Math.max(0, total - reserved)
-                    if (!r.batch?.batchNumber) return String(available)
-                    const pres = parsePresentationFromBatchNumber(r.batch.batchNumber)
-                    if (!pres) return String(available)
-                    const unitsPerPres = Number(pres.unitsPerPresentation)
+                    const unitsPerPres = getUnitsPerPresentation(r)
                     if (!Number.isFinite(unitsPerPres) || unitsPerPres <= 0) return String(available)
+                    if (unitsPerPres === 1) return String(available)
                     const availPres = available / unitsPerPres
                     return Number.isInteger(availPres) ? String(availPres) : availPres.toFixed(2)
                   },
@@ -466,16 +477,11 @@ export function BulkTransferPage() {
                     const disabled = !selectedRowIds[r.id]
                     let placeholder = String(available)
                     let maxValue = available
-                    if (r.batch?.batchNumber) {
-                      const pres = parsePresentationFromBatchNumber(r.batch.batchNumber)
-                      if (pres) {
-                        const unitsPerPres = Number(pres.unitsPerPresentation)
-                        if (Number.isFinite(unitsPerPres) && unitsPerPres > 0) {
-                          const availPres = available / unitsPerPres
-                          placeholder = Number.isInteger(availPres) ? String(availPres) : availPres.toFixed(2)
-                          maxValue = availPres
-                        }
-                      }
+                    const unitsPerPres = getUnitsPerPresentation(r)
+                    if (Number.isFinite(unitsPerPres) && unitsPerPres > 1) {
+                      const availPres = available / unitsPerPres
+                      placeholder = Number.isInteger(availPres) ? String(availPres) : availPres.toFixed(2)
+                      maxValue = availPres
                     }
                     return (
                       <input
