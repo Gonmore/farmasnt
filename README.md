@@ -2,15 +2,16 @@
 
 MVP: **Almacén + Ventas B2B** · SaaS **multi-tenant** (row-level `tenantId`) con auditoría (GxP-friendly).
 
-## Versión 2.1.1
+## Versión 2.1.2
 
 Estado actual de la raíz del proyecto:
-- Versión operativa objetivo: `2.1.1`.
+- Versión operativa objetivo: `2.1.2`.
 - Incluye soporte **multi-marca / multi-empresa** con grupos de tenants, grants por usuario y cambio de empresa desde el menú de cuenta.
 - El flujo de cambio de empresa ya contempla ida y vuelta entre tenant base y tenants cruzados.
 - `deploy.sh` queda como mecanismo previsto para actualización manual de producción.
 
 ### Ajustes recientes al catálogo, stock, ventas y documentos
+- `/stock/movements` añade la pestaña **Hist. Movimientos** con historial completo de transferencias, filtrable por fecha, lote, producto o usuario. La búsqueda por lote y producto usa autocompletado e identifica todos los movimientos que contienen ese valor en cualquiera de sus líneas de picking.
 - Branding por tenant ahora permite definir separador de miles y el frontend lo propaga a precios, KPIs, reportes y documentos exportados.
 - Cada producto ahora permite definir una abreviatura de unidad base configurable (`u`, `lt`, `ml`, `gr`, etc.) desde `/catalog/products`.
 - La abreviatura se propaga a catálogo, cotizaciones, entregas y otras vistas operativas donde se renderiza la presentación.

@@ -10,6 +10,7 @@ import { useAuth } from '../../providers/AuthProvider'
 import { MainLayout, PageContainer, Select, Input, Button, Table, Loading, ErrorState, Modal } from '../../components'
 import { useNavigation, usePermissions } from '../../hooks'
 import { MovementQuickActions } from '../../components/MovementQuickActions'
+import { MovementHistoryTab } from '../../components/MovementHistoryTab'
 
 type MovementRequestItem = {
   id: string
@@ -284,6 +285,7 @@ export function MovementsPage() {
   const queryClient = useQueryClient()
 
   const [type, setType] = useState('')
+  const [activeTab, setActiveTab] = useState<'operations' | 'history'>('operations')
   const [productId, setProductId] = useState('')
   const [selectedStockKey, setSelectedStockKey] = useState('')
   const [batchNumber, setBatchNumber] = useState('')
@@ -1364,6 +1366,34 @@ export function MovementsPage() {
       <PageContainer title="🏢 Movimientos">
         <MovementQuickActions currentPath="/stock/movements" />
 
+        {/* Tab navigation */}
+        <div className="mb-4 border-b border-slate-200 dark:border-slate-700">
+          <nav className="-mb-px flex space-x-8">
+            <button
+              onClick={() => setActiveTab('operations')}
+              className={`border-b-2 py-2 px-1 text-sm font-medium ${
+                activeTab === 'operations'
+                  ? 'border-blue-500 text-blue-600 dark:border-blue-400 dark:text-blue-400'
+                  : 'border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700 dark:text-slate-400 dark:hover:border-slate-600 dark:hover:text-slate-300'
+              }`}
+            >
+              Movimientos
+            </button>
+            <button
+              onClick={() => setActiveTab('history')}
+              className={`border-b-2 py-2 px-1 text-sm font-medium ${
+                activeTab === 'history'
+                  ? 'border-blue-500 text-blue-600 dark:border-blue-400 dark:text-blue-400'
+                  : 'border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700 dark:text-slate-400 dark:hover:border-slate-600 dark:hover:text-slate-300'
+              }`}
+            >
+              📋 Hist. Movimientos
+            </button>
+          </nav>
+        </div>
+
+        {activeTab === 'operations' && (<>
+
         {/* Selector de tipo de movimiento */}
         <div className="mb-6 rounded-lg border border-slate-200 bg-white p-6 dark:border-slate-700 dark:bg-slate-900">
           <Select
@@ -2377,6 +2407,12 @@ export function MovementsPage() {
             <div className="text-sm text-slate-600 dark:text-slate-400">No hay resultados.</div>
           )}
         </div>
+
+        </>)}
+
+        {activeTab === 'history' && (
+          <MovementHistoryTab token={auth.accessToken!} />
+        )}
 
         {requestDetailModal}
 

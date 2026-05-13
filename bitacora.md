@@ -2,6 +2,29 @@
 
 Este documento resume (a alto nivel) decisiones, hitos y cambios relevantes que se fueron incorporando al repositorio para llegar al estado actual del MVP.
 
+## **[13 May 2026] Versión 2.1.2 — Historial de movimientos con búsqueda por lote, producto y usuario**
+
+### Objetivo alcanzado
+- Se añadió la vista **Hist. Movimientos** en `/stock/movements` como pestaña adicional junto al formulario existente.
+- Permite consultar el historial completo de movimientos realizados con cuatro modos de filtrado interactivos, sin requerir cambios en backend.
+
+### Frontend
+- `/stock/movements` incorpora una segunda pestaña `📋 Hist. Movimientos` (componente `MovementHistoryTab`).
+- **Por fecha**: ordena ascendente o descendente; opcionalmente filtra por una fecha específica.
+- **Por lote**: buscador con autocompletado — al seleccionar un lote muestra todos los movimientos (ingresos, transferencias, ajustes, salidas, etc.) que contienen ese lote en cualquiera de sus líneas.
+- **Por producto**: buscador con autocompletado — muestra todos los movimientos asociados al producto elegido.
+- **Por usuario**: buscador con autocompletado — muestra todos los movimientos realizados o solicitados por ese usuario.
+- En modos lote/producto, el componente precarga en segundo plano el detalle de picking de cada movimiento para construir el índice de búsqueda. El índice almacena **todas las líneas** del picking (no solo la primera), garantizando trazabilidad completa en movimientos con múltiples ítems.
+- El dropdown de sugerencias filtra conforme el usuario escribe y desaparece al confirmar la selección, que se muestra como chip con opción de cambio.
+
+### Backend
+- Sin cambios. La vista consume endpoints ya existentes: `GET /api/v1/stock/completed-movements` y `GET /api/v1/stock/completed-movements/:id/picking`.
+
+### Operación
+- Sin migraciones Prisma nuevas.
+- Frontend compilable sin errores (`npm --prefix frontend run build`).
+- Deploy manual con `deploy.sh` no requiere pasos adicionales.
+
 ## **[02 Abr 2026] Versión 2.1.1 — badges operativos + restricción de edición de lotes**
 
 ### Objetivo alcanzado
