@@ -143,7 +143,7 @@ export function exportPickingToPdf(
   }
 
   const drawSignatureBlocks = (y: number) => {
-    const labels = ['Preparado por', 'Enviado por', 'Recibida por']
+    const labels = ['Preparado por', 'Enviado por', 'Recibido por']
     const gap = 10
     const totalWidth = pageWidth - margin * 2
     const columnWidth = (totalWidth - gap * (labels.length - 1)) / labels.length
