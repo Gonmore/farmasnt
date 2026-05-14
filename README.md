@@ -2,7 +2,7 @@
 
 MVP: **Almacén + Ventas B2B** · SaaS **multi-tenant** (row-level `tenantId`) con auditoría (GxP-friendly).
 
-## Versión 2.1.2
+## Versión 2.1.3
 
 Estado actual de la raíz del proyecto:
 - Versión operativa objetivo: `2.1.2`.
@@ -11,6 +11,7 @@ Estado actual de la raíz del proyecto:
 - `deploy.sh` queda como mecanismo previsto para actualización manual de producción.
 
 ### Ajustes recientes al catálogo, stock, ventas y documentos
+- En **Atender solicitudes** (`/stock/fulfill-requests`), si el lote seleccionado no cubre alguno de los ítems al 100 %, el botón *Confirmar Transferencia* vira a amarillo y al pulsarlo abre un modal de advertencia con el estado de cada ítem (completo ✓ / parcial ⚠ / no atendido ✗) y el botón *Confirmar atención parcial*.
 - `/stock/movements` añade la pestaña **Hist. Movimientos** con historial completo de transferencias, filtrable por fecha, lote, producto o usuario. La búsqueda por lote y producto usa autocompletado e identifica todos los movimientos que contienen ese valor en cualquiera de sus líneas de picking.
 - Branding por tenant ahora permite definir separador de miles y el frontend lo propaga a precios, KPIs, reportes y documentos exportados.
 - Cada producto ahora permite definir una abreviatura de unidad base configurable (`u`, `lt`, `ml`, `gr`, etc.) desde `/catalog/products`.

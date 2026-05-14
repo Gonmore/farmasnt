@@ -148,6 +148,7 @@ export function BulkFulfillRequestsPage() {
   const [isFulfillModalOpen, setIsFulfillModalOpen] = useState(false)
   const [batchSelections, setBatchSelections] = useState<Record<string, number>>({})
   const [requestsSearchQuery, setRequestsSearchQuery] = useState('')
+  const [showPartialWarning, setShowPartialWarning] = useState(false)
 
   const warehousesQuery = useQuery({
     queryKey: ['warehouses', 'fulfillRequests'],
@@ -378,6 +379,28 @@ export function BulkFulfillRequestsPage() {
     return selectedUnits >= Number(product.remainingQuantity ?? 0)
   }
 
+  // ─── Partial fulfillment detection ───────────────────────────────────────
+
+  const fulfillmentItemStatuses = useMemo(() => {
+    return requestedProducts
+      .filter((p) => p.remainingQuantity > 0)
+      .map((product) => {
+        const selectedUnits = getSelectedUnitsForProduct(product)
+        const required = Number(product.remainingQuantity ?? 0)
+        const status: 'complete' | 'partial' | 'unattended' =
+          selectedUnits >= required ? 'complete' : selectedUnits > 0 ? 'partial' : 'unattended'
+        return { product, selectedUnits, required, status }
+      })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestedProducts, batchSelections, availableBatches])
+
+  const isPartialFulfillment = useMemo(
+    () =>
+      Object.keys(batchSelections).length > 0 &&
+      fulfillmentItemStatuses.some((s) => s.status !== 'complete'),
+    [fulfillmentItemStatuses, batchSelections],
+  )
+
   const queryClient = useQueryClient()
 
   const bulkFulfillMutation = useMutation({
@@ -423,6 +446,69 @@ export function BulkFulfillRequestsPage() {
       navigate(highlightId ? `/stock/completed-movements?highlight=${encodeURIComponent(highlightId)}` : '/stock/completed-movements')
     },
   })
+
+  // ─── Extracted fulfillment submit logic ─────────────────────────────────
+
+  const performFulfillment = () => {
+    const selections = Object.entries(batchSelections)
+      .map(([balanceId, selectedCount]) => {
+        const batch = availableBatches.find((b) => b.id === balanceId)
+        if (!batch) return null
+        const unitsPer = getBatchUnitsPerPresentation(batch)
+        const count = Number(selectedCount ?? 0)
+        if (!Number.isFinite(count) || count <= 0) return null
+        return {
+          productId: batch.productId,
+          batchId: batch.batchId,
+          remainingUnits: count * unitsPer,
+        }
+      })
+      .filter(Boolean) as Array<{ productId: string; batchId: string; remainingUnits: number }>
+
+    const selectionsByProduct = new Map<string, Array<{ batchId: string; remainingUnits: number }>>()
+    for (const s of selections) {
+      const list = selectionsByProduct.get(s.productId) ?? []
+      list.push({ batchId: s.batchId, remainingUnits: s.remainingUnits })
+      selectionsByProduct.set(s.productId, list)
+    }
+
+    const fulfillments: Array<{
+      requestId: string
+      items: Array<{ requestItemId: string; productId: string; batchId: string; quantity: number }>
+    }> = []
+
+    for (const req of selectedRequests) {
+      const items: Array<{ requestItemId: string; productId: string; batchId: string; quantity: number }> = []
+
+      for (const it of req.items) {
+        let needUnits = Number(it.remainingQuantity ?? 0)
+        if (!Number.isFinite(needUnits) || needUnits <= 0) continue
+
+        const batchPool = selectionsByProduct.get(it.productId) ?? []
+        for (const b of batchPool) {
+          if (needUnits <= 0) break
+          if (b.remainingUnits <= 0) continue
+          const take = Math.min(needUnits, b.remainingUnits)
+          if (take <= 0) continue
+
+          items.push({
+            requestItemId: it.id,
+            productId: it.productId,
+            batchId: b.batchId,
+            quantity: take,
+          })
+          b.remainingUnits -= take
+          needUnits -= take
+        }
+      }
+
+      if (items.length > 0) {
+        fulfillments.push({ requestId: req.id, items })
+      }
+    }
+
+    bulkFulfillMutation.mutate({ fulfillments, fromLocationId, toLocationId, note })
+  }
 
   console.log('BulkFulfillRequestsPage loaded')
   return (
@@ -914,77 +1000,116 @@ export function BulkFulfillRequestsPage() {
           <Button variant="secondary" onClick={() => setIsFulfillModalOpen(false)}>
             Cancelar
           </Button>
-          <Button 
+          <Button
             onClick={() => {
-              // Preparar fulfillments en UNIDADES (base units) y asignarlos a las solicitudes seleccionadas
-              const selections = Object.entries(batchSelections)
-                .map(([balanceId, selectedCount]) => {
-                  const batch = availableBatches.find((b) => b.id === balanceId)
-                  if (!batch) return null
-                  const unitsPer = getBatchUnitsPerPresentation(batch)
-                  const count = Number(selectedCount ?? 0)
-                  if (!Number.isFinite(count) || count <= 0) return null
-                  return {
-                    productId: batch.productId,
-                    batchId: batch.batchId,
-                    remainingUnits: count * unitsPer,
-                  }
-                })
-                .filter(Boolean) as Array<{ productId: string; batchId: string; remainingUnits: number }>
-
-              const selectionsByProduct = new Map<string, Array<{ batchId: string; remainingUnits: number }>>()
-              for (const s of selections) {
-                const list = selectionsByProduct.get(s.productId) ?? []
-                list.push({ batchId: s.batchId, remainingUnits: s.remainingUnits })
-                selectionsByProduct.set(s.productId, list)
+              if (isPartialFulfillment) {
+                setShowPartialWarning(true)
+              } else {
+                performFulfillment()
               }
-
-              const fulfillments: Array<{
-                requestId: string
-                items: Array<{ requestItemId: string; productId: string; batchId: string; quantity: number }>
-              }> = []
-
-              for (const req of selectedRequests) {
-                const items: Array<{ requestItemId: string; productId: string; batchId: string; quantity: number }> = []
-
-                for (const it of req.items) {
-                  let needUnits = Number(it.remainingQuantity ?? 0)
-                  if (!Number.isFinite(needUnits) || needUnits <= 0) continue
-
-                  const batchPool = selectionsByProduct.get(it.productId) ?? []
-                  for (const b of batchPool) {
-                    if (needUnits <= 0) break
-                    if (b.remainingUnits <= 0) continue
-                    const take = Math.min(needUnits, b.remainingUnits)
-                    if (take <= 0) continue
-
-                    items.push({
-                      requestItemId: it.id,
-                      productId: it.productId,
-                      batchId: b.batchId,
-                      quantity: take,
-                    })
-                    b.remainingUnits -= take
-                    needUnits -= take
-                  }
-                }
-
-                if (items.length > 0) {
-                  fulfillments.push({ requestId: req.id, items })
-                }
-              }
-
-              bulkFulfillMutation.mutate({
-                fulfillments,
-                fromLocationId,
-                toLocationId,
-                note
-              })
             }}
             disabled={Object.keys(batchSelections).length === 0 || bulkFulfillMutation.isPending}
+            className={isPartialFulfillment ? '!bg-yellow-500 !hover:bg-yellow-600 focus:!ring-yellow-400' : ''}
           >
-            {bulkFulfillMutation.isPending ? 'Procesando...' : 'Confirmar Transferencia'}
+            {bulkFulfillMutation.isPending
+              ? 'Procesando...'
+              : isPartialFulfillment
+                ? '⚠️ Confirmar Transferencia'
+                : 'Confirmar Transferencia'}
           </Button>
+        </div>
+      </Modal>
+
+      {/* Modal de advertencia de atención parcial */}
+      <Modal
+        isOpen={showPartialWarning}
+        onClose={() => setShowPartialWarning(false)}
+        title="⚠️ Atención parcial detectada"
+        maxWidth="md"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-slate-600 dark:text-slate-400">
+            Algunos ítems no se cubrirán completamente. Revisá el detalle antes de confirmar:
+          </p>
+
+          <ul className="space-y-2">
+            {fulfillmentItemStatuses.map(({ product, selectedUnits, required, status }) => {
+              const unitsPer =
+                product.unitsPerPresentation && product.unitsPerPresentation > 0
+                  ? product.unitsPerPresentation
+                  : 1
+              const selectedCount =
+                unitsPer > 1 ? Math.floor(selectedUnits / unitsPer) : selectedUnits
+              const requiredCount =
+                unitsPer > 1 ? Math.ceil(required / unitsPer) : required
+              const presentationLabel =
+                unitsPer === 1
+                  ? 'unidad'
+                  : (product.presentationName || 'presentación') +
+                    (unitsPer > 1 ? ` (${unitsPer}u)` : '')
+
+              return (
+                <li
+                  key={product.productId}
+                  className={`flex items-start gap-3 rounded-md border px-3 py-2.5 ${
+                    status === 'complete'
+                      ? 'border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-900/20'
+                      : status === 'partial'
+                        ? 'border-yellow-200 bg-yellow-50 dark:border-yellow-800 dark:bg-yellow-900/20'
+                        : 'border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-900/20'
+                  }`}
+                >
+                  <span
+                    className={`mt-0.5 text-base font-bold ${
+                      status === 'complete'
+                        ? 'text-green-600 dark:text-green-400'
+                        : status === 'partial'
+                          ? 'text-yellow-600 dark:text-yellow-400'
+                          : 'text-red-600 dark:text-red-400'
+                    }`}
+                  >
+                    {status === 'complete' ? '✓' : status === 'partial' ? '⚠' : '✗'}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium text-slate-900 dark:text-slate-100">
+                      {product.productName || 'Producto desconocido'}
+                    </div>
+                    <div
+                      className={`text-xs ${
+                        status === 'complete'
+                          ? 'text-green-700 dark:text-green-400'
+                          : status === 'partial'
+                            ? 'text-yellow-700 dark:text-yellow-400'
+                            : 'text-red-700 dark:text-red-400'
+                      }`}
+                    >
+                      {status === 'complete'
+                        ? `Completo — ${selectedCount}/${requiredCount} ${presentationLabel}`
+                        : status === 'partial'
+                          ? `Parcial — ${selectedCount}/${requiredCount} ${presentationLabel}`
+                          : `No atendido — 0/${requiredCount} ${presentationLabel}`}
+                    </div>
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+
+          <div className="flex justify-end gap-3 border-t border-slate-200 pt-4 dark:border-slate-700">
+            <Button variant="secondary" onClick={() => setShowPartialWarning(false)}>
+              Volver a revisar
+            </Button>
+            <Button
+              onClick={() => {
+                setShowPartialWarning(false)
+                performFulfillment()
+              }}
+              loading={bulkFulfillMutation.isPending}
+              className="!bg-yellow-500 hover:!bg-yellow-600 focus:!ring-yellow-400"
+            >
+              Confirmar atención parcial
+            </Button>
+          </div>
         </div>
       </Modal>
     </MainLayout>

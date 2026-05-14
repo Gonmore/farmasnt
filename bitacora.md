@@ -2,6 +2,25 @@
 
 Este documento resume (a alto nivel) decisiones, hitos y cambios relevantes que se fueron incorporando al repositorio para llegar al estado actual del MVP.
 
+## **[14 May 2026] Versión 2.1.3 — Advertencia de atención parcial en solicitudes**
+
+### Objetivo alcanzado
+- En la pantalla **Atender solicitudes** (`/stock/fulfill-requests`), al seleccionar lotes que no cubren todos los ítems solicitados, el flujo de confirmación muestra al operador un resumen visual antes de proceder.
+
+### Frontend
+- El botón *Confirmar Transferencia* detecta si algún ítem queda sin cobertura completa (`isPartialFulfillment`) y cambia a amarillo.
+- Al pulsarlo, se abre un modal intermedio con la lista de ítems clasificados: **Completo** (verde ✓), **Parcial** (amarillo ⚠) y **No atendido** (rojo ✗), indicando las cantidades enviadas vs. requeridas.
+- El modal ofrece dos acciones: *Volver a revisar* (cierra el modal) y *Confirmar atención parcial* (procede con el envío).
+- La lógica de construcción del payload (`performFulfillment`) fue extraída del `onClick` inline a una función reutilizable compartida por ambos caminos de confirmación.
+
+### Backend
+- Sin cambios. El endpoint `POST /api/v1/stock/movement-requests/bulk-fulfill` acepta atenciones parciales desde antes.
+
+### Operación
+- Sin migraciones Prisma nuevas.
+- Frontend compilable sin errores (`npm --prefix frontend run build`).
+- Deploy manual con `deploy.sh` no requiere pasos adicionales.
+
 ## **[13 May 2026] Versión 2.1.2 — Historial de movimientos con búsqueda por lote, producto y usuario**
 
 ### Objetivo alcanzado
