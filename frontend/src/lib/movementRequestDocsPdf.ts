@@ -211,21 +211,19 @@ export function exportPickingToPdf(
   y = drawSectionTitle('ENVIADO', y)
 
   const col = {
-    ubic: { w: 18 },
     lote: { w: 34 },
     vence: { w: 28 },
     cant: { w: 14 },
     pres: { w: 30 },
   }
-  const productW = pageWidth - margin * 2 - col.ubic.w - col.lote.w - col.vence.w - col.cant.w - col.pres.w
+  const productW = pageWidth - margin * 2 - col.lote.w - col.vence.w - col.cant.w - col.pres.w
 
   const x = {
-    ubic: margin,
-    lote: margin + col.ubic.w,
-    vence: margin + col.ubic.w + col.lote.w,
-    cant: margin + col.ubic.w + col.lote.w + col.vence.w,
-    pres: margin + col.ubic.w + col.lote.w + col.vence.w + col.cant.w,
-    prod: margin + col.ubic.w + col.lote.w + col.vence.w + col.cant.w + col.pres.w,
+    prod: margin,
+    lote: margin + productW,
+    vence: margin + productW + col.lote.w,
+    cant: margin + productW + col.lote.w + col.vence.w,
+    pres: margin + productW + col.lote.w + col.vence.w + col.cant.w,
   }
 
   const sorted = [...(sent ?? [])].sort((a, b) => {
@@ -242,12 +240,11 @@ export function exportPickingToPdf(
   const drawSentTableHeader = (yy: number) => {
     pdf.setFont('helvetica', 'bold')
     pdf.setFontSize(tableFontSize)
-    pdf.text('Ubic', x.ubic, yy)
+    pdf.text('Producto', x.prod, yy)
     pdf.text('Lote', x.lote, yy)
     pdf.text('Vence', x.vence, yy)
     pdf.text('Cant', x.cant, yy)
     pdf.text('Pres', x.pres, yy)
-    pdf.text('Producto', x.prod, yy)
     yy += 5
     pdf.line(margin, yy, pageWidth - margin, yy)
     return yy + 4
@@ -258,7 +255,6 @@ export function exportPickingToPdf(
   pdf.setFontSize(tableFontSize)
 
   for (const line of sorted) {
-    const loc = sanitizePdfText(line.locationCode ?? '—')
     const lote = sanitizePdfText(line.batchNumber ?? '—')
     const vence = line.expiresAt ? sanitizePdfText(formatDateOnlyUtc(line.expiresAt)) : '—'
     const qtyValue = line.quantityPresentations ?? line.quantityUnits
@@ -270,12 +266,11 @@ export function exportPickingToPdf(
 
     y = ensureSpace(y, rowH + 8)
 
-    pdf.text(loc, x.ubic, y)
+    pdf.text(productLines, x.prod, y)
     pdf.text(lote, x.lote, y)
     pdf.text(vence, x.vence, y)
     pdf.text(qty, x.cant, y)
     pdf.text(pres, x.pres, y)
-    pdf.text(productLines, x.prod, y)
 
     y += rowH
   }

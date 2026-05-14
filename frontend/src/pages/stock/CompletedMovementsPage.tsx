@@ -56,28 +56,7 @@ async function tryLoadLogoDataUrl(url: string): Promise<string | null> {
     if (!res.ok) return null
     const blob = await res.blob()
     const dataUrl = await toDataUrlFromBlob(blob)
-
-    // Try to render grayscale (best-effort). If it fails, fall back to original.
-    try {
-      const img = new Image()
-      img.src = dataUrl
-      await new Promise<void>((resolve, reject) => {
-        img.onload = () => resolve()
-        img.onerror = () => reject(new Error('Logo image load failed'))
-      })
-
-      const canvas = document.createElement('canvas')
-      canvas.width = Math.max(1, img.naturalWidth || img.width || 1)
-      canvas.height = Math.max(1, img.naturalHeight || img.height || 1)
-      const ctx = canvas.getContext('2d')
-      if (!ctx) return dataUrl
-
-      ;(ctx as any).filter = 'grayscale(1)'
-      ctx.drawImage(img, 0, 0)
-      return canvas.toDataURL('image/png')
-    } catch {
-      return dataUrl
-    }
+    return dataUrl
   } catch {
     return null
   }
