@@ -337,62 +337,81 @@ export function BulkFulfillRequestsPage() {
     return getBatchMaxSelectable(batch) < requiredCount ? 'insufficient' : 'sufficient'
   }
 
-  const isExactPresentationMatch = (product: typeof requestedProducts[0], batch: any) => {
-    const batchUnitsPerPresentation = parseInt(batch.unitsPerPresentation) || 1
-    const productUnitsPerPresentation = product.unitsPerPresentation || 1
+  const isExactPresentationMatch = (product: any, batch: any) => {
+    const presentationsToCheck = product.presentations || [product]
     
-    // Misma presentación exacta
-    if (batch.presentationId === product.presentationId) {
-      return true
-    }
-    
-    // Si se solicita unidades individuales y el lote las tiene
-    if ((!product.presentationId || productUnitsPerPresentation === 1) && batchUnitsPerPresentation === 1) {
-      return true
-    }
-    
-    // Si se solicitan unidades empaquetadas y el lote tiene unidades individuales
-    if (product.presentationId && productUnitsPerPresentation > 1 && batchUnitsPerPresentation === 1) {
-      return false // No es match exacto, pero sí convertible
-    }
-    
-    // Si se solicita unidades individuales y el lote tiene presentación empaquetada
-    if ((!product.presentationId || productUnitsPerPresentation === 1) && batchUnitsPerPresentation > 1) {
-      return false // No es match exacto, pero sí convertible
-    }
-    
-    return false
+    return presentationsToCheck.some((rp: any) => {
+      const batchUnitsPerPresentation = parseInt(batch.unitsPerPresentation) || 1
+      const productUnitsPerPresentation = rp.unitsPerPresentation || 1
+      
+      if (batch.presentationId === rp.presentationId) return true
+      if ((!rp.presentationId || productUnitsPerPresentation === 1) && batchUnitsPerPresentation === 1) return true
+      if (rp.presentationId && productUnitsPerPresentation > 1 && batchUnitsPerPresentation === 1) return false
+      if ((!rp.presentationId || productUnitsPerPresentation === 1) && batchUnitsPerPresentation > 1) return false
+      
+      return false
+    })
   }
 
-  const getSelectedUnitsForProduct = (product: typeof requestedProducts[0]) => {
-    return Object.entries(batchSelections).reduce((totalUnits, [balanceId, selectedCount]) => {
-      const batch = availableBatches.find((b) => b.id === balanceId)
-      if (!batch) return totalUnits
-      if (batch.productId !== product.productId) return totalUnits
-      const unitsPer = getBatchUnitsPerPresentation(batch)
-      return totalUnits + Number(selectedCount ?? 0) * unitsPer
-    }, 0)
-  }
 
-  const getProductFulfillmentStatus = (product: typeof requestedProducts[0]) => {
-    const selectedUnits = getSelectedUnitsForProduct(product)
-    return selectedUnits >= Number(product.remainingQuantity ?? 0)
-  }
+  // Nuevo estado derivado: Agrupa puramente por Producto para la tabla de selección
+  const uniqueProductsToFulfill = useMemo(() => {
+    const map = new Map<string, any>()
+    requestedProducts.forEach(rp => {
+      if (!map.has(rp.productId)) {
+        map.set(rp.productId, {
+          productId: rp.productId,
+          productName: rp.productName,
+          productSku: rp.productSku,
+          remainingQuantity: 0,
+          presentations: [] // Guardamos las presentaciones originales para validaciones
+        })
+      }
+      const p = map.get(rp.productId)
+      p.remainingQuantity += rp.remainingQuantity
+      p.presentations.push(rp)
+    })
+    return Array.from(map.values())
+  }, [requestedProducts])
 
   // ─── Partial fulfillment detection ───────────────────────────────────────
 
   const fulfillmentItemStatuses = useMemo(() => {
+    // Creamos un "pool" de unidades por producto basado en lo que el usuario ha seleccionado
+    const productPool = new Map<string, number>()
+
+    Object.entries(batchSelections).forEach(([balanceId, selectedCount]) => {
+      const batch = availableBatches.find((b) => b.id === balanceId)
+      if (batch) {
+        const unitsPer = getBatchUnitsPerPresentation(batch)
+        const current = productPool.get(batch.productId) || 0
+        productPool.set(batch.productId, current + Number(selectedCount ?? 0) * unitsPer)
+      }
+    })
+
+    // Distribuimos el pool en cascada entre las diferentes presentaciones solicitadas
     return requestedProducts
       .filter((p) => p.remainingQuantity > 0)
       .map((product) => {
-        const selectedUnits = getSelectedUnitsForProduct(product)
+        const pool = productPool.get(product.productId) || 0
         const required = Number(product.remainingQuantity ?? 0)
+        const allocated = Math.min(pool, required)
+
+        // Restamos lo asignado para que la siguiente presentación (si la hay) use lo restante
+        productPool.set(product.productId, pool - allocated)
+
         const status: 'complete' | 'partial' | 'unattended' =
-          selectedUnits >= required ? 'complete' : selectedUnits > 0 ? 'partial' : 'unattended'
-        return { product, selectedUnits, required, status }
+          allocated >= required ? 'complete' : allocated > 0 ? 'partial' : 'unattended'
+
+        return { product, selectedUnits: allocated, required, status }
       })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requestedProducts, batchSelections, availableBatches])
+
+  const getProductFulfillmentStatus = (product: typeof requestedProducts[0]) => {
+    const statusItem = fulfillmentItemStatuses.find(s => s.product === product)
+    return statusItem?.status === 'complete'
+  }
 
   const isPartialFulfillment = useMemo(
     () =>
@@ -806,7 +825,7 @@ export function BulkFulfillRequestsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {requestedProducts.filter(product => product.remainingQuantity > 0).map((product) => {
+                  {uniqueProductsToFulfill.filter(product => product.remainingQuantity > 0).map((product) => {
                     const productBatches = availableBatches.filter(batch => batch.productId === product.productId)
                     
                     return (
