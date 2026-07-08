@@ -28,6 +28,8 @@ Cambios recientes en stock y reportes:
 - `GET /api/v1/products/:id/batches` también devuelve `originWarehouseId`, `originWarehouseCode`, `originWarehouseName`, `originLocationId` y `originLocationCode` para restringir ediciones del lote al almacén de ingreso original.
 - `GET /api/v1/reports/stock/existencias` devuelve stock físico, reservado, disponible, entradas, salidas, bajas, muestras y traspasos para el período.
 - `GET /api/v1/reports/stock/movement-requests/by-city` y `GET /api/v1/stock/movement-requests?status=OPEN|SENT` siguen siendo los endpoints base para los badges operativos del menú compartido de stock.
+- El filtro por defecto de **Reportes > Ventas** en frontend pasó a `status=ALL` (antes solo `FULFILLED` por defecto, ocultando ventas en otros estados).
+- El tope de `take` en `reports/sales/top-products`, `reports/sales/margins`, `reports/sales/by-customer`, `reports/sales/by-city` y `GET /api/v1/sales/orders` se elevó a 1000 para evitar que los reportes agregados y sus drill-down recorten filas. Es un límite fijo temporal; se recomienda migrar a paginación real (`cursor`) en una futura iteración en lugar de seguir subiendo el número.
 
 Base URL (dev): `http://127.0.0.1:6000`
 
@@ -2041,9 +2043,12 @@ Response 400
 Requiere permiso: `sales:order:read`.
 
 Query
-- `take` (1..50, default 20)
+- `take` (1..1000, default 20)
 - `cursor` (uuid, opcional)
 - `status` (DRAFT|CONFIRMED|FULFILLED|CANCELLED, opcional)
+
+Nota
+- El tope de `take` se elevó a 1000 (antes 100) para que los drill-down de reportes de ventas puedan traer todas las órdenes de una ciudad/cliente/producto en un solo llamado. Es un límite fijo temporal; a futuro se recomienda reemplazarlo por paginación real (`cursor`) en vez de seguir subiendo el número.
 
 Response 200
 ```json
@@ -2385,7 +2390,10 @@ Query
 - `from` (date-time, opcional)
 - `to` (date-time, opcional)
 - `status` (opcional)
-- `take` (1..50, default 10)
+- `take` (1..1000, default 10)
+
+Nota
+- Mismo esquema de `take` usado por `GET /api/v1/reports/sales/margins`. El tope se elevó de 50 a 1000 para evitar que el reporte recorte productos; a futuro conviene reemplazarlo por paginación real.
 
 Response 200
 ```json
@@ -2403,7 +2411,10 @@ Query
 - `from` (date-time, opcional)
 - `to` (date-time, opcional)
 - `status` (opcional)
-- `take` (1..50, default 15)
+- `take` (1..1000, default 15)
+
+Nota
+- El tope se elevó de 200 a 1000 para evitar que el reporte recorte clientes; a futuro conviene reemplazarlo por paginación real.
 
 Response 200
 ```json
@@ -2421,7 +2432,10 @@ Query
 - `from` (date-time, opcional)
 - `to` (date-time, opcional)
 - `status` (opcional)
-- `take` (1..50, default 20)
+- `take` (1..1000, default 20)
+
+Nota
+- El tope se elevó de 200 a 1000 para evitar que el reporte recorte ciudades; a futuro conviene reemplazarlo por paginación real.
 
 Response 200
 ```json

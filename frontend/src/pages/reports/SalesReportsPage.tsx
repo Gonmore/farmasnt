@@ -272,7 +272,7 @@ async function fetchOrdersByCity(
   token: string,
   q: { from?: string; to?: string; city: string; status?: SalesStatus },
 ): Promise<{ items: OrderDetailItem[] }> {
-  const params = new URLSearchParams({ take: '100' })
+  const params = new URLSearchParams({ take: '1000' })
   if (q.from) params.set('from', q.from)
   if (q.to) params.set('to', q.to)
   if (q.city) params.set('deliveryCity', q.city)
@@ -285,7 +285,7 @@ async function fetchOrdersByCustomer(
   token: string,
   q: { from?: string; to?: string; customerId: string; status?: SalesStatus },
 ): Promise<{ items: OrderDetailItem[] }> {
-  const params = new URLSearchParams({ take: '100' })
+  const params = new URLSearchParams({ take: '1000' })
   if (q.from) params.set('from', q.from)
   if (q.to) params.set('to', q.to)
   if (q.customerId) params.set('customerId', q.customerId)
@@ -298,7 +298,7 @@ async function fetchOrdersByProduct(
   token: string,
   q: { from?: string; to?: string; productId: string; status?: SalesStatus },
 ): Promise<{ items: OrderDetailItem[] }> {
-  const params = new URLSearchParams({ take: '100' })
+  const params = new URLSearchParams({ take: '1000' })
   if (q.from) params.set('from', q.from)
   if (q.to) params.set('to', q.to)
   if (q.productId) params.set('productId', q.productId)
@@ -401,7 +401,7 @@ export function SalesReportsPage() {
   const [tab, setTab] = useState<ReportTab>('MONTH')
   const [from, setFrom] = useState<string>(toIsoDate(startOfMonth(today)))
   const [to, setTo] = useState<string>(toIsoDate(startOfNextMonth(today)))
-  const [status, setStatus] = useState<SalesStatus>('FULFILLED')
+  const [status, setStatus] = useState<SalesStatus>('ALL')
 
   // Estados para drill-down
   const [drillDownOpen, setDrillDownOpen] = useState(false)
@@ -1267,19 +1267,19 @@ export function SalesReportsPage() {
 
   const byCustomerQuery = useQuery({
     queryKey: ['reports', 'sales', 'byCustomer', { from, to, status }],
-    queryFn: () => fetchSalesByCustomer(auth.accessToken!, { from, to, take: 25, status }),
+    queryFn: () => fetchSalesByCustomer(auth.accessToken!, { from, to, take: 1000, status }),
     enabled: !!auth.accessToken && tab === 'CUSTOMERS',
   })
 
   const byCityQuery = useQuery({
     queryKey: ['reports', 'sales', 'byCity', { from, to, status }],
-    queryFn: () => fetchSalesByCity(auth.accessToken!, { from, to, take: 20, status }),
+    queryFn: () => fetchSalesByCity(auth.accessToken!, { from, to, take: 1000, status }),
     enabled: !!auth.accessToken && tab === 'CITIES',
   })
 
   const topProductsQuery = useQuery({
     queryKey: ['reports', 'sales', 'topProducts', { from, to, status }],
-    queryFn: () => fetchTopProducts(auth.accessToken!, { from, to, take: 15, status }),
+    queryFn: () => fetchTopProducts(auth.accessToken!, { from, to, take: 1000, status }),
     enabled: !!auth.accessToken && tab === 'TOP_PRODUCTS',
   })
 
@@ -1299,7 +1299,7 @@ export function SalesReportsPage() {
   // Query para márgenes
   const marginsQuery = useQuery({
     queryKey: ['reports', 'sales', 'margins', { from, to, status }],
-    queryFn: () => fetchProductMargins(auth.accessToken!, { from, to, take: 30, status }),
+    queryFn: () => fetchProductMargins(auth.accessToken!, { from, to, take: 1000, status }),
     enabled: !!auth.accessToken && tab === 'MARGINS',
   })
 

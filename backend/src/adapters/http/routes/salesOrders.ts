@@ -7,7 +7,7 @@ import { Permissions } from '../../../application/security/permissions.js'
 import { currentYearUtc, nextSequence } from '../../../application/shared/sequence.js'
 
 const listQuerySchema = z.object({
-  take: z.coerce.number().int().min(1).max(100).default(20),
+  take: z.coerce.number().int().min(1).max(1000).default(20),
   cursor: z.string().uuid().optional(),
   status: z.enum(['DRAFT', 'CONFIRMED', 'FULFILLED', 'CANCELLED']).optional(),
   customerId: z.string().trim().min(1).optional(),

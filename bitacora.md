@@ -2,6 +2,27 @@
 
 Este documento resume (a alto nivel) decisiones, hitos y cambios relevantes que se fueron incorporando al repositorio para llegar al estado actual del MVP.
 
+## **[08 Jul 2026] Versión 2.1.4 — Reportes de ventas: estado por defecto "Todos" y sin recorte de filas**
+
+### Objetivo alcanzado
+- Se corrigió que **Reportes > Ventas** mostrara por defecto solo órdenes `FULFILLED`, ocultando `DRAFT`/`CONFIRMED`/`CANCELLED` salvo que el usuario cambiara manualmente el filtro de estado.
+- Se corrigió que los reportes agregados (por cliente, por ciudad, top productos, márgenes) y los drill-down de órdenes recortaran silenciosamente filas más allá de un límite fijo bajo (15/20/25/30/100), dando la impresión de que faltaban ventas.
+
+### Frontend
+- `SalesReportsPage.tsx`: el estado inicial del filtro de estado pasa de `'FULFILLED'` a `'ALL'` ("TODOS"), consistente en todas las pestañas (Mes, Clientes, Ciudades, Top Productos, Comparación, Márgenes).
+- Se subieron los `take` hardcodeados de las consultas agregadas (clientes, ciudades, top productos, márgenes) y de los drill-down por ciudad/cliente/producto de 15–100 a 1000, para que el reporte muestre todas las filas disponibles en un solo llamado.
+
+### Backend
+- Se elevó el tope máximo permitido de `take` en los endpoints `reports/sales/top-products`, `reports/sales/margins`, `reports/sales/by-customer` y `reports/sales/by-city` de 50/200 a 1000.
+- Se elevó el tope máximo de `take` en `GET /api/v1/sales/orders` (usado por los drill-down) de 100 a 1000. El valor por defecto no cambió, por lo que otros consumidores del endpoint (ej. entregas) no se ven afectados.
+- **Pendiente/mejora futura**: el límite de 1000 sigue siendo un tope fijo; si un tenant llega a superar esa cantidad de filas en un reporte agregado o de drill-down, se recomienda reemplazarlo por paginación real (cursor) en vez de seguir subiendo el número.
+
+### Operación
+- Sin migraciones Prisma nuevas.
+- Backend compilado correctamente con `npm --prefix backend run build`.
+- Frontend compilado correctamente con `npm --prefix frontend run build`.
+- Deploy manual con `deploy.sh` no requiere pasos adicionales.
+
 ## **[14 May 2026] Versión 2.1.3 — Advertencia de atención parcial en solicitudes**
 
 ### Objetivo alcanzado

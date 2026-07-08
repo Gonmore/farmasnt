@@ -38,17 +38,17 @@ const salesSummaryQuerySchema = dateRangeQuerySchema.extend({
 })
 
 const salesTopProductsQuerySchema = dateRangeQuerySchema.extend({
-  take: z.coerce.number().int().min(1).max(50).default(10),
+  take: z.coerce.number().int().min(1).max(1000).default(10),
   status: z.enum(['DRAFT', 'CONFIRMED', 'FULFILLED', 'CANCELLED']).optional(),
 })
 
 const salesByCustomerQuerySchema = dateRangeQuerySchema.extend({
-  take: z.coerce.number().int().min(1).max(200).default(25),
+  take: z.coerce.number().int().min(1).max(1000).default(25),
   status: z.enum(['DRAFT', 'CONFIRMED', 'FULFILLED', 'CANCELLED']).optional(),
 })
 
 const salesByCityQuerySchema = dateRangeQuerySchema.extend({
-  take: z.coerce.number().int().min(1).max(200).default(25),
+  take: z.coerce.number().int().min(1).max(1000).default(25),
   status: z.enum(['DRAFT', 'CONFIRMED', 'FULFILLED', 'CANCELLED']).optional(),
 })
 
