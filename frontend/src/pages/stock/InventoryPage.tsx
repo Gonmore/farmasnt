@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useMemo, useState, type ReactElement, type ReactNode } from 'react'
+import { useMemo, useState, useEffect, type ReactElement, type ReactNode } from 'react'
 import { apiFetch } from '../../lib/api'
 import { formatDateOnlyUtc } from '../../lib/date'
 import { exportToXlsx } from '../../lib/exportXlsx'
@@ -148,6 +148,7 @@ type ProductGroup = {
       availableQuantity: number
       locationId: string
       locationCode: string
+      warehouseId: string
     }>
   }>
 }
@@ -187,6 +188,7 @@ type WarehouseGroup = {
       availableQuantity: number
       locationId: string
       locationCode: string
+      warehouseId: string
     }>
   }>
 }
@@ -390,6 +392,78 @@ function formatPresentation(p: {
   return parts.length ? parts.join(' ') : null
 }
 
+function InlineLocationEditor({ batch, token }: { batch: any; token: string }) {
+  const [selectedLoc, setSelectedLoc] = useState(batch.locationId)
+  const queryClient = useQueryClient()
+
+  // Sincronizar el estado local si la data externa se actualiza
+  useEffect(() => {
+    setSelectedLoc(batch.locationId)
+  }, [batch.locationId])
+
+  // Obtener solo las ubicaciones de la misma sucursal
+  const locQuery = useQuery({
+    queryKey: ['warehouseLocations', 'inline', batch.warehouseId],
+    queryFn: () => listWarehouseLocations(token, batch.warehouseId),
+    enabled: !!token && !!batch.warehouseId,
+    staleTime: 1000 * 60 * 5, // Cache por 5 minutos para no saturar la API
+  })
+
+  const moveMutation = useMutation({
+    mutationFn: async () => {
+      if (selectedLoc === batch.locationId) return
+      return createTransferMovement(token, {
+        productId: batch.productId,
+        batchId: batch.batchId,
+        fromLocationId: batch.locationId,
+        toLocationId: selectedLoc,
+        quantity: String(batch.availableQuantity), // Movemos solo lo disponible para no romper reservas
+      })
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['balances'] })
+    },
+    onError: (err: unknown) => {
+      alert(err instanceof Error ? err.message : 'Error al cambiar la ubicación')
+      setSelectedLoc(batch.locationId) // Revertimos al valor original si falla
+    },
+  })
+
+  const isChanged = selectedLoc !== batch.locationId
+  const hasNoAvailableStock = Number(batch.availableQuantity) <= 0
+
+  return (
+    <div className="flex items-center gap-1">
+      <select
+        value={selectedLoc}
+        onChange={(e) => setSelectedLoc(e.target.value)}
+        disabled={moveMutation.isPending || hasNoAvailableStock}
+        title={hasNoAvailableStock ? "Sin stock disponible para mover" : "Cambiar ubicación"}
+        className="block w-full min-w-[110px] rounded-md border border-slate-300 bg-white py-1 pl-2 pr-6 text-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-slate-100 disabled:opacity-70 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:disabled:bg-slate-900"
+      >
+        <option value={batch.locationId}>{batch.locationCode}</option>
+        {locQuery.data?.items
+          .filter((l) => l.isActive && l.id !== batch.locationId)
+          .map((l) => (
+            <option key={l.id} value={l.id}>
+              {l.code}
+            </option>
+          ))}
+      </select>
+
+      {isChanged && (
+        <button
+          onClick={() => moveMutation.mutate()}
+          disabled={moveMutation.isPending}
+          title="Grabar nueva ubicación"
+          className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md text-sm transition-colors hover:bg-slate-100 disabled:opacity-50 dark:hover:bg-slate-700"
+        >
+          {moveMutation.isPending ? '⏳' : '💾'}
+        </button>
+      )}
+    </div>
+  )
+}
 
 export function InventoryPage() {
   const auth = useAuth()
@@ -609,8 +683,8 @@ export function InventoryPage() {
       },
       {
         header: 'Ubicación',
-        accessor: (b, _index) => b.locationCode,
-        width: '120px',
+        accessor: (b, _index) => <InlineLocationEditor batch={b} token={auth.accessToken!} />,
+        width: '180px',
       },
     ]
 
@@ -664,7 +738,7 @@ export function InventoryPage() {
     }
 
     return baseColumns
-  }, [canSeeBatchFlow, canChangeBatchStatus])
+  }, [canSeeBatchFlow, canChangeBatchStatus, auth.accessToken])
 
   const warehouseColumns = useMemo(() => {
     const baseColumns: Array<{
@@ -697,7 +771,10 @@ export function InventoryPage() {
           )
         },
       },
-      { header: '📍 Ubicación', accessor: (b, _index) => b.locationCode },
+      { 
+        header: '📍 Ubicación', 
+        accessor: (b, _index) => <InlineLocationEditor batch={b} token={auth.accessToken!} /> 
+      },
       { header: '📊 Total', accessor: (b, _index) => formatQtyByBatchPresentation(Number(b.quantity), b) },
       {
         header: '🧷 Reservado',
@@ -748,7 +825,7 @@ export function InventoryPage() {
     }
 
     return baseColumns
-  }, [canSeeBatchFlow, loadingReservations])
+  }, [canSeeBatchFlow, loadingReservations, auth.accessToken])
 
   const productGroups = useMemo<ProductGroup[]>(() => {
     if (!balancesQuery.data?.items) return []
@@ -818,6 +895,7 @@ export function InventoryPage() {
         availableQuantity: available,
         locationId: item.locationId,
         locationCode: item.location.code,
+        warehouseId: item.location.warehouse.id,
       })
     }
 
@@ -892,6 +970,7 @@ export function InventoryPage() {
         availableQuantity: available,
         locationId: item.locationId,
         locationCode: item.location.code,
+        warehouseId: item.location.warehouse.id,
       })
     }
 
