@@ -69,6 +69,20 @@ function decimalFromNumber(value: number): string {
   return value.toString()
 }
 
+const processQuoteBodySchema = z
+  .object({
+    locationId: z.string().uuid().optional(),
+    lineBatches: z
+      .array(
+        z.object({
+          quoteLineId: z.string().uuid(),
+          batchId: z.string().uuid(),
+        }),
+      )
+      .optional(),
+  })
+  .optional()
+
 function clampPct(value: number): number {
   if (!Number.isFinite(value)) return 0
   if (value < 0) return 0
@@ -221,6 +235,7 @@ async function reserveForOrderInCityOrFail(
     userId: string
     orderId: string
     city: string
+    locationId?: string | null
     lines: Array<{ id: string; productId: string; productName: string; batchId: string | null; quantity: any }>
   },
 ): Promise<any[]> {
@@ -229,13 +244,17 @@ async function reserveForOrderInCityOrFail(
   const city = cityRaw ? cityRaw : ''
   if (!city) throw new InsufficientStockCityError({ city: '(sin ciudad)', items: [] })
 
-  const sameCityLoc = {
-    isActive: true,
-    warehouse: {
-      isActive: true,
-      city: { equals: city, mode: 'insensitive' as const },
-    },
-  }
+  // If a specific location (e.g. "sub almacén") was chosen, restrict reservation to it.
+  // Otherwise fall back to the previous behavior: any active location in the customer's city.
+  const scopeLoc = args.locationId
+    ? { id: args.locationId, isActive: true }
+    : {
+        isActive: true,
+        warehouse: {
+          isActive: true,
+          city: { equals: city, mode: 'insensitive' as const },
+        },
+      }
 
   // Pre-check availability in the customer's city for all lines (fail fast, no partial reservations).
   const shortages: InsufficientStockItem[] = []
@@ -248,7 +267,7 @@ async function reserveForOrderInCityOrFail(
         tenantId: args.tenantId,
         productId: line.productId,
         quantity: { gt: 0 },
-        location: sameCityLoc,
+        location: scopeLoc,
         OR: [
           { batchId: null },
           { batch: { status: 'RELEASED', OR: [{ expiresAt: null }, { expiresAt: { gte: todayUtc } }] } },
@@ -283,7 +302,7 @@ async function reserveForOrderInCityOrFail(
           productId: line.productId,
           batchId: line.batchId,
           quantity: { gt: 0 },
-          location: sameCityLoc,
+          location: scopeLoc,
           batch: { status: 'RELEASED', OR: [{ expiresAt: null }, { expiresAt: { gte: todayUtc } }] },
         },
         orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
@@ -297,7 +316,7 @@ async function reserveForOrderInCityOrFail(
           productId: line.productId,
           batchId: { not: null },
           quantity: { gt: 0 },
-          location: sameCityLoc,
+          location: scopeLoc,
           batch: { status: 'RELEASED', expiresAt: { not: null, gte: todayUtc } },
         },
         orderBy: [{ batch: { expiresAt: 'asc' } }, { updatedAt: 'desc' }, { id: 'asc' }],
@@ -310,7 +329,7 @@ async function reserveForOrderInCityOrFail(
           productId: line.productId,
           batchId: { not: null },
           quantity: { gt: 0 },
-          location: sameCityLoc,
+          location: scopeLoc,
           batch: { status: 'RELEASED', expiresAt: null },
         },
         orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
@@ -323,7 +342,7 @@ async function reserveForOrderInCityOrFail(
           productId: line.productId,
           batchId: null,
           quantity: { gt: 0 },
-          location: sameCityLoc,
+          location: scopeLoc,
         },
         orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
         select: { id: true, quantity: true, reservedQuantity: true },
@@ -808,6 +827,23 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
         return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
       }
 
+      const bodyParsed = processQuoteBodySchema.safeParse(request.body ?? {})
+      if (!bodyParsed.success) {
+        return reply.status(400).send({ message: 'Invalid body', issues: bodyParsed.error.issues })
+      }
+      const chosenLocationId = bodyParsed.data?.locationId ?? null
+      const lineBatchMap = new Map((bodyParsed.data?.lineBatches ?? []).map((lb) => [lb.quoteLineId, lb.batchId]))
+
+      if (chosenLocationId) {
+        const chosenLocation = await db.location.findFirst({
+          where: { id: chosenLocationId, tenantId, isActive: true },
+          select: { id: true, warehouse: { select: { isActive: true } } },
+        })
+        if (!chosenLocation || !chosenLocation.warehouse.isActive) {
+          return reply.status(404).send({ message: 'Ubicación (sub almacén) no encontrada' })
+        }
+      }
+
       let created: any
       try {
         created = await db.$transaction(async (tx: any) => {
@@ -895,7 +931,7 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
                 tenantId,
                 salesOrderId: order.id,
                 productId: l.productId,
-                batchId: null,
+                batchId: lineBatchMap.get(l.id) ?? null,
                 quantity: decimalFromNumber(Number(l.quantity)),
                 presentationId: (l as any).presentationId ?? null,
                 presentationQuantity: (l as any).presentationQuantity === null || (l as any).presentationQuantity === undefined ? null : decimalFromNumber(Number((l as any).presentationQuantity)),
@@ -908,17 +944,18 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
               id: lineRow.id,
               productId: lineRow.productId,
               productName: String((l as any)?.product?.name ?? ''),
-              batchId: null,
+              batchId: lineBatchMap.get(l.id) ?? null,
               quantity: lineRow.quantity,
             })
           }
 
-          // Reserve stock strictly from customer's city.
+          // Reserve stock strictly from customer's city (or the chosen sub almacén, if any).
           const changedBalances = await reserveForOrderInCityOrFail(tx, {
             tenantId,
             userId,
             orderId: order.id,
             city,
+            locationId: chosenLocationId,
             lines: createdLines,
           })
 
@@ -1283,7 +1320,7 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
             : {}),
         },
         include: {
-          customer: { select: { name: true, businessName: true, address: true, phone: true } },
+          customer: { select: { name: true, businessName: true, address: true, phone: true, city: true } },
           lines: {
             include: {
               product: { select: { name: true, sku: true, genericName: true, baseUnitAbbreviation: true } },
@@ -1317,6 +1354,7 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
         customerBusinessName: quote.customer.businessName,
         customerAddress: quote.customer.address,
         customerPhone: quote.customer.phone,
+        customerCity: quote.customer.city,
         validityDays: quote.validityDays,
         paymentMode: quote.paymentMode,
         deliveryDays: quote.deliveryDays,

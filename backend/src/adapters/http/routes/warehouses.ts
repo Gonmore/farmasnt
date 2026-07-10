@@ -20,12 +20,22 @@ const updateWarehouseSchema = z.object({
 
 const createLocationSchema = z.object({
   code: z.string().trim().min(1).max(32),
-  type: z.enum(['BIN', 'SHELF', 'FLOOR']).default('BIN'),
+  type: z.enum(['BIN', 'SHELF', 'FLOOR', 'SUB_ALMACEN']).default('BIN'),
+})
+
+const updateLocationSchema = z.object({
+  code: z.string().trim().min(1).max(32).optional(),
+  type: z.enum(['BIN', 'SHELF', 'FLOOR', 'SUB_ALMACEN']).optional(),
+  isActive: z.boolean().optional(),
 })
 
 const listQuerySchema = z.object({
   take: z.coerce.number().int().min(1).max(100).default(20),
   cursor: z.string().uuid().optional(),
+})
+
+const subLocationsQuerySchema = z.object({
+  city: z.string().trim().max(120).optional(),
 })
 
 export async function registerWarehouseRoutes(app: FastifyInstance): Promise<void> {
@@ -74,6 +84,42 @@ export async function registerWarehouseRoutes(app: FastifyInstance): Promise<voi
 
       const nextCursor = items.length === parsed.data.take ? items[items.length - 1]!.id : null
       return reply.send({ items: itemsWithTotals, nextCursor })
+    },
+  )
+
+  // List "sub almacén" locations (private/institutional split, etc.), optionally scoped by warehouse city.
+  // Used by sales quote processing to let the user pick where stock will be reserved from.
+  app.get(
+    '/api/v1/warehouses/sub-locations',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.StockRead)],
+    },
+    async (request, reply) => {
+      const parsed = subLocationsQuerySchema.safeParse(request.query)
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
+
+      const tenantId = request.auth!.tenantId
+      const city = parsed.data.city?.trim()
+
+      const items = await db.location.findMany({
+        where: {
+          tenantId,
+          type: 'SUB_ALMACEN',
+          isActive: true,
+          warehouse: {
+            isActive: true,
+            ...(city ? { city: { equals: city, mode: 'insensitive' as const } } : {}),
+          },
+        },
+        select: {
+          id: true,
+          code: true,
+          warehouse: { select: { id: true, code: true, name: true, city: true } },
+        },
+        orderBy: [{ warehouse: { code: 'asc' } }, { code: 'asc' }],
+      })
+
+      return reply.send({ items })
     },
   )
 
@@ -237,6 +283,105 @@ export async function registerWarehouseRoutes(app: FastifyInstance): Promise<voi
       } catch (e: any) {
         if (typeof e?.code === 'string' && e.code === 'P2002') {
           return reply.status(409).send({ message: 'Location code already exists in this warehouse' })
+        }
+        throw e
+      }
+    },
+  )
+
+  // Update location
+  app.patch(
+    '/api/v1/warehouses/:id/locations/:locationId',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.StockManage)],
+    },
+    async (request, reply) => {
+      const warehouseId = (request.params as any).id as string
+      const locationId = (request.params as any).locationId as string
+      const parsed = updateLocationSchema.safeParse(request.body)
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid request', issues: parsed.error.issues })
+
+      const tenantId = request.auth!.tenantId
+      const userId = request.auth!.userId
+
+      const location = await db.location.findFirst({
+        where: { id: locationId, warehouseId, tenantId },
+        select: { id: true, version: true },
+      })
+      if (!location) return reply.status(404).send({ message: 'Location not found' })
+
+      try {
+        const updated = await db.location.update({
+          where: {
+            id: locationId,
+            version: location.version, // Optimistic locking
+          },
+          data: {
+            ...(parsed.data.code !== undefined ? { code: parsed.data.code } : {}),
+            ...(parsed.data.type !== undefined ? { type: parsed.data.type } : {}),
+            ...(parsed.data.isActive !== undefined ? { isActive: parsed.data.isActive } : {}),
+            version: { increment: 1 },
+            createdBy: userId,
+          },
+          select: { id: true, warehouseId: true, code: true, type: true, isActive: true, version: true, updatedAt: true },
+        })
+        return reply.send(updated)
+      } catch (e: any) {
+        if (typeof e?.code === 'string' && e.code === 'P2002') {
+          return reply.status(409).send({ message: 'Location code already exists in this warehouse' })
+        }
+        if (typeof e?.code === 'string' && e.code === 'P2025') {
+          return reply.status(409).send({ message: 'Location was modified by another user, please reload' })
+        }
+        throw e
+      }
+    },
+  )
+
+  // Delete (soft-delete) location
+  app.delete(
+    '/api/v1/warehouses/:id/locations/:locationId',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.StockManage)],
+    },
+    async (request, reply) => {
+      const warehouseId = (request.params as any).id as string
+      const locationId = (request.params as any).locationId as string
+
+      const tenantId = request.auth!.tenantId
+      const userId = request.auth!.userId
+
+      const location = await db.location.findFirst({
+        where: { id: locationId, warehouseId, tenantId },
+        select: { id: true, version: true, isActive: true },
+      })
+      if (!location) return reply.status(404).send({ message: 'Location not found' })
+
+      const totalQuantity = await db.inventoryBalance.aggregate({
+        where: { tenantId, locationId },
+        _sum: { quantity: true },
+      })
+      if (Number(totalQuantity._sum.quantity ?? 0) > 0) {
+        return reply.status(409).send({ message: 'No se puede eliminar: la ubicación todavía tiene stock' })
+      }
+
+      try {
+        const updated = await db.location.update({
+          where: {
+            id: locationId,
+            version: location.version, // Optimistic locking
+          },
+          data: {
+            isActive: false,
+            version: { increment: 1 },
+            createdBy: userId,
+          },
+          select: { id: true, warehouseId: true, code: true, type: true, isActive: true, version: true, updatedAt: true },
+        })
+        return reply.send(updated)
+      } catch (e: any) {
+        if (typeof e?.code === 'string' && e.code === 'P2025') {
+          return reply.status(409).send({ message: 'Location was modified by another user, please reload' })
         }
         throw e
       }

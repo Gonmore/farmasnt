@@ -1,10 +1,10 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { apiFetch } from '../../lib/api'
 import { formatMoney } from '../../lib/numberFormat'
 import { useAuth } from '../../providers/AuthProvider'
-import { MainLayout, PageContainer, Button, Table, PaginationCursor, Input, Badge, Modal } from '../../components'
+import { MainLayout, PageContainer, Button, Table, PaginationCursor, Input, Select, Badge, Modal, Loading, ErrorState } from '../../components'
 import { useNavigation } from '../../hooks'
 import { EyeIcon, ArrowPathIcon, TrashIcon, PlusIcon } from '@heroicons/react/24/outline'
 import { useNotifications } from '../../providers/NotificationsProvider'
@@ -23,6 +23,38 @@ type QuoteListItem = {
 
 type ListResponse = { items: QuoteListItem[]; nextCursor: string | null }
 
+type QuoteDetailLine = {
+  id: string
+  productId: string
+  productName: string
+  productSku: string
+  quantity: number
+  presentationQuantity: number | null
+  presentationName: string | null
+  baseUnitAbbreviation: string
+}
+
+type QuoteDetail = {
+  id: string
+  number: string
+  customerCity: string | null
+  lines: QuoteDetailLine[]
+}
+
+type SubLocationItem = {
+  id: string
+  code: string
+  warehouse: { id: string; code: string; name: string; city: string | null }
+}
+
+type FefoSuggestionItem = {
+  batchId: string
+  batchNumber: string
+  expiresAt: string | null
+  status: string
+  quantity: string
+}
+
 type ProcessQuoteResponse = {
   id: string
   number: string
@@ -38,8 +70,31 @@ async function fetchQuotes(token: string, take: number, cursor?: string, custome
   return apiFetch(`/api/v1/sales/quotes?${params}`, { token })
 }
 
-async function processQuote(token: string, quoteId: string): Promise<ProcessQuoteResponse> {
-  return apiFetch(`/api/v1/sales/quotes/${encodeURIComponent(quoteId)}/process`, { token, method: 'POST' })
+async function fetchQuoteDetail(token: string, quoteId: string): Promise<QuoteDetail> {
+  return apiFetch(`/api/v1/sales/quotes/${encodeURIComponent(quoteId)}`, { token })
+}
+
+async function fetchSubLocations(token: string, city?: string): Promise<{ items: SubLocationItem[] }> {
+  const params = new URLSearchParams()
+  if (city) params.set('city', city)
+  return apiFetch(`/api/v1/warehouses/sub-locations?${params}`, { token })
+}
+
+async function fetchFefoSuggestions(token: string, locationId: string, productId: string): Promise<{ items: FefoSuggestionItem[] }> {
+  const params = new URLSearchParams({ locationId, productId, take: '50' })
+  return apiFetch(`/api/v1/stock/fefo-suggestions?${params}`, { token })
+}
+
+async function processQuote(
+  token: string,
+  quoteId: string,
+  body?: { locationId?: string; lineBatches?: Array<{ quoteLineId: string; batchId: string }> },
+): Promise<ProcessQuoteResponse> {
+  return apiFetch(`/api/v1/sales/quotes/${encodeURIComponent(quoteId)}/process`, {
+    token,
+    method: 'POST',
+    body: JSON.stringify(body ?? {}),
+  })
 }
 
 async function deleteQuote(token: string, quoteId: string): Promise<{ success: true }> {
@@ -63,6 +118,34 @@ export function QuotesPage() {
   const [stockErrorModalOpen, setStockErrorModalOpen] = useState(false)
   const [stockErrorMessage, setStockErrorMessage] = useState<string>('')
 
+  // Modal: elegir sub almacén (privado/institucional) y, opcionalmente, lote manual antes de procesar.
+  const [processModalQuoteId, setProcessModalQuoteId] = useState<string | null>(null)
+  const [processLocationId, setProcessLocationId] = useState<string>('')
+  const [batchMode, setBatchMode] = useState<'AUTO' | 'MANUAL'>('AUTO')
+  const [lineBatchSelections, setLineBatchSelections] = useState<Record<string, string>>({})
+
+  const quoteDetailQuery = useQuery({
+    queryKey: ['quotes', 'detail', processModalQuoteId],
+    queryFn: () => fetchQuoteDetail(auth.accessToken!, processModalQuoteId!),
+    enabled: !!auth.accessToken && !!processModalQuoteId,
+  })
+
+  const subLocationsQuery = useQuery({
+    queryKey: ['warehouses', 'sub-locations', quoteDetailQuery.data?.customerCity ?? ''],
+    queryFn: () => fetchSubLocations(auth.accessToken!, quoteDetailQuery.data?.customerCity ?? undefined),
+    enabled: !!auth.accessToken && !!processModalQuoteId && !!quoteDetailQuery.data,
+  })
+
+  const quoteLinesForBatchSelection = quoteDetailQuery.data?.lines ?? []
+  const fefoQueries = useQueries({
+    queries: quoteLinesForBatchSelection.map((line) => ({
+      queryKey: ['stock', 'fefo-suggestions', processLocationId, line.productId],
+      queryFn: () => fetchFefoSuggestions(auth.accessToken!, processLocationId, line.productId),
+      enabled: !!auth.accessToken && batchMode === 'MANUAL' && !!processLocationId,
+    })),
+  })
+  const fefoByProductId = new Map(quoteLinesForBatchSelection.map((line, idx) => [line.productId, fefoQueries[idx]]))
+
   const quotesQuery = useQuery({
     queryKey: ['quotes', cursor, customerSearch],
     queryFn: () => fetchQuotes(auth.accessToken!, 20, cursor, customerSearch || undefined),
@@ -80,7 +163,8 @@ export function QuotesPage() {
   }, [highlightId, searchParams, setSearchParams])
 
   const processMutation = useMutation({
-    mutationFn: async (quoteId: string) => processQuote(auth.accessToken!, quoteId),
+    mutationFn: async (args: { quoteId: string; locationId?: string; lineBatches?: Array<{ quoteLineId: string; batchId: string }> }) =>
+      processQuote(auth.accessToken!, args.quoteId, { locationId: args.locationId, lineBatches: args.lineBatches }),
     onError: (err: any) => {
       const msg = String(err?.message ?? '')
       if (msg.toLowerCase().includes('cantidad de existencias insuficientes')) {
@@ -91,11 +175,42 @@ export function QuotesPage() {
     onSuccess: async (createdOrder) => {
       await queryClient.invalidateQueries({ queryKey: ['quotes'] })
       await queryClient.invalidateQueries({ queryKey: ['orders'] })
+      closeProcessModal()
 
       // Jump to Orders list and highlight the created order.
       navigate(`/sales/orders?highlight=${encodeURIComponent(createdOrder.id)}`)
     },
   })
+
+  const openProcessModal = (quoteId: string) => {
+    setProcessModalQuoteId(quoteId)
+    setProcessLocationId('')
+    setBatchMode('AUTO')
+    setLineBatchSelections({})
+    processMutation.reset()
+  }
+
+  const closeProcessModal = () => {
+    setProcessModalQuoteId(null)
+    setProcessLocationId('')
+    setBatchMode('AUTO')
+    setLineBatchSelections({})
+  }
+
+  const confirmProcess = () => {
+    if (!processModalQuoteId) return
+    const lineBatches =
+      batchMode === 'MANUAL'
+        ? Object.entries(lineBatchSelections)
+            .filter(([, batchId]) => !!batchId)
+            .map(([quoteLineId, batchId]) => ({ quoteLineId, batchId }))
+        : undefined
+    processMutation.mutate({
+      quoteId: processModalQuoteId,
+      locationId: processLocationId || undefined,
+      lineBatches,
+    })
+  }
 
   const requestStockMutation = useMutation({
     mutationFn: async (quoteId: string) => requestQuoteStock(auth.accessToken!, quoteId),
@@ -141,7 +256,7 @@ export function QuotesPage() {
                 variant="secondary"
                 loading={requestStockMutation.isPending}
                 onClick={async () => {
-                  const quoteId = processMutation.variables
+                  const quoteId = processMutation.variables?.quoteId
                   if (!quoteId) return
 
                   try {
@@ -173,6 +288,112 @@ export function QuotesPage() {
                 }}
               >
                 Cancelar
+              </Button>
+            </div>
+          </div>
+        </Modal>
+
+        {/* Modal: elegir sub almacén (privado/institucional) y lote antes de procesar */}
+        <Modal
+          isOpen={!!processModalQuoteId}
+          onClose={closeProcessModal}
+          title="Procesar cotización"
+          maxWidth="lg"
+        >
+          <div className="space-y-4">
+            {quoteDetailQuery.isLoading && <Loading />}
+            {quoteDetailQuery.error && (
+              <ErrorState message={quoteDetailQuery.error instanceof Error ? quoteDetailQuery.error.message : 'Error al cargar la cotización'} />
+            )}
+            {quoteDetailQuery.data && (
+              <>
+                <Select
+                  label="Sub almacén (opcional)"
+                  value={processLocationId}
+                  onChange={(e) => {
+                    setProcessLocationId(e.target.value)
+                    setLineBatchSelections({})
+                  }}
+                  options={[
+                    { value: '', label: 'Automático (cualquier ubicación de la sucursal)' },
+                    ...(subLocationsQuery.data?.items ?? []).map((l) => ({
+                      value: l.id,
+                      label: `${l.warehouse.code} - ${l.code}`,
+                    })),
+                  ]}
+                />
+                {subLocationsQuery.data && subLocationsQuery.data.items.length === 0 && (
+                  <div className="text-sm text-slate-500 dark:text-slate-400">
+                    No hay sub almacenes configurados para la ciudad del cliente; se reservará automáticamente en cualquier ubicación de la sucursal.
+                  </div>
+                )}
+
+                {processLocationId && (
+                  <div className="space-y-2">
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        variant={batchMode === 'AUTO' ? 'primary' : 'outline'}
+                        onClick={() => setBatchMode('AUTO')}
+                      >
+                        Autoselección (FEFO)
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant={batchMode === 'MANUAL' ? 'primary' : 'outline'}
+                        onClick={() => setBatchMode('MANUAL')}
+                      >
+                        Elegir lote manualmente
+                      </Button>
+                    </div>
+
+                    {batchMode === 'MANUAL' && (
+                      <div className="space-y-3 rounded-md border border-slate-200 p-3 dark:border-slate-700">
+                        {quoteDetailQuery.data.lines.map((line) => {
+                          const suggestions = fefoByProductId.get(line.productId)
+                          return (
+                            <div key={line.id} className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:items-center">
+                              <div className="text-sm text-slate-700 dark:text-slate-300">
+                                {line.productName} <span className="text-slate-400">({line.quantity} {line.baseUnitAbbreviation})</span>
+                              </div>
+                              <Select
+                                value={lineBatchSelections[line.id] ?? ''}
+                                onChange={(e) => setLineBatchSelections((prev) => ({ ...prev, [line.id]: e.target.value }))}
+                                options={[
+                                  { value: '', label: suggestions?.isLoading ? 'Cargando lotes...' : 'Automático (FEFO)' },
+                                  ...(suggestions?.data?.items ?? []).map((b) => ({
+                                    value: b.batchId,
+                                    label: `${b.batchNumber}${b.expiresAt ? ` · vence ${new Date(b.expiresAt).toLocaleDateString('es-ES')}` : ''} (disp: ${b.quantity})`,
+                                  })),
+                                ]}
+                              />
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+
+            {processMutation.isError && (
+              <div className="text-sm text-red-600 dark:text-red-400">
+                Error: {(processMutation.error as any)?.message ?? 'Error desconocido'}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" onClick={closeProcessModal}>
+                Cancelar
+              </Button>
+              <Button
+                variant="primary"
+                loading={processMutation.isPending}
+                disabled={quoteDetailQuery.isLoading || !quoteDetailQuery.data}
+                onClick={confirmProcess}
+              >
+                Procesar
               </Button>
             </div>
           </div>
@@ -226,8 +447,8 @@ export function QuotesPage() {
                               variant="ghost"
                               size="sm"
                               icon={<ArrowPathIcon className="w-4 h-4" />}
-                              onClick={() => processMutation.mutate(q.id)}
-                              loading={processMutation.isPending}
+                              onClick={() => openProcessModal(q.id)}
+                              loading={processMutation.isPending && processModalQuoteId === q.id}
                             >
                               <span className="hidden md:inline">Procesar</span>
                             </Button>

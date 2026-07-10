@@ -16,6 +16,8 @@ const listQuerySchema = z.object({
   deliveryCity: z.string().optional(),
   from: z.coerce.date().optional(),
   to: z.coerce.date().optional(),
+  warehouseId: z.string().uuid().optional(),
+  locationId: z.string().uuid().optional(),
 })
 
 const deliveriesQuerySchema = z.object({
@@ -730,6 +732,19 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
         where.createdAt = {}
         if (parsed.data.from) where.createdAt.gte = parsed.data.from
         if (parsed.data.to) where.createdAt.lt = parsed.data.to
+      }
+      if (parsed.data.warehouseId || parsed.data.locationId) {
+        const matchedNumbers = await db.$queryRaw<{ number: string }[]>`
+          SELECT DISTINCT sm."referenceId" as "number"
+          FROM "StockMovement" sm
+          JOIN "Location" l ON l.id = sm."fromLocationId"
+          WHERE sm."tenantId" = ${tenantId}
+            AND sm."referenceType" = 'SALES_ORDER'
+            AND (${parsed.data.warehouseId ?? null}::text IS NULL OR l."warehouseId" = ${parsed.data.warehouseId ?? null})
+            AND (${parsed.data.locationId ?? null}::text IS NULL OR sm."fromLocationId" = ${parsed.data.locationId ?? null})
+        `
+        const numbers = matchedNumbers.map((r) => r.number)
+        where.number = { in: numbers.length ? numbers : ['__NONE__'] }
       }
       if (branchCity) {
         where.AND = [

@@ -2,7 +2,7 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { ResponsiveContainer, BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip, Legend, PieChart, Pie, Cell } from 'recharts'
-import { MainLayout, PageContainer, Button, IconButton, Input, Loading, ErrorState, EmptyState, Modal, Table } from '../../components'
+import { MainLayout, PageContainer, Button, IconButton, Input, Select, Loading, ErrorState, EmptyState, Modal, Table } from '../../components'
 import { KPICard, ReportSection, StockExistenciasDocument, StockExpiryDocument, StockInputsDocument, StockLowStockDocument, StockOpsDocument, StockRotationDocument, StockTransfersDocument, reportColors, getChartColor, chartTooltipStyle, chartGridStyle, chartAxisStyle } from '../../components/reports'
 import { useNavigation } from '../../hooks'
 import { apiFetch } from '../../lib/api'
@@ -367,11 +367,24 @@ async function fetchInputsByProduct(token: string, q: { from?: string; to?: stri
   return apiFetch(`/api/v1/reports/stock/inputs-by-product?${params}`, { token })
 }
 
-async function fetchExistencias(token: string, q: { from?: string; to?: string; take: number }): Promise<{ items: StockExistenciasItem[]; warehouses: StockExistenciasWarehouseSection[] }> {
+async function fetchExistencias(token: string, q: { from?: string; to?: string; take: number; warehouseId?: string; locationId?: string }): Promise<{ items: StockExistenciasItem[]; warehouses: StockExistenciasWarehouseSection[] }> {
   const params = new URLSearchParams({ take: String(q.take) })
   if (q.from) params.set('from', q.from)
   if (q.to) params.set('to', q.to)
+  if (q.warehouseId) params.set('warehouseId', q.warehouseId)
+  if (q.locationId) params.set('locationId', q.locationId)
   return apiFetch(`/api/v1/reports/stock/existencias?${params}`, { token })
+}
+
+type WarehouseListItem = { id: string; code: string; name: string; city?: string | null; isActive: boolean }
+type WarehouseLocationListItem = { id: string; code: string; type: string; isActive: boolean }
+
+async function fetchWarehousesList(token: string): Promise<{ items: WarehouseListItem[] }> {
+  return apiFetch(`/api/v1/warehouses?take=100`, { token })
+}
+
+async function fetchWarehouseLocationsList(token: string, warehouseId: string): Promise<{ items: WarehouseLocationListItem[] }> {
+  return apiFetch(`/api/v1/warehouses/${warehouseId}/locations?take=100`, { token })
 }
 
 async function fetchTransfers(token: string, q: { from?: string; to?: string; take: number }): Promise<{ items: TransferItem[] }> {
@@ -381,17 +394,20 @@ async function fetchTransfers(token: string, q: { from?: string; to?: string; ta
   return apiFetch(`/api/v1/reports/stock/transfers-between-warehouses?${params}`, { token })
 }
 
-async function fetchBalancesExpanded(token: string, q: { take: number; productId?: string }): Promise<{ items: BalanceExpandedItem[] }> {
+async function fetchBalancesExpanded(token: string, q: { take: number; productId?: string; warehouseId?: string; locationId?: string }): Promise<{ items: BalanceExpandedItem[] }> {
   const params = new URLSearchParams({ take: String(q.take) })
   if (q.productId) params.set('productId', q.productId)
+  if (q.warehouseId) params.set('warehouseId', q.warehouseId)
+  if (q.locationId) params.set('locationId', q.locationId)
   return apiFetch(`/api/v1/reports/stock/balances-expanded?${params}`, { token })
 }
 
-async function fetchMovementsExpanded(token: string, q: { from?: string; to?: string; take: number; productId?: string }): Promise<{ items: MovementExpandedItem[] }> {
+async function fetchMovementsExpanded(token: string, q: { from?: string; to?: string; take: number; productId?: string; locationId?: string }): Promise<{ items: MovementExpandedItem[] }> {
   const params = new URLSearchParams({ take: String(q.take) })
   if (q.from) params.set('from', q.from)
   if (q.to) params.set('to', q.to)
   if (q.productId) params.set('productId', q.productId)
+  if (q.locationId) params.set('locationId', q.locationId)
   return apiFetch(`/api/v1/reports/stock/movements-expanded?${params}`, { token })
 }
 
@@ -535,6 +551,8 @@ export function StockReportsPage() {
   const [tab, setTab] = useState<StockTab>('EXISTENCIAS')
   const [from, setFrom] = useState<string>(toIsoDate(startOfMonth(today)))
   const [to, setTo] = useState<string>(toIsoDate(startOfNextMonth(today)))
+  const [warehouseId, setWarehouseId] = useState<string>('')
+  const [locationId, setLocationId] = useState<string>('')
 
   useEffect(() => {
     const sp = new URLSearchParams(location.search)
@@ -596,9 +614,21 @@ export function StockReportsPage() {
     enabled: !!auth.accessToken && tab === 'INPUTS',
   })
 
+  const warehousesQuery = useQuery({
+    queryKey: ['warehouses', 'list'],
+    queryFn: () => fetchWarehousesList(auth.accessToken!),
+    enabled: !!auth.accessToken,
+  })
+
+  const warehouseLocationsQuery = useQuery({
+    queryKey: ['warehouseLocations', warehouseId],
+    queryFn: () => fetchWarehouseLocationsList(auth.accessToken!, warehouseId),
+    enabled: !!auth.accessToken && !!warehouseId,
+  })
+
   const existenciasQuery = useQuery({
-    queryKey: ['reports', 'stock', 'existencias', { from, to }],
-    queryFn: () => fetchExistencias(auth.accessToken!, { from, to, take: 5000 }),
+    queryKey: ['reports', 'stock', 'existencias', { from, to, warehouseId, locationId }],
+    queryFn: () => fetchExistencias(auth.accessToken!, { from, to, take: 5000, warehouseId: warehouseId || undefined, locationId: locationId || undefined }),
     enabled: !!auth.accessToken && tab === 'EXISTENCIAS',
   })
 
@@ -627,14 +657,14 @@ export function StockReportsPage() {
   })
 
   const stockBalancesExpandedQuery = useQuery({
-    queryKey: ['reports', 'stock', 'balancesExpanded', { tab }],
-    queryFn: () => fetchBalancesExpanded(auth.accessToken!, { take: 5000 }),
+    queryKey: ['reports', 'stock', 'balancesExpanded', { tab, warehouseId, locationId }],
+    queryFn: () => fetchBalancesExpanded(auth.accessToken!, { take: 5000, warehouseId: warehouseId || undefined, locationId: locationId || undefined }),
     enabled: !!auth.accessToken && ['INPUTS', 'ROTATION', 'NOMOVEMENT', 'LOWSTOCK'].includes(tab),
   })
 
   const stockMovementsExpandedQuery = useQuery({
-    queryKey: ['reports', 'stock', 'movementsExpanded', { from, to, tab }],
-    queryFn: () => fetchMovementsExpanded(auth.accessToken!, { from, to, take: 5000 }),
+    queryKey: ['reports', 'stock', 'movementsExpanded', { from, to, tab, locationId }],
+    queryFn: () => fetchMovementsExpanded(auth.accessToken!, { from, to, take: 5000, locationId: locationId || undefined }),
     enabled: !!auth.accessToken && ['INPUTS', 'ROTATION', 'NOMOVEMENT'].includes(tab),
   })
 
@@ -1412,6 +1442,30 @@ export function StockReportsPage() {
                 Reset mes
               </Button>
             </div>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
+            <Select
+              label="Sucursal"
+              value={warehouseId}
+              onChange={(e) => {
+                setWarehouseId(e.target.value)
+                setLocationId('')
+              }}
+              options={[
+                { value: '', label: 'Todas las sucursales' },
+                ...(warehousesQuery.data?.items ?? []).map((w) => ({ value: w.id, label: `${w.code} - ${w.name}` })),
+              ]}
+            />
+            <Select
+              label="Sub almacén / Ubicación"
+              value={locationId}
+              onChange={(e) => setLocationId(e.target.value)}
+              disabled={!warehouseId}
+              options={[
+                { value: '', label: warehouseId ? 'Todas las ubicaciones' : 'Elija una sucursal primero' },
+                ...(warehouseLocationsQuery.data?.items ?? []).filter((l) => l.isActive).map((l) => ({ value: l.id, label: l.code })),
+              ]}
+            />
           </div>
         </div>
 

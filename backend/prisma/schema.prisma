@@ -26,6 +26,7 @@ enum LocationType {
   BIN
   SHELF
   FLOOR
+  SUB_ALMACEN
 }
 
 enum StockMovementType {

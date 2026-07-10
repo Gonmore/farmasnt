@@ -16,7 +16,7 @@ import {
   Area,
   AreaChart,
 } from 'recharts'
-import { MainLayout, PageContainer, Button, IconButton, Input, Loading, ErrorState, EmptyState, Modal, Table } from '../../components'
+import { MainLayout, PageContainer, Button, IconButton, Input, Select, Loading, ErrorState, EmptyState, Modal, Table } from '../../components'
 import { KPICard, ReportSection, SalesByCityDocument, SalesByCustomerDocument, SalesComparisonDocument, SalesFunnelDocument, SalesMarginsDocument, SalesMonthDocument, SalesTopProductsDocument, reportColors, getChartColor, chartTooltipStyle, chartGridStyle, chartAxisStyle } from '../../components/reports'
 import { useNavigation } from '../../hooks'
 import { apiFetch } from '../../lib/api'
@@ -226,113 +226,144 @@ function buildStatusMix(orders: OrderDetailItem[]): Array<{ label: string; total
     .filter((item) => item.total > 0 || item.ordersCount > 0)
 }
 
-async function fetchSalesSummary(token: string, q: { from?: string; to?: string; status?: SalesStatus }): Promise<{ items: SalesSummaryItem[] }> {
+async function fetchSalesSummary(token: string, q: { from?: string; to?: string; status?: SalesStatus; warehouseId?: string; locationId?: string }): Promise<{ items: SalesSummaryItem[] }> {
   const params = new URLSearchParams()
   if (q.from) params.set('from', q.from)
   if (q.to) params.set('to', q.to)
   if (q.status && q.status !== 'ALL') params.set('status', q.status)
+  if (q.warehouseId) params.set('warehouseId', q.warehouseId)
+  if (q.locationId) params.set('locationId', q.locationId)
   return apiFetch(`/api/v1/reports/sales/summary?${params}`, { token })
 }
 
 async function fetchSalesByCustomer(
   token: string,
-  q: { from?: string; to?: string; take: number; status?: SalesStatus },
+  q: { from?: string; to?: string; take: number; status?: SalesStatus; warehouseId?: string; locationId?: string },
 ): Promise<{ items: SalesByCustomerItem[] }> {
   const params = new URLSearchParams({ take: String(q.take) })
   if (q.from) params.set('from', q.from)
   if (q.to) params.set('to', q.to)
   if (q.status && q.status !== 'ALL') params.set('status', q.status)
+  if (q.warehouseId) params.set('warehouseId', q.warehouseId)
+  if (q.locationId) params.set('locationId', q.locationId)
   return apiFetch(`/api/v1/reports/sales/by-customer?${params}`, { token })
 }
 
 async function fetchSalesByCity(
   token: string,
-  q: { from?: string; to?: string; take: number; status?: SalesStatus },
+  q: { from?: string; to?: string; take: number; status?: SalesStatus; warehouseId?: string; locationId?: string },
 ): Promise<{ items: SalesByCityItem[] }> {
   const params = new URLSearchParams({ take: String(q.take) })
   if (q.from) params.set('from', q.from)
   if (q.to) params.set('to', q.to)
   if (q.status && q.status !== 'ALL') params.set('status', q.status)
+  if (q.warehouseId) params.set('warehouseId', q.warehouseId)
+  if (q.locationId) params.set('locationId', q.locationId)
   return apiFetch(`/api/v1/reports/sales/by-city?${params}`, { token })
 }
 
 async function fetchTopProducts(
   token: string,
-  q: { from?: string; to?: string; take: number; status?: SalesStatus },
+  q: { from?: string; to?: string; take: number; status?: SalesStatus; warehouseId?: string; locationId?: string },
 ): Promise<{ items: SalesTopProductItem[] }> {
   const params = new URLSearchParams({ take: String(q.take) })
   if (q.from) params.set('from', q.from)
   if (q.to) params.set('to', q.to)
   if (q.status && q.status !== 'ALL') params.set('status', q.status)
+  if (q.warehouseId) params.set('warehouseId', q.warehouseId)
+  if (q.locationId) params.set('locationId', q.locationId)
   return apiFetch(`/api/v1/reports/sales/top-products?${params}`, { token })
 }
 
 // Función para obtener órdenes por ciudad (drill-down)
 async function fetchOrdersByCity(
   token: string,
-  q: { from?: string; to?: string; city: string; status?: SalesStatus },
+  q: { from?: string; to?: string; city: string; status?: SalesStatus; warehouseId?: string; locationId?: string },
 ): Promise<{ items: OrderDetailItem[] }> {
   const params = new URLSearchParams({ take: '1000' })
   if (q.from) params.set('from', q.from)
   if (q.to) params.set('to', q.to)
   if (q.city) params.set('deliveryCity', q.city)
   if (q.status && q.status !== 'ALL') params.set('status', q.status)
+  if (q.warehouseId) params.set('warehouseId', q.warehouseId)
+  if (q.locationId) params.set('locationId', q.locationId)
   return apiFetch(`/api/v1/sales/orders?${params}`, { token })
 }
 
 // Función para obtener órdenes por cliente (drill-down)
 async function fetchOrdersByCustomer(
   token: string,
-  q: { from?: string; to?: string; customerId: string; status?: SalesStatus },
+  q: { from?: string; to?: string; customerId: string; status?: SalesStatus; warehouseId?: string; locationId?: string },
 ): Promise<{ items: OrderDetailItem[] }> {
   const params = new URLSearchParams({ take: '1000' })
   if (q.from) params.set('from', q.from)
   if (q.to) params.set('to', q.to)
   if (q.customerId) params.set('customerId', q.customerId)
   if (q.status && q.status !== 'ALL') params.set('status', q.status)
+  if (q.warehouseId) params.set('warehouseId', q.warehouseId)
+  if (q.locationId) params.set('locationId', q.locationId)
   return apiFetch(`/api/v1/sales/orders?${params}`, { token })
 }
 
 // Función para obtener órdenes por producto (drill-down)
 async function fetchOrdersByProduct(
   token: string,
-  q: { from?: string; to?: string; productId: string; status?: SalesStatus },
+  q: { from?: string; to?: string; productId: string; status?: SalesStatus; warehouseId?: string; locationId?: string },
 ): Promise<{ items: OrderDetailItem[] }> {
   const params = new URLSearchParams({ take: '1000' })
   if (q.from) params.set('from', q.from)
   if (q.to) params.set('to', q.to)
   if (q.productId) params.set('productId', q.productId)
   if (q.status && q.status !== 'ALL') params.set('status', q.status)
+  if (q.warehouseId) params.set('warehouseId', q.warehouseId)
+  if (q.locationId) params.set('locationId', q.locationId)
   return apiFetch(`/api/v1/sales/orders?${params}`, { token })
 }
 
-async function fetchFunnel(token: string, q: { from?: string; to?: string }): Promise<FunnelResponse> {
+async function fetchFunnel(token: string, q: { from?: string; to?: string; warehouseId?: string; locationId?: string }): Promise<FunnelResponse> {
   const params = new URLSearchParams()
   if (q.from) params.set('from', q.from)
   if (q.to) params.set('to', q.to)
+  if (q.warehouseId) params.set('warehouseId', q.warehouseId)
+  if (q.locationId) params.set('locationId', q.locationId)
   return apiFetch(`/api/v1/reports/sales/funnel?${params}`, { token })
 }
 
 async function fetchSalesByMonth(
   token: string,
-  q: { from?: string; to?: string; status?: SalesStatus },
+  q: { from?: string; to?: string; status?: SalesStatus; warehouseId?: string; locationId?: string },
 ): Promise<{ items: SalesByMonthItem[] }> {
   const params = new URLSearchParams()
   if (q.from) params.set('from', q.from)
   if (q.to) params.set('to', q.to)
   if (q.status && q.status !== 'ALL') params.set('status', q.status)
+  if (q.warehouseId) params.set('warehouseId', q.warehouseId)
+  if (q.locationId) params.set('locationId', q.locationId)
   return apiFetch(`/api/v1/reports/sales/by-month?${params}`, { token })
 }
 
 async function fetchProductMargins(
   token: string,
-  q: { from?: string; to?: string; take: number; status?: SalesStatus },
+  q: { from?: string; to?: string; take: number; status?: SalesStatus; warehouseId?: string; locationId?: string },
 ): Promise<MarginsResponse> {
   const params = new URLSearchParams({ take: String(q.take) })
   if (q.from) params.set('from', q.from)
   if (q.to) params.set('to', q.to)
   if (q.status && q.status !== 'ALL') params.set('status', q.status)
+  if (q.warehouseId) params.set('warehouseId', q.warehouseId)
+  if (q.locationId) params.set('locationId', q.locationId)
   return apiFetch(`/api/v1/reports/sales/margins?${params}`, { token })
+}
+
+type SalesWarehouseListItem = { id: string; code: string; name: string; city?: string | null; isActive: boolean }
+type SalesWarehouseLocationListItem = { id: string; code: string; type: string; isActive: boolean }
+
+async function fetchSalesWarehousesList(token: string): Promise<{ items: SalesWarehouseListItem[] }> {
+  return apiFetch(`/api/v1/warehouses?take=100`, { token })
+}
+
+async function fetchSalesWarehouseLocationsList(token: string, warehouseId: string): Promise<{ items: SalesWarehouseLocationListItem[] }> {
+  return apiFetch(`/api/v1/warehouses/${warehouseId}/locations?take=100`, { token })
 }
 
 async function sendSalesReportEmail(token: string, input: { to: string; subject: string; filename: string; pdfBase64: string; message?: string }) {
@@ -402,6 +433,8 @@ export function SalesReportsPage() {
   const [from, setFrom] = useState<string>(toIsoDate(startOfMonth(today)))
   const [to, setTo] = useState<string>(toIsoDate(startOfNextMonth(today)))
   const [status, setStatus] = useState<SalesStatus>('ALL')
+  const [warehouseId, setWarehouseId] = useState<string>('')
+  const [locationId, setLocationId] = useState<string>('')
 
   // Estados para drill-down
   const [drillDownOpen, setDrillDownOpen] = useState(false)
@@ -458,22 +491,22 @@ export function SalesReportsPage() {
 
   // Query para drill-down por ciudad
   const drillDownCityQuery = useQuery({
-    queryKey: ['reports', 'sales', 'drilldown', 'city', drillDownParam, { from, to, status }],
-    queryFn: () => fetchOrdersByCity(auth.accessToken!, { from, to, city: drillDownParam, status }),
+    queryKey: ['reports', 'sales', 'drilldown', 'city', drillDownParam, { from, to, status, warehouseId, locationId }],
+    queryFn: () => fetchOrdersByCity(auth.accessToken!, { from, to, city: drillDownParam, status, warehouseId: warehouseId || undefined, locationId: locationId || undefined }),
     enabled: !!auth.accessToken && drillDownOpen && drillDownType === 'city' && !!drillDownParam,
   })
 
   // Query para drill-down por cliente
   const drillDownCustomerQuery = useQuery({
-    queryKey: ['reports', 'sales', 'drilldown', 'customer', drillDownParam, { from, to, status }],
-    queryFn: () => fetchOrdersByCustomer(auth.accessToken!, { from, to, customerId: drillDownParam, status }),
+    queryKey: ['reports', 'sales', 'drilldown', 'customer', drillDownParam, { from, to, status, warehouseId, locationId }],
+    queryFn: () => fetchOrdersByCustomer(auth.accessToken!, { from, to, customerId: drillDownParam, status, warehouseId: warehouseId || undefined, locationId: locationId || undefined }),
     enabled: !!auth.accessToken && drillDownOpen && drillDownType === 'customer' && !!drillDownParam,
   })
 
   // Query para drill-down por producto
   const drillDownProductQuery = useQuery({
-    queryKey: ['reports', 'sales', 'drilldown', 'product', drillDownParam, { from, to, status }],
-    queryFn: () => fetchOrdersByProduct(auth.accessToken!, { from, to, productId: drillDownParam, status }),
+    queryKey: ['reports', 'sales', 'drilldown', 'product', drillDownParam, { from, to, status, warehouseId, locationId }],
+    queryFn: () => fetchOrdersByProduct(auth.accessToken!, { from, to, productId: drillDownParam, status, warehouseId: warehouseId || undefined, locationId: locationId || undefined }),
     enabled: !!auth.accessToken && drillDownOpen && drillDownType === 'product' && !!drillDownParam,
   })
 
@@ -1260,47 +1293,59 @@ export function SalesReportsPage() {
   }
 
   const summaryQuery = useQuery({
-    queryKey: ['reports', 'sales', 'summary', { from, to, status }],
-    queryFn: () => fetchSalesSummary(auth.accessToken!, { from, to, status }),
+    queryKey: ['reports', 'sales', 'summary', { from, to, status, warehouseId, locationId }],
+    queryFn: () => fetchSalesSummary(auth.accessToken!, { from, to, status, warehouseId: warehouseId || undefined, locationId: locationId || undefined }),
     enabled: !!auth.accessToken && tab === 'MONTH',
   })
 
   const byCustomerQuery = useQuery({
-    queryKey: ['reports', 'sales', 'byCustomer', { from, to, status }],
-    queryFn: () => fetchSalesByCustomer(auth.accessToken!, { from, to, take: 1000, status }),
+    queryKey: ['reports', 'sales', 'byCustomer', { from, to, status, warehouseId, locationId }],
+    queryFn: () => fetchSalesByCustomer(auth.accessToken!, { from, to, take: 1000, status, warehouseId: warehouseId || undefined, locationId: locationId || undefined }),
     enabled: !!auth.accessToken && tab === 'CUSTOMERS',
   })
 
   const byCityQuery = useQuery({
-    queryKey: ['reports', 'sales', 'byCity', { from, to, status }],
-    queryFn: () => fetchSalesByCity(auth.accessToken!, { from, to, take: 1000, status }),
+    queryKey: ['reports', 'sales', 'byCity', { from, to, status, warehouseId, locationId }],
+    queryFn: () => fetchSalesByCity(auth.accessToken!, { from, to, take: 1000, status, warehouseId: warehouseId || undefined, locationId: locationId || undefined }),
     enabled: !!auth.accessToken && tab === 'CITIES',
   })
 
   const topProductsQuery = useQuery({
-    queryKey: ['reports', 'sales', 'topProducts', { from, to, status }],
-    queryFn: () => fetchTopProducts(auth.accessToken!, { from, to, take: 1000, status }),
+    queryKey: ['reports', 'sales', 'topProducts', { from, to, status, warehouseId, locationId }],
+    queryFn: () => fetchTopProducts(auth.accessToken!, { from, to, take: 1000, status, warehouseId: warehouseId || undefined, locationId: locationId || undefined }),
     enabled: !!auth.accessToken && tab === 'TOP_PRODUCTS',
   })
 
   const funnelQuery = useQuery({
-    queryKey: ['reports', 'sales', 'funnel', { from, to }],
-    queryFn: () => fetchFunnel(auth.accessToken!, { from, to }),
+    queryKey: ['reports', 'sales', 'funnel', { from, to, warehouseId, locationId }],
+    queryFn: () => fetchFunnel(auth.accessToken!, { from, to, warehouseId: warehouseId || undefined, locationId: locationId || undefined }),
     enabled: !!auth.accessToken && tab === 'FUNNEL',
   })
 
   // Query para comparativa mensual
   const byMonthQuery = useQuery({
-    queryKey: ['reports', 'sales', 'byMonth', { from, to, status }],
-    queryFn: () => fetchSalesByMonth(auth.accessToken!, { from, to, status }),
+    queryKey: ['reports', 'sales', 'byMonth', { from, to, status, warehouseId, locationId }],
+    queryFn: () => fetchSalesByMonth(auth.accessToken!, { from, to, status, warehouseId: warehouseId || undefined, locationId: locationId || undefined }),
     enabled: !!auth.accessToken && tab === 'COMPARISON',
   })
 
   // Query para márgenes
   const marginsQuery = useQuery({
-    queryKey: ['reports', 'sales', 'margins', { from, to, status }],
-    queryFn: () => fetchProductMargins(auth.accessToken!, { from, to, take: 1000, status }),
+    queryKey: ['reports', 'sales', 'margins', { from, to, status, warehouseId, locationId }],
+    queryFn: () => fetchProductMargins(auth.accessToken!, { from, to, take: 1000, status, warehouseId: warehouseId || undefined, locationId: locationId || undefined }),
     enabled: !!auth.accessToken && tab === 'MARGINS',
+  })
+
+  const salesWarehousesQuery = useQuery({
+    queryKey: ['warehouses', 'list'],
+    queryFn: () => fetchSalesWarehousesList(auth.accessToken!),
+    enabled: !!auth.accessToken,
+  })
+
+  const salesWarehouseLocationsQuery = useQuery({
+    queryKey: ['warehouseLocations', warehouseId],
+    queryFn: () => fetchSalesWarehouseLocationsList(auth.accessToken!, warehouseId),
+    enabled: !!auth.accessToken && !!warehouseId,
   })
 
 
@@ -1526,6 +1571,30 @@ export function SalesReportsPage() {
                 Reset mes
               </Button>
             </div>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
+            <Select
+              label="Sucursal"
+              value={warehouseId}
+              onChange={(e) => {
+                setWarehouseId(e.target.value)
+                setLocationId('')
+              }}
+              options={[
+                { value: '', label: 'Todas las sucursales' },
+                ...(salesWarehousesQuery.data?.items ?? []).map((w) => ({ value: w.id, label: `${w.code} - ${w.name}` })),
+              ]}
+            />
+            <Select
+              label="Sub almacén / Ubicación"
+              value={locationId}
+              onChange={(e) => setLocationId(e.target.value)}
+              disabled={!warehouseId}
+              options={[
+                { value: '', label: warehouseId ? 'Todas las ubicaciones' : 'Elija una sucursal primero' },
+                ...(salesWarehouseLocationsQuery.data?.items ?? []).filter((l) => l.isActive).map((l) => ({ value: l.id, label: l.code })),
+              ]}
+            />
           </div>
         </div>
 
