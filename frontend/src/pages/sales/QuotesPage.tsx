@@ -62,6 +62,19 @@ type ProcessQuoteResponse = {
   version: number
   createdAt: string
 }
+type AdminUserListItem = {
+  id: string
+  email: string
+  fullName: string | null
+  isActive: boolean
+  createdAt: string
+  roleIds?: string[]
+  roles?: Array<{ id: string; code: string; name: string }>
+}
+
+async function fetchUsers(token: string): Promise<{ items: AdminUserListItem[] }> {
+  return apiFetch(`/api/v1/admin/users`, { token })
+}
 
 async function fetchQuotes(token: string, take: number, cursor?: string, customerSearch?: string): Promise<ListResponse> {
   const params = new URLSearchParams({ take: String(take) })
@@ -88,7 +101,7 @@ async function fetchFefoSuggestions(token: string, locationId: string, productId
 async function processQuote(
   token: string,
   quoteId: string,
-  body?: { locationId?: string; lineBatches?: Array<{ quoteLineId: string; batchId: string }> },
+  body?: { locationId?: string; sellerId?: string; lineBatches?: Array<{ quoteLineId: string; batchId: string }> },
 ): Promise<ProcessQuoteResponse> {
   return apiFetch(`/api/v1/sales/quotes/${encodeURIComponent(quoteId)}/process`, {
     token,
@@ -117,6 +130,7 @@ export function QuotesPage() {
   const [customerSearch, setCustomerSearch] = useState('')
   const [stockErrorModalOpen, setStockErrorModalOpen] = useState(false)
   const [stockErrorMessage, setStockErrorMessage] = useState<string>('')
+  const [processSellerId, setProcessSellerId] = useState<string>('')
 
   // Modal: elegir sub almacén (privado/institucional) y, opcionalmente, lote manual antes de procesar.
   const [processModalQuoteId, setProcessModalQuoteId] = useState<string | null>(null)
@@ -127,6 +141,12 @@ export function QuotesPage() {
   const quoteDetailQuery = useQuery({
     queryKey: ['quotes', 'detail', processModalQuoteId],
     queryFn: () => fetchQuoteDetail(auth.accessToken!, processModalQuoteId!),
+    enabled: !!auth.accessToken && !!processModalQuoteId,
+  })
+
+  const usersQuery = useQuery({
+    queryKey: ['users'],
+    queryFn: () => fetchUsers(auth.accessToken!),
     enabled: !!auth.accessToken && !!processModalQuoteId,
   })
 
@@ -163,7 +183,7 @@ export function QuotesPage() {
   }, [highlightId, searchParams, setSearchParams])
 
   const processMutation = useMutation({
-    mutationFn: async (args: { quoteId: string; locationId?: string; lineBatches?: Array<{ quoteLineId: string; batchId: string }> }) =>
+    mutationFn: async (args: { quoteId: string; locationId?: string;  sellerId?: string; lineBatches?: Array<{ quoteLineId: string; batchId: string }> }) =>
       processQuote(auth.accessToken!, args.quoteId, { locationId: args.locationId, lineBatches: args.lineBatches }),
     onError: (err: any) => {
       const msg = String(err?.message ?? '')
@@ -185,6 +205,7 @@ export function QuotesPage() {
   const openProcessModal = (quoteId: string) => {
     setProcessModalQuoteId(quoteId)
     setProcessLocationId('')
+    setProcessSellerId('')
     setBatchMode('AUTO')
     setLineBatchSelections({})
     processMutation.reset()
@@ -193,6 +214,7 @@ export function QuotesPage() {
   const closeProcessModal = () => {
     setProcessModalQuoteId(null)
     setProcessLocationId('')
+    setProcessSellerId('')
     setBatchMode('AUTO')
     setLineBatchSelections({})
   }
@@ -208,6 +230,7 @@ export function QuotesPage() {
     processMutation.mutate({
       quoteId: processModalQuoteId,
       locationId: processLocationId || undefined,
+      sellerId: processSellerId || undefined,
       lineBatches,
     })
   }
@@ -307,6 +330,20 @@ export function QuotesPage() {
             )}
             {quoteDetailQuery.data && (
               <>
+                
+              {/* NUEVO SELECT DE VENDEDOR */}
+                <Select
+                  label="Vendedor encargado (Opcional)"
+                  value={processSellerId}
+                  onChange={(e) => setProcessSellerId(e.target.value)}
+                  options={[
+                    { value: '', label: 'Asignar automáticamente (creador de cotización)' },
+                    ...(usersQuery.data?.items ?? []).map((u) => ({
+                      value: u.id,
+                      label: u.fullName || u.email,
+                    })),
+                  ]}
+                />
                 <Select
                   label="Sub almacén (opcional)"
                   value={processLocationId}

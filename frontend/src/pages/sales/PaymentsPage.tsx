@@ -29,7 +29,7 @@ type PaymentListItem = {
 
 type ListResponse = { items: PaymentListItem[] }
 
-type PaymentReceiptType = 'CASH' | 'TRANSFER_QR'
+type PaymentReceiptType = 'CASH' | 'TRANSFER_QR' | 'CHECK'
 type PaymentProofUpload = { uploadUrl: string; publicUrl: string; key: string; method?: string }
 
 function money(n: number): string {
@@ -357,21 +357,24 @@ export function PaymentsPage() {
               options={[
                 { value: 'CASH', label: 'Al contado' },
                 { value: 'TRANSFER_QR', label: 'Transferencia/QR' },
+                { value: 'CHECK', label: 'Cheque' },
               ]}
               disabled={payMutation.isPending}
             />
 
-            {receiptType === 'TRANSFER_QR' && (
+            {(receiptType === 'TRANSFER_QR' || receiptType === 'CHECK') && (
               <div className="space-y-3">
                 <Input
-                  label="Numero de transaccion (opcional)"
+                  label={receiptType === 'CHECK' ? 'Número de cheque (opcional)' : 'Número de transacción (opcional)'}
                   value={receiptRef}
                   onChange={(e) => setReceiptRef(e.target.value)}
-                  placeholder="Ej: 123456789"
+                  placeholder={receiptType === 'CHECK' ? 'Ej: 00012345' : 'Ej: 123456789'}
                   disabled={payMutation.isPending}
                 />
                 <div>
-                  <div className="mb-2 text-sm font-medium text-slate-700 dark:text-slate-300">Foto o captura (opcional)</div>
+                  <div className="mb-2 text-sm font-medium text-slate-700 dark:text-slate-300">
+                    {receiptType === 'CHECK' ? 'Foto del cheque (opcional)' : 'Foto o captura (opcional)'}
+                  </div>
                   <ImageUpload
                     mode="select"
                     currentImageUrl={receiptPhoto?.url ?? null}
@@ -382,7 +385,9 @@ export function PaymentsPage() {
                   />
                 </div>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  Debe ingresar numero de transaccion o subir una imagen.
+                  {receiptType === 'CHECK'
+                    ? 'Debe ingresar el número de cheque o subir una imagen.'
+                    : 'Debe ingresar numero de transaccion o subir una imagen.'}
                 </p>
               </div>
             )}
@@ -431,11 +436,13 @@ export function PaymentsPage() {
                     }
                   }
 
-                  const needsProof = receiptType === 'TRANSFER_QR'
+                  const needsProof = receiptType === 'TRANSFER_QR' || receiptType === 'CHECK'
                   const hasRef = receiptRef.trim().length > 0
                   const hasPhoto = !!receiptPhoto?.url
                   if (needsProof && !hasRef && !hasPhoto) {
-                    setReceiptError('Ingrese numero de transaccion o suba una imagen.')
+                    setReceiptError(receiptType === 'CHECK'
+                      ? 'Ingrese el número de cheque o suba una imagen.'
+                      : 'Ingrese número de transacción o suba una imagen.')
                     return
                   }
 

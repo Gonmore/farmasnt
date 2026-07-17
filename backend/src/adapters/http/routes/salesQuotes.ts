@@ -72,6 +72,7 @@ function decimalFromNumber(value: number): string {
 const processQuoteBodySchema = z
   .object({
     locationId: z.string().uuid().optional(),
+    sellerId: z.string().uuid().optional(),
     lineBatches: z
       .array(
         z.object({
@@ -832,6 +833,7 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
         return reply.status(400).send({ message: 'Invalid body', issues: bodyParsed.error.issues })
       }
       const chosenLocationId = bodyParsed.data?.locationId ?? null
+      const chosenSellerId = bodyParsed.data?.sellerId ?? null
       const lineBatchMap = new Map((bodyParsed.data?.lineBatches ?? []).map((lb) => [lb.quoteLineId, lb.batchId]))
 
       if (chosenLocationId) {
@@ -913,7 +915,7 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
               deliveryZone: quote.deliveryZone ?? null,
               deliveryAddress: quote.deliveryAddress ?? null,
               deliveryMapsUrl: quote.deliveryMapsUrl ?? null,
-              createdBy: userId,
+              createdBy: chosenSellerId || quote.createdBy || userId,
             },
             select: { id: true, number: true, status: true, version: true, createdAt: true },
           })
