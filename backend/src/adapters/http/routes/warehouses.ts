@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
 import { z } from 'zod'
 import { Prisma } from '../../../generated/prisma/client.js'
 import { prisma } from '../../db/prisma.js'
@@ -199,23 +199,34 @@ export async function registerWarehouseRoutes(app: FastifyInstance): Promise<voi
 
       if (!warehouse) return reply.status(404).send({ message: 'Warehouse not found' })
 
-      const updated = await db.warehouse.update({
-        where: {
-          id: warehouseId,
-          version: warehouse.version // Optimistic locking
-        },
-        data: {
-          ...(parsed.data.code !== undefined ? { code: parsed.data.code } : {}),
-          ...(parsed.data.name !== undefined ? { name: parsed.data.name } : {}),
-          ...(parsed.data.city !== undefined ? { city: parsed.data.city.toUpperCase() } : {}),
-          ...(parsed.data.isActive !== undefined ? { isActive: parsed.data.isActive } : {}),
-          version: { increment: 1 },
-          createdBy: userId,
-        },
-        select: { id: true, code: true, name: true, city: true, isActive: true, version: true, updatedAt: true },
-      })
+      // AÑADIDO: Bloque try/catch para capturar duplicados y colisiones
+      try {
+        const updated = await db.warehouse.update({
+          where: {
+            id: warehouseId,
+            version: warehouse.version // Optimistic locking
+          },
+          data: {
+            ...(parsed.data.code !== undefined ? { code: parsed.data.code } : {}),
+            ...(parsed.data.name !== undefined ? { name: parsed.data.name } : {}),
+            ...(parsed.data.city !== undefined ? { city: parsed.data.city.toUpperCase() } : {}),
+            ...(parsed.data.isActive !== undefined ? { isActive: parsed.data.isActive } : {}),
+            version: { increment: 1 },
+            createdBy: userId,
+          },
+          select: { id: true, code: true, name: true, city: true, isActive: true, version: true, updatedAt: true },
+        })
 
-      return reply.send(updated)
+        return reply.send(updated)
+      } catch (e: any) {
+        if (typeof e?.code === 'string' && e.code === 'P2002') {
+          return reply.status(409).send({ message: 'El código de almacén ya existe' })
+        }
+        if (typeof e?.code === 'string' && e.code === 'P2025') {
+          return reply.status(409).send({ message: 'El almacén fue modificado por otro usuario, por favor recarga' })
+        }
+        throw e
+      }
     },
   )
   app.get(

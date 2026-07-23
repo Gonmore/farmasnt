@@ -369,7 +369,14 @@ export function WarehousesPage() {
             </label>
             <Input
               value={`SUC-${editCode}`}
-              onChange={(e) => setEditCode(e.target.value.replace(/^SUC-/, '').toUpperCase())}
+              onChange={(e) => {
+                // Removemos el SUC- (si existe) y eliminamos cualquier caracter que no sea letra o número
+                const cleanValue = e.target.value
+                  .replace(/^SUC-?/i, '')
+                  .replace(/[^a-zA-Z0-9]/g, '')
+                  .toUpperCase()
+                setEditCode(cleanValue)
+              }}
               placeholder="SCZ"
               disabled={updateWarehouseMutation.isPending}
             />
@@ -413,7 +420,19 @@ export function WarehousesPage() {
 
           {updateWarehouseMutation.error && (
             <div className="rounded-md bg-red-50 p-3 text-sm text-red-600 dark:bg-red-900/20 dark:text-red-400">
-              Error: {(updateWarehouseMutation.error as any)?.response?.data?.message || 'Error al actualizar sucursal'}
+              <span className="font-semibold">Error al actualizar:</span>{' '}
+              {(updateWarehouseMutation.error as any)?.response?.data?.message || 'Error desconocido'}
+              
+              {/* Esto mostrará los detalles exactos del error de validación de Zod */}
+              {(updateWarehouseMutation.error as any)?.response?.data?.issues?.length > 0 && (
+                <ul className="mt-1 list-disc pl-5 text-xs">
+                  {(updateWarehouseMutation.error as any).response.data.issues.map((iss: any, idx: number) => (
+                    <li key={idx}>
+                      <span className="font-bold">{iss.path?.join('.')}</span>: {iss.message}
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           )}
 
