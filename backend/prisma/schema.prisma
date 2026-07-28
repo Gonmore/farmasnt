@@ -575,6 +575,7 @@ model Location {
   laboratoryMaintenanceFor Laboratory[] @relation("LaboratoryMaintenanceLocation")
   laboratoryQuarantineFor Laboratory[] @relation("LaboratoryQuarantineLocation")
   stockReturns StockReturn[] @relation("StockReturnToLocation")
+  quotes    Quote[]
 
   @@unique([tenantId, warehouseId, code])
   @@index([tenantId])
@@ -869,6 +870,9 @@ model Quote {
   tenantId   String
   number     String
   customerId String
+
+  locationId       String?
+
   status     QuoteStatus @default(CREATED)
   isActive   Boolean  @default(true)
   processedAt DateTime?
@@ -888,6 +892,7 @@ model Quote {
   createdBy  String?
 
   customer Customer @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  location Location?  @relation(fields: [locationId], references: [id], onDelete: SetNull)
   lines    QuoteLine[]
   salesOrder SalesOrder?
   stockMovementRequests StockMovementRequest[]
@@ -895,6 +900,7 @@ model Quote {
   @@unique([tenantId, number])
   @@index([tenantId])
   @@index([customerId])
+  @@index([locationId])
   @@index([status])
   @@index([isActive])
 }

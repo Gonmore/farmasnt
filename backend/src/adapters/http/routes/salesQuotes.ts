@@ -15,13 +15,13 @@ const listQuerySchema = z.object({
 const quoteCreateSchema = z.object({
   // Customer IDs are strings in Prisma and may be legacy (not strictly UUID).
   customerId: z.string().trim().min(1).max(64),
+  locationId: z.string().uuid().optional().nullable(), // Tipo de venta / Sub almacén
   validityDays: z.coerce.number().int().min(1).max(365).default(7),
   paymentMode: z.string().trim().min(1).max(50).default('CASH'),
   deliveryDays: z.coerce.number().int().min(0).max(365).default(1),
   deliveryCity: z.string().trim().max(80).optional(),
   deliveryZone: z.string().trim().max(80).optional(),
   deliveryAddress: z.string().trim().max(200).optional(),
-  // Google Maps share URLs can be long.
   deliveryMapsUrl: z.string().trim().max(2000).optional(),
   globalDiscountPct: z.coerce.number().min(0).max(100).default(0),
   proposalValue: z.string().trim().max(200).optional(),
@@ -30,7 +30,6 @@ const quoteCreateSchema = z.object({
     .array(
       z.object({
         productId: z.string().uuid(),
-        // Base quantity (units). If presentationId/presentationQuantity is provided, backend derives this.
         quantity: z.coerce.number().positive().optional(),
         presentationId: z.string().uuid().optional(),
         presentationQuantity: z.coerce.number().positive().optional(),
@@ -122,10 +121,8 @@ function deriveOrderNumberFromQuoteNumber(quoteNumber: string): string {
   if (!n) return 'OV'
   if (n.toUpperCase().startsWith('COT-')) return `OV-${n.slice(4)}`
   if (n.toUpperCase().startsWith('COT')) {
-    // Handle legacy formats like COT2026009
     return `OV${n.slice(3)}`
   }
-  // Fallback: keep the numeric tail if present.
   const dash = n.indexOf('-')
   if (dash >= 0 && dash < n.length - 1) return `OV-${n.slice(dash + 1)}`
   return `OV-${n}`
@@ -169,7 +166,6 @@ async function computeStockShortagesInCity(
     let presentationQuantity: number | undefined
 
     if (line.presentationId && line.presentationQuantity) {
-      // Get units per presentation
       const presentation = await tx.productPresentation.findFirst({
         where: { id: line.presentationId, tenantId: args.tenantId },
         select: { unitsPerPresentation: true },
@@ -180,7 +176,6 @@ async function computeStockShortagesInCity(
         presentationId = line.presentationId
         presentationQuantity = toNumber(line.presentationQuantity)
       } else {
-        // Fallback to total quantity
         required = Math.max(0, toNumber(line.quantity))
       }
     } else {
@@ -245,8 +240,6 @@ async function reserveForOrderInCityOrFail(
   const city = cityRaw ? cityRaw : ''
   if (!city) throw new InsufficientStockCityError({ city: '(sin ciudad)', items: [] })
 
-  // If a specific location (e.g. "sub almacén") was chosen, restrict reservation to it.
-  // Otherwise fall back to the previous behavior: any active location in the customer's city.
   const scopeLoc = args.locationId
     ? { id: args.locationId, isActive: true }
     : {
@@ -257,7 +250,6 @@ async function reserveForOrderInCityOrFail(
         },
       }
 
-  // Pre-check availability in the customer's city for all lines (fail fast, no partial reservations).
   const shortages: InsufficientStockItem[] = []
   for (const line of args.lines) {
     const required = Math.max(0, toNumber(line.quantity))
@@ -269,6 +261,7 @@ async function reserveForOrderInCityOrFail(
         productId: line.productId,
         quantity: { gt: 0 },
         location: scopeLoc,
+        ...(line.batchId ? { batchId: line.batchId } : {}),
         OR: [
           { batchId: null },
           { batch: { status: 'RELEASED', OR: [{ expiresAt: null }, { expiresAt: { gte: todayUtc } }] } },
@@ -289,7 +282,6 @@ async function reserveForOrderInCityOrFail(
   }
   if (shortages.length > 0) throw new InsufficientStockCityError({ city, items: shortages })
 
-  // Reserve in city only (FEFO-ish ordering).
   const changedBalances: any[] = []
   for (const line of args.lines) {
     let remaining = Math.max(0, toNumber(line.quantity))
@@ -396,7 +388,6 @@ async function reserveForOrderInCityOrFail(
       if (remaining <= 0) break
     }
 
-    // Race-condition safety: if stock changed after pre-check, fail with a clear message.
     if (remaining > 1e-9) {
       throw new InsufficientStockCityError({
         city,
@@ -434,6 +425,159 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
     const city = String(request.auth?.warehouseCity ?? '').trim()
     return city ? city.toUpperCase() : '__MISSING__'
   }
+
+  // Endpoint para obtener los sub almacenes (Tipos de venta)
+  app.get(
+    '/api/v1/sales/quotes/sub-warehouses',
+    {
+      preHandler: [
+        requireAuth(),
+        requireModuleEnabled(db, 'SALES'),
+        requirePermission(Permissions.SalesOrderRead),
+      ],
+    },
+    async (request, reply) => {
+      const tenantId = request.auth!.tenantId
+      const branchCity = branchCityOf(request)
+
+      const where: any = {
+        tenantId,
+        isActive: true,
+        type: 'SUB_ALMACEN',
+        warehouse: { isActive: true },
+      }
+
+      if (branchCity && branchCity !== '__MISSING__') {
+        where.warehouse.city = { equals: branchCity, mode: 'insensitive' }
+      }
+
+      const locations = await db.location.findMany({
+        where,
+        select: {
+          id: true,
+          code: true,
+          warehouseId: true,
+          warehouse: { select: { name: true, city: true } },
+        },
+        orderBy: { code: 'asc' },
+      })
+
+      return locations.map((loc: any) => ({
+        id: loc.id,
+        code: loc.code,
+        name: loc.code,
+        warehouseName: loc.warehouse?.name ?? null,
+        city: loc.warehouse?.city ?? null,
+      }))
+    },
+  )
+
+  // Endpoint para obtener los lotes disponibles por cada producto de una cotización
+  app.get(
+    '/api/v1/sales/quotes/:id/available-batches',
+    {
+      preHandler: [
+        requireAuth(),
+        requireModuleEnabled(db, 'SALES'),
+        requirePermission(Permissions.SalesOrderRead),
+      ],
+    },
+    async (request, reply) => {
+      const paramsParsed = z.object({ id: z.string().uuid() }).safeParse(request.params)
+      if (!paramsParsed.success) return reply.status(400).send({ message: 'Invalid params', issues: paramsParsed.error.issues })
+
+      const { id } = paramsParsed.data
+      const tenantId = request.auth!.tenantId
+
+      const quote = await db.quote.findFirst({
+        where: { id, tenantId },
+        include: {
+          customer: { select: { city: true } },
+          lines: { select: { id: true, productId: true } },
+        },
+      })
+
+      if (!quote) return reply.status(404).send({ message: 'Cotización no encontrada' })
+
+      const city = (quote.customer?.city ?? '').trim()
+      const scopeLoc = quote.locationId
+        ? { id: quote.locationId, isActive: true }
+        : {
+            isActive: true,
+            warehouse: {
+              isActive: true,
+              ...(city ? { city: { equals: city, mode: 'insensitive' as const } } : {}),
+            },
+          }
+
+      const todayUtc = startOfTodayUtc()
+      const productIds = Array.from(new Set(quote.lines.map((l: any) => l.productId)))
+
+      const balances = await db.inventoryBalance.findMany({
+        where: {
+          tenantId,
+          productId: { in: productIds },
+          quantity: { gt: 0 },
+          location: scopeLoc,
+          batchId: { not: null },
+          batch: {
+            status: 'RELEASED',
+            OR: [{ expiresAt: null }, { expiresAt: { gte: todayUtc } }],
+          },
+        },
+        select: {
+          productId: true,
+          quantity: true,
+          reservedQuantity: true,
+          batch: {
+            select: {
+              id: true,
+              batchNumber: true,
+              expiresAt: true,
+            },
+          },
+        },
+        orderBy: [{ batch: { expiresAt: 'asc' } }],
+      })
+
+      const batchesByProduct: Record<string, Array<{ batchId: string; batchNumber: string; expiresAt: string | null; availableQuantity: number }>> = {}
+
+      for (const b of balances) {
+        if (!b.batch) continue
+        
+        // Guardamos b.batch en una const local.
+        // Esto congela el tipo para TypeScript incluso dentro de funciones callback como .find()
+        const batch = b.batch
+
+        const available = Math.max(0, toNumber(b.quantity) - toNumber(b.reservedQuantity))
+        if (available <= 0) continue
+
+        const productBatches = (batchesByProduct[b.productId] ??= [])
+
+        // Usamos 'batch' en lugar de 'b.batch'
+        const existing = productBatches.find((item) => item.batchId === batch.id)
+
+        if (existing) {
+          existing.availableQuantity += available
+        } else {
+          productBatches.push({
+            batchId: batch.id,
+            batchNumber: batch.batchNumber,
+            expiresAt: batch.expiresAt ? batch.expiresAt.toISOString() : null,
+            availableQuantity: available,
+          })
+        }
+      }
+
+      const lineBatches = quote.lines.map((line: any) => ({
+        quoteLineId: line.id,
+        productId: line.productId,
+        availableBatches: batchesByProduct[line.productId] ?? [],
+      }))
+
+      return { lines: lineBatches }
+    },
+  )
 
   app.get(
     '/api/v1/sales/quotes',
@@ -484,6 +628,7 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
         orderBy: { createdAt: 'desc' },
         include: {
           customer: { select: { name: true } },
+          location: { select: { id: true, code: true } },
           lines: { select: { id: true, unitPrice: true, quantity: true, discountPct: true } },
           _count: { select: { lines: true } },
         },
@@ -504,6 +649,8 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
         number: quote.number,
         customerId: quote.customerId,
         customerName: quote.customer.name,
+        locationId: quote.locationId ?? null,
+        locationCode: quote.location?.code ?? null,
         status: quote.status,
         quotedBy: quote.createdBy ? authorMap.get(quote.createdBy) ?? null : null,
         total: computeTotals(
@@ -537,6 +684,7 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
 
       const {
         customerId,
+        locationId,
         validityDays,
         paymentMode,
         deliveryDays,
@@ -558,7 +706,6 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
         return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
       }
 
-      // Verify customer exists and belongs to tenant
       const customer = await db.customer.findFirst({
         where: { id: customerId, tenantId },
         select: { id: true, name: true, city: true, zone: true, address: true, mapsUrl: true },
@@ -574,7 +721,16 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
         }
       }
 
-      // Verify all products exist and belong to tenant
+      if (locationId) {
+        const locationExists = await db.location.findFirst({
+          where: { id: locationId, tenantId, isActive: true },
+          select: { id: true },
+        })
+        if (!locationExists) {
+          return reply.code(404).send({ error: 'Sub almacén / Tipo de venta no encontrado' })
+        }
+      }
+
       const productIds = [...new Set(lines.map((line) => line.productId))]
       const products = await db.product.findMany({
         where: { id: { in: productIds }, tenantId },
@@ -587,7 +743,6 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
       const productMap = new Map(products.map((p: any) => [p.id, p]))
 
       const quote = await db.$transaction(async (tx: any) => {
-        // Ensure each product has at least a default unit presentation.
         const existingPres = await tx.productPresentation.findMany({
           where: { tenantId, productId: { in: productIds }, isActive: true },
           select: { id: true, productId: true, isDefault: true, unitsPerPresentation: true },
@@ -620,7 +775,6 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
           }
         }
 
-        // Load presentations referenced by request (if any) and default unit presentation per product.
         const requestedPresentationIds = Array.from(
           new Set(lines.map((l: any) => (typeof (l as any).presentationId === 'string' ? (l as any).presentationId : null)).filter(Boolean)),
         ) as string[]
@@ -648,7 +802,6 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
         })
         for (const row of defaults) {
           if (defaultUnitByProduct.has(row.productId)) continue
-          // Prefer isDefault=true; otherwise first.
           defaultUnitByProduct.set(row.productId, row.id)
         }
 
@@ -675,10 +828,6 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
             }
             baseQty = (presQty ?? 0) * factor
 
-            // Pricing rule:
-            // - Product.price is the base unit price.
-            // - If presentation has priceOverride (price per 1 presentation), derive unitPrice = priceOverride / factor.
-            // - If client provided unitPrice explicitly, keep it.
             if (line.unitPrice === undefined && pres && pres.priceOverride !== null && pres.priceOverride !== undefined) {
               const presPrice = Number(pres.priceOverride)
               if (Number.isFinite(presPrice) && presPrice >= 0) {
@@ -705,6 +854,7 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
             tenantId,
             number: quoteNumber,
             customerId,
+            locationId: locationId || null,
             status: 'CREATED',
             deliveryCity: (deliveryCity ?? customer.city ?? null) ? String(deliveryCity ?? customer.city).trim().toUpperCase() : null,
             deliveryZone: (deliveryZone ?? customer.zone ?? null) ? String(deliveryZone ?? customer.zone).trim().toUpperCase() : null,
@@ -732,6 +882,7 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
           },
           include: {
             customer: { select: { name: true } },
+            location: { select: { code: true } },
             lines: {
               include: {
                 product: { select: { name: true, sku: true, genericName: true, baseUnitAbbreviation: true } },
@@ -766,6 +917,8 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
         number: quote.number,
         customerId: quote.customerId,
         customerName: quote.customer.name,
+        locationId: quote.locationId ?? null,
+        locationCode: quote.location?.code ?? null,
         status: quote.status,
         quotedBy,
         validityDays: quote.validityDays,
@@ -832,19 +985,9 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
       if (!bodyParsed.success) {
         return reply.status(400).send({ message: 'Invalid body', issues: bodyParsed.error.issues })
       }
-      const chosenLocationId = bodyParsed.data?.locationId ?? null
+      
       const chosenSellerId = bodyParsed.data?.sellerId ?? null
       const lineBatchMap = new Map((bodyParsed.data?.lineBatches ?? []).map((lb) => [lb.quoteLineId, lb.batchId]))
-
-      if (chosenLocationId) {
-        const chosenLocation = await db.location.findFirst({
-          where: { id: chosenLocationId, tenantId, isActive: true },
-          select: { id: true, warehouse: { select: { isActive: true } } },
-        })
-        if (!chosenLocation || !chosenLocation.warehouse.isActive) {
-          return reply.status(404).send({ message: 'Ubicación (sub almacén) no encontrada' })
-        }
-      }
 
       let created: any
       try {
@@ -874,6 +1017,21 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
             throw err
           }
 
+          // Usar el sub almacén seleccionado al crear la cotización
+          const chosenLocationId = bodyParsed.data?.locationId ?? quote.locationId ?? null
+
+          if (chosenLocationId) {
+            const chosenLocation = await tx.location.findFirst({
+              where: { id: chosenLocationId, tenantId, isActive: true },
+              select: { id: true, warehouse: { select: { isActive: true } } },
+            })
+            if (!chosenLocation || !chosenLocation.warehouse.isActive) {
+              const err = new Error('Ubicación (sub almacén) no encontrada') as Error & { statusCode?: number }
+              err.statusCode = 404
+              throw err
+            }
+          }
+
           if (branchCity) {
             const custCity = String(quote.customer.city ?? '').trim().toUpperCase()
             if (!custCity || custCity !== branchCity) {
@@ -896,7 +1054,6 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
           }
 
           const orderNumber = deriveOrderNumberFromQuoteNumber(String(quote.number ?? ''))
-
           const todayUtc = startOfTodayUtc()
           const deliveryDate = addDaysUtc(todayUtc, Number(quote.deliveryDays ?? 0))
 
@@ -907,7 +1064,6 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
               customerId: quote.customerId,
               quoteId: quote.id,
               status: 'CONFIRMED',
-              // Copy payment terms onto the order so payments can be managed without joining Quote.
               paymentMode: quote.paymentMode ?? 'CASH',
               note: `Desde cotización ${quote.number}`,
               deliveryDate,
@@ -922,7 +1078,6 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
 
           const gd = clampPct(Number(quote.globalDiscountPct ?? 0)) / 100
 
-          // Create lines individually so we can create reservations referencing the line IDs.
           const createdLines: Array<{ id: string; productId: string; productName: string; batchId: string | null; quantity: any }> = []
           for (const l of quote.lines) {
             const disc = clampPct(Number(l.discountPct ?? 0)) / 100
@@ -951,7 +1106,6 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
             })
           }
 
-          // Reserve stock strictly from customer's city (or the chosen sub almacén, if any).
           const changedBalances = await reserveForOrderInCityOrFail(tx, {
             tenantId,
             userId,
@@ -1085,13 +1239,7 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
         request.log.warn({ err: e }, 'notifications.create.failed')
       }
 
-      // Real-time notifications + stock reservation updates
       const room = `tenant:${tenantId}`
-      console.log(`Emitting sales.quote.processed to room ${room}`, {
-        quoteId: created?.quoteInfo?.id ?? id,
-        orderId: created?.order?.id ?? null,
-        orderNumber: created?.order?.number ?? null,
-      })
       app.io?.to(room).emit('sales.quote.processed', {
         quoteId: created?.quoteInfo?.id ?? id,
         quoteNumber: created?.quoteInfo?.number ?? null,
@@ -1105,13 +1253,10 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
         reservations: Array.isArray(created?.reservations) ? created.reservations : [],
       })
 
-      // Emit order created event if an order was created
       if (created?.order) {
-        console.log(`Emitting sales.order.created to room ${room}`, created.order)
         app.io?.to(room).emit('sales.order.created', created.order)
       }
 
-      // Ensure other clients see reserved quantities immediately
       if (Array.isArray(created?.changedBalances)) {
         for (const b of created.changedBalances) app.io?.to(room).emit('stock.balance.changed', b)
       }
@@ -1120,8 +1265,6 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
     },
   )
 
-  // Request stock from other users when a quote cannot be processed due to shortages.
-  // Persists a request record so Warehouse can manage it.
   app.post(
     '/api/v1/sales/quotes/:id/request-stock',
     {
@@ -1323,6 +1466,7 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
         },
         include: {
           customer: { select: { name: true, businessName: true, address: true, phone: true, city: true } },
+          location: { select: { id: true, code: true } },
           lines: {
             include: {
               product: { select: { name: true, sku: true, genericName: true, baseUnitAbbreviation: true } },
@@ -1351,6 +1495,8 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
         number: quote.number,
         customerId: quote.customerId,
         customerName: quote.customer.name,
+        locationId: quote.locationId ?? null,
+        locationCode: quote.location?.code ?? null,
         status: quote.status,
         quotedBy,
         customerBusinessName: quote.customer.businessName,
@@ -1412,6 +1558,7 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
       const { id } = paramsParsed.data
       const {
         customerId,
+        locationId,
         validityDays,
         paymentMode,
         deliveryDays,
@@ -1428,7 +1575,6 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
       const userId = request.auth!.userId
       const audit = new AuditService(db)
 
-      // Verify quote exists and belongs to tenant
       const existingQuote = await db.quote.findFirst({
         where: { id, tenantId },
         include: { lines: true },
@@ -1441,7 +1587,6 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
         return reply.code(409).send({ message: 'Quote already processed' })
       }
 
-      // Verify customer exists and belongs to tenant
       const customer = await db.customer.findFirst({
         where: { id: customerId, tenantId },
         select: { id: true, city: true, zone: true, address: true, mapsUrl: true },
@@ -1450,7 +1595,16 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: 'Customer not found' })
       }
 
-      // Verify all products exist and belong to tenant
+      if (locationId) {
+        const locationExists = await db.location.findFirst({
+          where: { id: locationId, tenantId, isActive: true },
+          select: { id: true },
+        })
+        if (!locationExists) {
+          return reply.code(404).send({ error: 'Sub almacén / Tipo de venta no encontrado' })
+        }
+      }
+
       const productIds = [...new Set(lines.map((line) => line.productId))]
       const products = await db.product.findMany({
         where: { id: { in: productIds }, tenantId },
@@ -1462,9 +1616,7 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
 
       const productMap = new Map(products.map((p: any) => [p.id, p]))
 
-      // Update quote in transaction
       const quote = await db.$transaction(async (tx: any) => {
-        // Ensure each product has at least a default unit presentation.
         const existingPres = await tx.productPresentation.findMany({
           where: { tenantId, productId: { in: productIds }, isActive: true },
           select: { id: true, productId: true, isDefault: true, unitsPerPresentation: true },
@@ -1497,7 +1649,6 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
           }
         }
 
-        // Load presentations referenced by request (if any) and default unit presentation per product.
         const requestedPresentationIds = Array.from(
           new Set(lines.map((l: any) => (typeof (l as any).presentationId === 'string' ? (l as any).presentationId : null)).filter(Boolean)),
         ) as string[]
@@ -1525,7 +1676,6 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
         })
         for (const row of defaults) {
           if (defaultUnitByProduct.has(row.productId)) continue
-          // Prefer isDefault=true; otherwise first.
           defaultUnitByProduct.set(row.productId, row.id)
         }
 
@@ -1559,14 +1709,13 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
           }
         })
 
-        // Delete existing lines
         await tx.quoteLine.deleteMany({ where: { quoteId: id, tenantId } })
 
-        // Update quote
         const updatedQuote = await tx.quote.update({
           where: { id },
           data: {
             customerId,
+            locationId: locationId || null,
             deliveryCity: (deliveryCity ?? customer.city ?? null) ? String(deliveryCity ?? customer.city).trim().toUpperCase() : null,
             deliveryZone: (deliveryZone ?? customer.zone ?? null) ? String(deliveryZone ?? customer.zone).trim().toUpperCase() : null,
             deliveryAddress: (deliveryAddress ?? customer.address ?? null) ? String(deliveryAddress ?? customer.address).trim() : null,
@@ -1582,6 +1731,7 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
           },
           include: {
             customer: { select: { name: true } },
+            location: { select: { code: true } },
             lines: {
               include: {
                 product: { select: { name: true, sku: true, genericName: true, baseUnitAbbreviation: true } },
@@ -1591,7 +1741,6 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
           },
         })
 
-        // Create new lines
         await tx.quoteLine.createMany({
           data: resolvedLines.map((line: any) => ({
             tenantId,
@@ -1606,7 +1755,6 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
           })),
         })
 
-        // Fetch updated lines
         const updatedLines = await tx.quoteLine.findMany({
           where: { quoteId: id },
           include: {
@@ -1644,6 +1792,8 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
         number: quote.number,
         customerId: quote.customerId,
         customerName: quote.customer.name,
+        locationId: quote.locationId ?? null,
+        locationCode: quote.location?.code ?? null,
         status: quote.status,
         quotedBy,
         validityDays: quote.validityDays,
