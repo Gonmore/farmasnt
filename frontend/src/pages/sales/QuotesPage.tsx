@@ -19,6 +19,7 @@ type QuoteListItem = {
   total: number
   createdAt: string
   itemsCount: number
+  locationCode?: string | null
 }
 
 type ListResponse = { items: QuoteListItem[]; nextCursor: string | null }
@@ -38,6 +39,9 @@ type QuoteDetail = {
   id: string
   number: string
   customerCity: string | null
+  locationId?: string | null
+  locationCode?: string | null // <-- NUEVO
+  locationName?: string | null // <-- NUEVO
   lines: QuoteDetailLine[]
 }
 
@@ -62,6 +66,7 @@ type ProcessQuoteResponse = {
   version: number
   createdAt: string
 }
+
 type AdminUserListItem = {
   id: string
   email: string
@@ -132,10 +137,9 @@ export function QuotesPage() {
   const [stockErrorMessage, setStockErrorMessage] = useState<string>('')
   const [processSellerId, setProcessSellerId] = useState<string>('')
 
-  // Modal: elegir sub almacén (privado/institucional) y, opcionalmente, lote manual antes de procesar.
+  // Modal de procesamiento
   const [processModalQuoteId, setProcessModalQuoteId] = useState<string | null>(null)
   const [processLocationId, setProcessLocationId] = useState<string>('')
-  const [batchMode, setBatchMode] = useState<'AUTO' | 'MANUAL'>('AUTO')
   const [lineBatchSelections, setLineBatchSelections] = useState<Record<string, string>>({})
 
   const quoteDetailQuery = useQuery({
@@ -143,6 +147,9 @@ export function QuotesPage() {
     queryFn: () => fetchQuoteDetail(auth.accessToken!, processModalQuoteId!),
     enabled: !!auth.accessToken && !!processModalQuoteId,
   })
+
+  // Usar la ubicación de la cotización si ya viene definida, o el selector local
+  const effectiveLocationId = processLocationId || quoteDetailQuery.data?.locationId || ''
 
   const usersQuery = useQuery({
     queryKey: ['users'],
@@ -156,15 +163,18 @@ export function QuotesPage() {
     enabled: !!auth.accessToken && !!processModalQuoteId && !!quoteDetailQuery.data,
   })
 
-  const quoteLinesForBatchSelection = quoteDetailQuery.data?.lines ?? []
+  const quoteLines = quoteDetailQuery.data?.lines ?? []
+  
+  // Consulta automática de sugerencias FEFO para cada producto de la cotización
   const fefoQueries = useQueries({
-    queries: quoteLinesForBatchSelection.map((line) => ({
-      queryKey: ['stock', 'fefo-suggestions', processLocationId, line.productId],
-      queryFn: () => fetchFefoSuggestions(auth.accessToken!, processLocationId, line.productId),
-      enabled: !!auth.accessToken && batchMode === 'MANUAL' && !!processLocationId,
+    queries: quoteLines.map((line) => ({
+      queryKey: ['stock', 'fefo-suggestions', effectiveLocationId, line.productId],
+      queryFn: () => fetchFefoSuggestions(auth.accessToken!, effectiveLocationId, line.productId),
+      enabled: !!auth.accessToken && !!effectiveLocationId,
     })),
   })
-  const fefoByProductId = new Map(quoteLinesForBatchSelection.map((line, idx) => [line.productId, fefoQueries[idx]]))
+
+  const fefoByProductId = new Map(quoteLines.map((line, idx) => [line.productId, fefoQueries[idx]]))
 
   const quotesQuery = useQuery({
     queryKey: ['quotes', cursor, customerSearch],
@@ -183,8 +193,8 @@ export function QuotesPage() {
   }, [highlightId, searchParams, setSearchParams])
 
   const processMutation = useMutation({
-    mutationFn: async (args: { quoteId: string; locationId?: string;  sellerId?: string; lineBatches?: Array<{ quoteLineId: string; batchId: string }> }) =>
-      processQuote(auth.accessToken!, args.quoteId, { locationId: args.locationId, lineBatches: args.lineBatches }),
+    mutationFn: async (args: { quoteId: string; locationId?: string; sellerId?: string; lineBatches?: Array<{ quoteLineId: string; batchId: string }> }) =>
+      processQuote(auth.accessToken!, args.quoteId, { locationId: args.locationId, sellerId: args.sellerId, lineBatches: args.lineBatches }),
     onError: (err: any) => {
       const msg = String(err?.message ?? '')
       if (msg.toLowerCase().includes('cantidad de existencias insuficientes')) {
@@ -196,8 +206,6 @@ export function QuotesPage() {
       await queryClient.invalidateQueries({ queryKey: ['quotes'] })
       await queryClient.invalidateQueries({ queryKey: ['orders'] })
       closeProcessModal()
-
-      // Jump to Orders list and highlight the created order.
       navigate(`/sales/orders?highlight=${encodeURIComponent(createdOrder.id)}`)
     },
   })
@@ -206,7 +214,6 @@ export function QuotesPage() {
     setProcessModalQuoteId(quoteId)
     setProcessLocationId('')
     setProcessSellerId('')
-    setBatchMode('AUTO')
     setLineBatchSelections({})
     processMutation.reset()
   }
@@ -215,23 +222,22 @@ export function QuotesPage() {
     setProcessModalQuoteId(null)
     setProcessLocationId('')
     setProcessSellerId('')
-    setBatchMode('AUTO')
     setLineBatchSelections({})
   }
 
   const confirmProcess = () => {
     if (!processModalQuoteId) return
-    const lineBatches =
-      batchMode === 'MANUAL'
-        ? Object.entries(lineBatchSelections)
-            .filter(([, batchId]) => !!batchId)
-            .map(([quoteLineId, batchId]) => ({ quoteLineId, batchId }))
-        : undefined
+    
+    // Si el usuario seleccionó lotes específicos manualmente los enviamos; de lo contrario el backend usará FEFO automático
+    const lineBatches = Object.entries(lineBatchSelections)
+      .filter(([, batchId]) => !!batchId)
+      .map(([quoteLineId, batchId]) => ({ quoteLineId, batchId }))
+
     processMutation.mutate({
       quoteId: processModalQuoteId,
-      locationId: processLocationId || undefined,
+      locationId: effectiveLocationId || undefined,
       sellerId: processSellerId || undefined,
-      lineBatches,
+      lineBatches: lineBatches.length > 0 ? lineBatches : undefined,
     })
   }
 
@@ -252,6 +258,40 @@ export function QuotesPage() {
 
   const processErrorMsg = String((processMutation.error as any)?.message ?? '')
   const isStockError = processMutation.isError && processErrorMsg.toLowerCase().includes('cantidad de existencias insuficientes')
+
+  // Obtener los nombres de forma segura para mostrarlos u compararlos
+    const originalLocationId = quoteDetailQuery.data?.locationId ?? ''
+    
+    // Si processLocationId está vacío, significa que se usará la ubicación por defecto (la misma de la cotización)
+    const finalProcessLocationId = processLocationId || originalLocationId
+
+    const originalLocationName = 
+      quoteDetailQuery.data?.locationCode || 
+      subLocationsQuery.data?.items.find(l => l.id === originalLocationId)?.code || 
+      'la ubicación original'
+
+    const newLocationName = 
+      subLocationsQuery.data?.items.find(l => l.id === finalProcessLocationId)?.code || 
+      subLocationsQuery.data?.items.find(l => l.id === finalProcessLocationId)?.warehouse?.code || 
+      'la nueva ubicación'
+
+    // LOG de depuración para que veas exactamente qué IDs y nombres se están comparando en consola
+    console.log('[DEBUG UMBRAL]:', {
+      originalLocationId,
+      processLocationId,
+      finalProcessLocationId,
+      originalLocationName,
+      newLocationName
+    })
+
+    // Hay desajuste ÚNICAMENTE si el usuario seleccionó explícitamente un ID distinto 
+    // Y los nombres normalizados son diferentes. Si se llaman igual ("Privado" y "Privado"), no salta la alerta.
+    const isLocationMismatch = Boolean(
+      processLocationId && 
+      originalLocationId && 
+      processLocationId !== originalLocationId &&
+      originalLocationName.trim().toLowerCase() !== newLocationName.trim().toLowerCase()
+    )
 
   return (
     <MainLayout navGroups={navGroups}>
@@ -316,12 +356,12 @@ export function QuotesPage() {
           </div>
         </Modal>
 
-        {/* Modal: elegir sub almacén (privado/institucional) y lote antes de procesar */}
+        {/* Modal: Procesar Cotización con resumen de productos y lotes */}
         <Modal
           isOpen={!!processModalQuoteId}
           onClose={closeProcessModal}
-          title="Procesar cotización"
-          maxWidth="lg"
+          title="Procesar cotización a Orden de Venta"
+          maxWidth="xl"
         >
           <div className="space-y-4">
             {quoteDetailQuery.isLoading && <Loading />}
@@ -330,8 +370,6 @@ export function QuotesPage() {
             )}
             {quoteDetailQuery.data && (
               <>
-                
-              {/* NUEVO SELECT DE VENDEDOR */}
                 <Select
                   label="Vendedor encargado (Opcional)"
                   value={processSellerId}
@@ -344,73 +382,81 @@ export function QuotesPage() {
                     })),
                   ]}
                 />
+
                 <Select
-                  label="Sub almacén (opcional)"
-                  value={processLocationId}
+                  label="Ubicación / Sub almacén"
+                  value={effectiveLocationId}
                   onChange={(e) => {
                     setProcessLocationId(e.target.value)
                     setLineBatchSelections({})
                   }}
                   options={[
-                    { value: '', label: 'Automático (cualquier ubicación de la sucursal)' },
+                    { value: '', label: 'Automático (Cualquier ubicación de la sucursal)' },
                     ...(subLocationsQuery.data?.items ?? []).map((l) => ({
                       value: l.id,
                       label: `${l.warehouse.code} - ${l.code}`,
                     })),
                   ]}
                 />
-                {subLocationsQuery.data && subLocationsQuery.data.items.length === 0 && (
-                  <div className="text-sm text-slate-500 dark:text-slate-400">
-                    No hay sub almacenes configurados para la ciudad del cliente; se reservará automáticamente en cualquier ubicación de la sucursal.
+                {/* --- NUEVA ADVERTENCIA AQUÍ --- */}
+                {isLocationMismatch && (
+                  <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
+                    <strong>⚠️ Advertencia:</strong> La cotización se realizó a <strong>{originalLocationName}</strong>, pero se usará el stock de <strong>{newLocationName}</strong>. La orden de venta se creará con los lotes de esta última ubicación.
                   </div>
                 )}
 
-                {processLocationId && (
-                  <div className="space-y-2">
-                    <div className="flex gap-2">
-                      <Button
-                        size="sm"
-                        variant={batchMode === 'AUTO' ? 'primary' : 'outline'}
-                        onClick={() => setBatchMode('AUTO')}
-                      >
-                        Autoselección (FEFO)
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant={batchMode === 'MANUAL' ? 'primary' : 'outline'}
-                        onClick={() => setBatchMode('MANUAL')}
-                      >
-                        Elegir lote manualmente
-                      </Button>
-                    </div>
+                <div className="space-y-3 pt-2">
+                  <h4 className="text-sm font-semibold text-slate-800 dark:text-slate-200">
+                    Productos a reservar y asignación de Lotes
+                  </h4>
+                  
+                  <div className="divide-y divide-slate-200 rounded-md border border-slate-200 bg-slate-50/50 p-3 dark:divide-slate-700 dark:border-slate-700 dark:bg-slate-900/50">
+                    {quoteDetailQuery.data.lines.map((line) => {
+                      const suggestionsQuery = fefoByProductId.get(line.productId)
+                      const items = suggestionsQuery?.data?.items ?? []
+                      const autoBatch = items[0] // Selección FEFO por defecto (primer lote disponible)
+                      const selectedBatchId = lineBatchSelections[line.id] ?? (autoBatch?.batchId || '')
 
-                    {batchMode === 'MANUAL' && (
-                      <div className="space-y-3 rounded-md border border-slate-200 p-3 dark:border-slate-700">
-                        {quoteDetailQuery.data.lines.map((line) => {
-                          const suggestions = fefoByProductId.get(line.productId)
-                          return (
-                            <div key={line.id} className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:items-center">
-                              <div className="text-sm text-slate-700 dark:text-slate-300">
-                                {line.productName} <span className="text-slate-400">({line.quantity} {line.baseUnitAbbreviation})</span>
+                      return (
+                        <div key={line.id} className="py-2.5 first:pt-0 last:pb-0">
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="text-sm">
+                              <span className="font-medium text-slate-900 dark:text-slate-100">{line.productName}</span>
+                              <div className="text-xs text-slate-500 dark:text-slate-400">
+                                Cantidad: <span className="font-semibold text-slate-700 dark:text-slate-300">{line.quantity} {line.baseUnitAbbreviation}</span>
                               </div>
+                            </div>
+
+                            <div className="w-full sm:w-72">
                               <Select
-                                value={lineBatchSelections[line.id] ?? ''}
-                                onChange={(e) => setLineBatchSelections((prev) => ({ ...prev, [line.id]: e.target.value }))}
-                                options={[
-                                  { value: '', label: suggestions?.isLoading ? 'Cargando lotes...' : 'Automático (FEFO)' },
-                                  ...(suggestions?.data?.items ?? []).map((b) => ({
-                                    value: b.batchId,
-                                    label: `${b.batchNumber}${b.expiresAt ? ` · vence ${new Date(b.expiresAt).toLocaleDateString('es-ES')}` : ''} (disp: ${b.quantity})`,
-                                  })),
-                                ]}
+                                className="text-sm"
+                                value={selectedBatchId}
+                                onChange={(e) =>
+                                  setLineBatchSelections((prev) => ({
+                                    ...prev,
+                                    [line.id]: e.target.value,
+                                  }))
+                                }
+                                options={
+                                  suggestionsQuery?.isLoading
+                                    ? [{ value: '', label: 'Cargando lotes disponilbes...' }]
+                                    : items.length === 0
+                                    ? [{ value: '', label: '⚠️ Sin stock/lotes disponibles' }]
+                                    : items.map((b, idx) => ({
+                                        value: b.batchId,
+                                        label: `${idx === 0 ? '✨ (Auto FEFO) ' : ''}Lote: ${b.batchNumber}${
+                                          b.expiresAt ? ` · Vence ${new Date(b.expiresAt).toLocaleDateString('es-ES')}` : ''
+                                        } (Disp: ${b.quantity})`,
+                                      }))
+                                }
                               />
                             </div>
-                          )
-                        })}
-                      </div>
-                    )}
+                          </div>
+                        </div>
+                      )
+                    })}
                   </div>
-                )}
+                </div>
               </>
             )}
 
@@ -420,7 +466,7 @@ export function QuotesPage() {
               </div>
             )}
 
-            <div className="flex justify-end gap-2">
+            <div className="flex justify-end gap-2 pt-2">
               <Button variant="secondary" onClick={closeProcessModal}>
                 Cancelar
               </Button>
@@ -430,11 +476,12 @@ export function QuotesPage() {
                 disabled={quoteDetailQuery.isLoading || !quoteDetailQuery.data}
                 onClick={confirmProcess}
               >
-                Procesar
+                Procesar y Generar Orden
               </Button>
             </div>
           </div>
         </Modal>
+
         <div className="mb-4">
           <Input
             placeholder="Buscar por cliente..."
@@ -443,6 +490,7 @@ export function QuotesPage() {
             className="max-w-sm"
           />
         </div>
+
         <div className="rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
           {quotesQuery.data && quotesQuery.data.items.length > 0 && (
             <>
@@ -459,6 +507,16 @@ export function QuotesPage() {
                       </Badge>
                     ),
                   },
+                  {
+  header: 'Tipo',
+  accessor: (q) => q.locationCode ? (
+    // Cambia "outline" por un variant que tu componente soporte, ej: "secondary" o "default"
+    <Badge variant="info">{q.locationCode}</Badge> 
+  ) : (
+    <span className="text-slate-400 dark:text-slate-500">Sin asignar</span>
+  ),
+},
+                  
                   { header: 'Cotizado por', className: 'hidden md:table-cell', accessor: (q) => q.quotedBy ?? '-' },
                   { header: 'Fecha', accessor: (q) => new Date(q.createdAt).toLocaleString('es-ES', { timeZone: 'America/La_Paz' }) },
                   {

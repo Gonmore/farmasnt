@@ -104,6 +104,7 @@ type BalanceExpandedItem = {
   product: { sku: string; name: string }
   batchId: string | null
   batch: { batchNumber: string; expiresAt: string | null; status: string; version: number } | null
+  locationId: string
   location: { code: string; warehouse: { id: string; name: string; code: string } }
 }
 
@@ -124,7 +125,7 @@ async function fetchCustomers(token: string, search?: string): Promise<CustomerL
 }
 
 async function fetchBalancesExpanded(token: string): Promise<{ items: BalanceExpandedItem[] }> {
-  const params = new URLSearchParams({ take: '200' })
+  const params = new URLSearchParams({ take: '1000' })
   return apiFetch(`/api/v1/reports/stock/balances-expanded?${params}`, { token })
 }
 
@@ -168,6 +169,7 @@ type QuoteDetailForEdit = {
   id: string
   number: string
   customerId: string
+  locationId: string
   customerName: string
   status: 'CREATED' | 'PROCESSED'
   quotedBy: string | null
@@ -200,6 +202,40 @@ type QuoteDetailForEdit = {
   }>
   createdAt: string
   updatedAt: string
+}
+
+type LocationListItem = { id: string; name: string; code?: string }
+
+async function fetchLocations(token: string, city?: string | null): Promise<{ items: LocationListItem[] }> {
+  if (!city) return { items: [] }
+
+  try {
+    // 1. Buscamos el warehouse correspondiente a la ciudad del cliente
+    const warehouseParams = new URLSearchParams({ city, isActive: 'true' })
+    
+    // 👇 Le indicamos a TypeScript la forma exacta que esperamos (un objeto con un array de items que tienen un id string)
+    const warehouseRes = (await apiFetch(`/api/v1/warehouses?${warehouseParams}`, { 
+      token 
+    })) as { items?: { id: string }[] }
+    
+    const warehouseId = warehouseRes.items?.[0]?.id 
+
+    // Si no hay almacén para esa ciudad, devolvemos un array vacío
+    if (!warehouseId) {
+      console.warn(`No se encontró un almacén activo para la ciudad: ${city}`)
+      return { items: [] }
+    }
+
+    // 2. Buscamos las locations de ese warehouse específico
+    // 👇 También le decimos a TypeScript que esto devuelve lo que la función promete
+    return (await apiFetch(`/api/v1/warehouses/${warehouseId}/locations?isActive=true`, { 
+      token 
+    })) as { items: LocationListItem[] }
+
+  } catch (error) {
+    console.error("Error al obtener las ubicaciones:", error)
+    return { items: [] }
+  }
 }
 
 async function createQuote(
@@ -278,6 +314,8 @@ async function fetchCustomerDetail(token: string, customerId: string): Promise<C
 
 type WarehouseStock = { warehouseName: string; qty: number }
 
+
+
 type StockSummary = {
   total: number
   warehouses: WarehouseStock[]
@@ -316,6 +354,10 @@ export function SellerCatalogPage() {
   const take = 20
 
   const [customerId, setCustomerId] = useState('')
+
+  const [locationId, setLocationId] = useState('') // 👈 NUEVO
+
+  
 
   const [quoteOpen, setQuoteOpen] = useState(false)
 
@@ -357,6 +399,7 @@ export function SellerCatalogPage() {
     if (isEditing) return
     cart.clearCart()
     setCustomerId('')
+    setLocationId('')
     setValidityDays('7')
     setPaymentMode('CASH')
     setGlobalDiscountPct('0')
@@ -438,6 +481,15 @@ export function SellerCatalogPage() {
     enabled: !!auth.accessToken && !!customerId,
   })
 
+  const customerCity = customerDetailQuery.data?.city || (customersQuery.data?.items ?? []).find(c => c.id === customerId)?.city
+
+  const locationsQuery = useQuery({
+    queryKey: ['locations', customerCity],
+    queryFn: () => fetchLocations(auth.accessToken!, customerCity),
+    // Solo se ejecuta si hay un token Y ya tenemos la ciudad del cliente
+    enabled: !!auth.accessToken && !!customerCity, 
+  })
+
   const balancesQuery = useQuery({
     queryKey: ['balancesExpanded', 'forSellerCatalog'],
     queryFn: () => fetchBalancesExpanded(auth.accessToken!),
@@ -474,6 +526,7 @@ export function SellerCatalogPage() {
 
     const q = quoteForEditQuery.data
     setCustomerId(q.customerId)
+    setLocationId(q.locationId ?? '')
     setValidityDays(String(q.validityDays ?? 7))
     setPaymentMode(q.paymentMode ?? 'CASH')
     setDeliveryDays(String(q.deliveryDays ?? 1))
@@ -545,6 +598,8 @@ export function SellerCatalogPage() {
   const saveQuoteMutation = useMutation({
     mutationFn: async () => {
       if (!customerId) throw new Error('Seleccioná un cliente')
+        // NUEVO: Validación de sub almacén (tipo de venta)
+      if (!locationId) throw new Error('Debes seleccionar un tipo de venta (Sub almacén) antes de guardar')
       if (cart.items.length === 0) throw new Error('Seleccioná al menos un producto')
 
       const invalidQty = cart.items.find((i) => !Number.isFinite(i.quantity) || i.quantity <= 0)
@@ -563,6 +618,7 @@ export function SellerCatalogPage() {
 
       const payload = {
         customerId,
+        locationId: locationId || undefined,
         validityDays: Number(validityDays) || 7,
         paymentMode,
         deliveryDays: Number(deliveryDays) || 1,
@@ -655,6 +711,11 @@ export function SellerCatalogPage() {
     const map = new Map<string, StockSummary>()
 
     for (const item of balancesQuery.data?.items ?? []) {
+      if (locationId && item.locationId !== locationId) {
+        continue
+      }
+
+
       const qty = Math.max(0, Number(item.quantity) - Number(item.reservedQuantity ?? '0'))
       if (!Number.isFinite(qty) || qty <= 0) continue
 
@@ -677,7 +738,7 @@ export function SellerCatalogPage() {
     }
 
     return map
-  }, [balancesQuery.data?.items])
+  }, [balancesQuery.data?.items, locationId])
 
   const selectedCustomer = (customersQuery.data?.items ?? []).find((c) => c.id === customerId) ?? customerDetailQuery.data ?? null
 
@@ -739,16 +800,15 @@ export function SellerCatalogPage() {
           <div className="flex items-end gap-2">
             <Button
               variant="secondary"
-              onClick={() => {
-                setQuoteOpen(true)
-              }}
+              onClick={() => setQuoteOpen(true)}
               disabled={!canGenerate}
+              className="w-full"
             >
               📄 Generar cotización
             </Button>
           </div>
         </div>
-
+        
         <div className="grid gap-4 grid-cols-1 lg:grid-cols-[1fr_280px] xl:grid-cols-[1fr_360px]">
           <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
             {productsQuery.isLoading && !searchResults && <Loading />}
@@ -1006,7 +1066,7 @@ export function SellerCatalogPage() {
         </div>
       </PageContainer>
 
-      <Modal isOpen={quoteOpen} onClose={() => setQuoteOpen(false)} title={isEditing ? '📄 Editar cotización' : '📄 Generar cotización'} maxWidth="xl">
+      <Modal isOpen={quoteOpen} onClose={() => setQuoteOpen(false)} title={isEditing ? '📄 Editar cotización' : '📄 Generar cotización'} maxWidth="4xl">
         {isEditing && quoteForEditQuery.isLoading ? (
           <div className="py-8">
             <Loading />
@@ -1038,26 +1098,52 @@ export function SellerCatalogPage() {
               </div>
             )}
 
-            {quoteActionError && (
-              <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-200">
-                {quoteActionError}
-              </div>
-            )}
+            
 
-            <div className="rounded-lg border border-slate-200 dark:border-slate-700 p-3">
-              <div className="text-sm font-semibold text-slate-900 dark:text-slate-100 mb-2">Cliente</div>
-              <CustomerSelector
-                value={customerId}
-                onChange={setCustomerId}
-                placeholder="Buscar cliente..."
-                disabled={customersQuery.isLoading || modalReadOnly}
-              />
-              {!customerId && (
-                <div className="mt-2 text-xs text-amber-700 dark:text-amber-300">Selecciona un cliente para generar la cotización.</div>
-              )}
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="rounded-lg border border-slate-200 dark:border-slate-700 p-3">
+                <div className="text-sm font-semibold text-slate-900 dark:text-slate-100 mb-2">Cliente</div>
+                <CustomerSelector
+                  value={customerId}
+                  onChange={setCustomerId}
+                  placeholder="Buscar cliente..."
+                  disabled={customersQuery.isLoading || modalReadOnly}
+                />
+                {!customerId && (
+                  <div className="mt-2 text-xs text-amber-700 dark:text-amber-300">Selecciona un cliente para generar la cotización.</div>
+                )}
+              </div>
+
+              {/* NUEVO BLOQUE: TIPO DE VENTA */}
+              <div className="rounded-lg border border-slate-200 dark:border-slate-700 p-3">
+                <div className="text-sm font-semibold text-slate-900 dark:text-slate-100 mb-2">
+                  Tipo de venta (Sub almacén)
+                </div>
+                <Select
+                  value={locationId}
+                  onChange={(e) => setLocationId(e.target.value)}
+                  options={[
+                    { 
+                      value: '', 
+                      label: !customerCity ? 'Seleccioná un cliente primero...' : 'Seleccionar sub-almacén...' 
+                    },
+                    ...(locationsQuery.data?.items.map((l) => ({
+                      value: l.id,
+                      label: l.name || l.code || 'Sin nombre', // Fallbacks seguros por si name viene vacío
+                    })) ?? []),
+                  ]}
+                  disabled={locationsQuery.isLoading || modalReadOnly || !customerCity}
+                />
+
+                {customerCity && locationsQuery.data?.items.length === 0 && !locationsQuery.isLoading && (
+                  <div className="mt-2 text-xs text-amber-600 dark:text-amber-400">
+                    No se encontraron sub-almacenes para la ciudad: {customerCity}.
+                  </div>
+                )}
+              </div>
             </div>
 
-            <div className="grid gap-3 md:grid-cols-2">
+            <div className="grid gap-3 md:grid-cols-2 mt-4">
               <Input
                 label="Tiempo de validez (días)"
                 type="number"
@@ -1397,6 +1483,11 @@ export function SellerCatalogPage() {
           </div>
 
             <div className="sticky bottom-0 z-[1] bg-white/95 dark:bg-slate-900/95 border-t border-slate-200 dark:border-slate-800 pt-3 pb-2">
+              {quoteActionError && (
+              <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-200">
+                {quoteActionError}
+              </div>
+            )}
               <div className="flex justify-end gap-2">
                 <Button
                   onClick={() => {

@@ -15,6 +15,8 @@ type QuoteDetail = {
   id: string
   number: string
   customerId: string
+  locationId: string | null // <-- NUEVO
+  locationCode: string | null // <-- NUEVO
   customerName: string
   status: 'CREATED' | 'PROCESSED'
   quotedBy: string | null
@@ -74,6 +76,7 @@ type DraftLine = {
 
 type QuoteDraft = {
   customerId: string
+  locationId: string // <-- NUEVO
   validityDays: number
   deliveryDays: number
   deliveryCity: string
@@ -89,6 +92,7 @@ type QuoteDraft = {
 function buildDraftFromQuote(q: QuoteDetail, presentationsByProduct?: Map<string, ProductPresentation[]>): QuoteDraft {
   return {
     customerId: q.customerId,
+    locationId: q.locationId ?? '',
     validityDays: toNumberSafe(q.validityDays, 7),
     deliveryDays: toNumberSafe(q.deliveryDays, 1),
     deliveryCity: String(q.deliveryCity ?? ''),
@@ -197,6 +201,7 @@ async function updateQuote(
   quoteId: string,
   payload: {
     customerId: string
+    locationId?: string
     validityDays: number
     paymentMode: string
     deliveryDays: number
@@ -218,6 +223,25 @@ async function updateQuote(
   },
 ): Promise<QuoteDetail> {
   return apiFetch(`/api/v1/sales/quotes/${quoteId}`, { token, method: 'PUT', body: JSON.stringify(payload) })
+}
+// NUEVAS FUNCIONES PARA EL SELECTOR
+type LocationListItem = { id: string; name: string; code?: string }
+
+async function fetchCustomerDetail(token: string, customerId: string): Promise<{ city: string | null }> {
+  return apiFetch(`/api/v1/customers/${customerId}`, { token })
+}
+
+async function fetchLocations(token: string, city?: string | null): Promise<{ items: LocationListItem[] }> {
+  if (!city) return { items: [] }
+  try {
+    const warehouseParams = new URLSearchParams({ city, isActive: 'true' })
+    const warehouseRes = (await apiFetch(`/api/v1/warehouses?${warehouseParams}`, { token })) as { items?: { id: string }[] }
+    const warehouseId = warehouseRes.items?.[0]?.id 
+    if (!warehouseId) return { items: [] }
+    return (await apiFetch(`/api/v1/warehouses/${warehouseId}/locations?isActive=true`, { token })) as { items: LocationListItem[] }
+  } catch (error) {
+    return { items: [] }
+  }
 }
 
 export function QuoteDetailPage() {
@@ -250,6 +274,21 @@ export function QuoteDetailPage() {
       return new Map<string, ProductPresentation[]>(entries)
     },
     enabled: !!auth.accessToken && !!id && !!quoteQuery.data,
+  })
+
+  // Consultas para alimentar el select de sub almacenes
+  const customerDetailQuery = useQuery({
+    queryKey: ['customer-city', draft?.customerId ?? quoteQuery.data?.customerId],
+    queryFn: () => fetchCustomerDetail(auth.accessToken!, (draft?.customerId ?? quoteQuery.data?.customerId)!),
+    enabled: !!auth.accessToken && !!(draft?.customerId ?? quoteQuery.data?.customerId),
+  })
+
+  const customerCity = customerDetailQuery.data?.city
+
+  const locationsQuery = useQuery({
+    queryKey: ['locations', customerCity],
+    queryFn: () => fetchLocations(auth.accessToken!, customerCity),
+    enabled: !!auth.accessToken && !!customerCity,
   })
 
   useEffect(() => {
@@ -292,6 +331,7 @@ export function QuoteDetailPage() {
 
       return updateQuote(token, id!, {
         customerId: payload.customerId,
+        locationId: payload.locationId || undefined,
         validityDays: Math.max(1, Math.trunc(payload.validityDays || 7)),
         paymentMode: payload.paymentMode || 'CASH',
         deliveryDays: Math.max(0, Math.trunc(payload.deliveryDays || 0)),
@@ -680,6 +720,7 @@ export function QuoteDetailPage() {
               <div className="grid gap-2 md:grid-cols-2 text-sm">
                 <div><strong>Número:</strong> {quoteQuery.data.number}</div>
                 <div><strong>Cliente:</strong> {quoteQuery.data.customerName}</div>
+                <div><strong>Tipo (Sub almacén):</strong> {quoteQuery.data.locationCode ?? 'Sin asignar'}</div>
                 <div><strong>Estado:</strong> {quoteQuery.data.status === 'PROCESSED' ? 'PROCESADA' : 'CREADA'}</div>
                 <div><strong>Cotizado por:</strong> {quoteQuery.data.quotedBy ?? '-'}</div>
                 <div><strong>Validez:</strong> {quoteQuery.data.validityDays} día(s)</div>
@@ -782,6 +823,26 @@ export function QuoteDetailPage() {
                     value={draft.customerId}
                     onChange={(cid) => setDraft((p) => (p ? { ...p, customerId: cid } : p))}
                     disabled={!canEdit || saveMutation.isPending}
+                  />
+                </div>
+
+                {/* NUEVO: Campo de Tipo de venta (Sub almacén) */}
+                <div>
+                  <div className="mb-1 text-sm font-medium">Tipo de venta (Sub almacén)</div>
+                  <Select
+                    value={draft.locationId}
+                    onChange={(e) => setDraft((p) => (p ? { ...p, locationId: e.target.value } : p))}
+                    options={[
+                      { 
+                        value: '', 
+                        label: !customerCity ? 'Seleccioná un cliente primero...' : 'Seleccionar sub-almacén...' 
+                      },
+                      ...(locationsQuery.data?.items.map((l) => ({
+                        value: l.id,
+                        label: l.name || l.code || 'Sin nombre',
+                      })) ?? []),
+                    ]}
+                    disabled={locationsQuery.isLoading || !canEdit || saveMutation.isPending || !customerCity}
                   />
                 </div>
                 <div>
