@@ -42,9 +42,10 @@ interface CustomerSelectorProps {
   placeholder?: string
   disabled?: boolean
   className?: string
+  cityFilter?: string
 }
 
-export function CustomerSelector({ value, onChange, placeholder = "Buscar cliente...", disabled, className = '' }: CustomerSelectorProps) {
+export function CustomerSelector({ value, onChange, placeholder = "Buscar cliente...", disabled, className = '', cityFilter }: CustomerSelectorProps) {
   const auth = useAuth()
   const [searchTerm, setSearchTerm] = useState('')
   const [isOpen, setIsOpen] = useState(false)
@@ -81,7 +82,23 @@ export function CustomerSelector({ value, onChange, placeholder = "Buscar client
   })
 
   const customers = searchTerm ? searchQuery.data?.items ?? [] : allCustomersQuery.data?.items ?? []
-  const activeCustomers = customers.filter(c => c.isActive)
+  const activeCustomers = customers.filter(c => {
+    // 1. Descartar inactivos
+    if (!c.isActive) return false
+    
+    // 2. Si hay un filtro de ciudad definido, verificar que coincida (ignorando mayúsculas/minúsculas y espacios)
+    if (cityFilter) {
+      const clientCity = c.city?.trim().toUpperCase() || ''
+      const filterCity = cityFilter.trim().toUpperCase()
+      
+      if (clientCity !== filterCity) {
+        return false
+      }
+    }
+    
+    // 3. Si pasó las validaciones, lo mostramos
+    return true
+  })
 
   // Find selected customer (works for search results too)
   const selectedCustomer = value ? knownCustomersById.get(value) ?? selectedByIdQuery.data ?? null : null

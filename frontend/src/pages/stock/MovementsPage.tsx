@@ -11,6 +11,7 @@ import { MainLayout, PageContainer, Select, Input, Button, Table, Loading, Error
 import { useNavigation, usePermissions } from '../../hooks'
 import { MovementQuickActions } from '../../components/MovementQuickActions'
 import { MovementHistoryTab } from '../../components/MovementHistoryTab'
+import { CustomerSelector } from '../../components/CustomerSelector'
 
 type MovementRequestItem = {
   id: string
@@ -395,7 +396,8 @@ export function MovementsPage() {
     queryFn: () =>
       listClients(
         auth.accessToken!,
-        type === 'OUT_SAMPLE' && selectedStockCityForClients === 'COCHABAMBA' ? ['COCHABAMBA'] : undefined,
+        // Cambiamos el hardcodeo por la ciudad dinámica
+        type === 'OUT_SAMPLE' && selectedStockCityForClients ? [selectedStockCityForClients] : undefined,
       ),
     enabled: !!auth.accessToken && !!selectedStockKey && ((type === 'OUT' && outReasonType === 'SALE') || type === 'OUT_SAMPLE'),
   })
@@ -515,11 +517,14 @@ export function MovementsPage() {
         throw new Error('Ingresá el motivo de la baja')
       }
 
-      if (isSampleOut && selectedStockCity === 'COCHABAMBA') {
+      if (isSampleOut && selectedStockCity) {
         const selectedClient = (clientsQuery.data?.items ?? []).find((client) => client.id === clientId)
-        const clientCity = String(selectedClient?.city ?? '').trim().toUpperCase()
-        if (clientCity !== 'COCHABAMBA') {
-          throw new Error('Para lotes de Cochabamba solo podés elegir clientes de Cochabamba')
+        
+        if (selectedClient) {
+          const clientCity = String(selectedClient.city ?? '').trim().toUpperCase()
+          if (clientCity && clientCity !== selectedStockCity) {
+            throw new Error(`Para lotes de ${selectedStockCity} solo podés elegir clientes de ${selectedStockCity}`)
+          }
         }
       }
 
@@ -2057,23 +2062,27 @@ export function MovementsPage() {
                     )}
 
                     {(type === 'OUT_SAMPLE' || outReasonType === 'SALE') && (
-                      <Select
-                        label={type === 'OUT_SAMPLE' ? 'Cliente final' : 'Cliente'}
-                        value={clientId}
-                        onChange={(e) => setClientId(e.target.value)}
-                        options={[
-                          { value: '', label: type === 'OUT_SAMPLE' ? 'Selecciona cliente final' : 'Selecciona cliente' },
-                          ...(clientsQuery.data?.items ?? [])
-                            .filter((c) => c.isActive)
-                            .map((c) => ({ value: c.id, label: c.city ? `${c.name} (${c.city})` : c.name })),
-                        ]}
-                        disabled={clientsQuery.isLoading}
-                      />
+                      <div className="space-y-1">
+                        <label className="block text-sm font-medium text-slate-900 dark:text-slate-100">
+                          {type === 'OUT_SAMPLE' ? 'Cliente final' : 'Cliente'}
+                        </label>
+                        <CustomerSelector
+                          value={clientId}
+                          onChange={setClientId}
+                          placeholder={type === 'OUT_SAMPLE' ? 'Buscar cliente final...' : 'Buscar cliente...'}
+                          cityFilter={type === 'OUT_SAMPLE' ? selectedStockCity : undefined}
+                          /* 
+                           * TIP: Si tu CustomerSelector soporta filtrar por ciudad mediante props, 
+                           * sería genial pasarle la ciudad aquí para que el buscador ya limite los resultados:
+                           * cityFilter={type === 'OUT_SAMPLE' ? selectedStockCity : undefined} 
+                           */
+                        />
+                      </div>
                     )}
 
-                    {type === 'OUT_SAMPLE' && selectedStockCity === 'COCHABAMBA' && (
+                    {type === 'OUT_SAMPLE' && selectedStockCity && (
                       <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-700 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-200">
-                        Este lote pertenece a Cochabamba, por lo tanto solo se pueden elegir clientes de Cochabamba.
+                        Este lote pertenece a <span className="font-bold">{selectedStockCity}</span>, por lo tanto solo se pueden elegir clientes de <span className="font-bold">{selectedStockCity}</span>.
                       </div>
                     )}
 
