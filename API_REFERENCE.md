@@ -1268,15 +1268,19 @@ Response 201
 ### GET /api/v1/stock/completed-movements
 Requiere permiso: `stock:move`.
 
-Lista “Movimientos realizados” para UI, unificando:
+Lista "Movimientos realizados" para UI, unificando:
 - Movimientos individuales (manuales) relevantes para operación.
 - Transferencias masivas (`referenceType: BULK_TRANSFER`) agrupadas por `referenceId`.
 - Atenciones/envíos de solicitudes (`referenceType: MOVEMENT_REQUEST`) agrupadas por solicitud (incluye atenciones parciales).
 - Devoluciones.
 
-Notas
+Notes
 - Si el usuario tiene scope de sucursal (`ScopeBranch`), el backend exige sucursal seleccionada; si falta, responde `409`.
-- Devuelve como máximo los 100 más recientes, ordenados por `completedAt` desc.
+- Los resultados se combinan y ordenan por `completedAt` desc, luego se paginan. Cada origen (movimientos individuales, transferencias masivas, atenciones de solicitud, devoluciones) se consulta con un `take` interno de 300, por lo que el listado combinado puede contener hasta ~1200 registros antes de quedarse sin más páginas.
+
+Query (paginación cursor)
+- `take` (1..100, default 50): tamaño de página.
+- `cursor` (string opcional): offset entero no negativo devuelto como `nextCursor` en la página anterior. Es opaco para el cliente.
 
 Response 200
 ```json
@@ -1299,7 +1303,8 @@ Response 200
       "canExportPicking": true,
       "canExportLabel": true
     }
-  ]
+  ],
+  "nextCursor": "50" // string con el offset para la página siguiente, o null si no hay más
 }
 ```
 

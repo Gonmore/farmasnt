@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { MainLayout, PageContainer, Button, Loading, ErrorState, EmptyState, Table, Modal, Input } from '../../components'
+import { MainLayout, PageContainer, Button, Loading, ErrorState, EmptyState, Table, Modal, Input, PaginationCursor } from '../../components'
 import { MovementQuickActions } from '../../components/MovementQuickActions'
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
@@ -74,6 +74,11 @@ export default function CompletedMovementsPage() {
   const [searchParams] = useSearchParams()
   const [highlightId, setHighlightId] = useState<string | null>(null)
 
+  const take = 50
+  const [cursor, setCursor] = useState<string | undefined>()
+  const [cursorHistory, setCursorHistory] = useState<string[]>([])
+  const [currentPage, setCurrentPage] = useState(1)
+
   useEffect(() => {
     const id = searchParams.get('highlight')
     if (!id) return
@@ -82,11 +87,15 @@ export default function CompletedMovementsPage() {
     return () => clearTimeout(t)
   }, [searchParams])
 
-  const completedMovementsQuery = useQuery<{ items: CompletedMovement[] }>({
-    queryKey: ['completed-movements'],
-    queryFn: () => apiFetch('/api/v1/stock/completed-movements', {
-      token: auth.accessToken!
-    }),
+  const completedMovementsQuery = useQuery<{ items: CompletedMovement[]; nextCursor: string | null }>({
+    queryKey: ['completed-movements', take, cursor],
+    queryFn: () => {
+      const params = new URLSearchParams({ take: String(take) })
+      if (cursor) params.append('cursor', cursor)
+      return apiFetch(`/api/v1/stock/completed-movements?${params}`, {
+        token: auth.accessToken!
+      })
+    },
     enabled: !!auth.accessToken,
   })
 
@@ -117,6 +126,29 @@ export default function CompletedMovementsPage() {
   }
 
   const movements = completedMovementsQuery.data?.items || []
+
+  const handleLoadMore = () => {
+    if (completedMovementsQuery.data?.nextCursor) {
+      setCursorHistory((prev) => [...prev, cursor || ''])
+      setCursor(completedMovementsQuery.data!.nextCursor)
+      setCurrentPage((prev) => prev + 1)
+    }
+  }
+
+  const handleGoBack = () => {
+    if (cursorHistory.length > 0) {
+      const previousCursor = cursorHistory[cursorHistory.length - 1]
+      setCursorHistory((prev) => prev.slice(0, -1))
+      setCursor(previousCursor || undefined)
+      setCurrentPage((prev) => Math.max(1, prev - 1))
+    }
+  }
+
+  const handleGoToStart = () => {
+    setCursor(undefined)
+    setCursorHistory([])
+    setCurrentPage(1)
+  }
 
   const visibleMovements = useMemo(() => {
     const items = movements
@@ -200,7 +232,7 @@ export default function CompletedMovementsPage() {
         return m.typeLabel
       }
     },
-    { header: 'Fecha', accessor: (m: CompletedMovement) => new Date(m.createdAt).toLocaleString('es-ES', { timeZone: 'America/La_Paz' }) },
+    { header: 'Fecha', accessor: (m: CompletedMovement) => new Date(m.completedAt).toLocaleString('es-ES', { timeZone: 'America/La_Paz' }) },
     { 
       header: 'Origen → Destino', 
       accessor: (m: CompletedMovement) => {
@@ -265,6 +297,20 @@ export default function CompletedMovementsPage() {
             </div>
           </div>
         )}
+
+        {movements.length > 0 && (
+          <PaginationCursor
+            hasMore={!!completedMovementsQuery.data?.nextCursor}
+            onLoadMore={handleLoadMore}
+            loading={completedMovementsQuery.isFetching}
+            currentCount={visibleMovements.length}
+            currentPage={currentPage}
+            take={take}
+            onGoToStart={cursorHistory.length > 0 ? handleGoToStart : undefined}
+            canGoBack={cursorHistory.length > 0}
+            onGoBack={cursorHistory.length > 0 ? handleGoBack : undefined}
+          />
+        )}
       </PageContainer>
 
       <Modal isOpen={detailOpen} onClose={closeDetail} title={selected ? selected.typeLabel : 'Movimiento'} maxWidth="2xl">
@@ -274,9 +320,9 @@ export default function CompletedMovementsPage() {
               <div className="grid gap-2 md:grid-cols-2">
                 <div>
                   <div className="text-slate-500">Fecha</div>
-                  <div className="text-slate-900 dark:text-slate-100">
-                    {new Date(selected.createdAt).toLocaleString('es-ES', { timeZone: 'America/La_Paz' })}
-                  </div>
+                   <div className="text-slate-900 dark:text-slate-100">
+                     {new Date(selected.completedAt).toLocaleString('es-ES', { timeZone: 'America/La_Paz' })}
+                   </div>
                 </div>
                 <div>
                   <div className="text-slate-500">Origen → Destino</div>

@@ -57,6 +57,22 @@ const completedMovementDocsParamsSchema = z.object({
   id: z.string().uuid(),
 })
 
+// Limit fetched from each underlying source (movements, bulk transfers, returns,
+// movement-request fulfillments). The merged result is sorted in-memory and then
+// paginated with an offset cursor. Raising this value increases the maximum
+// pageable depth (up to ~4x this number of merged records).
+const SOURCE_FETCH_LIMIT = 300
+
+// Offset-based cursor: opaque decimal-string offset into the merged sorted list.
+const completedMovementsQuerySchema = z.object({
+  take: z.coerce.number().int().min(1).max(100).default(50),
+  cursor: z
+    .string()
+    .optional()
+    .transform((v) => (v ? Number.parseInt(v, 10) : 0))
+    .refine((n) => Number.isInteger(n) && n >= 0, { message: 'cursor must be a non-negative integer' }),
+})
+
 const completedMovementDocsQuerySchema = z.object({
   type: z.enum(['MOVEMENT', 'BULK_TRANSFER', 'FULFILL_REQUEST', 'RETURN']),
 })
@@ -3614,6 +3630,11 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
     async (request, reply) => {
       const tenantId = request.auth!.tenantId
 
+      const queryParsed = completedMovementsQuerySchema.safeParse(request.query)
+      if (!queryParsed.success)
+        return reply.status(400).send({ message: 'Invalid query', issues: queryParsed.error.issues })
+      const { take, cursor } = queryParsed.data
+
       const unitsPer = (value: unknown): number => {
         const n = Number(value)
         return Number.isFinite(n) && n > 0 ? n : 1
@@ -3703,7 +3724,7 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
           _count: { id: true },
           _sum: { quantity: true },
           orderBy: { _max: { createdAt: 'desc' } },
-          take: 100,
+          take: SOURCE_FETCH_LIMIT,
         })
 
         // Get bulk transfers (grouped by referenceId)
@@ -3730,7 +3751,7 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
               createdAt: 'desc',
             },
           },
-          take: 100,
+          take: SOURCE_FETCH_LIMIT,
         })
 
         const bulkTransferIds = bulkTransfers.map((bt) => bt.referenceId).filter(Boolean) as string[]
@@ -3813,7 +3834,7 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
           orderBy: {
             createdAt: 'desc',
           },
-          take: 100,
+          take: SOURCE_FETCH_LIMIT,
         })
 
         const individualBatchIds = Array.from(new Set(individualMovements.map((m) => m.batchId).filter(Boolean) as string[]))
@@ -3911,7 +3932,7 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
           orderBy: {
             createdAt: 'desc',
           },
-          take: 100,
+          take: SOURCE_FETCH_LIMIT,
         })
 
         // Get return details
@@ -4043,7 +4064,7 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
           })
         )
 
-        // Combine all completed movements and sort by completion date
+        // Combine all completed movements and sort by completion date.
         const allMovements = [
           ...bulkTransferDetails.filter(Boolean),
           ...individualMovementDetails,
@@ -4051,8 +4072,14 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
           ...movementRequestFulfillmentDetails.filter(Boolean),
         ].filter(m => m !== null).sort((a, b) => new Date(b!.completedAt).getTime() - new Date(a!.completedAt).getTime())
 
+        // Offset-based pagination over the merged, sorted list.
+        // `cursor` is a non-negative integer offset (opaque to the client).
+        const page = allMovements.slice(cursor, cursor + take)
+        const nextCursor = cursor + take < allMovements.length ? String(cursor + take) : null
+
         return reply.send({
-          items: allMovements.slice(0, 100), // Limit to 100 most recent
+          items: page,
+          nextCursor,
         })
       } catch (e: any) {
         if (e.statusCode) return reply.status(e.statusCode).send({ message: e.message })
