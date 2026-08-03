@@ -2244,6 +2244,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
         },
         include: {
           warehouse: { select: { id: true, code: true, name: true, city: true } },
+          toLocation: { select: { id: true, code: true, warehouse: { select: { id: true, code: true, name: true, city: true } } } },
           items: {
             include: {
               product: { select: { id: true, sku: true, name: true, genericName: true } },
@@ -2314,7 +2315,9 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
           confirmationStatus: (req as any).confirmationStatus,
           requestedCity: req.requestedCity,
           warehouseId: (req as any).warehouseId ?? null,
-          warehouse: (req as any).warehouse ?? null,
+           warehouse: (req as any).warehouse ?? null,
+          toLocationId: (req as any).toLocationId ?? null,
+          toLocation: (req as any).toLocation ?? null,
           note: req.note ?? null,
           createdAt: req.createdAt.toISOString(),
           requestedBy: req.requestedBy,

@@ -373,10 +373,11 @@ export function PaymentsPage() {
                 />
                 <div>
                   <div className="mb-2 text-sm font-medium text-slate-700 dark:text-slate-300">
-                    {receiptType === 'CHECK' ? 'Foto del cheque (opcional)' : 'Foto o captura (opcional)'}
+                    {receiptType === 'CHECK' ? 'Foto o PDF del cheque (opcional)' : 'Foto o Captura (opcional)'}
                   </div>
                   <ImageUpload
                     mode="select"
+                    accept="image/png,image/jpeg,image/webp,application/pdf"
                     currentImageUrl={receiptPhoto?.url ?? null}
                     onImageSelect={handleUploadProof}
                     onImageRemove={() => setReceiptPhoto(null)}

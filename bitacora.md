@@ -2,6 +2,33 @@
 
 Este documento resume (a alto nivel) decisiones, hitos y cambios relevantes que se fueron incorporando al repositorio para llegar al estado actual del MVP.
 
+## **[03 Ago 2026] Versión 2.2.0 — Kardex por presentación, modal de entrega con devoluciones, sub-warehouse en solicitudes, upload PDF de comprobantes**
+
+### Objetivo alcanzado
+- Se implementaron 4 features: Kardex por presentación con exportación Excel, modal de entrega con manejo de devoluciones parciales, enrutamiento a sub-almacén en solicitudes de movimiento, y soporte de upload de comprobantes en PDF.
+
+### Frontend
+- **Kardex (`InventoryPage.tsx`)**: botón "Kardex" en el header del producto; `KardexModalContent` con pestañas por presentación, tabla de movimientos (fecha, ubicación, almacén, ciudad, tipo, lote, detalle, entradas, salidas, saldos) y exportación a Excel via `exportToXlsx`.
+- **`ImageUpload.tsx`**: omite compresión para archivos PDF (contentType `application/pdf`); preview muestra ícono 📄 en lugar de imagen rota.
+- **`DeliveriesPage.tsx`**: botón "Marcar como entregado" abre `DeliveryModal` (reemplaza `window.confirm`) con modos NORMAL/PARCIAL, editor de líneas de devolución (cantidad, motivo, nota por línea) y exportación Excel; `deliverOrder()` envía el endpoint `deliver-with-returns`.
+- **`MovementRequestsPage.tsx`**: modal de creación agrega "Sub-Almacén destino" (`Select` poblado desde locations del warehouse destino); envía `toLocationId` en `createMovementRequest`; el detalle muestra `toLocation.code`.
+- **`PaymentsPage.tsx`**: el `accept` del `ImageUpload` incluye `application/pdf`.
+
+### Backend
+- **`Product` kardex**: `GET /api/v1/products/:id/kardex` (routes/products.ts:1389) devuelve movimientos agrupados por presentación con saldos acumulados, datos de lote/ubicación y saldos finales por presentación.
+- **`StockMovementRequest` + `Location`**: migración `20260803143835_add_kardex_and_movement_request_to_location` agrega `toLocationId` (UUID) a `StockMovementRequest` y relación `Location.movementRequestDestinations`; listado/plan incluyen `toLocationId` + `toLocation` con warehouse anidado.
+- **Entregas con devoluciones**: `POST /api/v1/sales/orders/:id/deliver-with-returns` (routes/salesOrders.ts:1333) con `orderDeliverWithReturnsSchema` acepta `returns[]`; `POST /api/v1/sales/orders/:id/return` para devoluciones standalone.
+- **Upload de comprobantes PDF**: `POST /api/v1/sales/payments/proof-upload` (routes/salesPayments.ts:91) acepta `application/pdf` en `allowedContentTypes`; `POST /api/v1/stock/returns/photo-upload` también acepta `application/pdf`.
+
+### Operación
+- Nueva migración Prisma: `20260803143835_add_kardex_and_movement_request_to_location/migration.sql`.
+- `npm run prisma:generate --prefix backend` ejecutado.
+- Backend compilado correctamente con `npm --prefix backend run build`.
+- Frontend compilado correctamente con `npm --prefix frontend run build`.
+- Deploy manual con `deploy.sh` requiere aplicar la nueva migración antes de reiniciar servicios.
+
+---
+
 ## **[08 Jul 2026] Versión 2.1.4 — Reportes de ventas: estado por defecto "Todos" y sin recorte de filas**
 
 ### Objetivo alcanzado

@@ -56,6 +56,11 @@ export function ImageUpload({
       return null
     }
 
+    // Skip compression for PDF files
+    if (file.type === 'application/pdf') {
+      return file
+    }
+
     try {
       // Auto-compress if needed
       const processedFile = await autoCompressImage(file, {
@@ -171,19 +176,30 @@ export function ImageUpload({
         onDragLeave={disabled ? undefined : handleDragLeave}
       >
         {displayImageUrl && !imageLoadError ? (
-          <div className="space-y-3">
-            <img
-              src={displayImageUrl}
-              alt="Foto del producto"
-              className="mx-auto max-h-48 w-auto rounded-lg object-contain bg-white shadow-md dark:bg-slate-900"
-              onError={() => setImageLoadError(true)}
-            />
-            {previewUrl && (
+          selectedFile?.type === 'application/pdf' ? (
+            <div className="space-y-3">
+              <div className="mx-auto flex h-32 w-32 items-center justify-center rounded-lg bg-slate-100 dark:bg-slate-800">
+                <span className="text-4xl">📄</span>
+              </div>
               <p className="text-center text-sm text-slate-600 dark:text-slate-400">
-                Vista previa - {selectedFile?.name}
+                Vista previa - {selectedFile?.name ?? 'PDF seleccionado'}
               </p>
-            )}
-          </div>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <img
+                src={displayImageUrl}
+                alt="Foto del producto"
+                className="mx-auto max-h-48 w-auto rounded-lg object-contain bg-white shadow-md dark:bg-slate-900"
+                onError={() => setImageLoadError(true)}
+              />
+              {previewUrl && (
+                <p className="text-center text-sm text-slate-600 dark:text-slate-400">
+                  Vista previa - {selectedFile?.name}
+                </p>
+              )}
+            </div>
+          )
         ) : (
           <div className="text-center">
             {isProcessing ? (
@@ -198,13 +214,13 @@ export function ImageUpload({
                 <div className="mb-4 text-4xl">📸</div>
                 <p className="mb-2 text-sm font-medium text-slate-900 dark:text-slate-100">
                   {disabled
-                    ? 'Carga deshabilitada'
-                    : imageLoadError
-                      ? 'No se pudo cargar la imagen guardada'
-                      : 'Arrastra una imagen aquí'}
+                     ? 'Carga deshabilitada'
+                     : imageLoadError
+                     ? 'No se pudo cargar el archivo guardado'
+                     : 'Arrastra una imagen o PDF aquí'}
                 </p>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  PNG, JPG, WebP hasta {maxSizeMB}MB
+                  PNG, JPG, WebP, PDF hasta {maxSizeMB}MB
                 </p>
                 {imageLoadError && currentImageUrl && (
                   <p className="mt-2 text-xs text-slate-500 dark:text-slate-400 break-all">

@@ -52,6 +52,25 @@ const orderDeliverSchema = z.object({
   note: z.string().trim().max(500).optional(),
 })
 
+const orderDeliverWithReturnsSchema = z.object({
+  version: z.number().int().positive(),
+  fromLocationId: z.string().uuid().optional(),
+  note: z.string().trim().max(500).optional(),
+  returns: z
+    .array(
+      z.object({
+        lineId: z.string().uuid(),
+        productId: z.string().uuid(),
+        batchId: z.string().uuid().nullable().optional(),
+        quantity: z.coerce.number().int().positive(),
+        reason: z.string().trim().max(500).optional(),
+        note: z.string().trim().max(500).optional(),
+      }),
+    )
+    .optional()
+    .default([]),
+})
+
 type LockedBalanceRow = { id: string; quantity: string }
 
 type LockedBalanceForDeliveryRow = {
@@ -1305,6 +1324,480 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
       } catch (error) {
         console.error('Error fetching reservations for order', order.id, ':', (error as any).message, (error as any).stack)
         return reply.status(500).send({ message: 'Error interno del servidor al cargar reservas' })
+       }
+     },
+   )
+
+  app.post(
+    '/api/v1/sales/orders/:id/deliver-with-returns',
+    {
+      preHandler: [
+        requireAuth(),
+        requireModuleEnabled(db, 'SALES'),
+        requireModuleEnabled(db, 'WAREHOUSE'),
+        requirePermission(Permissions.SalesDeliveryWrite),
+        requirePermission(Permissions.StockDeliver),
+      ],
+    },
+    async (request, reply) => {
+      const id = (request.params as any).id as string
+      const parsed = orderDeliverWithReturnsSchema.safeParse(request.body)
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid request', issues: parsed.error.issues })
+
+      const tenantId = request.auth!.tenantId
+      const userId = request.auth!.userId
+      const branchCity = branchCityOf(request)
+
+      if (branchCity === '__MISSING__') {
+        return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+      }
+
+      try {
+        const deliveredAt = new Date()
+        const result = await db.$transaction(async (tx) => {
+          const order = await tx.salesOrder.findFirst({
+            where: {
+              id,
+              tenantId,
+              ...(branchCity
+                ? {
+                    OR: [
+                      { deliveryCity: { equals: branchCity, mode: 'insensitive' as const } },
+                      { AND: [{ OR: [{ deliveryCity: null }, { deliveryCity: '' }] }, { customer: { city: { equals: branchCity, mode: 'insensitive' as const } } }] },
+                    ],
+                  }
+                : {}),
+            },
+            select: { id: true, number: true, status: true, version: true, paymentMode: true, deliveryCity: true },
+          })
+          if (!order) {
+            const err = new Error('Not found') as Error & { statusCode?: number }
+            err.statusCode = 404
+            throw err
+          }
+          if (order.version !== parsed.data.version) {
+            const err = new Error('Version conflict') as Error & { statusCode?: number }
+            err.statusCode = 409
+            throw err
+          }
+          if (order.status === 'FULFILLED') {
+            const err = new Error('Order already delivered') as Error & { statusCode?: number }
+            err.statusCode = 409
+            throw err
+          }
+          if (order.status === 'CANCELLED') {
+            const err = new Error('Cancelled orders cannot be delivered') as Error & { statusCode?: number }
+            err.statusCode = 409
+            throw err
+          }
+
+          const returnItems = parsed.data.returns ?? []
+
+          const reservations = await tx.salesOrderReservation.findMany({
+            where: { tenantId, salesOrderId: order.id },
+            select: { id: true, inventoryBalanceId: true, quantity: true, salesOrderLineId: true },
+          })
+
+          const qtyByBalanceId = new Map<string, number>()
+          for (const r of reservations) {
+            const q = toNumber(r.quantity)
+            if (q <= 0) continue
+            qtyByBalanceId.set(r.inventoryBalanceId, (qtyByBalanceId.get(r.inventoryBalanceId) ?? 0) + q)
+          }
+
+          const balanceIds = Array.from(qtyByBalanceId.keys())
+          const locked: LockedBalanceForDeliveryRow[] = []
+          for (const bid of balanceIds) {
+            const rows = await tx.$queryRaw<LockedBalanceForDeliveryRow[]>`
+              SELECT "id", "quantity", "reservedQuantity", "locationId", "productId", "batchId"
+              FROM "InventoryBalance"
+              WHERE "tenantId" = ${tenantId} AND "id" = ${bid}
+              FOR UPDATE
+            `
+            if (rows[0]) locked.push(rows[0])
+          }
+
+          const lockedById = new Map(locked.map((r) => [r.id, r]))
+
+          let deliveryNote = parsed.data.note ?? null
+
+          const changedBalances: any[] = []
+          const createdMovements: any[] = []
+          const year = currentYearUtc()
+
+          if (reservations.length > 0) {
+            for (const [balanceId, q] of qtyByBalanceId.entries()) {
+              const b = lockedById.get(balanceId)
+              if (!b) {
+                const err = new Error('Inventory balance not found') as Error & { statusCode?: number }
+                err.statusCode = 404
+                throw err
+              }
+
+              const curQty = toNumber(b.quantity)
+              const curRes = toNumber(b.reservedQuantity)
+              const nextQty = curQty - q
+              const nextRes = curRes - q
+              if (nextQty < 0) {
+                const err = new Error('Insufficient stock') as Error & { statusCode?: number }
+                err.statusCode = 409
+                throw err
+              }
+              if (nextRes < 0) {
+                const err = new Error('Reserved quantity inconsistency') as Error & { statusCode?: number }
+                err.statusCode = 409
+                throw err
+              }
+
+              const updatedBalance = await tx.inventoryBalance.update({
+                where: { id: balanceId },
+                data: {
+                  quantity: decimalFromNumber(nextQty),
+                  reservedQuantity: decimalFromNumber(nextRes),
+                  version: { increment: 1 },
+                  createdBy: userId,
+                },
+                select: {
+                  id: true,
+                  locationId: true,
+                  productId: true,
+                  batchId: true,
+                  quantity: true,
+                  reservedQuantity: true,
+                  version: true,
+                  updatedAt: true,
+                },
+              })
+              changedBalances.push(updatedBalance)
+
+              const seq = await nextSequence(tx, { tenantId, year, key: 'MS' })
+              const movement = await tx.stockMovement.create({
+                data: {
+                  tenantId,
+                  number: seq.number,
+                  numberYear: year,
+                  type: 'OUT',
+                  productId: b.productId,
+                  batchId: b.batchId,
+                  fromLocationId: b.locationId,
+                  toLocationId: null,
+                  quantity: decimalFromNumber(q),
+                  referenceType: 'SALES_ORDER',
+                  referenceId: order.number,
+                  note: deliveryNote,
+                  createdBy: userId,
+                },
+                select: {
+                  id: true,
+                  number: true,
+                  numberYear: true,
+                  type: true,
+                  productId: true,
+                  batchId: true,
+                  fromLocationId: true,
+                  toLocationId: true,
+                  quantity: true,
+                  createdAt: true,
+                  referenceType: true,
+                  referenceId: true,
+                },
+              })
+              createdMovements.push(movement)
+            }
+
+            await tx.salesOrderReservation.updateMany({
+              where: { tenantId, salesOrderId: order.id, releasedAt: null },
+              data: { releasedAt: deliveredAt },
+            })
+          } else {
+            // No reservations - fall back to classic fulfillment using fromLocationId
+            if (!parsed.data.fromLocationId) {
+              const err = new Error('Order has no reservations; provide fromLocationId or use /fulfill') as Error & { statusCode?: number }
+              err.statusCode = 409
+              throw err
+            }
+            const fulfillResult = await fulfillOrderInTx(tx, {
+              tenantId,
+              orderId: order.id,
+              userId,
+              version: parsed.data.version,
+              fromLocationId: parsed.data.fromLocationId,
+              deliveredAt,
+              ...(deliveryNote ? { note: deliveryNote } : {}),
+            })
+            changedBalances.push(...(fulfillResult.changedBalances ?? []))
+            createdMovements.push(...(fulfillResult.createdMovements ?? []))
+          }
+
+          // Process returns: create IN movements restocking origin batch/location
+          for (const ret of returnItems) {
+            const seq = await nextSequence(tx, { tenantId, year, key: 'MS' })
+            const returnMovement = await tx.stockMovement.create({
+              data: {
+                tenantId,
+                number: seq.number,
+                numberYear: year,
+                type: 'IN',
+                productId: ret.productId,
+                batchId: ret.batchId ?? null,
+                quantity: decimalFromNumber(ret.quantity),
+                referenceType: 'SALES_ORDER_RETURN',
+                referenceId: order.number,
+                note: `Devolución OV ${order.number}: ${ret.reason ?? ret.note ?? ''}`,
+                createdBy: userId,
+              },
+              select: {
+                id: true,
+                number: true,
+                numberYear: true,
+                type: true,
+                productId: true,
+                batchId: true,
+                fromLocationId: true,
+                toLocationId: true,
+                quantity: true,
+                createdAt: true,
+                referenceType: true,
+                referenceId: true,
+              },
+            })
+            createdMovements.push(returnMovement)
+
+            // Restore inventory balance at origin location/batch
+            const balanceWhere: any = { tenantId, productId: ret.productId, location: {}, batchId: ret.batchId ?? undefined }
+            if (ret.batchId) {
+              balanceWhere.batchId = ret.batchId
+            }
+
+            // Find origin location from the delivered OUT movements for this order
+            const originMovement = await tx.stockMovement.findFirst({
+              where: {
+                tenantId,
+                type: 'OUT',
+                referenceType: 'SALES_ORDER',
+                referenceId: order.number,
+                productId: ret.productId,
+                batchId: ret.batchId ?? null,
+              },
+              orderBy: { createdAt: 'desc' },
+              select: { fromLocationId: true, productId: true, batchId: true },
+            })
+
+            if (originMovement?.fromLocationId) {
+              let balance = await tx.inventoryBalance.findFirst({
+                where: {
+                  tenantId,
+                  productId: ret.productId,
+                  batchId: ret.batchId ?? null,
+                  locationId: originMovement.fromLocationId,
+                },
+              })
+              if (balance) {
+                await tx.inventoryBalance.update({
+                  where: { id: balance.id },
+                  data: {
+                    quantity: decimalFromNumber(toNumber(balance.quantity) + ret.quantity),
+                    version: { increment: 1 },
+                  },
+                })
+              } else {
+                await tx.inventoryBalance.create({
+                  data: {
+                    tenantId,
+                    productId: ret.productId,
+                    batchId: ret.batchId ?? null,
+                    locationId: originMovement.fromLocationId,
+                    quantity: decimalFromNumber(ret.quantity),
+                  },
+                })
+              }
+            }
+          }
+
+          await tx.salesOrder.update({
+            where: { id: order.id },
+            data: { status: 'FULFILLED', deliveredAt, version: { increment: 1 }, createdBy: userId },
+            select: { id: true, number: true, status: true, version: true, paymentMode: true, deliveredAt: true, updatedAt: true, deliveryCity: true },
+          })
+
+          return { order, createdMovements, changedBalances, returnCount: returnItems.length }
+        })
+
+        await audit.append({
+          tenantId,
+          actorUserId: userId,
+          action: 'sales.order.deliver-with-returns',
+          entityType: 'SalesOrder',
+          entityId: id,
+          after: {
+            orderId: id,
+            returnCount: result.returnCount,
+            movementCount: result.createdMovements.length,
+          },
+        })
+
+        const room = `tenant:${tenantId}`
+        for (const m of result.createdMovements) app.io?.to(room).emit('stock.movement.created', m)
+        for (const b of result.changedBalances) app.io?.to(room).emit('stock.balance.changed', b)
+
+        return reply.send({ order: { id: id, status: 'FULFILLED', deliveredAt: deliveredAt.toISOString(), version: result.order.version + (result.returnCount > 0 ? 0 : 0) }, returnCount: result.returnCount })
+      } catch (e: any) {
+        if (e?.code === 'BATCH_EXPIRED') {
+          return reply.status(409).send({ message: 'Batch expired' })
+        }
+        if (e.statusCode) return reply.status(e.statusCode).send({ message: e.message })
+        throw e
+      }
+    },
+  )
+
+  app.post(
+    '/api/v1/sales/orders/:id/return',
+    {
+      preHandler: [
+        requireAuth(),
+        requireModuleEnabled(db, 'SALES'),
+        requireModuleEnabled(db, 'WAREHOUSE'),
+        requirePermission(Permissions.SalesDeliveryWrite),
+        requirePermission(Permissions.StockMove),
+      ],
+    },
+    async (request, reply) => {
+      const id = (request.params as any).id as string
+      const parsed = z.object({
+        version: z.number().int().positive(),
+        items: z.array(
+          z.object({
+            lineId: z.string().uuid().optional(),
+            productId: z.string().uuid(),
+            batchId: z.string().uuid().nullable().optional(),
+            quantity: z.coerce.number().int().positive(),
+            reason: z.string().trim().max(500).optional(),
+            note: z.string().trim().max(500).optional(),
+            locationId: z.string().uuid(),
+          }),
+        ).min(1),
+      }).safeParse(request.body)
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid request', issues: parsed.error.issues })
+
+      const tenantId = request.auth!.tenantId
+      const userId = request.auth!.userId
+      const branchCity = branchCityOf(request)
+
+      if (branchCity === '__MISSING__') {
+        return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+      }
+
+      try {
+        const result = await db.$transaction(async (tx) => {
+          const order = await tx.salesOrder.findFirst({
+            where: { id, tenantId },
+            select: { id: true, number: true, version: true, status: true },
+          })
+          if (!order) {
+            const err = new Error('Order not found') as Error & { statusCode?: number }
+            err.statusCode = 404
+            throw err
+          }
+          if (order.version !== parsed.data.version) {
+            const err = new Error('Version conflict') as Error & { statusCode?: number }
+            err.statusCode = 409
+            throw err
+          }
+
+          const year = currentYearUtc()
+          const createdMovements: any[] = []
+          const changedBalances: any[] = []
+
+          for (const ret of parsed.data.items) {
+            const seq = await nextSequence(tx, { tenantId, year, key: 'MS' })
+            const returnMovement = await tx.stockMovement.create({
+              data: {
+                tenantId,
+                number: seq.number,
+                numberYear: year,
+                type: 'IN',
+                productId: ret.productId,
+                batchId: ret.batchId ?? null,
+                toLocationId: ret.locationId,
+                quantity: decimalFromNumber(ret.quantity),
+                referenceType: 'SALES_ORDER_RETURN',
+                referenceId: order.number,
+                note: `Devolución OV ${order.number}: ${ret.reason ?? ret.note ?? ''}`,
+                createdBy: userId,
+              },
+              select: {
+                id: true,
+                number: true,
+                numberYear: true,
+                type: true,
+                productId: true,
+                batchId: true,
+                fromLocationId: true,
+                toLocationId: true,
+                quantity: true,
+                createdAt: true,
+                referenceType: true,
+                referenceId: true,
+              },
+            })
+            createdMovements.push(returnMovement)
+
+            let balance = await tx.inventoryBalance.findFirst({
+              where: {
+                tenantId,
+                productId: ret.productId,
+                batchId: ret.batchId ?? null,
+                locationId: ret.locationId,
+              },
+            })
+            if (balance) {
+              await tx.inventoryBalance.update({
+                where: { id: balance.id },
+                data: {
+                  quantity: decimalFromNumber(toNumber(balance.quantity) + ret.quantity),
+                  version: { increment: 1 },
+                },
+              })
+              const updated = await tx.inventoryBalance.findFirst({ where: { id: balance.id } })
+              if (updated) changedBalances.push(updated)
+            } else {
+              const created = await tx.inventoryBalance.create({
+                data: {
+                  tenantId,
+                  productId: ret.productId,
+                  batchId: ret.batchId ?? null,
+                  locationId: ret.locationId,
+                  quantity: decimalFromNumber(ret.quantity),
+                },
+              })
+              changedBalances.push(created)
+            }
+          }
+
+          await audit.append({
+            tenantId,
+            actorUserId: userId,
+            action: 'sales.order.return',
+            entityType: 'SalesOrder',
+            entityId: id,
+            after: { itemsCount: parsed.data.items.length, movementCount: createdMovements.length },
+          })
+
+          return { createdMovements, changedBalances }
+        })
+
+        const room = `tenant:${tenantId}`
+        for (const m of result.createdMovements) app.io?.to(room).emit('stock.movement.created', m)
+        for (const b of result.changedBalances) app.io?.to(room).emit('stock.balance.changed', b)
+
+        return reply.send({ ok: true, movements: result.createdMovements.length })
+      } catch (e: any) {
+        if (e?.code === 'BATCH_EXPIRED') {
+          return reply.status(409).send({ message: 'Batch expired' })
+        }
+        if (e.statusCode) return reply.status(e.statusCode).send({ message: e.message })
+        throw e
       }
     },
   )

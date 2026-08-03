@@ -576,6 +576,7 @@ model Location {
   laboratoryQuarantineFor Laboratory[] @relation("LaboratoryQuarantineLocation")
   stockReturns StockReturn[] @relation("StockReturnToLocation")
   quotes    Quote[]
+  movementRequestDestinations StockMovementRequest[] @relation("MovementRequestDestination")
 
   @@unique([tenantId, warehouseId, code])
   @@index([tenantId])
@@ -647,6 +648,7 @@ model StockMovementRequest {
   codeYear      Int
   codeSeq       Int
   warehouseId   String?
+  toLocationId   String?
   status        StockMovementRequestStatus @default(OPEN)
   confirmationStatus StockMovementRequestConfirmationStatus @default(PENDING)
   requestedCity String
@@ -663,6 +665,7 @@ model StockMovementRequest {
 
   quote Quote? @relation(fields: [quoteId], references: [id], onDelete: SetNull)
   warehouse Warehouse? @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
+  toLocation Location? @relation("MovementRequestDestination", fields: [toLocationId], references: [id], onDelete: SetNull)
 
   items StockMovementRequestItem[]
 

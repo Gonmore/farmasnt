@@ -30,6 +30,9 @@ type MovementRequest = {
   requestedCity: string
   requestedByName: string | null
   note?: string | null
+  warehouseId: string | null
+  toLocationId: string | null
+  toLocation: { id: string; code: string } | null
   createdAt: string
   fulfilledAt: string | null
   confirmedAt?: string | null
@@ -42,6 +45,13 @@ type WarehouseListItem = {
   code: string
   name: string
   city?: string | null
+  isActive: boolean
+}
+
+type LocationListItem = {
+  id: string
+  warehouseId: string
+  code: string
   isActive: boolean
 }
 
@@ -97,6 +107,11 @@ async function listWarehouses(token: string): Promise<{ items: WarehouseListItem
   return apiFetch(`/api/v1/warehouses?take=100`, { token })
 }
 
+async function listWarehouseLocations(token: string, warehouseId: string): Promise<{ items: LocationListItem[] }> {
+  const params = new URLSearchParams({ take: '100' })
+  return apiFetch(`/api/v1/warehouses/${encodeURIComponent(warehouseId)}/locations?${params}`, { token })
+}
+
 async function fetchProducts(token: string): Promise<{ items: ProductListItem[] }> {
   const params = new URLSearchParams({ take: '100' })
   return apiFetch(`/api/v1/products?${params}`, { token })
@@ -110,6 +125,7 @@ async function createMovementRequest(
   token: string,
   data: {
     warehouseId: string
+    toLocationId?: string
     items: { productId: string; presentationId: string; quantity: number }[]
     note?: string
   },
@@ -165,6 +181,7 @@ export function MovementRequestsPage() {
   const [confirmNote, setConfirmNote] = useState('')
   const [confirmError, setConfirmError] = useState<string | null>(null)
   const [requestWarehouseId, setRequestWarehouseId] = useState('')
+  const [requestToLocationId, setRequestToLocationId] = useState('')
   const [requestProductId, setRequestProductId] = useState('')
   const [requestItems, setRequestItems] = useState<Array<{ presentationId: string; quantity: number }>>([])
   const [requestNote, setRequestNote] = useState('')
@@ -175,6 +192,17 @@ export function MovementRequestsPage() {
     queryFn: () => fetchProductPresentations(auth.accessToken!, requestProductId),
     enabled: !!auth.accessToken && !!requestProductId,
   })
+
+  const requestWarehouseLocationsQuery = useQuery({
+    queryKey: ['warehouseLocations', 'forMovementRequest', requestWarehouseId],
+    queryFn: () => listWarehouseLocations(auth.accessToken!, requestWarehouseId),
+    enabled: !!auth.accessToken && !!requestWarehouseId,
+  })
+
+  const activeRequestLocations = useMemo(
+    () => (requestWarehouseLocationsQuery.data?.items ?? []).filter((l) => l.isActive),
+    [requestWarehouseLocationsQuery.data],
+  )
 
   const activeWarehouses = useMemo(
     () => (warehousesQuery.data?.items ?? []).filter((w) => w.isActive),
@@ -222,6 +250,7 @@ export function MovementRequestsPage() {
 
       return createMovementRequest(auth.accessToken!, {
         warehouseId: requestWarehouseId,
+        ...(requestToLocationId ? { toLocationId: requestToLocationId } : {}),
         items: requestItems.map((it) => ({ productId: requestProductId, presentationId: it.presentationId, quantity: it.quantity })),
         note: requestNote.trim() || undefined,
       })
@@ -230,6 +259,7 @@ export function MovementRequestsPage() {
       await queryClient.invalidateQueries({ queryKey: ['movementRequests'] })
       setShowCreateModal(false)
       setRequestWarehouseId('')
+      setRequestToLocationId('')
       setRequestProductId('')
       setRequestItems([])
       setRequestNote('')
@@ -437,11 +467,22 @@ export function MovementRequestsPage() {
                 <div className="text-xs text-slate-500">Solicitado por</div>
                 <div className="font-medium text-slate-900 dark:text-slate-100">{selectedRequest.requestedByName ?? '—'}</div>
               </div>
-              <div className="rounded border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900">
-                <div className="text-xs text-slate-500">Creado</div>
-                <div className="font-medium text-slate-900 dark:text-slate-100">{selectedRequest.createdAt ? new Date(selectedRequest.createdAt).toLocaleString() : '—'}</div>
-              </div>
-            </div>
+               <div className="rounded border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900">
+                 <div className="text-xs text-slate-500">Creado</div>
+                 <div className="font-medium text-slate-900 dark:text-slate-100">{selectedRequest.createdAt ? new Date(selectedRequest.createdAt).toLocaleString() : '—'}</div>
+               </div>
+               {selectedRequest.toLocation ? (
+                 <div className="rounded border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900">
+                   <div className="text-xs text-slate-500">Sub-Almacén destino</div>
+                   <div className="font-medium text-slate-900 dark:text-slate-100">{selectedRequest.toLocation.code}</div>
+                 </div>
+               ) : (
+                 <div className="rounded border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900">
+                   <div className="text-xs text-slate-500">Sub-Almacén destino</div>
+                   <div className="font-medium text-slate-400 dark:text-slate-500">—</div>
+                 </div>
+               )}
+             </div>
 
             {selectedRequest.note && (
               <div className="rounded border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900">
@@ -545,17 +586,32 @@ export function MovementRequestsPage() {
               { value: '', label: 'Selecciona una sucursal' },
               ...activeWarehouses.map((w) => ({ value: w.id, label: `${w.code} - ${w.name}${w.city ? ` (${String(w.city).toUpperCase()})` : ''}` })),
             ]}
-            disabled={warehousesQuery.isLoading}
-            required
-          />
+             disabled={warehousesQuery.isLoading}
+             required
+           />
+
+           {requestWarehouseId && (
+             <Select
+               label="Sub-Almacén destino"
+               value={requestToLocationId}
+               onChange={(e) => setRequestToLocationId(e.target.value)}
+               options={[
+                 { value: '', label: requestWarehouseLocationsQuery.isLoading ? 'Cargando...' : 'Sin sub-almacén específico' },
+                 ...activeRequestLocations.map((l) => ({ value: l.id, label: l.code })),
+               ]}
+               disabled={requestWarehouseLocationsQuery.isLoading || requestWarehouseLocationsQuery.isError}
+             />
+           )}
 
           <Select
             label="Producto"
             value={requestProductId}
-            onChange={(e) => {
-              setRequestProductId(e.target.value)
-              setRequestItems([])
-            }}
+             onChange={(e) => {
+               setRequestWarehouseId(e.target.value)
+               setRequestToLocationId('')
+               setRequestProductId('')
+               setRequestItems([])
+             }}
             options={[
               { value: '', label: 'Selecciona un producto' },
               ...activeProducts.map((p) => ({ value: p.id, label: getProductLabel(p) })),

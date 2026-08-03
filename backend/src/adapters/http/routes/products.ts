@@ -344,6 +344,47 @@ function extFromFileName(fileName: string): string {
   return (m?.[1] ?? '').toLowerCase()
 }
 
+const kardexQuerySchema = z.object({
+  from: z.coerce.date().optional(),
+  to: z.coerce.date().optional(),
+  presentationId: z.string().uuid().optional(),
+})
+
+function formatQty(value: number): string {
+  const n = Math.trunc(value)
+  return n.toString()
+}
+
+function formatPresentation(value: number, unitsPer: number): string {
+  const v = Number(value)
+  const u = Math.trunc(unitsPer)
+  if (!u || u <= 0) return '—'
+  return (v / u).toFixed(2).replace(/\.?0+$/, '')
+}
+
+function buildMovementDetail(
+  m: {
+    type: string
+    batchId: string | null
+    referenceType: string | null
+    referenceId: string | null
+    note: string | null
+  },
+  batchById: Map<string, { batchNumber: string }>,
+  fromLoc: { code: string; warehouse?: { name?: string } } | null,
+  toLoc: { code: string; warehouse?: { name?: string } } | null,
+): string {
+  const parts: string[] = []
+  const direction = m.type === 'IN' || m.type === 'ADJUSTMENT' ? 'Ingreso' : m.type === 'OUT' ? 'Salida' : 'Transferencia'
+  parts.push(direction)
+  if (m.batchId && batchById.has(m.batchId)) parts.push(`Lote ${batchById.get(m.batchId)!.batchNumber}`)
+  if (m.referenceType) parts.push(`[${m.referenceType}] ${m.referenceId ?? ''}`)
+  if (fromLoc) parts.push(`Desde ${fromLoc.code} (${fromLoc.warehouse?.name ?? ''})`)
+  if (toLoc) parts.push(`Hacia ${toLoc.code} (${toLoc.warehouse?.name ?? ''})`)
+  if (m.note) parts.push(m.note)
+  return parts.filter(Boolean).join(' • ')
+}
+
 export async function registerProductRoutes(app: FastifyInstance): Promise<void> {
   const db = prisma()
   const audit = new AuditService(db)
@@ -1341,6 +1382,206 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
       })
 
       return reply.send({ batch: { id: batch.id, batchNumber: batch.batchNumber }, items })
+    },
+  )
+
+  app.get(
+    '/api/v1/products/:id/kardex',
+    {
+      preHandler: [requireAuth(), requirePermission(Permissions.CatalogRead)],
+    },
+    async (request, reply) => {
+      const productId = (request.params as any).id as string
+      const parsed = kardexQuerySchema.safeParse(request.query)
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
+
+      const tenantId = request.auth!.tenantId
+      const hasStockRead = request.auth!.permissions.has(Permissions.StockRead)
+
+      const product = await db.product.findFirst({
+        where: { id: productId, tenantId },
+        select: { id: true, sku: true, name: true, baseUnitAbbreviation: true },
+      })
+      if (!product) return reply.status(404).send({ message: 'Product not found' })
+
+      const createdAtFilter: { gte?: Date; lt?: Date } = {}
+      const { from, to, presentationId } = parsed.data
+      if (from) createdAtFilter.gte = from
+      if (to) createdAtFilter.lt = to
+
+      const movements = await db.stockMovement.findMany({
+        where: {
+          tenantId,
+          productId,
+          ...(presentationId ? { presentationId } : {}),
+          ...(Object.keys(createdAtFilter).length > 0 ? { createdAt: createdAtFilter } : {}),
+        },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        select: {
+          id: true,
+          number: true,
+          createdAt: true,
+          type: true,
+          quantity: true,
+          presentationId: true,
+          presentationQuantity: true,
+          batchId: true,
+          fromLocationId: true,
+          toLocationId: true,
+          referenceType: true,
+          referenceId: true,
+          note: true,
+        },
+      })
+
+      const presentationIds = new Set<string>()
+      const batchIds = new Set<string>()
+      const locationIds = new Set<string>()
+      for (const m of movements) {
+        if (m.presentationId) presentationIds.add(m.presentationId)
+        if (m.batchId) batchIds.add(m.batchId)
+        if (m.fromLocationId) locationIds.add(m.fromLocationId)
+        if (m.toLocationId) locationIds.add(m.toLocationId)
+      }
+
+      const presentations = presentationIds.size
+        ? await db.productPresentation.findMany({
+            where: { tenantId, id: { in: [...presentationIds] } },
+            select: { id: true, name: true, unitsPerPresentation: true, isDefault: true, sortOrder: true },
+          })
+        : []
+      const presById = new Map(presentations.map((p) => [p.id, p]))
+
+      const batches = batchIds.size
+        ? await db.batch.findMany({
+            where: { tenantId, id: { in: [...batchIds] } },
+            select: { id: true, batchNumber: true, expiresAt: true, status: true },
+          })
+        : []
+      const batchById = new Map(batches.map((b) => [b.id, b]))
+
+      const locations = locationIds.size
+        ? await db.location.findMany({
+            where: { tenantId, id: { in: [...locationIds] } },
+            select: {
+              id: true,
+              code: true,
+              warehouse: { select: { id: true, code: true, name: true, city: true } },
+            },
+          })
+        : []
+      const locById = new Map(locations.map((l) => [l.id, l]))
+
+      const presentationList =
+        (await db.productPresentation.findMany({
+          where: { tenantId, productId, isActive: true },
+          orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+          select: { id: true, name: true, unitsPerPresentation: true, isDefault: true },
+        })) ?? []
+
+      const baseUnit = product.baseUnitAbbreviation ?? 'u'
+
+      const items: Array<{
+        date: string
+        locationCode: string
+        locationWarehouse: string | null
+        locationCity: string | null
+        type: string
+        batchNumber: string | null
+        detail: string
+        entry: string
+        exit: string
+        balance: string
+        balancePresentation: string
+        presentationId: string | null
+        presentationLabel: string
+        presentationUnits: string
+      }> = []
+
+      let balance = 0
+      const balanceByPresentation = new Map<string, number>()
+      for (const pres of presentationList) {
+        balanceByPresentation.set(pres.id, 0)
+      }
+
+      for (const m of movements) {
+        const qty = Number(m.quantity)
+        const isEntry = m.type === 'IN' || m.type === 'ADJUSTMENT'
+        const entry = isEntry ? qty : 0
+        const exit = !isEntry ? qty : 0
+
+        let presLabel = '—'
+        let presUnitsStr = ''
+        let presUnitsPer = 1
+        if (m.presentationId && presById.has(m.presentationId)) {
+          const pres = presById.get(m.presentationId)
+          if (pres) {
+            presUnitsPer = Number(pres.unitsPerPresentation)
+            presLabel = `${pres.name} (${Math.trunc(presUnitsPer)}${baseUnit})`
+          }
+        }
+
+        let presQty: number | null = null
+        if (m.presentationQuantity) {
+          presQty = Number(m.presentationQuantity)
+        } else if (m.presentationId && presById.has(m.presentationId) && presUnitsPer > 0) {
+          presQty = qty / presUnitsPer
+        }
+        presUnitsStr = presQty !== null && !Number.isNaN(presQty) ? formatPresentation(presQty, 1) : ''
+
+        const fromLoc = m.fromLocationId ? locById.get(m.fromLocationId) ?? null : null
+        const toLoc = m.toLocationId ? locById.get(m.toLocationId) ?? null : null
+        balance += entry - exit
+        if (m.presentationId && presById.has(m.presentationId)) {
+          const prev = balanceByPresentation.get(m.presentationId) ?? 0
+          balanceByPresentation.set(m.presentationId, prev + entry - exit)
+        }
+
+        let balancePres = '—'
+        if (m.presentationId && presById.has(m.presentationId) && presUnitsPer > 0) {
+          balancePres = formatPresentation(balanceByPresentation.get(m.presentationId) ?? 0, presUnitsPer)
+        }
+
+        const detail = buildMovementDetail(m, batchById, fromLoc ?? null, toLoc ?? null)
+        const loc = toLoc ?? fromLoc
+        items.push({
+          date: m.createdAt.toISOString(),
+          locationCode: loc ? loc.code : '—',
+          locationWarehouse: loc ? loc.warehouse.name : null,
+          locationCity: loc ? loc.warehouse.city : null,
+          type: m.type,
+          batchNumber: m.batchId ? batchById.get(m.batchId)?.batchNumber ?? '—' : null,
+          detail,
+          entry: isEntry ? formatQty(qty) : '',
+          exit: !isEntry ? formatQty(qty) : '',
+          balance: formatQty(balance),
+          balancePresentation: balancePres,
+          presentationId: m.presentationId ?? null,
+          presentationLabel: presLabel,
+          presentationUnits: presUnitsStr,
+        })
+      }
+
+      const presentationsResult = presentationList.map((pres) => ({
+        id: pres.id,
+        name: pres.name,
+        unitsPerPresentation: pres.unitsPerPresentation,
+        isDefault: pres.isDefault,
+         movements: items.filter((i) => i.presentationId === pres.id || (!i.presentationId && Number(pres.unitsPerPresentation) === 1)),
+        finalBalance: balanceByPresentation.get(pres.id) ?? 0,
+      }))
+
+      return reply.send({
+        product: {
+          id: product.id,
+          sku: product.sku,
+          name: product.name,
+          baseUnitAbbreviation: product.baseUnitAbbreviation ?? baseUnit,
+        },
+        hasStockRead,
+        presentations: presentationsResult,
+        totals: { totalMovements: items.length, balance: formatQty(balance) },
+      })
     },
   )
 

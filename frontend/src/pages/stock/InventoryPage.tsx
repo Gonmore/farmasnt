@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState, useEffect, type ReactElement, type ReactNode } from 'react'
 import { apiFetch } from '../../lib/api'
 import { formatDateOnlyUtc } from '../../lib/date'
-import { exportToXlsx } from '../../lib/exportXlsx'
+import { exportToXlsx, type ExportSheet } from '../../lib/exportXlsx'
 import { getProductLabel } from '../../lib/productName'
 import { sortProductsByDisplayName } from '../../lib/productSorting'
 import { useAuth } from '../../providers/AuthProvider'
@@ -20,7 +20,7 @@ import {
 } from '../../components'
 import { useNavigation, usePermissions } from '../../hooks'
 import type { ExpiryStatus } from '../../components/common/ExpiryBadge'
-import { ArchiveBoxIcon, ArrowPathIcon, BeakerIcon, DocumentArrowDownIcon } from '@heroicons/react/24/outline'
+import { ArchiveBoxIcon, ArrowPathIcon, BeakerIcon, DocumentArrowDownIcon, TableCellsIcon } from '@heroicons/react/24/outline'
 
 type BalanceExpandedItem = {
   id: string
@@ -112,6 +112,39 @@ type BatchMovementItem = {
 }
 
 type BatchMovementsResponse = { batch: { id: string; batchNumber: string }; items: BatchMovementItem[] }
+
+type KardexItem = {
+  date: string
+  locationCode: string
+  locationWarehouse: string | null
+  locationCity: string | null
+  type: string
+  batchNumber: string | null
+  detail: string
+  entry: string
+  exit: string
+  balance: string
+  balancePresentation: string
+  presentationId: string | null
+  presentationLabel: string
+  presentationUnits: string
+}
+
+type KardexPresentation = {
+  id: string
+  name: string
+  unitsPerPresentation: number
+  isDefault: boolean
+  movements: KardexItem[]
+  finalBalance: number
+}
+
+type KardexResponse = {
+  product: { id: string; sku: string; name: string; baseUnitAbbreviation: string }
+  hasStockRead: boolean
+  presentations: KardexPresentation[]
+  totals: { totalMovements: number; balance: string }
+}
 
 type ProductGroup = {
   productId: string
@@ -269,6 +302,10 @@ async function fetchReservations(token: string, balanceId: string): Promise<{ it
 
 async function listBatchMovements(token: string, productId: string, batchId: string): Promise<BatchMovementsResponse> {
   return apiFetch(`/api/v1/products/${productId}/batches/${batchId}/movements`, { token })
+}
+
+async function fetchProductKardex(token: string, productId: string): Promise<KardexResponse> {
+  return apiFetch(`/api/v1/products/${productId}/kardex`, { token })
 }
 
 async function updateBatchStatus(
@@ -465,6 +502,151 @@ function InlineLocationEditor({ batch, token }: { batch: any; token: string }) {
   )
 }
 
+function KardexModalContent({ productId, onClose }: { productId: string; onClose: () => void }) {
+  const auth = useAuth()
+
+  const [activePresentationId, setActivePresentationId] = useState<string | null>(null)
+
+  const { data: kardexData, isLoading, error, refetch } = useQuery({
+    queryKey: ['productKardex', productId],
+    queryFn: () => fetchProductKardex(auth.accessToken!, productId),
+    enabled: !!auth.accessToken && !!productId,
+  })
+
+  const presentations = kardexData?.presentations ?? []
+  useEffect(() => {
+    if (presentations.length > 0 && !activePresentationId) {
+      const defaultPres = presentations.find((p) => p.isDefault) ?? presentations[0]
+      setActivePresentationId(defaultPres?.id ?? null)
+    }
+  }, [presentations, activePresentationId])
+
+  const exportKardexToExcel = () => {
+    if (!kardexData) return
+    const sheets: ExportSheet[] = kardexData.presentations.map((pres) => ({
+      name: pres.name,
+      rows: pres.movements.map((m) => ({
+        Fecha: m.date,
+        'Ubicación (Sub-Almacén)': m.locationCode,
+        'Almacén': m.locationWarehouse ?? '',
+        'Ciudad': m.locationCity ?? '',
+        'Tipo Movimiento': m.type,
+        LOTE: m.batchNumber ?? '',
+        'Detalle / Cliente': m.detail,
+        'Entrada (u)': m.entry,
+        'Salida (u)': m.exit,
+        'Saldo Unidades': m.balance,
+        'Saldo Presentaciones': m.balancePresentation,
+      })),
+    }))
+    const date = new Date().toISOString().split('T')[0]
+    const filename = `kardex_${kardexData.product.sku}_${date}.xlsx`
+    exportToXlsx(filename, sheets)
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div>
+        <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
+          {kardexData?.product?.name ?? 'Producto'}
+        </h3>
+        <p className="text-sm text-slate-500 dark:text-slate-400">SKU: {kardexData?.product?.sku ?? '—'}</p>
+      </div>
+
+      {isLoading && <Loading />}
+
+      {error && <ErrorState message="Error al cargar el kardex" retry={() => refetch()} />}
+
+      {!isLoading && !error && kardexData && presentations.length > 0 && (
+        <>
+          <div className="flex flex-wrap gap-1 border-b border-slate-200 dark:border-slate-700">
+            {presentations.map((pres) => (
+              <button
+                key={pres.id}
+                onClick={() => setActivePresentationId(pres.id)}
+                className={`rounded-t-md border border-b-0 px-4 py-2 text-sm font-medium transition-colors ${
+                  activePresentationId === pres.id
+                    ? 'border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300'
+                    : 'border-transparent text-slate-600 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-800'
+                }`}
+              >
+                {pres.name}{' '}
+                {pres.unitsPerPresentation > 1
+                  ? `(${pres.unitsPerPresentation}${kardexData.product.baseUnitAbbreviation})`
+                  : `(${kardexData.product.baseUnitAbbreviation})`}
+                {pres.isDefault && ' (default)'}
+              </button>
+            ))}
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800">
+                  <th className="border px-2 py-1.5 text-left font-medium text-slate-800 dark:text-slate-200">Fecha</th>
+                  <th className="border px-2 py-1.5 text-left font-medium text-slate-800 dark:text-slate-200">Ubicación (Sub-Almacén)</th>
+                  <th className="border px-2 py-1.5 text-left font-medium text-slate-800 dark:text-slate-200">Tipo</th>
+                  <th className="border px-2 py-1.5 text-left font-medium text-slate-800 dark:text-slate-200">LOTE</th>
+                  <th className="border px-2 py-1.5 text-left font-medium text-slate-800 dark:text-slate-200">Detalle</th>
+                  <th className="border px-2 py-1.5 text-right font-medium text-slate-800 dark:text-slate-200">Entrada (u)</th>
+                  <th className="border px-2 py-1.5 text-right font-medium text-slate-800 dark:text-slate-200">Salida (u)</th>
+                  <th className="border px-2 py-1.5 text-right font-medium text-slate-800 dark:text-slate-200">Saldo Unds.</th>
+                  <th className="border px-2 py-1.5 text-right font-medium text-slate-800 dark:text-slate-200">Saldo Presentaciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {presentations
+                  .find((p) => p.id === activePresentationId)
+                  ?.movements.map((m, idx) => (
+                    <tr
+                      key={idx}
+                      className={idx % 2 === 0 ? 'bg-white dark:bg-slate-900' : 'bg-slate-50 dark:bg-slate-800'}
+                    >
+                      <td className="border px-2 py-1">{new Date(m.date).toLocaleString()}</td>
+                      <td className="border px-2 py-1">{m.locationCode}</td>
+                      <td className="border px-2 py-1">{m.type}</td>
+                      <td className="border px-2 py-1">{m.batchNumber ?? '—'}</td>
+                      <td className="border px-2 py-1">{m.detail}</td>
+                      <td className="border px-2 py-1 text-right">{m.entry || '—'}</td>
+                      <td className="border px-2 py-1 text-right">{m.exit || '—'}</td>
+                      <td className="border px-2 py-1 text-right font-medium">{m.balance}</td>
+                      <td className="border px-2 py-1 text-right">{m.balancePresentation}</td>
+                    </tr>
+                  ))}
+                {presentations.find((p) => p.id === activePresentationId)?.movements.length === 0 && (
+                  <tr>
+                    <td colSpan={9} className="border px-2 py-4 text-center text-slate-500 dark:text-slate-400">
+                      No hay movimientos registrados para esta presentación.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="flex justify-between items-center border-t border-slate-200 dark:border-slate-700 pt-3">
+            <span className="text-sm text-slate-600 dark:text-slate-400">
+              Total movimientos: {kardexData.totals.totalMovements} | Stock actual: {kardexData.totals.balance}
+            </span>
+            <div className="flex gap-2">
+              <Button variant="secondary" onClick={onClose}>
+                Cerrar
+              </Button>
+              <Button icon={<DocumentArrowDownIcon />} onClick={exportKardexToExcel}>
+                Exportar a Excel
+              </Button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {!isLoading && !error && presentations.length === 0 && (
+        <p className="text-slate-500 dark:text-slate-400">Este producto no tiene movimientos registrados.</p>
+      )}
+    </div>
+  )
+}
+
 export function InventoryPage() {
   const auth = useAuth()
   const navGroups = useNavigation()
@@ -506,6 +688,9 @@ export function InventoryPage() {
   const [reservationsModalOpen, setReservationsModalOpen] = useState(false)
   const [selectedReservations, setSelectedReservations] = useState<ReservationItem[]>([])
   const [loadingReservations, setLoadingReservations] = useState(false)
+
+  const [kardexModalOpen, setKardexModalOpen] = useState(false)
+  const [kardexProductId, setKardexProductId] = useState<string | null>(null)
 
   const [flowItem, setFlowItem] = useState<{
     productId: string
@@ -1121,10 +1306,21 @@ export function InventoryPage() {
                     }}
                     className="flex w-full items-start justify-between gap-4 p-4 text-left hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-400/40 dark:hover:bg-slate-800"
                   >
-                    <div className="min-w-0">
+                     <div className="min-w-0">
                       <div className="truncate font-semibold text-slate-900 dark:text-slate-100">{pg.name}</div>
                       <div className="mt-1 text-xs font-mono text-slate-500 dark:text-slate-400">{pg.sku}</div>
                     </div>
+
+                    <Button
+                      icon={<TableCellsIcon />}
+                      onClick={() => {
+                        setKardexProductId(pg.productId)
+                        setKardexModalOpen(true)
+                      }}
+                      className="h-7 text-xs"
+                    >
+                      Kardex
+                    </Button>
 
                     <div className="flex flex-wrap justify-end gap-2">
                       {(() => {
@@ -1597,7 +1793,17 @@ export function InventoryPage() {
               })
             )}
           </div>
+         </Modal>
+
+        <Modal
+          isOpen={kardexModalOpen}
+          onClose={() => { setKardexModalOpen(false); setKardexProductId(null) }}
+          title="Kardex de Inventario"
+          maxWidth="4xl"
+        >
+          {kardexProductId ? <KardexModalContent productId={kardexProductId} onClose={() => { setKardexModalOpen(false); setKardexProductId(null) }} /> : null}
         </Modal>
-    </MainLayout>
+
+     </MainLayout>
   )
 }

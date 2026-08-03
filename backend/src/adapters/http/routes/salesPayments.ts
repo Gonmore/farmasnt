@@ -96,7 +96,7 @@ export function registerSalesPaymentRoutes(app: FastifyInstance) {
       const parsed = paymentProofPresignSchema.safeParse(request.body)
       if (!parsed.success) return reply.status(400).send({ message: 'Invalid request', issues: parsed.error.issues })
 
-      const allowedContentTypes = new Set(['image/png', 'image/jpeg', 'image/webp'])
+      const allowedContentTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'application/pdf'])
       if (!allowedContentTypes.has(parsed.data.contentType)) {
         return reply.status(400).send({ message: 'Unsupported contentType' })
       }

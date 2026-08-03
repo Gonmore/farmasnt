@@ -302,7 +302,8 @@ const movementRequestsListQuerySchema = z.object({
 })
 
 const movementRequestCreateSchema = z.object({
-  warehouseId: z.string().uuid(),
+  warehouseId: z.string().uuid().optional(),
+  toLocationId: z.string().uuid().optional(),
   items: z
     .array(
       z.object({
@@ -845,6 +846,7 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
         orderBy: [{ createdAt: 'desc' }],
         include: {
           warehouse: { select: { id: true, code: true, name: true, city: true } },
+          toLocation: { select: { id: true, code: true, warehouse: { select: { id: true, code: true, name: true, city: true } } } },
           items: {
             include: { 
               product: { select: { id: true, sku: true, name: true, genericName: true } },
@@ -1033,6 +1035,14 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
           note: r.note,
           requestedBy: r.requestedBy,
           requestedByName: userMap.get(r.requestedBy) || null,
+          toLocationId: (r as any).toLocationId ?? null,
+          toLocation: (r as any).toLocation
+            ? {
+                id: (r as any).toLocation.id,
+                code: (r as any).toLocation.code,
+                warehouse: (r as any).toLocation.warehouse,
+              }
+            : null,
           fulfilledAt: r.fulfilledAt ? r.fulfilledAt.toISOString() : null,
           fulfilledBy: r.fulfilledBy,
           fulfilledByName: r.fulfilledBy ? (userMap.get(r.fulfilledBy) || r.fulfilledBy) : null,
@@ -1122,9 +1132,11 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
 
       const input = parsed.data
 
+      const resolvedToLocationHolder: { current: { id: string; code: string } | null } = { current: null }
+
       try {
         const result = await db.$transaction(async (tx) => {
-          // Get warehouse to extract city
+           // Get warehouse to extract city
           const warehouse = await (tx as any).warehouse.findFirst({
             where: { tenantId, id: input.warehouseId, isActive: true },
             select: { id: true, city: true },
@@ -1133,6 +1145,24 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
             const err = new Error('Warehouse not found') as Error & { statusCode?: number }
             err.statusCode = 404
             throw err
+          }
+
+          // Validate toLocationId if provided: must belong to the target warehouse
+          if (input.toLocationId) {
+            const loc = await (tx as any).location.findFirst({
+              where: {
+                tenantId,
+                id: input.toLocationId,
+                isActive: true,
+              },
+              select: { id: true, code: true },
+            })
+            if (!loc) {
+              const err = new Error('Destination location not found') as Error & { statusCode?: number }
+              err.statusCode = 404
+              throw err
+            }
+            resolvedToLocationHolder.current = loc
           }
 
           if (branchCity) {
@@ -1196,6 +1226,7 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
               codeYear: year,
               codeSeq: seq.value,
               warehouseId: input.warehouseId,
+              toLocationId: input.toLocationId ?? null,
               requestedCity: warehouse.city,
               requestedBy: userId,
               note: input.note,
@@ -1234,6 +1265,7 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
             entityId: movementRequest.id,
             after: {
               warehouseId: input.warehouseId,
+              toLocationId: input.toLocationId ?? null,
               itemsCount: normalizedItems.length,
             },
           })
@@ -1254,6 +1286,8 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
           status: result.status,
           confirmationStatus: (result as any).confirmationStatus,
           warehouseId: (result as any).warehouseId ?? input.warehouseId,
+          toLocationId: (result as any).toLocationId ?? input.toLocationId ?? null,
+          toLocation: resolvedToLocationHolder.current ? { id: resolvedToLocationHolder.current.id, code: resolvedToLocationHolder.current.code } : null,
           requestedCity: result.requestedCity,
           requestedByName: userName,
           confirmedAt: null,
@@ -1567,6 +1601,7 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
         },
         include: {
           warehouse: { select: { id: true, code: true, name: true, city: true } },
+          toLocation: { select: { id: true, code: true, warehouse: { select: { id: true, code: true, name: true, city: true } } } },
           items: {
             where: { remainingQuantity: { gt: 0 } },
             include: {
@@ -1771,6 +1806,8 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
         confirmationStatus: (req as any).confirmationStatus,
         warehouseId: (req as any).warehouseId ?? null,
         warehouse: (req as any).warehouse ?? null,
+        toLocationId: (req as any).toLocationId ?? null,
+        toLocation: (req as any).toLocation ?? null,
         requestedCity: req.requestedCity,
         fromWarehouseId: originWarehouse.id,
         fromWarehouse: originWarehouse,
@@ -1814,6 +1851,7 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
             },
             include: {
               warehouse: { select: { id: true, code: true, name: true, city: true } },
+              toLocation: { select: { id: true, code: true, warehouse: { select: { id: true, code: true, name: true, city: true } } } },
               items: {
                 include: {
                   product: { select: { id: true, sku: true, name: true, genericName: true } },

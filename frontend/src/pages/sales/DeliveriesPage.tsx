@@ -14,6 +14,7 @@ import {
   PaginationCursor,
   Select,
   Table,
+  Input,
 } from '../../components'
 import { useNavigation } from '../../hooks'
 import { usePermissions } from '../../hooks/usePermissions'
@@ -70,6 +71,27 @@ type ReservationRow = {
 
 type ReservationsResponse = { items: ReservationRow[] }
 
+type OrderLineItem = {
+  id: string
+  productId: string
+  batchId: string | null
+  quantity: number
+  presentationId: string | null
+  presentationName: string | null
+  unitsPerPresentation: number | null
+  presentationQuantity: number | null
+  unitPrice: number
+  product: { sku: string; name: string; genericName: string | null; baseUnitAbbreviation: string }
+}
+
+type OrderResponse = {
+  id: string
+  number: string
+  version: number
+  status: string
+  lines: OrderLineItem[]
+}
+
 function startOfDayLocal(d: Date) {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate())
 }
@@ -110,15 +132,32 @@ async function listWarehouseLocations(token: string, warehouseId: string): Promi
   return apiFetch(`/api/v1/warehouses/${encodeURIComponent(warehouseId)}/locations?${params}`, { token })
 }
 
-async function deliverOrder(
-  token: string,
-  input: { orderId: string; version: number; fromLocationId?: string },
-): Promise<{ order: { id: string } }> {
-  return apiFetch(`/api/v1/sales/orders/${encodeURIComponent(input.orderId)}/deliver`, {
+async function deliverOrder(token: string, input: {
+  orderId: string; version: number; fromLocationId?: string;
+  note?: string; returns?: Array<{ lineId: string; productId: string; batchId: string | null; quantity: number; reason?: string; note?: string; locationId?: string }>
+}): Promise<{ order: { id: string } }> {
+  const body: any = { version: input.version }
+  if (input.fromLocationId) body.fromLocationId = input.fromLocationId
+  if (input.note) body.note = input.note
+  if (input.returns && input.returns.length > 0) {
+    body.returns = input.returns.map(r => ({
+      lineId: r.lineId,
+      productId: r.productId,
+      batchId: r.batchId ?? undefined,
+      quantity: r.quantity,
+      reason: r.reason,
+      note: r.note,
+    }))
+  }
+  return apiFetch(`/api/v1/sales/orders/${encodeURIComponent(input.orderId)}/deliver-with-returns`, {
     method: 'POST',
     token,
-    body: JSON.stringify({ version: input.version, ...(input.fromLocationId ? { fromLocationId: input.fromLocationId } : {}) }),
+    body: JSON.stringify(body),
   })
+}
+
+async function fetchOrderDetail(token: string, orderId: string): Promise<OrderResponse> {
+  return apiFetch(`/api/v1/sales/orders/${encodeURIComponent(orderId)}`, { token })
 }
 
 async function fetchOrderReservations(token: string, orderId: string): Promise<ReservationsResponse> {
@@ -128,6 +167,251 @@ async function fetchOrderReservations(token: string, orderId: string): Promise<R
 function isMissingReservationsError(message: string): boolean {
   const m = (message ?? '').toLowerCase()
   return m.includes('no reservations') || (m.includes('fromlocationid') && m.includes('no reservations'))
+}
+
+function DeliveryModal({
+  isOpen,
+  onClose,
+  orderId,
+  deliverMutation,
+  auth,
+  deliverMode,
+  setDeliverMode,
+  returnLines,
+  setReturnLines,
+}: {
+  isOpen: boolean
+  onClose: () => void
+  orderId: string | null
+  deliverMutation: any
+  auth: { accessToken: string | null }
+  deliverMode: 'NORMAL' | 'PARTIAL'
+  setDeliverMode: (v: 'NORMAL' | 'PARTIAL') => void
+  returnLines: Array<{
+    lineId: string
+    productId: string
+    batchId: string | null
+    productName: string
+    quantity: number
+    returnQuantity: string
+    reason: string
+    note: string
+  }>
+  setReturnLines: (lines: Array<typeof returnLines[number]>) => void
+}) {
+  const [orderDetail, setOrderDetail] = useState<OrderResponse | null>(null)
+  const [returnNote, setReturnNote] = useState('')
+
+  const orderQuery = useQuery({
+    queryKey: ['orderDetail', orderId],
+    queryFn: () => fetchOrderDetail(auth.accessToken!, orderId!),
+    enabled: !!auth.accessToken && !!orderId && isOpen,
+    staleTime: 60000,
+    gcTime: 120000,
+  })
+
+  useEffect(() => {
+    if (orderQuery.data) {
+      setOrderDetail(orderQuery.data)
+      // Auto-populate return lines from order items
+      const lines = orderQuery.data.lines.map((line) => ({
+        lineId: line.id,
+        productId: line.productId,
+        batchId: line.batchId,
+        productName: `${line.product.name}${line.presentationName ? ` (${line.presentationName})` : ''}`,
+        quantity: Number(line.quantity),
+        returnQuantity: '',
+        reason: '',
+        note: '',
+      }))
+      setReturnLines(lines)
+    }
+  }, [orderQuery.data])
+
+  const totalReturnItems = useMemo(() => {
+    return returnLines.reduce((sum, line) => {
+      const qty = Number(line.returnQuantity)
+      return sum + (Number.isFinite(qty) && qty > 0 ? qty : 0)
+    }, 0)
+  }, [returnLines])
+
+  const handleReturnTypeChange = (index: number, value: string) => {
+    const newLines = [...returnLines]
+    newLines[index] = { ...newLines[index], returnQuantity: value }
+    setReturnLines(newLines)
+  }
+
+  const handleReasonChange = (index: number, value: string) => {
+    const newLines = [...returnLines]
+    newLines[index] = { ...newLines[index], reason: value }
+    setReturnLines(newLines)
+  }
+
+  const handleReturnLineNoteChange = (index: number, value: string) => {
+    const newLines = [...returnLines]
+    newLines[index] = { ...newLines[index], note: value }
+    setReturnLines(newLines)
+  }
+
+  const removeReturnLine = (index: number) => {
+    setReturnLines(returnLines.filter((_, i) => i !== index))
+  }
+
+  const handleConfirm = async () => {
+    if (!orderId || deliverMutation.isPending) return
+    if (!orderDetail) return
+
+    const returns = returnLines
+      .filter((line) => {
+        const qty = Number(line.returnQuantity)
+        return Number.isFinite(qty) && qty > 0
+      })
+      .map((line) => ({
+        lineId: line.lineId,
+        productId: line.productId,
+        batchId: line.batchId,
+        quantity: Math.trunc(Number(line.returnQuantity)),
+        reason: line.reason.trim() || undefined,
+        note: line.note.trim() || undefined,
+      }))
+
+    let fromLocationId: string | undefined = undefined
+
+    const note = returnNote.trim() || undefined
+
+    await deliverMutation.mutateAsync({
+      orderId: orderId,
+      version: orderDetail.version,
+      fromLocationId,
+      note,
+      returns: returns.length > 0 ? returns : undefined,
+    })
+  }
+
+  return (
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title="Marcar orden como entregada"
+      maxWidth="3xl"
+    >
+      <div className="space-y-4">
+        {orderQuery.isLoading && <Loading />}
+
+        {orderQuery.data && (
+          <>
+            <div>
+              <h4 className="text-sm font-medium text-slate-700 dark:text-slate-300">Orden #{orderQuery.data.number}</h4>
+            </div>
+
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="radio"
+                  name="deliverMode"
+                  checked={deliverMode === 'NORMAL'}
+                  onChange={() => setDeliverMode('NORMAL')}
+                  disabled={deliverMutation.isPending}
+                />
+                <span>Entrega normal (sin devoluciones)</span>
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="radio"
+                  name="deliverMode"
+                  checked={deliverMode === 'PARTIAL'}
+                  onChange={() => setDeliverMode('PARTIAL')}
+                  disabled={deliverMutation.isPending}
+                />
+                <span>Entrega con devoluciones parciales</span>
+              </label>
+            </div>
+
+            {deliverMode === 'PARTIAL' && (
+              <div className="space-y-3">
+                <p className="text-sm text-slate-600 dark:text-slate-400">
+                  Marca las cantidades a devolver. El stock será devuelto al origen.
+                </p>
+
+                {returnLines.map((line, idx) => (
+                  <div key={line.lineId} className="rounded-lg border border-slate-200 dark:border-slate-700 p-3 space-y-2">
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <span className="text-sm font-medium text-slate-900 dark:text-slate-100">{line.productName}</span>
+                        <span className="text-xs text-slate-500 dark:text-slate-400"> / Pedido: {line.quantity} unidades</span>
+                      </div>
+                      <button
+                        onClick={() => removeReturnLine(idx)}
+                        className="text-xs text-red-600 hover:text-red-700 dark:text-red-400"
+                        disabled={deliverMutation.isPending}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Input
+                        label="Cant. a devolver"
+                        type="number"
+                        min="0"
+                        max={line.quantity}
+                        value={line.returnQuantity}
+                        onChange={(e) => handleReturnTypeChange(idx, e.target.value)}
+                        disabled={deliverMutation.isPending}
+                      />
+                      <Input
+                        label="Motivo"
+                        value={line.reason}
+                        onChange={(e) => handleReasonChange(idx, e.target.value)}
+                        placeholder="Ej: Producto defectuoso"
+                        disabled={deliverMutation.isPending}
+                        maxLength={200}
+                      />
+                    </div>
+                    <Input
+                      label="Nota (opcional)"
+                      value={line.note}
+                      onChange={(e) => handleReturnLineNoteChange(idx, e.target.value)}
+                      placeholder="Detalle adicional"
+                      disabled={deliverMutation.isPending}
+                      maxLength={200}
+                    />
+                  </div>
+                ))}
+
+                <div className="border-t border-slate-200 dark:border-slate-700 pt-2">
+                  <p className="text-sm text-slate-600 dark:text-slate-400">
+                    Total a devolver: <strong>{totalReturnItems}</strong> unidades
+                  </p>
+                </div>
+              </div>
+            )}
+
+            <Input
+              label="Nota de entrega (opcional)"
+              value={returnNote}
+              onChange={(e) => setReturnNote(e.target.value)}
+              placeholder="Observaciones sobre la entrega"
+              disabled={deliverMutation.isPending}
+              maxLength={500}
+            />
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <Button variant="secondary" onClick={onClose} disabled={deliverMutation.isPending}>
+                Cancelar
+              </Button>
+              <Button
+                loading={deliverMutation.isPending}
+                onClick={handleConfirm}
+                disabled={!orderDetail || deliverMutation.isPending}
+              >
+                {deliverMutation.isPending ? 'Marcando...' : 'Confirmar entrega'}
+              </Button>
+            </div>
+          </>
+        )}
+      </div>
+    </Modal>
+  )
 }
 
 export function DeliveriesPage() {
@@ -148,6 +432,20 @@ export function DeliveriesPage() {
   const [deliverTarget, setDeliverTarget] = useState<{ orderId: string; version: number; number: string } | null>(null)
   const [deliverWarehouseId, setDeliverWarehouseId] = useState<string>('')
   const [deliverLocationId, setDeliverLocationId] = useState<string>('')
+
+  const [deliverModalOpen, setDeliverModalOpen] = useState(false)
+  const [deliverModalOrderId, setDeliverModalOrderId] = useState<string | null>(null)
+  const [deliverMode, setDeliverMode] = useState<'NORMAL' | 'PARTIAL'>('NORMAL')
+  const [returnLines, setReturnLines] = useState<Array<{
+    lineId: string
+    productId: string
+    batchId: string | null
+    productName: string
+    quantity: number
+    returnQuantity: string
+    reason: string
+    note: string
+  }>>([])
 
   const [locationModalOpen, setLocationModalOpen] = useState(false)
   const [locationModalItem, setLocationModalItem] = useState<DeliveryListItem | null>(null)
@@ -193,18 +491,20 @@ export function DeliveriesPage() {
   })
 
   const deliverMutation = useMutation({
-    mutationFn: (vars: { orderId: string; version: number; fromLocationId?: string }) => deliverOrder(auth.accessToken!, vars),
+    mutationFn: (vars: { orderId: string; version: number; fromLocationId?: string; note?: string; returns?: Array<{ lineId: string; productId: string; batchId: string | null; quantity: number; reason?: string; note?: string; locationId?: string }> }) =>
+      deliverOrder(auth.accessToken!, vars),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['deliveries'] })
       await queryClient.invalidateQueries({ queryKey: ['orders'] })
-      setDeliverTarget(null)
-      setDeliverLocationModalOpen(false)
-      setDeliverWarehouseId('')
-      setDeliverLocationId('')
+      setDeliverModalOpen(false)
+      setDeliverModalOrderId(null)
+      setDeliverMode('NORMAL')
+      setReturnLines([])
     },
     onError: (err: any) => {
       const msg = (err?.message as string | undefined) ?? 'No se pudo marcar como entregado'
-      if (deliverTarget && isMissingReservationsError(msg)) {
+      if (deliverModalOrderId && isMissingReservationsError(msg)) {
+        setDeliverTarget({ orderId: deliverModalOrderId, version: 0, number: '' })
         setDeliverLocationModalOpen(true)
         return
       }
@@ -395,39 +695,15 @@ export function DeliveriesPage() {
                         >
                           <span className="hidden md:inline">Nota</span>
                         </Button>
-                        {o.status !== 'FULFILLED' && perms.hasPermission('sales:delivery:write') ? (
+                          {o.status !== 'FULFILLED' && perms.hasPermission('sales:delivery:write') ? (
                           <Button
                             size="sm"
                             variant="ghost"
                             icon={<CheckCircleIcon className="w-4 h-4" />}
                             disabled={deliverMutation.isPending}
-                            onClick={async () => {
-                              let confirmMsg = `¿Marcar la OV ${o.number} como entregada? Esto descontará stock.`
-                              try {
-                                const res = await fetchOrderReservations(auth.accessToken!, o.id)
-                                const rows = res?.items ?? []
-                                if (rows.length > 0) {
-                                  const lotes = new Set(rows.map((r: any) => r.batchId ?? r.batchNumber ?? 'SIN_LOTE'))
-                                  const ubic = new Set(rows.map((r: any) => r.locationId ?? r.locationCode ?? 'SIN_UBICACION'))
-                                  confirmMsg += `\n\nSe descontará específicamente de las reservas (picking): ${rows.length} líneas, ${lotes.size} lotes, ${ubic.size} ubicaciones.`
-                                }
-                              } catch {
-                                // ignore: keep default confirm text
-                              }
-
-                              const ok = window.confirm(confirmMsg)
-                              if (!ok) return
-                              setDeliverTarget({ orderId: o.id, version: o.version, number: o.number })
-                              try {
-                                await deliverMutation.mutateAsync({ orderId: o.id, version: o.version })
-                              } catch (e: any) {
-                                const msg = (e?.message as string | undefined) ?? ''
-                                if (isMissingReservationsError(msg)) {
-                                  setDeliverLocationModalOpen(true)
-                                  return
-                                }
-                                throw e
-                              }
+                            onClick={() => {
+                              setDeliverModalOrderId(o.id)
+                              setDeliverModalOpen(true)
                             }}
                           >
                             <span className="hidden md:inline">Marcar entregado</span>
@@ -572,7 +848,25 @@ export function DeliveriesPage() {
             </div>
           </div>
         </Modal>
-      </PageContainer>
+
+        <DeliveryModal
+          isOpen={deliverModalOpen}
+          onClose={() => {
+            setDeliverModalOpen(false)
+            setDeliverModalOrderId(null)
+            setDeliverMode('NORMAL')
+            setReturnLines([])
+          }}
+          orderId={deliverModalOrderId}
+          deliverMutation={deliverMutation}
+          auth={auth}
+          deliverMode={deliverMode}
+          setDeliverMode={setDeliverMode}
+          returnLines={returnLines}
+          setReturnLines={setReturnLines}
+        />
+
+       </PageContainer>
     </MainLayout>
   )
 }

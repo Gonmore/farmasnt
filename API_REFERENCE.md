@@ -1,8 +1,16 @@
 # API Reference — PharmaFlow Bolivia (MVP)
 
-## Versión 2.1.1
+## Versión 2.2.0
 
-Esta referencia ya contempla la ampliación **multi-marca / multi-empresa** de la versión `2.0`, los ajustes operativos de la versión `2.0.1`, la consolidación funcional de la versión `2.1.0` y los refuerzos operativos de la versión `2.1.1`.
+Esta referencia contempla los cambios de las versiones **2.0** (multi-marca/multi-empresa), **2.0.1** (orden alfabético), **2.1.0** (branding numérico + existencias + salida de muestra), **2.1.1** (badges operativos + restricción de edición de lotes), **2.1.2** (historial de movimientos), **2.1.3** (advertencia de atención parcial), **2.1.4** (reportes de ventas: estado por defecto "Todos" y `take` elevado a 1000) y **2.2.0** (kardex por presentación, modal de entrega con devoluciones, sub-almacén en solicitudes, upload PDF de comprobantes).
+
+Cambios relevantes en 2.2.0:
+- Nuevo endpoint `GET /api/v1/products/:id/kardex` devuelve movimientos agrupados por presentación con saldos acumulados, datos de lote/ubicación y saldos finales.
+- `POST /api/v1/sales/orders/:id/deliver-with-returns` permite registrar la entrega junto con devoluciones parciales en un solo request.
+- Nuevo endpoint `POST /api/v1/sales/orders/:id/return` para devoluciones standalone.
+- `POST /api/v1/stock/movement-requests` acepta `toLocationId` opcional para enrutar a un sub-almacén destino; `GET /api/v1/stock/movement-requests` y `POST /api/v1/stock/movement-requests/:id/plan` incluyen `toLocationId` + `toLocation`.
+- `POST /api/v1/sales/payments/proof-upload` y `POST /api/v1/stock/returns/photo-upload` aceptan `application/pdf` en `contentType`.
+- Se elevó el tope máximo de `take` en `GET /api/v1/reports/sales/by-month` a 1000 (antes 30) para consistencia con otros reportes.
 
 Cambios relevantes en 2.0:
 - `GET /api/v1/auth/me` devuelve `availableTenants` y `activeTenantId` cuando el usuario tiene acceso a más de una empresa.
@@ -65,8 +73,11 @@ Códigos usados por los guards:
 - `catalog:read`, `catalog:write`
 - `stock:read`, `stock:move`
 - `sales:order:read`, `sales:order:write`
+- `sales:delivery:read`, `sales:delivery:write`
 - `admin:users:manage`
 - `audit:read`
+- `report:sales:read`, `report:stock:read`
+- `platform:tenants:manage`
 
 ---
 
@@ -917,6 +928,90 @@ Response 200
 }
 ```
 
+### GET /api/v1/products/:productId/batches/:batchId/movements
+Requiere permisos: `catalog:read` + `stock:read`.
+
+Response 200
+```json
+{
+  "batch": { "id": "...", "batchNumber": "LOT-2026-0001" },
+  "items": [
+    {
+      "id": "...",
+      "number": "MS2026-0001",
+      "numberYear": 2026,
+      "createdAt": "2026-01-05T00:00:00.000Z",
+      "type": "IN",
+      "quantity": "30",
+      "presentationId": "...",
+      "presentationQuantity": "2",
+      "presentation": { "id": "...", "name": "Caja", "unitsPerPresentation": "15" },
+      "referenceType": null,
+      "referenceId": null,
+      "note": "Ingreso inicial",
+      "from": null,
+      "to": {
+        "id": "...",
+        "code": "BIN-01",
+        "warehouse": { "id": "...", "code": "WH-01", "name": "Almacén" }
+      }
+    }
+  ]
+}
+```
+
+### GET /api/v1/products/:id/kardex
+Requiere permisos: `catalog:read` + (`stock:read` si se desea ver stock detallado).
+
+Lista el historial de movimientos del producto agrupado por presentación, con saldos acumulados. Usado por la UI de Kardex en `InventoryPage.tsx`.
+
+Query (opcionales)
+- `take` (1..1000, default 1000) — límite temporal elevado para evitar recortes.
+- `batchId` (uuid, opcional)
+- `locationId` (uuid, opcional)
+- `from` (date-time, opcional)
+- `to` (date-time, opcional)
+
+Response 200
+```json
+{
+  "product": {
+    "id": "...",
+    "sku": "SKU-001",
+    "name": "Paracetamol 500mg",
+    "baseUnitAbbreviation": "u"
+  },
+  "hasStockRead": true,
+  "presentations": [
+    {
+      "id": "...",
+      "name": "Caja",
+      "unitsPerPresentation": 20,
+      "isDefault": true,
+      "movements": [
+        {
+          "date": "2026-03-01T00:00:00.000Z",
+          "locationCode": "BIN-01",
+          "locationWarehouse": "Almacén",
+          "locationCity": "LA PAZ",
+          "type": "IN",
+          "batchNumber": "LOT-2026-0001",
+          "detail": "Ingreso inicial",
+          "entry": "20",
+          "exit": "0",
+          "balance": "20",
+          "balancePresentation": "1"
+        }
+      ],
+      "finalBalance": 20
+    }
+  ],
+  "totals": { "totalMovements": 5, "balance": "20" }
+}
+```
+
+---
+
 ### PATCH /api/v1/products/:productId/batches/:batchId
 Requiere permiso: `catalog:write`.
 
@@ -1408,6 +1503,7 @@ Query
 Notas
 - Si el usuario tiene scope de sucursal (`ScopeBranch`), el backend filtra por la ciudad de la sucursal autenticada y no permite operar sin sucursal seleccionada.
 - `code` es un identificador humano tipo `SOLYY####`, secuencial por tenant+año.
+- La respuesta incluye `toLocationId` y `toLocation` (con warehouse anidado) cuando la solicitud tiene un sub-almacén destino.
 
 Response 200
 ```json
@@ -1421,6 +1517,8 @@ Response 200
       "warehouseId": "...",
       "warehouse": { "id": "...", "code": "SCZ", "name": "Sucursal SCZ", "city": "SANTA CRUZ" },
       "originWarehouse": { "id": "...", "code": "CEN", "name": "Central", "city": "SANTA CRUZ" },
+      "toLocationId": "...",
+      "toLocation": { "id": "...", "code": "SUB-01", "warehouse": { "id": "...", "code": "SCZ", "name": "Sucursal SCZ", "city": "SANTA CRUZ" } },
       "requestedCity": "SANTA CRUZ",
       "quoteId": null,
       "note": null,
@@ -1488,6 +1586,7 @@ Body
 ```json
 {
   "warehouseId": "...",
+  "toLocationId": "... (opcional, sub-almacén destino)",
   "items": [
     { "productId": "...", "presentationId": "...", "quantity": 10 },
     { "productId": "...", "presentationId": "...", "quantity": 30 }
@@ -1501,6 +1600,7 @@ Notas
 - El backend calcula `requestedQuantity`/`remainingQuantity` en unidades base usando `presentation.unitsPerPresentation`.
 - `requestedByName` se determina automáticamente desde el usuario autenticado (nombre o email).
 - `code` se asigna automáticamente al crear la solicitud.
+- `toLocationId` es opcional: si se envía, debe pertenecer al `warehouseId` destino y representa el sub-almacén destino de la solicitud.
 
 Response 201 (resumen)
 ```json
@@ -1510,6 +1610,8 @@ Response 201 (resumen)
   "status": "OPEN",
   "confirmationStatus": "PENDING",
   "warehouseId": "...",
+  "toLocationId": "..."
+  "toLocation": { "id": "...", "code": "SUB-01", "warehouse": { "id": "...", "code": "...", "name": "...", "city": "..." } }
   "requestedCity": "SANTA CRUZ",
   "requestedByName": "Juan Pérez",
   "createdAt": "2026-01-01T00:00:00.000Z",
@@ -2191,6 +2293,80 @@ Response 200
 { "order": { "id": "...", "number": "...", "status": "FULFILLED", "version": 3, "updatedAt": "..." } }
 ```
 
+### POST /api/v1/sales/orders/:id/deliver-with-returns
+Requiere: módulos `SALES` y `WAREHOUSE` + permisos `sales:order:write` (entrega) y `stock:move` (devoluciones).
+
+Alternativa a `POST /api/v1/sales/orders/:id/deliver` que permite registrar la entrega **junto con devoluciones parciales** en un solo request.
+
+Body
+```json
+{
+  "version": 2,
+  "fromLocationId": "... (opcional, fallback al flujo clásico)",
+  "note": "Opcional",
+  "returns": [
+    {
+      "lineId": "...",
+      "productId": "...",
+      "batchId": "... (opcional)",
+      "quantity": 2,
+      "reason": "Producto dañado",
+      "note": "Caja golpeada",
+      "locationId": "..."
+    }
+  ]
+}
+```
+
+Notas
+- Registra la entrega como `FULFILLED` con movimientos `OUT` (igual que `/deliver`).
+- Para cada item en `returns`, crea un movimiento `IN` con `referenceType: RETURN` y `referenceId` vinculado a la orden.
+- `locationId` en cada return es obligatorio y debe pertenecer a la ciudad del usuario (si está scopeado por sucursal).
+- `409` si `version` no coincide, la orden ya está `FULFILLED`, o stock insuficiente / lote vencido.
+
+Response 200
+```json
+{ "order": { "id": "...", "number": "...", "status": "FULFILLED", "version": 3, "updatedAt": "..." } }
+```
+
+Realtime emit
+- `sales.order.delivered`
+- `stock.movement.created`
+- `stock.balance.changed`
+
+### POST /api/v1/sales/orders/:id/return
+Requiere: módulos `SALES` y `WAREHOUSE` + permisos `sales:order:write` y `stock:move`.
+
+Registra devoluciones **standalone** (sin delivery) para órdenes ya entregadas o canceladas.
+
+Body
+```json
+{
+  "version": 2,
+  "items": [
+    {
+      "lineId": "... (opcional)",
+      "productId": "...",
+      "batchId": "... (opcional)",
+      "quantity": 2,
+      "reason": "Producto dañado",
+      "note": "Opcional",
+      "locationId": "..."
+    }
+  ]
+}
+```
+
+Notas
+- Crea movimientos `IN` con `referenceType: RETURN` y `referenceId` vinculado al id de la devolución.
+- `locationId` es obligatorio por item.
+- `409` si `version` no coincide o la orden no existe.
+
+Response 200
+```json
+{ "id": "...", "createdAt": "2026-03-01T00:00:00.000Z" }
+```
+
 ---
 
 ## Sales Payments (Cobros)
@@ -2199,13 +2375,15 @@ Requiere: módulo `SALES`.
 ### POST /api/v1/sales/payments/proof-upload
 Requiere permiso: `sales:order:write`.
 
+Genera una URL presignada para subir el comprobante de pago a S3-compatible.
+
 Body
 ```json
 { "fileName": "comprobante.jpg", "contentType": "image/jpeg" }
 ```
 
 Notas
-- `contentType` soportado: `image/png`, `image/jpeg`, `image/webp`.
+- `contentType` soportado: `image/png`, `image/jpeg`, `image/webp`, **`application/pdf`**.
 - Requiere S3-compatible configurado (`S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_PUBLIC_BASE_URL`).
 
 Response 200
