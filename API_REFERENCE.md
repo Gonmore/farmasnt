@@ -2,10 +2,10 @@
 
 ## Versión 2.2.0
 
-Esta referencia contempla los cambios de las versiones **2.0** (multi-marca/multi-empresa), **2.0.1** (orden alfabético), **2.1.0** (branding numérico + existencias + salida de muestra), **2.1.1** (badges operativos + restricción de edición de lotes), **2.1.2** (historial de movimientos), **2.1.3** (advertencia de atención parcial), **2.1.4** (reportes de ventas: estado por defecto "Todos" y `take` elevado a 1000) y **2.2.0** (kardex por presentación, modal de entrega con devoluciones, sub-almacén en solicitudes, upload PDF de comprobantes).
+Esta referencia contempla los cambios de las versiones **2.0** (multi-marca/multi-empresa), **2.0.1** (orden alfabético), **2.1.0** (branding numérico + existencias + salida de muestra), **2.1.1** (badges operativos + restricción de edición de lotes), **2.1.2** (historial de movimientos), **2.1.3** (advertencia de atención parcial), **2.1.4** (reportes de ventas: estado por defecto "Todos" y `take` elevado a 1000), **2.2.0** (kardex unificado AuditEvent-based, modal de entrega con devoluciones, sub-almacén en solicitudes, upload PDF de comprobantes).
 
 Cambios relevantes en 2.2.0:
-- Nuevo endpoint `GET /api/v1/products/:id/kardex` devuelve movimientos agrupados por presentación con saldos acumulados, datos de lote/ubicación y saldos finales.
+- `GET /api/v1/products/:id/kardex` refactorizado para reconstruir el saldo línea a línea desde `AuditEvent` (`action = 'stock.movement.create'`), ordenado cronológicamente ASC. Muestra el kardex en unidades base (sin pestañas por presentación) con un resumen consolidado por lotes/presentaciones al final. El saldo actual proviene de `InventoryBalance` (fuente autoritativa).
 - `POST /api/v1/sales/orders/:id/deliver-with-returns` permite registrar la entrega junto con devoluciones parciales en un solo request.
 - Nuevo endpoint `POST /api/v1/sales/orders/:id/return` para devoluciones standalone.
 - `POST /api/v1/stock/movement-requests` acepta `toLocationId` opcional para enrutar a un sub-almacén destino; `GET /api/v1/stock/movement-requests` y `POST /api/v1/stock/movement-requests/:id/plan` incluyen `toLocationId` + `toLocation`.
@@ -963,14 +963,18 @@ Response 200
 ### GET /api/v1/products/:id/kardex
 Requiere permisos: `catalog:read` + (`stock:read` si se desea ver stock detallado).
 
-Lista el historial de movimientos del producto agrupado por presentación, con saldos acumulados. Usado por la UI de Kardex en `InventoryPage.tsx`.
+Reconstruye el kardex del producto mediante `AuditEvent` (`action = 'stock.movement.create'`), ordenado cronológicamente ascendente. El flujo interno es: `warehouseId` → `Location` (ubicaciones de la sucursal) → `InventoryBalance` (IDs) → `AuditEvent` (movimientos cuyo `entityId` es un `StockMovement.id`). La tabla principal se muestra en **unidades base**, con un resumen consolidado al final.
 
 Query (opcionales)
-- `take` (1..1000, default 1000) — límite temporal elevado para evitar recortes.
-- `batchId` (uuid, opcional)
-- `locationId` (uuid, opcional)
-- `from` (date-time, opcional)
-- `to` (date-time, opcional)
+- `warehouseId` (uuid, opcional) — filtra movimientos que afectan a una sucursal específica. El balance acumulado solo incluye movimientos cuyo `fromLocationId` o `toLocationId` pertenecen a ubicaciones de esa sucursal. Las transferencias (`TRANSFER`) solo afectan si from o to están en la sucursal; movimientos `IN`/`OUT` sin ubicación se atribuyen a la sucursal consultada.
+- `locationId` (uuid, opcional) — filtra movimientos que afectan a una ubicación específica.
+- `from` (date-time, opcional) — fecha mínima.
+- `to` (date-time, opcional) — fecha máxima (exclusivo).
+
+Notas
+- El saldo acumulado (`runningBalance` en `summary`) se toma del `AuditEvent.after.toBalance.quantity` (o `fromBalance` según el rol) cuando el evento está disponible; si no hay evento de auditoría, se cae al acumulado de `entry - exit`.
+- El saldo actual (`currentStock`) proviene de la suma de `InventoryBalance.quantity` para la sucursal filtrada (fuente autoritativa), no del cálculo acumulado.
+- Los movimientos que no afectan a la sucursal filtrada se marcan con `affectsWarehouse=false` y aparecen sin impactar el saldo.
 
 Response 200
 ```json
@@ -982,33 +986,65 @@ Response 200
     "baseUnitAbbreviation": "u"
   },
   "hasStockRead": true,
-  "presentations": [
+  "currentStock": "210",
+  "kardex": [
     {
-      "id": "...",
-      "name": "Caja",
-      "unitsPerPresentation": 20,
-      "isDefault": true,
-      "movements": [
-        {
-          "date": "2026-03-01T00:00:00.000Z",
-          "locationCode": "BIN-01",
-          "locationWarehouse": "Almacén",
-          "locationCity": "LA PAZ",
-          "type": "IN",
-          "batchNumber": "LOT-2026-0001",
-          "detail": "Ingreso inicial",
-          "entry": "20",
-          "exit": "0",
-          "balance": "20",
-          "balancePresentation": "1"
-        }
-      ],
-      "finalBalance": 20
+      "date": "2026-03-01T00:00:00.000Z",
+      "batchId": "...",
+      "batchNumber": "LOT-2026-0001",
+      "presentationId": "",
+      "presentationLabel": "Caja (20u)",
+      "presentationUnits": "1",
+      "fromCode": null,
+      "toCode": "BIN-01",
+      "warehouseCode": "ALM-01",
+      "warehouseName": "Almacén",
+      "quantity": 20,
+      "entry": 20,
+      "exit": 0,
+      "balance": 20,
+      "affectsWarehouse": true,
+      "movementId": "...",
+      "movementType": "IN",
+      "movementNumber": "M-0001",
+      "detail": "Ingreso • Lote LOT-2026-0001 • Hacia BIN-01 (Almacén)",
+      "fromBalanceQty": null,
+      "toBalanceQty": 20
     }
   ],
-  "totals": { "totalMovements": 5, "balance": "20" }
+  "summary": {
+    "totalMovements": 5,
+    "runningBalance": 210,
+    "currentStock": 210,
+    "totalBatches": 3,
+    "byBatch": [
+      {
+        "batchId": "...",
+        "batchNumber": "LOT-2026-0001",
+        "presentationId": "...",
+        "presentationName": "Caja",
+        "unitsPerPresentation": 20,
+        "quantity": 200,
+        "presentationQuantity": 10,
+        "expiresAt": "2027-03-01T00:00:00.000Z"
+      }
+    ],
+    "byPresentation": [
+      {
+        "label": "Caja (20u)",
+        "units": 20,
+        "total": 200,
+        "presentations": 10
+      }
+    ]
+  }
 }
 ```
+
+Notas
+- `fromCode` y `toCode` indican la ubicación de origen y destino del movimiento. Para movimientos `IN` (creación/ingreso), `fromCode` es `null`.
+- `affectsWarehouse` indica si el movimiento afecta la sucursal filtrada. Transferencias inter-sucursales se muestran con `affectsWarehouse=false` y no incluyen en el saldo acumulado.
+- `currentStock` y `totals.currentBalance` provienen de `InventoryBalance` (fuente autoritativa), garantizando que el saldo refleje el stock real. El `totals.balance` es el saldo acumulado sobre movimientos filtrados.
 
 ---
 

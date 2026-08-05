@@ -348,6 +348,8 @@ const kardexQuerySchema = z.object({
   from: z.coerce.date().optional(),
   to: z.coerce.date().optional(),
   presentationId: z.string().uuid().optional(),
+  warehouseId: z.string().uuid().optional(),
+  locationId: z.string().uuid().optional(),
 })
 
 function formatQty(value: number): string {
@@ -1404,16 +1406,46 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
       })
       if (!product) return reply.status(404).send({ message: 'Product not found' })
 
+      const { from, to, warehouseId, locationId } = parsed.data
       const createdAtFilter: { gte?: Date; lt?: Date } = {}
-      const { from, to, presentationId } = parsed.data
       if (from) createdAtFilter.gte = from
       if (to) createdAtFilter.lt = to
 
+      // 1. Obtain locations (bins/warehouses) for the filtered branch
+      let warehouseLocationIds: string[] | undefined
+      if (warehouseId) {
+        const locs = await db.location.findMany({ where: { tenantId, warehouseId }, select: { id: true } })
+        warehouseLocationIds = locs.map((l) => l.id)
+      }
+
+      // 2. Fetch all InventoryBalance records for this product (optionally scoped to branch locations)
+      let balanceWhere: any = { tenantId, productId }
+      if (warehouseId) {
+        balanceWhere.location = { warehouseId }
+      } else if (warehouseLocationIds && warehouseLocationIds.length > 0) {
+        balanceWhere.locationId = { in: warehouseLocationIds }
+      } else if (locationId) {
+        balanceWhere.locationId = locationId
+      }
+
+      const balances = await db.inventoryBalance.findMany({
+        where: balanceWhere,
+        select: {
+          id: true,
+          locationId: true,
+          productId: true,
+          batchId: true,
+          quantity: true,
+        },
+      })
+
+      // 3. Fetch all StockMovements affecting the balances' batches/locations for this product
+      //    We get ALL movements for the product (no warehouse filter) so the AuditEvent-based
+      //    reconstruction can decide which affect the filtered branch.
       const movements = await db.stockMovement.findMany({
         where: {
           tenantId,
           productId,
-          ...(presentationId ? { presentationId } : {}),
           ...(Object.keys(createdAtFilter).length > 0 ? { createdAt: createdAtFilter } : {}),
         },
         orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
@@ -1434,35 +1466,54 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
         },
       })
 
-      const presentationIds = new Set<string>()
+      const movementIds = movements.map((m) => m.id)
+
+      // 4. Fetch AuditEvents for these movements (action = 'stock.movement.create')
+      const auditEvents = movementIds.length
+        ? await db.auditEvent.findMany({
+            where: {
+              tenantId,
+              action: 'stock.movement.create',
+              entityId: { in: movementIds },
+            },
+            orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+          })
+        : []
+
+      // 5. Build lookup maps
+      const movById = new Map(movements.map((m) => [m.id, m]))
       const batchIds = new Set<string>()
       const locationIds = new Set<string>()
       for (const m of movements) {
-        if (m.presentationId) presentationIds.add(m.presentationId)
+        if (m.presentationId) batchIds.add(m.presentationId)
         if (m.batchId) batchIds.add(m.batchId)
         if (m.fromLocationId) locationIds.add(m.fromLocationId)
         if (m.toLocationId) locationIds.add(m.toLocationId)
       }
 
-      const presentations = presentationIds.size
-        ? await db.productPresentation.findMany({
-            where: { tenantId, id: { in: [...presentationIds] } },
-            select: { id: true, name: true, unitsPerPresentation: true, isDefault: true, sortOrder: true },
-          })
-        : []
-      const presById = new Map(presentations.map((p) => [p.id, p]))
+      // Collect batch IDs from movements (not presentation IDs — fix earlier bug)
+      const realBatchIds = new Set(movements.filter((m) => m.batchId).map((m) => m.batchId!))
+      for (const b of balances) {
+        if (b.batchId) realBatchIds.add(b.batchId)
+      }
 
-      const batches = batchIds.size
+      const batches = realBatchIds.size
         ? await db.batch.findMany({
-            where: { tenantId, id: { in: [...batchIds] } },
-            select: { id: true, batchNumber: true, expiresAt: true, status: true },
+            where: { tenantId, productId, id: { in: [...realBatchIds] } },
+            select: { id: true, batchNumber: true, expiresAt: true, status: true, presentationId: true },
           })
         : []
       const batchById = new Map(batches.map((b) => [b.id, b]))
 
-      const locations = locationIds.size
+      const allLocationIds = locationIds
+      if (warehouseLocationIds && warehouseLocationIds.length > 0) {
+        for (const lid of warehouseLocationIds) allLocationIds.add(lid)
+      }
+      if (locationId) allLocationIds.add(locationId)
+
+      const locations = allLocationIds.size
         ? await db.location.findMany({
-            where: { tenantId, id: { in: [...locationIds] } },
+            where: { tenantId, id: { in: [...allLocationIds] } },
             select: {
               id: true,
               code: true,
@@ -1472,37 +1523,63 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
         : []
       const locById = new Map(locations.map((l) => [l.id, l]))
 
-      const presentationList =
-        (await db.productPresentation.findMany({
-          where: { tenantId, productId, isActive: true },
-          orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
-          select: { id: true, name: true, unitsPerPresentation: true, isDefault: true },
-        })) ?? []
+      const presentations = await db.productPresentation.findMany({
+        where: { tenantId, productId, isActive: true },
+        orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+        select: { id: true, name: true, unitsPerPresentation: true, isDefault: true },
+      })
+      const presById = new Map(presentations.map((p) => [p.id, p]))
+      const defaultPresentationId = presentations.find((p) => p.isDefault)?.id ?? null
+
+      // Presentation lookup by batch (InventoryBalance links via batch.presentationId)
+      const presByBatch = new Map<string, string>()
+      for (const b of batches) {
+        if (b.presentationId) presByBatch.set(b.id, b.presentationId)
+      }
 
       const baseUnit = product.baseUnitAbbreviation ?? 'u'
 
-      const items: Array<{
+      type KardexRow = {
         date: string
-        locationCode: string
-        locationWarehouse: string | null
-        locationCity: string | null
-        type: string
         batchNumber: string | null
-        detail: string
-        entry: string
-        exit: string
-        balance: string
-        balancePresentation: string
-        presentationId: string | null
+        presentationId: string | ''
         presentationLabel: string
         presentationUnits: string
-      }> = []
-
-      let balance = 0
-      const balanceByPresentation = new Map<string, number>()
-      for (const pres of presentationList) {
-        balanceByPresentation.set(pres.id, 0)
+        fromCode: string | null
+        toCode: string | null
+        warehouseCode: string | null
+        warehouseName: string | null
+        quantity: number
+        entry: number
+        exit: number
+        balance: number
+        affectsWarehouse: boolean
+        movementId: string
+        movementType: string
+        movementNumber: string
+        detail: string
+        fromBalanceQty: number | null
+        toBalanceQty: number | null
       }
+
+      // 6. Build a map of movementId -> parsed audit after payload
+      const auditByMovement = new Map<string, { movement: any; fromBalance: any; toBalance: any }>()
+      for (const ae of auditEvents) {
+        if (!ae.entityId || !ae.after) continue
+        const after = ae.after as any
+        const movement = after?.movement ?? null
+        const fromBalance = after?.fromBalance ?? null
+        const toBalance = after?.toBalance ?? null
+        if (movement?.id) {
+          auditByMovement.set(after.entityId, { movement, fromBalance, toBalance })
+        }
+      }
+
+      // 7. Process movements in chronological order; use audit event balance when available
+      const items: KardexRow[] = []
+      let runningBalance = 0
+      const balanceByPresentation = new Map<string, number>()
+      for (const pres of presentations) balanceByPresentation.set(pres.id, 0)
 
       for (const m of movements) {
         const qty = Number(m.quantity)
@@ -1510,66 +1587,160 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
         const entry = isEntry ? qty : 0
         const exit = !isEntry ? qty : 0
 
+        // Determine presentation
         let presLabel = '—'
         let presUnitsStr = ''
         let presUnitsPer = 1
-        if (m.presentationId && presById.has(m.presentationId)) {
-          const pres = presById.get(m.presentationId)
-          if (pres) {
-            presUnitsPer = Number(pres.unitsPerPresentation)
-            presLabel = `${pres.name} (${Math.trunc(presUnitsPer)}${baseUnit})`
-          }
+        const movementPresId = m.presentationId ?? defaultPresentationId
+        if (movementPresId && presById.has(movementPresId)) {
+          const pres = presById.get(movementPresId)!
+          presUnitsPer = Number(pres.unitsPerPresentation)
+          presLabel = `${pres.name} (${presUnitsPer}${baseUnit})`
         }
 
         let presQty: number | null = null
         if (m.presentationQuantity) {
           presQty = Number(m.presentationQuantity)
-        } else if (m.presentationId && presById.has(m.presentationId) && presUnitsPer > 0) {
+        } else if (movementPresId && presById.has(movementPresId) && presUnitsPer > 0) {
           presQty = qty / presUnitsPer
         }
         presUnitsStr = presQty !== null && !Number.isNaN(presQty) ? formatPresentation(presQty, 1) : ''
 
+        // Locations
         const fromLoc = m.fromLocationId ? locById.get(m.fromLocationId) ?? null : null
         const toLoc = m.toLocationId ? locById.get(m.toLocationId) ?? null : null
-        balance += entry - exit
-        if (m.presentationId && presById.has(m.presentationId)) {
-          const prev = balanceByPresentation.get(m.presentationId) ?? 0
-          balanceByPresentation.set(m.presentationId, prev + entry - exit)
+
+        // Determine if this movement affects the filtered warehouse (branch)
+        let affectsWarehouse = true
+        if (warehouseLocationIds && warehouseLocationIds.length > 0) {
+          const fromAffects = m.fromLocationId ? warehouseLocationIds.includes(m.fromLocationId) : false
+          const toAffects = m.toLocationId ? warehouseLocationIds.includes(m.toLocationId) : false
+          const isTransfer = m.type === 'TRANSFER'
+          if (isTransfer) {
+            affectsWarehouse = fromAffects || toAffects
+          } else if (m.type === 'IN') {
+            affectsWarehouse = toAffects || (!m.toLocationId && !m.fromLocationId)
+          } else if (m.type === 'OUT') {
+            affectsWarehouse = fromAffects || (!m.fromLocationId && !m.toLocationId)
+          } else {
+            affectsWarehouse = fromAffects || toAffects
+          }
+        } else if (locationId) {
+          const fromAffects = m.fromLocationId ? m.fromLocationId === locationId : false
+          const toAffects = m.toLocationId ? m.toLocationId === locationId : false
+          const isTransfer = m.type === 'TRANSFER'
+          if (isTransfer) {
+            affectsWarehouse = fromAffects || toAffects
+          } else if (m.type === 'IN') {
+            affectsWarehouse = toAffects || (!m.toLocationId && !m.fromLocationId)
+          } else if (m.type === 'OUT') {
+            affectsWarehouse = fromAffects || (!m.fromLocationId && !m.toLocationId)
+          } else {
+            affectsWarehouse = fromAffects || toAffects
+          }
         }
 
-        let balancePres = '—'
-        if (m.presentationId && presById.has(m.presentationId) && presUnitsPer > 0) {
-          balancePres = formatPresentation(balanceByPresentation.get(m.presentationId) ?? 0, presUnitsPer)
+        // Use audit-provided balance when available, else accumulate
+        let balanceValue = runningBalance
+        let fromBalQty: number | null = null
+        let toBalQty: number | null = null
+        const ae = auditByMovement.get(m.id)
+        if (ae) {
+          if (ae.fromBalance && fromLoc) {
+            fromBalQty = Number(ae.fromBalance.quantity ?? 0)
+          }
+          if (ae.toBalance && toLoc) {
+            toBalQty = Number(ae.toBalance.quantity ?? 0)
+          }
+          if (affectsWarehouse) {
+            balanceValue = toBalQty ?? fromBalQty ?? runningBalance
+            runningBalance = balanceValue
+          }
+        } else {
+          if (affectsWarehouse) {
+            runningBalance += entry - exit
+            balanceValue = runningBalance
+          }
         }
 
         const detail = buildMovementDetail(m, batchById, fromLoc ?? null, toLoc ?? null)
         const loc = toLoc ?? fromLoc
         items.push({
           date: m.createdAt.toISOString(),
-          locationCode: loc ? loc.code : '—',
-          locationWarehouse: loc ? loc.warehouse.name : null,
-          locationCity: loc ? loc.warehouse.city : null,
-          type: m.type,
           batchNumber: m.batchId ? batchById.get(m.batchId)?.batchNumber ?? '—' : null,
-          detail,
-          entry: isEntry ? formatQty(qty) : '',
-          exit: !isEntry ? formatQty(qty) : '',
-          balance: formatQty(balance),
-          balancePresentation: balancePres,
-          presentationId: m.presentationId ?? null,
+          presentationId: m.presentationId ?? '',
           presentationLabel: presLabel,
           presentationUnits: presUnitsStr,
+          fromCode: fromLoc ? fromLoc.code : null,
+          toCode: toLoc ? toLoc.code : null,
+          warehouseCode: loc ? loc.warehouse.code : null,
+          warehouseName: loc ? loc.warehouse.name : null,
+          quantity: qty,
+          entry,
+          exit,
+          balance: balanceValue,
+          affectsWarehouse,
+          movementId: m.id,
+          movementType: m.type,
+          movementNumber: m.number,
+          detail,
+          fromBalanceQty: fromBalQty,
+          toBalanceQty: toBalQty,
         })
+
+        if (affectsWarehouse && movementPresId && presById.has(movementPresId)) {
+          const prev = balanceByPresentation.get(movementPresId) ?? 0
+          balanceByPresentation.set(movementPresId, prev + entry - exit)
+        }
       }
 
-      const presentationsResult = presentationList.map((pres) => ({
-        id: pres.id,
-        name: pres.name,
-        unitsPerPresentation: pres.unitsPerPresentation,
-        isDefault: pres.isDefault,
-         movements: items.filter((i) => i.presentationId === pres.id || (!i.presentationId && Number(pres.unitsPerPresentation) === 1)),
-        finalBalance: balanceByPresentation.get(pres.id) ?? 0,
-      }))
+      // 8. Current stock from InventoryBalance (authoritative)
+      let currentStock = 0
+      if (hasStockRead) {
+        const balanceAgg = await db.inventoryBalance.aggregate({
+          where: balanceWhere,
+          _sum: { quantity: true },
+        })
+        currentStock = Number(balanceAgg._sum.quantity ?? 0)
+      }
+
+      // 9. Consolidated summary by batch and presentation (from current balances)
+      const summaryEntries = balances
+        .filter((b) => Number(b.quantity) !== 0)
+        .map((b) => {
+          const presId = b.batchId ? (presByBatch.get(b.batchId) ?? defaultPresentationId ?? null) : defaultPresentationId ?? null
+          const pres = presId ? presById.get(presId) : null
+          const units = pres ? Number(pres.unitsPerPresentation) : 1
+          const batchNum = b.batchId ? batchById.get(b.batchId)?.batchNumber ?? 'Sin lote' : 'Sin lote'
+          const presName = pres ? `${pres.name} (${units}${baseUnit})` : `${units > 1 ? units : ''}${baseUnit}`
+          const qty = Number(b.quantity)
+          const presQty = units > 0 ? qty / units : 0
+          return {
+            batchId: b.batchId ?? null,
+            batchNumber: batchNum,
+            presentationId: presId,
+            presentationName: pres ? pres.name : '',
+            unitsPerPresentation: units,
+            quantity: qty,
+            presentationQuantity: presQty,
+            expiresAt: b.batchId ? batchById.get(b.batchId)?.expiresAt?.toISOString() ?? null : null,
+          }
+        })
+        .sort((a, b) => b.quantity - a.quantity)
+
+      // Aggregate by presentation for human-friendly summary
+      const presSummary = new Map<string, { name: string; units: number; total: number }>()
+      for (const e of summaryEntries) {
+        const key = `${e.presentationId ?? 'default'}`
+        const existing = presSummary.get(key) ?? { name: e.presentationName || (e.unitsPerPresentation > 1 ? `${e.unitsPerPresentation}${baseUnit}` : baseUnit), units: e.unitsPerPresentation, total: 0 }
+        existing.total += e.quantity
+        presSummary.set(key, existing)
+      }
+      const presSummaryList: Array<{ label: string; units: number; total: number; presentations: number }> = []
+      for (const [, v] of presSummary) {
+        const count = Math.trunc(v.total / v.units)
+        presSummaryList.push({ label: v.name, units: v.units, total: v.total, presentations: count })
+      }
 
       return reply.send({
         product: {
@@ -1579,8 +1750,16 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
           baseUnitAbbreviation: product.baseUnitAbbreviation ?? baseUnit,
         },
         hasStockRead,
-        presentations: presentationsResult,
-        totals: { totalMovements: items.length, balance: formatQty(balance) },
+        currentStock: formatQty(currentStock),
+        kardex: items,
+        summary: {
+          totalMovements: items.length,
+          runningBalance: formatQty(runningBalance),
+          currentStock: formatQty(currentStock),
+          byBatch: summaryEntries,
+          byPresentation: presSummaryList,
+          totalBatches: summaryEntries.filter((e) => e.batchId).length,
+        },
       })
     },
   )

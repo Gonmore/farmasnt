@@ -35,9 +35,6 @@ services:
       S3_SECRET_ACCESS_KEY: "minioadmin"
       S3_PUBLIC_BASE_URL: "http://localhost:9000/farmasnt-uploads"
       S3_FORCE_PATH_STYLE: "true"
-      PRISMA_MIGRATE_RESOLVE_ON_FAIL: "1"
-      PRISMA_MIGRATE_RESOLVE_ACTION: "rolled-back"
-      PRISMA_MIGRATE_RESOLVE_NAMES: "20260116063727_pagos"
     ports:
       - "6000:6000"
     healthcheck:
@@ -61,9 +58,6 @@ services:
       SEED_ADMIN_EMAIL: "admin@demo.local"
       SEED_ADMIN_PASSWORD: "Admin123!"
       SEED_PLATFORM_DOMAIN: "localhost"
-      PRISMA_MIGRATE_RESOLVE_ON_FAIL: "1"
-      PRISMA_MIGRATE_RESOLVE_ACTION: "rolled-back"
-      PRISMA_MIGRATE_RESOLVE_NAMES: "20260116063727_pagos"
     command: ["sh", "-lc", "npm run prisma:migrate && npm run seed"]
     networks:
       - red-desarrollo
@@ -78,9 +72,6 @@ services:
     environment:
       DATABASE_URL: "postgresql://postgres:D3v3%2Fop3R@postgres-local:5432/farmasnt?schema=public"
       NODE_ENV: "development"
-      PRISMA_MIGRATE_RESOLVE_ON_FAIL: "1"
-      PRISMA_MIGRATE_RESOLVE_ACTION: "rolled-back"
-      PRISMA_MIGRATE_RESOLVE_NAMES: "20260116063727_pagos"
     command: ["sh", "-lc", "npm run prisma:migrate"]
     networks:
       - red-desarrollo

@@ -153,7 +153,6 @@ frontend/src/
 | `pages/catalog/ProductDetailPage.tsx` (receta) | `GET /api/v1/products/:id/recipe` | `routes/products.ts:787` |
 | | `PUT /api/v1/products/:id/recipe` | `routes/products.ts:831` |
 | | `DELETE /api/v1/products/:id/recipe` | `routes/products.ts:977` |
-| `pages/stock/InventoryPage.tsx` (kardex) | `GET /api/v1/products/:id/kardex` | `routes/products.ts:1389` |
 | `pages/catalog/ProductDetailPage.tsx` (lotes) | `GET /api/v1/products/:id/batches` | `routes/products.ts:1149` |
 | | `POST /api/v1/products/:id/batches` | `routes/products.ts:1589` |
 | `pages/stock/MovementsPage.tsx` (lotes) | `GET /api/v1/products/:productId/batches/:batchId/movements` | `routes/products.ts:1305` |
@@ -167,8 +166,8 @@ frontend/src/
 |---|---|---|
 | `pages/stock/InventoryPage.tsx` (stock) | `GET /api/v1/warehouses` | `routes/warehouses.ts:54` |
 | `pages/stock/InventoryPage.tsx` (ver stock) | `GET /api/v1/reports/stock/balances-expanded` | `routes/reports.ts:1435` |
-| `pages/stock/InventoryPage.tsx` (kardex) | `GET /api/v1/products/:id/kardex` | `routes/products.ts:1389` |
-| `pages/stock/InventoryPage.tsx` (kardex export) | `GET /api/v1/products/:id/kardex` | `routes/products.ts:1389` (datos para exportToXlsx) |
+| `pages/stock/InventoryPage.tsx` (kardex — vista "Por Sucursal") | `GET /api/v1/products/:id/kardex` | `routes/products.ts:1391` | Filtra movimientos por `warehouseId`; disponible solo en vista "Por Sucursal" |
+| `pages/stock/InventoryPage.tsx` (kardex export) | `GET /api/v1/products/:id/kardex` | `routes/products.ts:1391` (datos para exportToXlsx) |
 | `pages/stock/MovementsPage.tsx` | `POST /api/v1/stock/movements` | `routes/stock.ts:2506` |
 | | `GET /api/v1/warehouses/:id/locations` | `routes/warehouses.ts:200` |
 | `pages/stock/MovementRequestsPage.tsx` | `GET /api/v1/stock/movement-requests` | `routes/stock.ts:792` |

@@ -115,35 +115,59 @@ type BatchMovementsResponse = { batch: { id: string; batchNumber: string }; item
 
 type KardexItem = {
   date: string
-  locationCode: string
-  locationWarehouse: string | null
-  locationCity: string | null
-  type: string
+  batchId: string | null
   batchNumber: string | null
-  detail: string
-  entry: string
-  exit: string
-  balance: string
-  balancePresentation: string
-  presentationId: string | null
+  presentationId: string | ''
   presentationLabel: string
   presentationUnits: string
+  fromCode: string | null
+  toCode: string | null
+  warehouseCode: string | null
+  warehouseName: string | null
+  quantity: number
+  entry: number
+  exit: number
+  balance: number
+  affectsWarehouse: boolean
+  movementId: string
+  movementType: string
+  movementNumber: string
+  detail: string
+  fromBalanceQty: number | null
+  toBalanceQty: number | null
 }
 
-type KardexPresentation = {
-  id: string
-  name: string
+type KardexSummaryEntry = {
+  batchId: string | null
+  batchNumber: string
+  presentationId: string | null
+  presentationName: string
   unitsPerPresentation: number
-  isDefault: boolean
-  movements: KardexItem[]
-  finalBalance: number
+  quantity: number
+  presentationQuantity: number
+  expiresAt: string | null
+}
+
+type KardexSummary = {
+  totalMovements: number
+  runningBalance: number
+  currentStock: number
+  totalBatches: number
+  byBatch: KardexSummaryEntry[]
+  byPresentation: Array<{
+    label: string
+    units: number
+    total: number
+    presentations: number
+  }>
 }
 
 type KardexResponse = {
   product: { id: string; sku: string; name: string; baseUnitAbbreviation: string }
   hasStockRead: boolean
-  presentations: KardexPresentation[]
-  totals: { totalMovements: number; balance: string }
+  currentStock: string
+  kardex: KardexItem[]
+  summary: KardexSummary
 }
 
 type ProductGroup = {
@@ -304,8 +328,11 @@ async function listBatchMovements(token: string, productId: string, batchId: str
   return apiFetch(`/api/v1/products/${productId}/batches/${batchId}/movements`, { token })
 }
 
-async function fetchProductKardex(token: string, productId: string): Promise<KardexResponse> {
-  return apiFetch(`/api/v1/products/${productId}/kardex`, { token })
+async function fetchProductKardex(token: string, productId: string, warehouseId?: string): Promise<KardexResponse> {
+  const params = new URLSearchParams()
+  if (warehouseId) params.set('warehouseId', warehouseId)
+  const query = params.toString() ? `?${params.toString()}` : ''
+  return apiFetch(`/api/v1/products/${productId}/kardex${query}`, { token })
 }
 
 async function updateBatchStatus(
@@ -502,43 +529,55 @@ function InlineLocationEditor({ batch, token }: { batch: any; token: string }) {
   )
 }
 
-function KardexModalContent({ productId, onClose }: { productId: string; onClose: () => void }) {
+const KardexModalContent = ({ productId, warehouseId, onClose }: { productId: string; warehouseId?: string; onClose: () => void }) => {
   const auth = useAuth()
 
-  const [activePresentationId, setActivePresentationId] = useState<string | null>(null)
-
   const { data: kardexData, isLoading, error, refetch } = useQuery({
-    queryKey: ['productKardex', productId],
-    queryFn: () => fetchProductKardex(auth.accessToken!, productId),
+    queryKey: ['productKardex', productId, warehouseId ?? null],
+    queryFn: () => fetchProductKardex(auth.accessToken!, productId, warehouseId),
     enabled: !!auth.accessToken && !!productId,
   })
 
-  const presentations = kardexData?.presentations ?? []
-  useEffect(() => {
-    if (presentations.length > 0 && !activePresentationId) {
-      const defaultPres = presentations.find((p) => p.isDefault) ?? presentations[0]
-      setActivePresentationId(defaultPres?.id ?? null)
-    }
-  }, [presentations, activePresentationId])
+  const kardexItems = kardexData?.kardex ?? []
+  const summary = kardexData?.summary
+
+  const formatQty = (v: number) => (Number.isInteger(v) ? v.toString() : v.toFixed(2).replace(/\.?0+$/, ''))
 
   const exportKardexToExcel = () => {
     if (!kardexData) return
-    const sheets: ExportSheet[] = kardexData.presentations.map((pres) => ({
-      name: pres.name,
-      rows: pres.movements.map((m) => ({
-        Fecha: m.date,
-        'Ubicación (Sub-Almacén)': m.locationCode,
-        'Almacén': m.locationWarehouse ?? '',
-        'Ciudad': m.locationCity ?? '',
-        'Tipo Movimiento': m.type,
-        LOTE: m.batchNumber ?? '',
-        'Detalle / Cliente': m.detail,
-        'Entrada (u)': m.entry,
-        'Salida (u)': m.exit,
-        'Saldo Unidades': m.balance,
-        'Saldo Presentaciones': m.balancePresentation,
-      })),
-    }))
+    const sheets: ExportSheet[] = [
+      {
+        name: 'Kardex',
+        rows: kardexItems.map((m) => ({
+          Fecha: m.date,
+          Origen: m.fromCode ?? '—',
+          Destino: m.toCode ?? '—',
+          Almacén: m.warehouseName ?? '',
+          LOTE: m.batchNumber ?? '',
+          Presentación: m.presentationLabel,
+          'Tipo Movimiento': m.movementType,
+          Detalle: m.detail,
+          'Entrada (u)': m.entry,
+          'Salida (u)': m.exit,
+          'Saldo Unidades': m.balance,
+        })),
+      },
+      ...(summary?.byBatch
+        ? [
+            {
+              name: 'Resumen por Lote',
+              rows: summary.byBatch.map((b) => ({
+                Lote: b.batchNumber,
+                Presentación: b.presentationName || 'Sin presentación',
+                'Unidades por presentación': b.unitsPerPresentation,
+                'Cantidad (u)': b.quantity,
+                'Cantidad (presentaciones)': b.presentationQuantity,
+                Vencimiento: b.expiresAt ?? '',
+              })),
+            },
+          ]
+        : []),
+    ]
     const date = new Date().toISOString().split('T')[0]
     const filename = `kardex_${kardexData.product.sku}_${date}.xlsx`
     exportToXlsx(filename, sheets)
@@ -557,76 +596,97 @@ function KardexModalContent({ productId, onClose }: { productId: string; onClose
 
       {error && <ErrorState message="Error al cargar el kardex" retry={() => refetch()} />}
 
-      {!isLoading && !error && kardexData && presentations.length > 0 && (
+      {!isLoading && !error && kardexData && kardexItems.length > 0 && (
         <>
-          <div className="flex flex-wrap gap-1 border-b border-slate-200 dark:border-slate-700">
-            {presentations.map((pres) => (
-              <button
-                key={pres.id}
-                onClick={() => setActivePresentationId(pres.id)}
-                className={`rounded-t-md border border-b-0 px-4 py-2 text-sm font-medium transition-colors ${
-                  activePresentationId === pres.id
-                    ? 'border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300'
-                    : 'border-transparent text-slate-600 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-800'
-                }`}
-              >
-                {pres.name}{' '}
-                {pres.unitsPerPresentation > 1
-                  ? `(${pres.unitsPerPresentation}${kardexData.product.baseUnitAbbreviation})`
-                  : `(${kardexData.product.baseUnitAbbreviation})`}
-                {pres.isDefault && ' (default)'}
-              </button>
-            ))}
-          </div>
-
           <div className="overflow-x-auto">
             <table className="w-full border-collapse text-sm">
               <thead>
                 <tr className="border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800">
                   <th className="border px-2 py-1.5 text-left font-medium text-slate-800 dark:text-slate-200">Fecha</th>
-                  <th className="border px-2 py-1.5 text-left font-medium text-slate-800 dark:text-slate-200">Ubicación (Sub-Almacén)</th>
-                  <th className="border px-2 py-1.5 text-left font-medium text-slate-800 dark:text-slate-200">Tipo</th>
-                  <th className="border px-2 py-1.5 text-left font-medium text-slate-800 dark:text-slate-200">LOTE</th>
-                  <th className="border px-2 py-1.5 text-left font-medium text-slate-800 dark:text-slate-200">Detalle</th>
+                  <th className="border px-2 py-1.5 text-left font-medium text-slate-800 dark:text-slate-200">Lote</th>
+                  <th className="border px-2 py-1.5 text-left font-medium text-slate-800 dark:text-slate-200">Presentación</th>
+                  <th className="border px-2 py-1.5 text-left font-medium text-slate-800 dark:text-slate-200">Origen</th>
+                  <th className="border px-2 py-1.5 text-left font-medium text-slate-800 dark:text-slate-200">Destino</th>
                   <th className="border px-2 py-1.5 text-right font-medium text-slate-800 dark:text-slate-200">Entrada (u)</th>
                   <th className="border px-2 py-1.5 text-right font-medium text-slate-800 dark:text-slate-200">Salida (u)</th>
-                  <th className="border px-2 py-1.5 text-right font-medium text-slate-800 dark:text-slate-200">Saldo Unds.</th>
-                  <th className="border px-2 py-1.5 text-right font-medium text-slate-800 dark:text-slate-200">Saldo Presentaciones</th>
+                  <th className="border px-2 py-1.5 text-right font-medium text-slate-800 dark:text-slate-200">Saldo</th>
+                  <th className="border px-2 py-1.5 text-center font-medium text-slate-800 dark:text-slate-200">Sucursal</th>
                 </tr>
               </thead>
               <tbody>
-                {presentations
-                  .find((p) => p.id === activePresentationId)
-                  ?.movements.map((m, idx) => (
-                    <tr
-                      key={idx}
-                      className={idx % 2 === 0 ? 'bg-white dark:bg-slate-900' : 'bg-slate-50 dark:bg-slate-800'}
-                    >
-                      <td className="border px-2 py-1">{new Date(m.date).toLocaleString()}</td>
-                      <td className="border px-2 py-1">{m.locationCode}</td>
-                      <td className="border px-2 py-1">{m.type}</td>
-                      <td className="border px-2 py-1">{m.batchNumber ?? '—'}</td>
-                      <td className="border px-2 py-1">{m.detail}</td>
-                      <td className="border px-2 py-1 text-right">{m.entry || '—'}</td>
-                      <td className="border px-2 py-1 text-right">{m.exit || '—'}</td>
-                      <td className="border px-2 py-1 text-right font-medium">{m.balance}</td>
-                      <td className="border px-2 py-1 text-right">{m.balancePresentation}</td>
-                    </tr>
-                  ))}
-                {presentations.find((p) => p.id === activePresentationId)?.movements.length === 0 && (
-                  <tr>
-                    <td colSpan={9} className="border px-2 py-4 text-center text-slate-500 dark:text-slate-400">
-                      No hay movimientos registrados para esta presentación.
+                {kardexItems.map((m, idx) => (
+                  <tr
+                    key={m.movementId}
+                    className={`${idx % 2 === 0 ? 'bg-white dark:bg-slate-900' : 'bg-slate-50 dark:bg-slate-800'} ${!m.affectsWarehouse ? 'opacity-60' : ''}`}
+                  >
+                    <td className="border px-2 py-1">{new Date(m.date).toLocaleString()}</td>
+                    <td className="border px-2 py-1">{m.batchNumber ?? '—'}</td>
+                    <td className="border px-2 py-1">{m.presentationLabel}</td>
+                    <td className="border px-2 py-1">{m.fromCode ?? '—'}</td>
+                    <td className="border px-2 py-1">{m.toCode ?? '—'}</td>
+                    <td className="border px-2 py-1 text-right">{m.entry > 0 ? formatQty(m.entry) : ''}</td>
+                    <td className="border px-2 py-1 text-right">{m.exit > 0 ? formatQty(m.exit) : ''}</td>
+                    <td className="border px-2 py-1 text-right font-medium">{formatQty(m.balance)}</td>
+                    <td className="border px-2 py-1 text-center">
+                      {m.affectsWarehouse ? (
+                        <span className="inline-flex items-center gap-1 rounded-md bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/20 dark:text-green-300">
+                          Sí
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                          Otra sucursal
+                        </span>
+                      )}
                     </td>
                   </tr>
-                )}
+                ))}
               </tbody>
             </table>
           </div>
 
+          {summary && summary.byBatch.length > 0 && (
+            <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 p-4">
+              <h4 className="mb-3 text-sm font-semibold text-slate-800 dark:text-slate-200">Resumen consolidado por lote y presentación</h4>
+              <div className="mb-2 text-sm text-slate-600 dark:text-slate-400">
+                <span className="font-medium">Total:</span> {formatQty(summary.currentStock)} {kardexData.product.baseUnitAbbreviation} distribuidos en {summary.totalBatches} lotes:
+              </div>
+              <div className="grid grid-cols-1 gap-1 text-sm text-slate-700 dark:text-slate-300 sm:grid-cols-2">
+                {summary.byBatch.map((b) => (
+                  <div key={b.batchId ?? b.batchNumber} className="flex justify-between">
+                    <span>
+                      {b.batchNumber}
+                      {b.unitsPerPresentation > 1 ? ` (${b.unitsPerPresentation}${kardexData.product.baseUnitAbbreviation})` : ''}
+                    </span>
+                    <span className="font-medium">
+                      {formatQty(b.quantity)} {kardexData.product.baseUnitAbbreviation}
+                      {b.unitsPerPresentation > 1
+                        ? ` (${formatQty(b.presentationQuantity)} ${b.unitsPerPresentation === 1 ? 'unidad' : 'presentaciones'} de ${b.unitsPerPresentation}${kardexData.product.baseUnitAbbreviation})`
+                        : ''}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              {summary.byPresentation.length > 0 && (
+                <div className="mt-3 border-t border-slate-200 dark:border-slate-700 pt-2">
+                  <h5 className="mb-1 text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">Desglose por presentación</h5>
+                  <div className="grid grid-cols-1 gap-1 text-sm text-slate-700 dark:text-slate-300 sm:grid-cols-2">
+                    {summary.byPresentation.map((p, i) => (
+                      <div key={i} className="flex justify-between">
+                        <span>{p.label}</span>
+                        <span className="font-medium">
+                          {formatQty(p.total)} {kardexData.product.baseUnitAbbreviation} ({p.presentations} {p.units > 1 ? 'presentaciones' : 'unidades'})
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="flex justify-between items-center border-t border-slate-200 dark:border-slate-700 pt-3">
             <span className="text-sm text-slate-600 dark:text-slate-400">
-              Total movimientos: {kardexData.totals.totalMovements} | Stock actual: {kardexData.totals.balance}
+              Total movimientos: {summary?.totalMovements ?? kardexItems.length} | Saldo acumulado: {summary ? formatQty(summary.runningBalance) : '—'} | Stock actual (sucursal): {kardexData.currentStock ?? '—'}
             </span>
             <div className="flex gap-2">
               <Button variant="secondary" onClick={onClose}>
@@ -640,7 +700,7 @@ function KardexModalContent({ productId, onClose }: { productId: string; onClose
         </>
       )}
 
-      {!isLoading && !error && presentations.length === 0 && (
+      {!isLoading && !error && kardexItems.length === 0 && (
         <p className="text-slate-500 dark:text-slate-400">Este producto no tiene movimientos registrados.</p>
       )}
     </div>
@@ -691,6 +751,7 @@ export function InventoryPage() {
 
   const [kardexModalOpen, setKardexModalOpen] = useState(false)
   const [kardexProductId, setKardexProductId] = useState<string | null>(null)
+  const [kardexWarehouseId, setKardexWarehouseId] = useState<string | null>(null)
 
   const [flowItem, setFlowItem] = useState<{
     productId: string
@@ -1311,17 +1372,6 @@ export function InventoryPage() {
                       <div className="mt-1 text-xs font-mono text-slate-500 dark:text-slate-400">{pg.sku}</div>
                     </div>
 
-                    <Button
-                      icon={<TableCellsIcon />}
-                      onClick={() => {
-                        setKardexProductId(pg.productId)
-                        setKardexModalOpen(true)
-                      }}
-                      className="h-7 text-xs"
-                    >
-                      Kardex
-                    </Button>
-
                     <div className="flex flex-wrap justify-end gap-2">
                       {(() => {
                         const batches = pg.warehouses.flatMap((w) =>
@@ -1502,12 +1552,28 @@ export function InventoryPage() {
                             {prod.genericName ? (
                               <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">Genérico: {prod.genericName}</div>
                             ) : null}
-                            <div className="text-right">
-                              <div className="text-lg font-semibold text-slate-700 dark:text-slate-300">
-                                {formatTotalsFromBatches(prod.batches, 'availableQuantity')}
-                              </div>
-                              <div className="text-xs text-slate-500 dark:text-slate-400">
-                                {formatTotalsFromBatches(prod.batches, 'reservedQuantity')} res. · {formatTotalsFromBatches(prod.batches, 'quantity')} total
+                            <div className="flex items-center gap-3">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                icon={<TableCellsIcon />}
+                                onClick={() => {
+                                  setKardexProductId(prod.productId)
+                                  setKardexWarehouseId(wg.warehouseId)
+                                  setKardexModalOpen(true)
+                                }}
+                                className="h-7 text-xs"
+                                title="Ver kardex de este producto en esta sucursal"
+                              >
+                                Kardex
+                              </Button>
+                              <div className="text-right">
+                                <div className="text-lg font-semibold text-slate-700 dark:text-slate-300">
+                                  {formatTotalsFromBatches(prod.batches, 'availableQuantity')}
+                                </div>
+                                <div className="text-xs text-slate-500 dark:text-slate-400">
+                                  {formatTotalsFromBatches(prod.batches, 'reservedQuantity')} res. · {formatTotalsFromBatches(prod.batches, 'quantity')} total
+                                </div>
                               </div>
                             </div>
                           </div>
@@ -1795,13 +1861,13 @@ export function InventoryPage() {
           </div>
          </Modal>
 
-        <Modal
+         <Modal
           isOpen={kardexModalOpen}
-          onClose={() => { setKardexModalOpen(false); setKardexProductId(null) }}
+          onClose={() => { setKardexModalOpen(false); setKardexProductId(null); setKardexWarehouseId(null) }}
           title="Kardex de Inventario"
-          maxWidth="4xl"
+          maxWidth="5xl"
         >
-          {kardexProductId ? <KardexModalContent productId={kardexProductId} onClose={() => { setKardexModalOpen(false); setKardexProductId(null) }} /> : null}
+          {kardexProductId ? <KardexModalContent productId={kardexProductId} warehouseId={kardexWarehouseId ?? undefined} onClose={() => { setKardexModalOpen(false); setKardexProductId(null); setKardexWarehouseId(null) }} /> : null}
         </Modal>
 
      </MainLayout>
