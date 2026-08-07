@@ -1,7 +1,7 @@
 # Architecture — PharmaFlow Bolivia (farmaSNT)
 
 > Fuente de verdad para la estructura del proyecto y el mapeo frontend ↔ backend.  
-> Última actualización: 03 Ago 2026
+> Última actualización: 07 Ago 2026
 
 ---
 
@@ -166,8 +166,10 @@ frontend/src/
 |---|---|---|
 | `pages/stock/InventoryPage.tsx` (stock) | `GET /api/v1/warehouses` | `routes/warehouses.ts:54` |
 | `pages/stock/InventoryPage.tsx` (ver stock) | `GET /api/v1/reports/stock/balances-expanded` | `routes/reports.ts:1435` |
-| `pages/stock/InventoryPage.tsx` (kardex — vista "Por Sucursal") | `GET /api/v1/products/:id/kardex` | `routes/products.ts:1391` | Filtra movimientos por `warehouseId`; disponible solo en vista "Por Sucursal" |
-| `pages/stock/InventoryPage.tsx` (kardex export) | `GET /api/v1/products/:id/kardex` | `routes/products.ts:1391` (datos para exportToXlsx) |
+| `pages/stock/InventoryPage.tsx` (kardex — vista "Por Sucursal") | `GET /api/v1/products/:id/kardex` | `routes/products.ts:1391` | Filtra movimientos por `warehouseId`; muestra origen/destino como `WAREHOUSE:Location`; incluye `fromWarehouseCode`/`toWarehouseCode`; para ventas (`OUT+SALES_ORDER`) el destino muestra `NRO_ORDEN: NombreCliente`; saldo acumulado filtrado por `affectsWarehouse`. |
+| `pages/stock/InventoryPage.tsx` (kardex export) | `GET /api/v1/products/:id/kardex` | `routes/products.ts:1391` (datos para exportToXlsx) | Exporta origen/destino con formato `WAREHOUSE:Location`, filtrando solo movimientos `affectsWarehouse`. |
+| `pages/stock/CompletedMovementsPage.tsx` (historial) | `GET /api/v1/stock/completed-movements` | `routes/stock.ts:3665` | Columna "Origen → Destino" muestra `WAREHOUSE:Location` (sin prefijo `SUC-`). |
+| `components/MovementHistoryTab.tsx` (historial) | `GET /api/v1/stock/completed-movements` | `routes/stock.ts:3665` | Columna "Origen → Destino" muestra `WAREHOUSE:Location` con `SUC-` removido. |
 | `pages/stock/MovementsPage.tsx` | `POST /api/v1/stock/movements` | `routes/stock.ts:2506` |
 | | `GET /api/v1/warehouses/:id/locations` | `routes/warehouses.ts:200` |
 | `pages/stock/MovementRequestsPage.tsx` | `GET /api/v1/stock/movement-requests` | `routes/stock.ts:792` |

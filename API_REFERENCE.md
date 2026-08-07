@@ -4,6 +4,11 @@
 
 Esta referencia contempla los cambios de las versiones **2.0** (multi-marca/multi-empresa), **2.0.1** (orden alfabético), **2.1.0** (branding numérico + existencias + salida de muestra), **2.1.1** (badges operativos + restricción de edición de lotes), **2.1.2** (historial de movimientos), **2.1.3** (advertencia de atención parcial), **2.1.4** (reportes de ventas: estado por defecto "Todos" y `take` elevado a 1000), **2.2.0** (kardex unificado AuditEvent-based, modal de entrega con devoluciones, sub-almacén en solicitudes, upload PDF de comprobantes).
 
+## Cambios recientes (07 Ago 2026) — Kardex formato WAREHOUSE:Location + ventas con cliente
+
+- `GET /api/v1/products/:id/kardex`: la respuesta `kardex[]` ahora incluye `fromWarehouseCode`, `toWarehouseCode`, `fromLocationCode`, `toLocationCode`. El saldo acumulado (`balance`) se calcula solo sobre movimientos que afectan la sucursal filtrada (`affectsWarehouse`). Para movimientos `OUT` con `referenceType: 'SALES_ORDER'`, el `toCode` contiene el número de orden y `toWarehouseCode` el nombre del cliente; el `detail` incluye `[SALES_ORDER] NRO - Cliente: Nombre`. Los ajustes (`ADJUSTMENT`) se incluyen correctamente cuando su location pertenece a la sucursal filtrada.
+- `GET /api/v1/stock/completed-movements`: la columna "Origen → Destino" en el frontend muestra `WAREHOUSE:Location` (código de sucursal sin prefijo `SUC-` + código de ubicación).
+
 Cambios relevantes en 2.2.0:
 - `GET /api/v1/products/:id/kardex` refactorizado para reconstruir el saldo línea a línea desde `AuditEvent` (`action = 'stock.movement.create'`), ordenado cronológicamente ASC. Muestra el kardex en unidades base (sin pestañas por presentación) con un resumen consolidado por lotes/presentaciones al final. El saldo actual proviene de `InventoryBalance` (fuente autoritativa).
 - `POST /api/v1/sales/orders/:id/deliver-with-returns` permite registrar la entrega junto con devoluciones parciales en un solo request.
@@ -966,7 +971,7 @@ Requiere permisos: `catalog:read` + (`stock:read` si se desea ver stock detallad
 Reconstruye el kardex del producto mediante `AuditEvent` (`action = 'stock.movement.create'`), ordenado cronológicamente ascendente. El flujo interno es: `warehouseId` → `Location` (ubicaciones de la sucursal) → `InventoryBalance` (IDs) → `AuditEvent` (movimientos cuyo `entityId` es un `StockMovement.id`). La tabla principal se muestra en **unidades base**, con un resumen consolidado al final.
 
 Query (opcionales)
-- `warehouseId` (uuid, opcional) — filtra movimientos que afectan a una sucursal específica. El balance acumulado solo incluye movimientos cuyo `fromLocationId` o `toLocationId` pertenecen a ubicaciones de esa sucursal. Las transferencias (`TRANSFER`) solo afectan si from o to están en la sucursal; movimientos `IN`/`OUT` sin ubicación se atribuyen a la sucursal consultada.
+- `warehouseId` (uuid, opcional) — filtra movimientos que afectan a una sucursal específica. El balance acumulado solo incluye movimientos cuyo `fromLocationId` o `toLocationId` pertenecen a ubicaciones de esa sucursal. Las transferencias (`TRANSFER`) solo afectan si from o to están en la sucursal; movimientos `IN`/`OUT` sin ubicación se atribuyen a la sucursal consultada. Los ajustes (`ADJUSTMENT`) se incluyen cuando su `toLocationId` o `fromLocationId` pertenece a la sucursal; si el ajuste incrementa (`toLocationId`), suma al stock; si decrementa (`fromLocationId`), resta.
 - `locationId` (uuid, opcional) — filtra movimientos que afectan a una ubicación específica.
 - `from` (date-time, opcional) — fecha mínima.
 - `to` (date-time, opcional) — fecha máxima (exclusivo).
@@ -974,7 +979,9 @@ Query (opcionales)
 Notas
 - El saldo acumulado (`runningBalance` en `summary`) se toma del `AuditEvent.after.toBalance.quantity` (o `fromBalance` según el rol) cuando el evento está disponible; si no hay evento de auditoría, se cae al acumulado de `entry - exit`.
 - El saldo actual (`currentStock`) proviene de la suma de `InventoryBalance.quantity` para la sucursal filtrada (fuente autoritativa), no del cálculo acumulado.
-- Los movimientos que no afectan a la sucursal filtrada se marcan con `affectsWarehouse=false` y aparecen sin impactar el saldo.
+- Los movimientos que no afectan a la sucursal filtrada se marcan con `affectsWarehouse=false`.
+- Para movimientos `OUT` con `referenceType: 'SALES_ORDER'`: `toCode` = número de orden de venta, `toWarehouseCode` = nombre del cliente. El `detail` incluye `[SALES_ORDER] NRO - Cliente: Nombre`.
+- La respuesta incluye `fromWarehouseCode` y `toWarehouseCode` (códigos de sucursal de origen/destino) y `fromLocationCode`/`toLocationCode` (códigos de ubicación).
 
 Response 200
 ```json
@@ -995,19 +1002,23 @@ Response 200
       "presentationId": "",
       "presentationLabel": "Caja (20u)",
       "presentationUnits": "1",
-      "fromCode": null,
-      "toCode": "BIN-01",
-      "warehouseCode": "ALM-01",
-      "warehouseName": "Almacén",
-      "quantity": 20,
-      "entry": 20,
-      "exit": 0,
-      "balance": 20,
-      "affectsWarehouse": true,
-      "movementId": "...",
-      "movementType": "IN",
-      "movementNumber": "M-0001",
-      "detail": "Ingreso • Lote LOT-2026-0001 • Hacia BIN-01 (Almacén)",
+       "fromCode": null,
+       "fromWarehouseCode": null,
+       "fromLocationCode": null,
+       "toCode": "BIN-01",
+       "toWarehouseCode": "ALM-01",
+       "toLocationCode": "BIN-01",
+       "warehouseCode": "ALM-01",
+       "warehouseName": "Almacén",
+       "quantity": 20,
+       "entry": 20,
+       "exit": 0,
+       "balance": 20,
+       "affectsWarehouse": true,
+       "movementId": "...",
+       "movementType": "IN",
+       "movementNumber": "M-0001",
+       "detail": "Ingreso • Lote LOT-2026-0001 • Hacia BIN-01 (Almacén)",
       "fromBalanceQty": null,
       "toBalanceQty": 20
     }

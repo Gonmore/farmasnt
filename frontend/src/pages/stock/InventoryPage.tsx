@@ -121,7 +121,9 @@ type KardexItem = {
   presentationLabel: string
   presentationUnits: string
   fromCode: string | null
+  fromWarehouseCode: string | null
   toCode: string | null
+  toWarehouseCode: string | null
   warehouseCode: string | null
   warehouseName: string | null
   quantity: number
@@ -131,8 +133,9 @@ type KardexItem = {
   affectsWarehouse: boolean
   movementId: string
   movementType: string
-  movementNumber: string
-  detail: string
+   movementNumber: string
+   referenceType: string | null
+   detail: string
   fromBalanceQty: number | null
   toBalanceQty: number | null
 }
@@ -541,25 +544,104 @@ const KardexModalContent = ({ productId, warehouseId, onClose }: { productId: st
   const kardexItems = kardexData?.kardex ?? []
   const summary = kardexData?.summary
 
-  const formatQty = (v: number) => (Number.isInteger(v) ? v.toString() : v.toFixed(2).replace(/\.?0+$/, ''))
+   const movementTypeLabel = (type: string, refType?: string | null): string => {
+     if (type === 'IN' && refType === 'BATCH') return 'Creación Lote'
+     if (type === 'IN' && refType === 'MOVEMENT_REQUEST_RECEIPT') return 'Recepción'
+     if (type === 'IN' && refType === 'MOVEMENT_REQUEST') return 'Recepción'
+     if (type === 'IN' && refType === 'RETURN') return 'Devolución'
+     if (type === 'IN') return 'Entrada'
+     if (type === 'OUT' && refType === 'SALES_ORDER') return 'Venta'
+     if (type === 'OUT' && refType === 'MOVEMENT_REQUEST') return 'Transferencia'
+     if (type === 'OUT' && refType === 'PRODUCT_SAMPLE') return 'Muestra'
+     if (type === 'OUT' && refType === 'MANUAL_DISCARD') return 'Descarte'
+     if (type === 'OUT') return 'Salida'
+     if (type === 'ADJUSTMENT') return 'Ajuste'
+     if (type === 'TRANSFER') return 'Transferencia'
+       return type
+    }
 
-  const exportKardexToExcel = () => {
+    const cleanWarehouseCode = (code: string | null | undefined) => (code ? code.replace(/^SUC-/, '') : '')
+    const locLabel = (m: KardexItem, side: 'from' | 'to') => {
+      const wh = side === 'from' ? m.fromWarehouseCode : m.toWarehouseCode
+      const loc = side === 'from' ? m.fromCode : m.toCode
+      if (!wh && !loc) return '—'
+      // For sales orders, wh holds the customer name and loc holds the order number → show as "ORDER#: Customer"
+      if (side === 'to' && m.referenceType === 'SALES_ORDER' && m.movementType === 'OUT') {
+        return `${loc ?? '—'}: ${wh ?? '—'}`
+      }
+      return `${cleanWarehouseCode(wh)}:${loc ?? '—'}`
+    }
+
+    const { saldoTotal, saldoLote } = useMemo(() => {
+        const visibleItems = kardexItems.filter((m) => m.affectsWarehouse)
+        let running = 0
+        const byLote = new Map<string, number>()
+        const total: number[] = []
+        const lote: (number | '—')[] = []
+        visibleItems.forEach((m) => {
+          const delta = (m.entry ?? 0) - (m.exit ?? 0)
+          running += delta
+          const batchKey = m.batchNumber ?? '__SIN_LOTE__'
+          const prevLote = byLote.get(batchKey) ?? 0
+          const newLote = prevLote + delta
+          byLote.set(batchKey, newLote)
+          total.push(running)
+          lote.push(newLote)
+        })
+        return { saldoTotal: total, saldoLote: lote }
+      }, [kardexItems])
+
+  function formatQty(v: number): string {
+  if (Number.isInteger(v)) return v.toString();
+  const s = v.toFixed(2);
+  const dot = s.indexOf('.');
+  if (dot === -1) return s;
+  let end = s.length;
+  while (end > dot + 1 && s[end - 1] === '0') end--;
+  if (s[end - 1] === '.') end--;
+  return s.slice(0, end);
+}
+
+   const batchColors = new Map<string, string>()
+   const batchColorPalette = [
+     'bg-red-100 dark:bg-red-900/20',
+     'bg-blue-100 dark:bg-blue-900/20',
+     'bg-green-100 dark:bg-green-900/20',
+     'bg-yellow-100 dark:bg-yellow-900/20',
+     'bg-purple-100 dark:bg-purple-900/20',
+     'bg-pink-100 dark:bg-pink-900/20',
+     'bg-indigo-100 dark:bg-indigo-900/20',
+     'bg-teal-100 dark:bg-teal-900/20',
+     'bg-orange-100 dark:bg-orange-900/20',
+     'bg-cyan-100 dark:bg-cyan-900/20',
+   ]
+   let paletteIndex = 0
+   const getBatchColor = (batchNumber: string | null): string => {
+     if (!batchNumber) return ''
+     if (batchColors.has(batchNumber)) return batchColors.get(batchNumber)!
+     const color = batchColorPalette[paletteIndex % batchColorPalette.length]
+     paletteIndex++
+     batchColors.set(batchNumber, color)
+     return color
+   }
+
+   const exportKardexToExcel = () => {
     if (!kardexData) return
     const sheets: ExportSheet[] = [
       {
         name: 'Kardex',
-        rows: kardexItems.map((m) => ({
+        rows: kardexItems.filter((m) => m.affectsWarehouse).map((m, idx) => ({
           Fecha: m.date,
-          Origen: m.fromCode ?? '—',
-          Destino: m.toCode ?? '—',
-          Almacén: m.warehouseName ?? '',
+          Origen: locLabel(m, 'from'),
+          Destino: locLabel(m, 'to'),
+          Almacén: cleanWarehouseCode(m.warehouseCode) ?? '',
           LOTE: m.batchNumber ?? '',
           Presentación: m.presentationLabel,
-          'Tipo Movimiento': m.movementType,
+          'Tipo Movimiento': movementTypeLabel(m.movementType, m.referenceType),
           Detalle: m.detail,
-          'Entrada (u)': m.entry,
-          'Salida (u)': m.exit,
-          'Saldo Unidades': m.balance,
+          'Cantidad (u)': m.quantity,
+          'Saldo Lote (u)': typeof saldoLote[idx] === 'number' ? saldoLote[idx] as number : '',
+          'Saldo Total (u)': saldoTotal[idx],
         })),
       },
       ...(summary?.byBatch
@@ -585,18 +667,26 @@ const KardexModalContent = ({ productId, warehouseId, onClose }: { productId: st
 
   return (
     <div className="flex flex-col gap-4">
-      <div>
-        <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
-          {kardexData?.product?.name ?? 'Producto'}
-        </h3>
-        <p className="text-sm text-slate-500 dark:text-slate-400">SKU: {kardexData?.product?.sku ?? '—'}</p>
+      <div className="flex justify-between items-start">
+        <div>
+          <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
+            {kardexData?.product?.name ?? 'Producto'}
+          </h3>
+          <p className="text-sm text-slate-500 dark:text-slate-400">SKU: {kardexData?.product?.sku ?? '—'}</p>
+        </div>
+        {warehouseId && (
+          <div className="text-right">
+            <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Sucursal: </span>
+            <span className="text-sm text-slate-600 dark:text-slate-400">{cleanWarehouseCode(kardexItems.find((m) => m.affectsWarehouse)?.warehouseCode ?? kardexItems[0]?.warehouseCode ?? null)}</span>
+          </div>
+        )}
       </div>
 
       {isLoading && <Loading />}
 
       {error && <ErrorState message="Error al cargar el kardex" retry={() => refetch()} />}
 
-      {!isLoading && !error && kardexData && kardexItems.length > 0 && (
+        {!isLoading && !error && kardexData && kardexItems.filter((m) => m.affectsWarehouse).length > 0 && (
         <>
           <div className="overflow-x-auto">
             <table className="w-full border-collapse text-sm">
@@ -605,39 +695,29 @@ const KardexModalContent = ({ productId, warehouseId, onClose }: { productId: st
                   <th className="border px-2 py-1.5 text-left font-medium text-slate-800 dark:text-slate-200">Fecha</th>
                   <th className="border px-2 py-1.5 text-left font-medium text-slate-800 dark:text-slate-200">Lote</th>
                   <th className="border px-2 py-1.5 text-left font-medium text-slate-800 dark:text-slate-200">Presentación</th>
+                  <th className="border px-2 py-1.5 text-center font-medium text-slate-800 dark:text-slate-200">Tipo</th>
                   <th className="border px-2 py-1.5 text-left font-medium text-slate-800 dark:text-slate-200">Origen</th>
                   <th className="border px-2 py-1.5 text-left font-medium text-slate-800 dark:text-slate-200">Destino</th>
-                  <th className="border px-2 py-1.5 text-right font-medium text-slate-800 dark:text-slate-200">Entrada (u)</th>
-                  <th className="border px-2 py-1.5 text-right font-medium text-slate-800 dark:text-slate-200">Salida (u)</th>
-                  <th className="border px-2 py-1.5 text-right font-medium text-slate-800 dark:text-slate-200">Saldo</th>
-                  <th className="border px-2 py-1.5 text-center font-medium text-slate-800 dark:text-slate-200">Sucursal</th>
+                   <th className="border px-2 py-1.5 text-right font-medium text-slate-800 dark:text-slate-200">Cantidad</th>
+                   <th className="border px-2 py-1.5 text-right font-medium text-slate-800 dark:text-slate-200">Saldo Lote</th>
+                   <th className="border px-2 py-1.5 text-right font-medium text-slate-800 dark:text-slate-200">Saldo</th>
                 </tr>
               </thead>
               <tbody>
-                {kardexItems.map((m, idx) => (
+                {kardexItems.filter((m) => m.affectsWarehouse).map((m, idx) => (
                   <tr
                     key={m.movementId}
-                    className={`${idx % 2 === 0 ? 'bg-white dark:bg-slate-900' : 'bg-slate-50 dark:bg-slate-800'} ${!m.affectsWarehouse ? 'opacity-60' : ''}`}
+                    className={`${getBatchColor(m.batchNumber)} ${!m.affectsWarehouse ? 'opacity-60' : ''}`}
                   >
                     <td className="border px-2 py-1">{new Date(m.date).toLocaleString()}</td>
-                    <td className="border px-2 py-1">{m.batchNumber ?? '—'}</td>
-                    <td className="border px-2 py-1">{m.presentationLabel}</td>
-                    <td className="border px-2 py-1">{m.fromCode ?? '—'}</td>
-                    <td className="border px-2 py-1">{m.toCode ?? '—'}</td>
-                    <td className="border px-2 py-1 text-right">{m.entry > 0 ? formatQty(m.entry) : ''}</td>
-                    <td className="border px-2 py-1 text-right">{m.exit > 0 ? formatQty(m.exit) : ''}</td>
-                    <td className="border px-2 py-1 text-right font-medium">{formatQty(m.balance)}</td>
-                    <td className="border px-2 py-1 text-center">
-                      {m.affectsWarehouse ? (
-                        <span className="inline-flex items-center gap-1 rounded-md bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/20 dark:text-green-300">
-                          Sí
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500 dark:bg-slate-800 dark:text-slate-400">
-                          Otra sucursal
-                        </span>
-                      )}
-                    </td>
+                    <td className="border px-2 py-1 bg-white/80 dark:bg-slate-900/80">{m.batchNumber ?? '—'}</td>
+                    <td className="border px-2 py-1 bg-white/80 dark:bg-slate-900/80">{m.presentationLabel}</td>
+                    <td className="border px-2 py-1 bg-white/80 dark:bg-slate-900/80 font-medium">{movementTypeLabel(m.movementType, m.referenceType)}</td>
+                    <td className="border px-2 py-1 bg-white/80 dark:bg-slate-900/80">{locLabel(m, 'from')}</td>
+                    <td className="border px-2 py-1 bg-white/80 dark:bg-slate-900/80">{locLabel(m, 'to')}</td>
+                    <td className="border px-2 py-1 text-right bg-white/80 dark:bg-slate-900/80">{formatQty(m.quantity)}</td>
+                    <td className="border px-2 py-1 text-right bg-white/80 dark:bg-slate-900/80">{typeof saldoLote[idx] === 'number' ? formatQty(saldoLote[idx] as number) : '—'}</td>
+                    <td className="border px-2 py-1 text-right font-medium bg-white/80 dark:bg-slate-900/80">{formatQty(saldoTotal[idx])}</td>
                   </tr>
                 ))}
               </tbody>

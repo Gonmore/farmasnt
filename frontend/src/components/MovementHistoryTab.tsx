@@ -12,7 +12,9 @@ type CompletedMovement = {
   createdAt: string
   completedAt: string
   fromWarehouseCode?: string | null
+  fromLocationCode?: string | null
   toWarehouseCode?: string | null
+  toLocationCode?: string | null
   requestedByName?: string | null
   fulfilledByName?: string | null
   totalItems: number
@@ -67,6 +69,11 @@ function formatQty(value: unknown): string {
 function cleanWarehouseCode(code: string | null | undefined): string {
   if (!code) return '—'
   return code.replace(/^SUC-/, '')
+}
+
+function locLabel(code: string | null | undefined): string {
+  if (!code) return '—'
+  return code
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -288,7 +295,7 @@ export function MovementHistoryTab({ token }: { token: string }) {
         header: 'Origen → Destino',
         accessor: (m: CompletedMovement) => (
           <span className="text-sm font-mono">
-            {cleanWarehouseCode(m.fromWarehouseCode)} → {cleanWarehouseCode(m.toWarehouseCode)}
+            {cleanWarehouseCode(m.fromWarehouseCode)}:{locLabel(m.fromLocationCode)} → {cleanWarehouseCode(m.toWarehouseCode)}:{locLabel(m.toLocationCode)}
           </span>
         ),
       },

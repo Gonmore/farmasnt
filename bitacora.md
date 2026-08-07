@@ -1,8 +1,41 @@
 # Bitácora de desarrollo — PharmaFlow Bolivia (farmaSNT)
 
+> Última actualización: 07 Ago 2026
+
 Este documento resume (a alto nivel) decisiones, hitos y cambios relevantes que se fueron incorporando al repositorio para llegar al estado actual del MVP.
 
-## **[03 Ago 2026] Versión 2.2.0 — Kardex por presentación, modal de entrega con devoluciones, sub-warehouse en solicitudes, upload PDF de comprobantes**
+## **[07 Ago 2026] Kardex de inventario — formato WAREHOUSE:Location, filtrado por sucursal, ajustes y ventas**
+
+### Objetivo alcanzado
+- Refinamiento del kardex de inventario para mostrar Origen y Destino con el formato `WAREHOUSE:Location` (código de sucursal sin prefijo `SUC-` + código de ubicación), filtrar movimientos por la sucursal consultada, incluir ajustes de stock, y mostrar órdenes de venta con nombre del cliente en la columna Destino.
+
+### Backend (`backend/src/adapters/http/routes/products.ts`)
+- `GET /api/v1/products/:id/kardex`: agrega `fromWarehouseCode`, `toWarehouseCode`, `fromLocationCode`, `toLocationCode` a la respuesta (`KardexRow` y `KardexItem`).
+- Para movimientos `OUT` + `SALES_ORDER`: el `toCode` se muestra como el número de orden y `toWarehouseCode` como el nombre del cliente. La columna "Detalle" incluye el nombre del cliente para estas ventas.
+- Nueva query secundaria extrae `customer.name` desde `salesOrder` (lookup por `referenceId = order.number`) para enriquecer el kardex.
+- El `runningBalance` (Saldo acumulado) se calcula solo sobre movimientos que afectan la sucursal filtrada (`affectsWarehouse`), respetando `entry`/`exit` por tipo (IN/OUT/TRANSFER/ADJUSTMENT).
+- La lógica de `affectsWarehouse` incluye correctamente `type: 'ADJUSTMENT'` (tanto para `warehouseLocationIds` como para `locationId`).
+
+### Frontend (`frontend/src/pages/stock/InventoryPage.tsx`)
+- Header del kardex muestra la sucursal a la derecha (`Sucursal: LPZ`).
+- Columnas "Origen" y "Destino" usan el formato `WAREHOUSE:Location` (ej: `LPZ:Privado → SCZ:Público`), sin prefijo `SUC-` en el código de sucursal.
+- El kardex filtra y muestra solo movimientos con `affectsWarehouse === true` (transferencias, ingresos, salidas, ajustes, recepciones y devoluciones que impactan la sucursal).
+- El saldo acumulado (`Saldo` columna) se calcula sobre movimientos filtrados, mostrando el saldo total del producto en la sucursal en cada paso (ej: 2000 → 1960 tras una venta de 40).
+- Exportación a Excel refleja el mismo formato y filtrado.
+- Los ajustes (`ADJUSTMENT`) aparecen correctamente cuando su `fromLocationId`/`toLocationId` pertenece a la sucursal filtrada.
+- Las ventas (`OUT` + `SALES_ORDER`) muestran `NRO_ORDEN: NombreCliente` en la columna "Destino".
+
+### Frontend (`frontend/src/pages/stock/CompletedMovementsPage.tsx`)
+- Columna "Origen → Destino" usa el formato `WAREHOUSE:Location` (sin prefijo `SUC-`) para movimientos completados.
+
+### Frontend (`frontend/src/components/MovementHistoryTab.tsx`)
+- Columna "Origen → Destino" usa el formato `WAREHOUSE:Location` con `SUC-` removido de los códigos de sucursal.
+
+### Operación
+- Backend y frontend compilados correctamente sin errores de tipado.
+- No se requieren migraciones Prisma nuevas para estos cambios (solo cambios en queries y rendering).
+
+---
 
 ### Objetivo alcanzado
 - Se implementaron 4 features: Kardex por presentación con exportación Excel, modal de entrega con manejo de devoluciones parciales, enrutamiento a sub-almacén en solicitudes de movimiento, y soporte de upload de comprobantes en PDF.

@@ -375,12 +375,19 @@ function buildMovementDetail(
   batchById: Map<string, { batchNumber: string }>,
   fromLoc: { code: string; warehouse?: { name?: string } } | null,
   toLoc: { code: string; warehouse?: { name?: string } } | null,
+  salesOrder?: { customer: { name: string } } | null,
 ): string {
   const parts: string[] = []
   const direction = m.type === 'IN' || m.type === 'ADJUSTMENT' ? 'Ingreso' : m.type === 'OUT' ? 'Salida' : 'Transferencia'
   parts.push(direction)
   if (m.batchId && batchById.has(m.batchId)) parts.push(`Lote ${batchById.get(m.batchId)!.batchNumber}`)
-  if (m.referenceType) parts.push(`[${m.referenceType}] ${m.referenceId ?? ''}`)
+  if (m.referenceType) {
+    if (m.referenceType === 'SALES_ORDER' && salesOrder) {
+      parts.push(`[${m.referenceType}] ${m.referenceId ?? ''} - Cliente: ${salesOrder.customer.name ?? ''}`)
+    } else {
+      parts.push(`[${m.referenceType}] ${m.referenceId ?? ''}`)
+    }
+  }
   if (fromLoc) parts.push(`Desde ${fromLoc.code} (${fromLoc.warehouse?.name ?? ''})`)
   if (toLoc) parts.push(`Hacia ${toLoc.code} (${toLoc.warehouse?.name ?? ''})`)
   if (m.note) parts.push(m.note)
@@ -1480,6 +1487,24 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
           })
         : []
 
+      // 4b. Fetch SalesOrder info for OUT movements with referenceType SALES_ORDER
+      const salesOrderNumbers = new Set(
+        movements.filter((m) => m.type === 'OUT' && m.referenceType === 'SALES_ORDER' && m.referenceId).map((m) => m.referenceId!)
+      )
+      const salesOrders = salesOrderNumbers.size
+        ? await db.salesOrder.findMany({
+            where: {
+              tenantId,
+              number: { in: [...salesOrderNumbers] },
+            },
+            select: {
+              number: true,
+              customer: { select: { name: true } },
+            },
+          })
+        : []
+      const soByNumber = new Map(salesOrders.map((so) => [so.number, so]))
+
       // 5. Build lookup maps
       const movById = new Map(movements.map((m) => [m.id, m]))
       const batchIds = new Set<string>()
@@ -1545,9 +1570,11 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
         presentationId: string | ''
         presentationLabel: string
         presentationUnits: string
-        fromCode: string | null
-        toCode: string | null
-        warehouseCode: string | null
+         fromCode: string | null
+         fromWarehouseCode: string | null
+         toCode: string | null
+         toWarehouseCode: string | null
+         warehouseCode: string | null
         warehouseName: string | null
         quantity: number
         entry: number
@@ -1557,6 +1584,7 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
         movementId: string
         movementType: string
         movementNumber: string
+        referenceType: string | null
         detail: string
         fromBalanceQty: number | null
         toBalanceQty: number | null
@@ -1583,9 +1611,6 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
 
       for (const m of movements) {
         const qty = Number(m.quantity)
-        const isEntry = m.type === 'IN' || m.type === 'ADJUSTMENT'
-        const entry = isEntry ? qty : 0
-        const exit = !isEntry ? qty : 0
 
         // Determine presentation
         let presLabel = '—'
@@ -1612,33 +1637,80 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
 
         // Determine if this movement affects the filtered warehouse (branch)
         let affectsWarehouse = true
+        let netDelta = 0
         if (warehouseLocationIds && warehouseLocationIds.length > 0) {
           const fromAffects = m.fromLocationId ? warehouseLocationIds.includes(m.fromLocationId) : false
           const toAffects = m.toLocationId ? warehouseLocationIds.includes(m.toLocationId) : false
-          const isTransfer = m.type === 'TRANSFER'
-          if (isTransfer) {
+          if (m.type === 'TRANSFER') {
             affectsWarehouse = fromAffects || toAffects
+            netDelta = (toAffects ? qty : 0) - (fromAffects ? qty : 0)
           } else if (m.type === 'IN') {
             affectsWarehouse = toAffects || (!m.toLocationId && !m.fromLocationId)
+            netDelta = toAffects || (!m.toLocationId && !m.fromLocationId) ? qty : 0
           } else if (m.type === 'OUT') {
             affectsWarehouse = fromAffects || (!m.fromLocationId && !m.toLocationId)
+            netDelta = fromAffects || (!m.fromLocationId && !m.toLocationId) ? -qty : 0
+          } else if (m.type === 'ADJUSTMENT') {
+            affectsWarehouse = fromAffects || toAffects || (!m.fromLocationId && !m.toLocationId)
+            if (m.toLocationId && toAffects) {
+              netDelta = qty
+            } else if (m.fromLocationId && fromAffects) {
+              netDelta = -qty
+            }
           } else {
             affectsWarehouse = fromAffects || toAffects
+            netDelta = qty
           }
         } else if (locationId) {
           const fromAffects = m.fromLocationId ? m.fromLocationId === locationId : false
           const toAffects = m.toLocationId ? m.toLocationId === locationId : false
-          const isTransfer = m.type === 'TRANSFER'
-          if (isTransfer) {
+          if (m.type === 'TRANSFER') {
             affectsWarehouse = fromAffects || toAffects
+            netDelta = (toAffects ? qty : 0) - (fromAffects ? qty : 0)
           } else if (m.type === 'IN') {
             affectsWarehouse = toAffects || (!m.toLocationId && !m.fromLocationId)
+            netDelta = toAffects || (!m.toLocationId && !m.fromLocationId) ? qty : 0
           } else if (m.type === 'OUT') {
             affectsWarehouse = fromAffects || (!m.fromLocationId && !m.toLocationId)
+            netDelta = fromAffects || (!m.fromLocationId && !m.toLocationId) ? -qty : 0
+          } else if (m.type === 'ADJUSTMENT') {
+            affectsWarehouse = fromAffects || toAffects || (!m.fromLocationId && !m.toLocationId)
+            if (m.toLocationId && toAffects) {
+              netDelta = qty
+            } else if (m.fromLocationId && fromAffects) {
+              netDelta = -qty
+            }
           } else {
             affectsWarehouse = fromAffects || toAffects
+            netDelta = qty
+          }
+        } else if (locationId) {
+          const fromAffects = m.fromLocationId ? m.fromLocationId === locationId : false
+          const toAffects = m.toLocationId ? m.toLocationId === locationId : false
+          if (m.type === 'TRANSFER') {
+            affectsWarehouse = fromAffects || toAffects
+            netDelta = (toAffects ? qty : 0) - (fromAffects ? qty : 0)
+          } else if (m.type === 'IN') {
+            affectsWarehouse = toAffects || (!m.toLocationId && !m.fromLocationId)
+            netDelta = toAffects || (!m.toLocationId && !m.fromLocationId) ? qty : 0
+          } else if (m.type === 'OUT') {
+            affectsWarehouse = fromAffects || (!m.fromLocationId && !m.toLocationId)
+            netDelta = fromAffects || (!m.fromLocationId && !m.toLocationId) ? -qty : 0
+          } else if (m.type === 'ADJUSTMENT') {
+            affectsWarehouse = fromAffects || toAffects || (!m.fromLocationId && !m.toLocationId)
+            if (m.toLocationId && toAffects) {
+              netDelta = qty
+            } else if (m.fromLocationId && fromAffects) {
+              netDelta = -qty
+            }
+          } else {
+            affectsWarehouse = fromAffects || toAffects
+            netDelta = qty
           }
         }
+
+        const entry = netDelta > 0 ? Math.abs(qty) : 0
+        const exit = netDelta < 0 ? Math.abs(qty) : 0
 
         // Use audit-provided balance when available, else accumulate
         let balanceValue = runningBalance
@@ -1663,7 +1735,17 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
           }
         }
 
-        const detail = buildMovementDetail(m, batchById, fromLoc ?? null, toLoc ?? null)
+        // For sales orders, override destination with order#: customer name
+        let toCodeValue: string | null = toLoc ? toLoc.code : null
+        let toWarehouseCodeValue: string | null = toLoc ? toLoc.warehouse.code : null
+        let so: { customer: { name: string } } | null = null
+        if (m.type === 'OUT' && m.referenceType === 'SALES_ORDER' && m.referenceId) {
+          so = soByNumber.get(m.referenceId) ?? null
+          toCodeValue = m.referenceId
+          toWarehouseCodeValue = so?.customer?.name ?? null
+        }
+
+        const detail = buildMovementDetail(m, batchById, fromLoc ?? null, toLoc ?? null, so)
         const loc = toLoc ?? fromLoc
         items.push({
           date: m.createdAt.toISOString(),
@@ -1672,7 +1754,9 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
           presentationLabel: presLabel,
           presentationUnits: presUnitsStr,
           fromCode: fromLoc ? fromLoc.code : null,
-          toCode: toLoc ? toLoc.code : null,
+          fromWarehouseCode: fromLoc ? fromLoc.warehouse.code : null,
+          toCode: toCodeValue,
+          toWarehouseCode: toWarehouseCodeValue,
           warehouseCode: loc ? loc.warehouse.code : null,
           warehouseName: loc ? loc.warehouse.name : null,
           quantity: qty,
@@ -1683,6 +1767,7 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
           movementId: m.id,
           movementType: m.type,
           movementNumber: m.number,
+          referenceType: m.referenceType ?? null,
           detail,
           fromBalanceQty: fromBalQty,
           toBalanceQty: toBalQty,
@@ -1754,8 +1839,8 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
         kardex: items,
         summary: {
           totalMovements: items.length,
-          runningBalance: formatQty(runningBalance),
-          currentStock: formatQty(currentStock),
+          runningBalance: Number(runningBalance),
+          currentStock: Number(currentStock),
           byBatch: summaryEntries,
           byPresentation: presSummaryList,
           totalBatches: summaryEntries.filter((e) => e.batchId).length,
