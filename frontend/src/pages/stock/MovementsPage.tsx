@@ -33,7 +33,8 @@ type MovementRequest = {
   code: string
   status: 'OPEN' | 'SENT' | 'FULFILLED' | 'CANCELLED'
   requestedCity: string
-  warehouseId?: string | null
+   warehouseId?: string | null
+  toLocationId?: string | null
   note?: string | null
   requestedByName: string | null
   createdAt: string
@@ -239,6 +240,7 @@ async function createMovementRequest(
   token: string,
   data: {
     warehouseId: string
+    toLocationId?: string
     items: { productId: string; presentationId: string; quantity: number }[]
     note?: string
   },
@@ -255,6 +257,7 @@ async function updateMovementRequest(
   requestId: string,
   data: {
     warehouseId: string
+    toLocationId?: string
     items: { productId: string; presentationId: string; quantity: number }[]
     note?: string
   },
@@ -324,7 +327,8 @@ export function MovementsPage() {
   const [editingRequestId, setEditingRequestId] = useState<string | null>(null)
   const [selectedRequest, setSelectedRequest] = useState<MovementRequest | null>(null)
   const [showRequestDetailModal, setShowRequestDetailModal] = useState(false)
-  const [requestWarehouseId, setRequestWarehouseId] = useState('')
+   const [requestWarehouseId, setRequestWarehouseId] = useState('')
+  const [requestLocationId, setRequestLocationId] = useState('')
   const [requestProductId, setRequestProductId] = useState('')
   const [requestItem, setRequestItem] = useState<{ presentationId: string; quantity: number } | null>(null)
   const [requestItems, setRequestItems] = useState<
@@ -460,6 +464,12 @@ export function MovementsPage() {
     queryKey: ['warehouses', 'forRequests'],
     queryFn: () => listWarehouses(auth.accessToken!),
     enabled: !!auth.accessToken,
+  })
+
+  const requestLocationsQuery = useQuery({
+    queryKey: ['warehouseLocations', 'forRequests', requestWarehouseId],
+    queryFn: () => listWarehouseLocations(auth.accessToken!, requestWarehouseId),
+    enabled: !!auth.accessToken && !!requestWarehouseId,
   })
 
   // Preseleccionar sucursal para administradores de sucursal
@@ -942,8 +952,9 @@ export function MovementsPage() {
       const items = [...combined.values()].filter((x) => Number.isFinite(x.quantity) && x.quantity > 0)
       if (items.length === 0) throw new Error('Agregá al menos un ítem a la solicitud')
 
-      const payload = {
+       const payload = {
         warehouseId: requestWarehouseId,
+        toLocationId: requestLocationId || undefined,
         items,
         note: requestNote.trim() || undefined,
       }
@@ -960,8 +971,9 @@ export function MovementsPage() {
       setShowCreateRequestModal(false)
       // Only reset warehouse for non-branch-admin users
       if (!permissions.roles.some(r => r.code === 'BRANCH_ADMIN')) {
-        setRequestWarehouseId('')
-      }
+      setRequestWarehouseId('')
+       setRequestLocationId('')
+     }
       setEditingRequestId(null)
       setRequestProductId('')
       setRequestItem(null)
@@ -1253,8 +1265,9 @@ export function MovementsPage() {
     setEditingRequestId(req.id)
     setCreateRequestError('')
 
-    setRequestWarehouseId(String(req.warehouseId ?? ''))
-    setRequestNote(String(req.note ?? ''))
+     setRequestWarehouseId(String(req.warehouseId ?? ''))
+     setRequestLocationId(String(req.toLocationId ?? ''))
+     setRequestNote(String(req.note ?? ''))
 
     const nextItems = (req.items ?? [])
       .filter((it) => typeof it.presentationId === 'string' && it.presentationId.length > 0)
@@ -2435,8 +2448,8 @@ export function MovementsPage() {
           setEditingRequestId(null)
           setCreateRequestError('')
         }}
-        title={editingRequestId ? 'Editar solicitud de movimiento' : 'Crear solicitud de movimiento'}
-        maxWidth="lg"
+         title={editingRequestId ? 'Editar solicitud de movimiento' : 'Crear solicitud de movimiento'}
+        maxWidth="3xl"
       >
         <form
           onSubmit={(e) => {
@@ -2448,7 +2461,10 @@ export function MovementsPage() {
           <Select
             label="Sucursal que solicita"
             value={requestWarehouseId}
-            onChange={(e) => setRequestWarehouseId(e.target.value)}
+            onChange={(e) => {
+              setRequestWarehouseId(e.target.value)
+              setRequestLocationId('')
+            }}
             options={[
               { value: '', label: 'Selecciona una sucursal' },
               ...(requestWarehousesQuery.data?.items ?? [])
@@ -2458,6 +2474,22 @@ export function MovementsPage() {
             disabled={requestWarehousesQuery.isLoading || (permissions.hasPermission('scope:branch') && !permissions.isTenantAdmin)}
             required
           />
+
+          {requestWarehouseId && (
+            <Select
+              label="Sub-almacén destino"
+              value={requestLocationId}
+              onChange={(e) => setRequestLocationId(e.target.value)}
+              options={[
+                { value: '', label: 'Selecciona un sub-almacén' },
+                ...(requestLocationsQuery.data?.items ?? [])
+                  .filter((l) => l.isActive)
+                  .map((l) => ({ value: l.id, label: l.code })),
+              ]}
+              disabled={requestLocationsQuery.isLoading}
+              error={requestLocationsQuery.isError ? 'Error cargando sub-almacenes' : undefined}
+            />
+          )}
 
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">

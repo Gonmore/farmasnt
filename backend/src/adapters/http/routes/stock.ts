@@ -95,6 +95,7 @@ const bulkFulfillRequestsSchema = z.object({
   fulfillments: z.array(
     z.object({
       requestId: z.string().uuid(),
+      toLocationId: z.string().uuid().optional(),
       items: z.array(
         z.object({
           requestItemId: z.string().uuid().optional(),
@@ -106,7 +107,7 @@ const bulkFulfillRequestsSchema = z.object({
     })
   ).min(1),
   fromLocationId: z.string().uuid(),
-  toLocationId: z.string().uuid(),
+  toLocationId: z.string().uuid().optional(),
   note: z.string().trim().max(500).optional(),
 })
 
@@ -3063,18 +3064,22 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
       try {
         const result = await db.$transaction(async (tx) => {
           // Validate locations exist
-          const [fromLoc, toLoc] = await Promise.all([
-            tx.location.findFirst({
-              where: { tenantId, id: input.fromLocationId },
-              select: { id: true, code: true, warehouse: { select: { id: true, code: true, name: true, city: true } } },
-            }),
-            tx.location.findFirst({
+          const fromLoc = await tx.location.findFirst({
+            where: { tenantId, id: input.fromLocationId },
+            select: { id: true, code: true, warehouse: { select: { id: true, code: true, name: true, city: true } } },
+          })
+          if (!fromLoc) throw Object.assign(new Error('fromLocationId not found'), { statusCode: 404 })
+
+          // Validate a global toLocationId if provided; otherwise it is resolved per-request
+           let globalToLoc: { id: string; code: string; warehouse: { id: string; code: string; name: string; city: string | null } } | null = null
+          if (input.toLocationId) {
+            const loc = await tx.location.findFirst({
               where: { tenantId, id: input.toLocationId },
               select: { id: true, code: true, warehouse: { select: { id: true, code: true, name: true, city: true } } },
-            }),
-          ])
-          if (!fromLoc) throw Object.assign(new Error('fromLocationId not found'), { statusCode: 404 })
-          if (!toLoc) throw Object.assign(new Error('toLocationId not found'), { statusCode: 404 })
+            })
+            if (!loc) throw Object.assign(new Error('toLocationId not found'), { statusCode: 404 })
+            globalToLoc = loc as any
+          }
 
           if (branchWarehouseId && fromLoc.warehouse?.id !== branchWarehouseId) {
             throw Object.assign(new Error('Solo puede enviar stock desde su sucursal'), { statusCode: 403 })
@@ -3084,20 +3089,21 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
           const touchedRequestIds = new Set<string>()
 
           for (const fulfillment of input.fulfillments) {
-            const { requestId, items } = fulfillment
+            const { requestId, toLocationId: fulfillmentToLocationId, items } = fulfillment
 
             // Validate request exists and is effectively OPEN.
             // Historical inconsistency: some requests may be marked SENT/FULFILLED without any OUT movements.
             // In that case, treat them as OPEN again so they can be fulfilled.
-            const req = await tx.stockMovementRequest.findFirst({
-              where: { tenantId, id: requestId, status: { in: ['OPEN', 'SENT', 'FULFILLED'] } },
-              select: {
-                id: true,
-                status: true,
-                requestedCity: true,
-                warehouseId: true,
-                confirmationStatus: true,
-                items: {
+             const req = await tx.stockMovementRequest.findFirst({
+               where: { tenantId, id: requestId, status: { in: ['OPEN', 'SENT', 'FULFILLED'] } },
+               select: {
+                 id: true,
+                 status: true,
+                 requestedCity: true,
+                 warehouseId: true,
+                 toLocationId: true,
+                 confirmationStatus: true,
+                 items: {
                   select: {
                     id: true,
                     productId: true,
@@ -3141,16 +3147,28 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
 
             const reqCity = String(req.requestedCity ?? '').trim().toUpperCase()
 
-            // Check destination consistency
-            if (req.warehouseId && toLoc.warehouse?.id !== req.warehouseId) {
-              throw Object.assign(new Error('toLocationId does not belong to the requested warehouse'), { statusCode: 400 })
-            }
-            if (!req.warehouseId) {
-              const toCity = String(toLoc.warehouse?.city ?? '').trim().toUpperCase()
-              if (toCity && reqCity && toCity !== reqCity) {
-                throw Object.assign(new Error('toLocationId city does not match requestedCity'), { statusCode: 400 })
-              }
-            }
+             // Resolve the destination location for this request:
+             // use fulfillment.toLocationId, then global toLocationId, then the request's own toLocationId
+             const effectiveToLocationId = fulfillmentToLocationId ?? input.toLocationId ?? req.toLocationId
+             if (!effectiveToLocationId) {
+               throw Object.assign(new Error(`Request ${requestId} has no destination location and none was provided`), { statusCode: 400 })
+             }
+             const toLoc = (globalToLoc && globalToLoc.id === effectiveToLocationId) ? globalToLoc : await tx.location.findFirst({
+               where: { tenantId, id: effectiveToLocationId },
+               select: { id: true, code: true, warehouse: { select: { id: true, code: true, name: true, city: true } } },
+             }) as { id: string; code: string; warehouse: { id: string; code: string; name: string; city: string | null } }
+             if (!toLoc) throw Object.assign(new Error(`Destination location not found`), { statusCode: 404 })
+
+             // Check destination consistency
+             if (req.warehouseId && toLoc.warehouse?.id !== req.warehouseId) {
+               throw Object.assign(new Error('Destination location does not belong to the requested warehouse'), { statusCode: 400 })
+             }
+             if (!req.warehouseId) {
+               const toCity = String(toLoc.warehouse?.city ?? '').trim().toUpperCase()
+               if (toCity && reqCity && toCity !== reqCity) {
+                 throw Object.assign(new Error('Destination location city does not match requestedCity'), { statusCode: 400 })
+               }
+             }
 
             // Process each item in the fulfillment
             for (const item of items) {
@@ -3199,7 +3217,7 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
                 productId: item.productId,
                 batchId: item.batchId,
                 fromLocationId: input.fromLocationId,
-                toLocationId: input.toLocationId, // Store destination for later reception
+                toLocationId: effectiveToLocationId, // Store destination for later reception
                 quantity: item.quantity,
                 presentationId: batch.presentationId ?? requestItem.presentationId,
                 presentationQuantity: (() => {

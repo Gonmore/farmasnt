@@ -40,9 +40,12 @@ type MovementRequest = {
   fulfilledAt: string | null
   confirmedAt?: string | null
   confirmationNote?: string | null
-  movements?: Array<{ id: string; type: 'OUT' | 'IN' }>
-  items: MovementRequestItem[]
-}
+   warehouse?: { id: string; code: string | null; name: string | null; city: string | null } | null
+   toLocationId?: string | null
+   toLocation?: { id: string; code: string; warehouse: { id: string; code: string; name: string; city: string | null } } | null
+   movements?: Array<{ id: string; type: 'OUT' | 'IN' }>
+   items: MovementRequestItem[]
+ }
 
 async function listWarehouses(token: string): Promise<{ items: WarehouseListItem[] }> {
   return apiFetch('/api/v1/warehouses?take=100', { token })
@@ -141,11 +144,11 @@ export function BulkFulfillRequestsPage() {
 
   const [fromWarehouseId, setFromWarehouseId] = useState('')
   const [fromLocationId, setFromLocationId] = useState('')
-  const [toWarehouseId, setToWarehouseId] = useState('')
-  const [toLocationId, setToLocationId] = useState('')
-  const [note, setNote] = useState('')
+   const [toWarehouseId, setToWarehouseId] = useState('')
+   const [note, setNote] = useState('')
   const [selectedRequestIds, setSelectedRequestIds] = useState<string[]>([])
   const [isFulfillModalOpen, setIsFulfillModalOpen] = useState(false)
+  const [requestLocations, setRequestLocations] = useState<Record<string, string>>({})
   const [batchSelections, setBatchSelections] = useState<Record<string, number>>({})
   const [requestsSearchQuery, setRequestsSearchQuery] = useState('')
   const [showPartialWarning, setShowPartialWarning] = useState(false)
@@ -207,7 +210,7 @@ export function BulkFulfillRequestsPage() {
   const availableFromWarehouses = activeWarehouses
   const availableToWarehouses = activeWarehouses.filter((w) => w.id !== fromWarehouseId)
 
-  const canSubmit = !!fromWarehouseId && !!fromLocationId && !!toWarehouseId && !!toLocationId
+   const canSubmit = !!fromWarehouseId && !!fromLocationId && !!toWarehouseId
 
   const filteredRequests = useMemo(() => {
     if (!movementRequestsQuery.data?.items) return []
@@ -240,6 +243,7 @@ export function BulkFulfillRequestsPage() {
         r.fulfilledAt,
         formatDateOnlyUtc(r.createdAt),
         r.fulfilledAt ? formatDateOnlyUtc(r.fulfilledAt) : '',
+        r.toLocation?.code ?? '',
         itemText,
       ])
     })
@@ -249,7 +253,7 @@ export function BulkFulfillRequestsPage() {
     return filteredRequests.filter((request: MovementRequest) => selectedRequestIds.includes(request.id))
   }, [filteredRequests, selectedRequestIds])
 
-  const requestedProducts = useMemo(() => {
+   const requestedProducts = useMemo(() => {
     const productsMap = new Map()
     
     selectedRequests.forEach((request: MovementRequest) => {
@@ -286,6 +290,40 @@ export function BulkFulfillRequestsPage() {
     })
     
     return Array.from(productsMap.values())
+  }, [selectedRequests])
+
+  const requestedByRequest = useMemo(() => {
+    return selectedRequests.map((request: MovementRequest) => {
+      const requestProducts = new Map()
+      request.items.forEach((item: MovementRequestItem) => {
+        const key = `${item.productId}-${item.presentationId || 'no-presentation'}`
+        if (!requestProducts.has(key)) {
+          requestProducts.set(key, {
+            productId: item.productId,
+            productName: item.productName,
+            productSku: item.productSku,
+            presentationId: item.presentationId,
+            presentationName: item.presentationName,
+            unitsPerPresentation: item.unitsPerPresentation,
+            remainingQuantity: 0,
+            requestedQuantity: 0,
+          })
+        }
+        const product = requestProducts.get(key)
+        const remainingPresentationQuantity = item.unitsPerPresentation && item.unitsPerPresentation > 0
+          ? Math.ceil(item.remainingQuantity / item.unitsPerPresentation)
+          : item.presentationQuantity || item.remainingQuantity
+        const presentationQuantity = item.unitsPerPresentation && item.unitsPerPresentation > 0
+          ? Math.ceil(item.requestedQuantity / item.unitsPerPresentation)
+          : item.presentationQuantity || item.requestedQuantity
+        product.remainingQuantity += remainingPresentationQuantity
+        product.requestedQuantity += presentationQuantity
+      })
+      return {
+        request,
+        products: Array.from(requestProducts.values()).filter(p => p.remainingQuantity > 0),
+      }
+    }).filter(r => r.products.length > 0)
   }, [selectedRequests])
 
   const availableBatches = useMemo(() => {
@@ -408,8 +446,11 @@ export function BulkFulfillRequestsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requestedProducts, batchSelections, availableBatches])
 
-  const getProductFulfillmentStatus = (product: typeof requestedProducts[0]) => {
-    const statusItem = fulfillmentItemStatuses.find(s => s.product === product)
+   const getProductFulfillmentStatus = (product: any) => {
+    const statusItem = fulfillmentItemStatuses.find(s => 
+      s.product.productId === product.productId && 
+      s.product.presentationId === product.presentationId
+    )
     return statusItem?.status === 'complete'
   }
 
@@ -423,9 +464,10 @@ export function BulkFulfillRequestsPage() {
   const queryClient = useQueryClient()
 
   const bulkFulfillMutation = useMutation({
-    mutationFn: async (data: {
+     mutationFn: async (data: {
       fulfillments: Array<{
         requestId: string
+        toLocationId?: string
         items: Array<{
           requestItemId: string
           productId: string
@@ -434,7 +476,6 @@ export function BulkFulfillRequestsPage() {
         }>
       }>
       fromLocationId: string
-      toLocationId: string
       note?: string
     }) => {
       return apiFetch<{ sentRequestIds: string[]; touchedRequestIds: string[]; movementCount: number }>(
@@ -456,8 +497,9 @@ export function BulkFulfillRequestsPage() {
       
       // Limpiar la selección después del éxito
       setSelectedRequestIds([])
-      setBatchSelections({})
-      setNote('')
+       setBatchSelections({})
+       setRequestLocations({})
+       setNote('')
       setIsFulfillModalOpen(false)
       
       // Navegar automáticamente a "Realizados" y resaltar el registro
@@ -522,14 +564,25 @@ export function BulkFulfillRequestsPage() {
       }
 
       if (items.length > 0) {
-        fulfillments.push({ requestId: req.id, items })
+        fulfillments.push({ requestId: req.id, toLocationId: requestLocations[req.id] || req.toLocationId || undefined, items })
       }
     }
 
-    bulkFulfillMutation.mutate({ fulfillments, fromLocationId, toLocationId, note })
-  }
+     const payload: { fulfillments: Array<{ requestId: string; toLocationId?: string; items: Array<{ requestItemId: string; productId: string; batchId: string; quantity: number }> }>
+        fromLocationId: string
+        note?: string } = { fulfillments, fromLocationId, note: note.trim() || undefined }
 
-  console.log('BulkFulfillRequestsPage loaded')
+      // Validate that every selected request has a destination location
+      for (const req of selectedRequests) {
+        const resolvedLoc = requestLocations[req.id] || req.toLocationId
+        if (!resolvedLoc) {
+          throw new Error(`Seleccioná una ubicación destino para la solicitud ${req.code || req.id}`)
+        }
+      }
+
+      bulkFulfillMutation.mutate(payload)
+    }
+
   return (
     <MainLayout navGroups={navGroups}>
       <PageContainer title="✅ Enviar solicitudes">
@@ -592,19 +645,7 @@ export function BulkFulfillRequestsPage() {
                 disabled={warehousesQuery.isLoading}
               />
 
-              <Select
-                label="Ubicación destino"
-                value={toLocationId}
-                onChange={(e) => setToLocationId(e.target.value)}
-                options={[
-                  { value: '', label: 'Selecciona ubicación' },
-                  ...(toLocationsQuery.data?.items ?? [])
-                    .filter((l) => l.isActive)
-                    .map((l) => ({ value: l.id, label: l.code })),
-                ]}
-                disabled={!toWarehouseId || toLocationsQuery.isLoading}
-              />
-            </div>
+             </div>
 
             <div className="mt-3">
               <Input
@@ -661,18 +702,27 @@ export function BulkFulfillRequestsPage() {
                               {request.code ? (
                                 <span className="text-xs text-slate-500 dark:text-slate-400">({request.code})</span>
                               ) : null}
-                              {request.note && (
-                                <span
-                                  className="text-xs cursor-help"
-                                  title={request.note}
-                                >
-                                  📝
-                                </span>
-                              )}
-                            </div>
-                            <span className="text-xs text-slate-500 dark:text-slate-400">
-                              {new Date(request.createdAt).toLocaleString('es-ES')}
-                            </span>
+                             {request.note && (
+                                 <span
+                                   className="text-xs cursor-help"
+                                   title={request.note}
+                                 >
+                                   📝
+                                 </span>
+                               )}
+                             </div>
+                             <span className="text-xs text-slate-500 dark:text-slate-400">
+                               {new Date(request.createdAt).toLocaleString('es-ES')}
+                             </span>
+                             {request.toLocation ? (
+                               <span className="text-xs text-slate-600 dark:text-slate-400">
+                                 🏷️ {request.toLocation.code}
+                               </span>
+                             ) : (
+                               <span className="text-xs text-amber-600 dark:text-amber-400">
+                                 Sin ubicación destino
+                               </span>
+                             )}
                           </div>
                           <div className="flex-1 text-xs text-slate-600 dark:text-slate-400 ml-4">
                             {request.items.map((item: MovementRequestItem, index: number) => {
@@ -704,8 +754,16 @@ export function BulkFulfillRequestsPage() {
 
             <div className="mt-4 flex gap-2">
               <Button 
-                onClick={() => {
+                   onClick={() => {
                   setBatchSelections({})
+                  // Initialize requestLocations from the selected requests' toLocationId
+                  const initLocations: Record<string, string> = {}
+                  selectedRequests.forEach(r => {
+                    if (r.toLocationId) {
+                      initLocations[r.id] = r.toLocationId
+                    }
+                  })
+                  setRequestLocations(initLocations)
                   setIsFulfillModalOpen(true)
                 }}
                 disabled={!canSubmit || selectedRequestIds.length === 0}
@@ -717,10 +775,10 @@ export function BulkFulfillRequestsPage() {
                 onClick={() => {
                   setFromWarehouseId('')
                   setFromLocationId('')
-                  setToWarehouseId('')
-                  setToLocationId('')
-                  setNote('')
-                  setSelectedRequestIds([])
+                 setToWarehouseId('')
+                 setEditToLocationId('')
+                 setNote('')
+                 setSelectedRequestIds([])
                 }}
               >
                 Limpiar selección
@@ -750,63 +808,108 @@ export function BulkFulfillRequestsPage() {
       <Modal
         isOpen={isFulfillModalOpen}
         onClose={() => {
-          setIsFulfillModalOpen(false)
+           setIsFulfillModalOpen(false)
           setBatchSelections({})
+          setRequestLocations({})
         }}
         title={`Transferencia de ${activeWarehouses.find(w => w.id === fromWarehouseId)?.name || 'Origen'} a ${activeWarehouses.find(w => w.id === toWarehouseId)?.name || 'Destino'}`}
-        maxWidth="6xl"
+         maxWidth="6xl"
+         closable
       >
         <div className="flex flex-col gap-4 md:flex-row md:items-start">
           {/* Lo Solicitado (siempre visible a la izquierda) */}
           <div className="border border-slate-200 rounded-lg p-4 dark:border-slate-700 md:w-[30%]">
             <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100 mb-4">Lo Solicitado</h3>
-            <div className="space-y-2">
-              {requestedProducts.filter(product => product.remainingQuantity > 0).map((product, index) => {
-                const isFulfilled = getProductFulfillmentStatus(product)
-                const presentationText =
-                  product.unitsPerPresentation === 1
-                    ? 'Unidad'
-                    : (product.presentationName || 'Sin presentación') +
-                      (product.unitsPerPresentation && product.unitsPerPresentation > 1 ? ` (${product.unitsPerPresentation}u)` : '')
-                return (
-                  <div key={index} className="border-b border-slate-100 py-2 last:border-b-0 dark:border-slate-700">
-                    <div className="min-w-0">
-                      <div className="font-bold text-[13px] leading-tight text-slate-900 dark:text-slate-100">
-                        {product.productName || 'Producto desconocido'}
-                      </div>
-                      <div className="mt-0.5 flex items-center justify-between gap-2 leading-tight">
-                        <div className="min-w-0">
-                          <span
-                            className={`font-bold text-xs text-slate-900 dark:text-slate-100 ${
-                              product.remainingQuantity === 0 ? 'line-through text-slate-400 dark:text-slate-500' : ''
-                            }`}
-                          >
-                            {product.remaining}x
-                          </span>{' '}
-                          <span className="text-[11px] text-slate-600 dark:text-slate-400">{presentationText}</span>
-                        </div>
+            <div className="space-y-4">
+               {requestedByRequest.length === 0 ? (
+                 <div className="text-sm text-slate-600 dark:text-slate-400">No hay productos pendientes</div>
+               ) : null}
+               {requestedByRequest.map(({ request, products }) => {
+                 const selectedLoc = requestLocations[request.id] || ''
+                 const hasRequestLocation = !!request.toLocationId
+                 const locMismatch = selectedLoc && request.toLocationId && selectedLoc !== request.toLocationId
+                 const locMissing = !selectedLoc && !request.toLocationId
 
-                        <div
-                          className={`inline-flex items-center justify-center w-6 h-6 rounded-full border-2 flex-shrink-0 ${
-                            isFulfilled
-                              ? 'border-green-500 bg-green-50 dark:bg-green-900/20'
-                              : 'border-slate-300 bg-slate-50 dark:bg-slate-800 dark:border-slate-600'
-                          }`}
-                          title={isFulfilled ? 'Completado' : 'Pendiente'}
-                        >
-                          <span
-                            className={`text-sm ${
-                              isFulfilled ? 'text-green-600 dark:text-green-400' : 'text-slate-400 dark:text-slate-500'
-                            }`}
-                          >
-                            ✓
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )
-              })}
+                 return (
+                   <div key={request.id} className="rounded-md border border-slate-200 p-3 dark:border-slate-700">
+                     <div className="mb-2 flex items-center justify-between">
+                       <span className="text-xs font-medium text-slate-600 dark:text-slate-400">
+                         {request.code || request.id}
+                       </span>
+                     </div>
+
+                     <Select
+                       label="Ubicación destino"
+                       value={selectedLoc}
+                       onChange={(e) => setRequestLocations(prev => ({ ...prev, [request.id]: e.target.value }))}
+                       options={[
+                         { value: '', label: 'Selecciona ubicación' },
+                         ...(toLocationsQuery.data?.items ?? [])
+                           .filter((l) => l.isActive)
+                           .map((l) => ({
+                             value: l.id,
+                             label: `${l.code}${hasRequestLocation && l.id === request.toLocationId ? ' ⭐' : ''}`,
+                           })),
+                       ]}
+                       disabled={toLocationsQuery.isLoading}
+                     />
+                     {hasRequestLocation && !locMismatch && (
+                       <p className="mt-1 text-xs text-green-600 dark:text-green-400">
+                         ⭐ Ubicación fijada desde la solicitud: {request.toLocation?.code || '—'}
+                       </p>
+                     )}
+                     {locMismatch && (
+                       <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                         ⚠️ Estás cambiando la ubicación destino fijada en la solicitud ({request.toLocation?.code || '—'} → {toLocationsQuery.data?.items?.find(l => l.id === selectedLoc)?.code || 'otra'})
+                       </p>
+                     )}
+                     {locMissing && (
+                       <p className="mt-1 text-xs text-red-600 dark:text-red-400">
+                         ⚠️ Esta solicitud no tiene ubicación destino. Seleccioná una.
+                       </p>
+                     )}
+
+                     <div className="mt-3 space-y-2">
+                       {products.map((product: any, pidx: number) => {
+                         const isFulfilled = getProductFulfillmentStatus(product)
+                          const presentationText =
+                            product.unitsPerPresentation === 1
+                              ? 'Unidad'
+                              : (product.presentationName || 'Sin presentación') +
+                                (product.unitsPerPresentation && product.unitsPerPresentation > 1 ? ` (${product.unitsPerPresentation}u)` : '')
+
+                          return (
+                           <div key={pidx} className="border-b border-slate-100 py-2 last:border-b-0 dark:border-slate-700">
+                             <div className="min-w-0">
+                               <div className="font-bold text-[13px] leading-tight text-slate-900 dark:text-slate-100">
+                                 {product.productName || 'Producto desconocido'}
+                               </div>
+                               <div className="mt-0.5 flex items-center justify-between gap-2 leading-tight">
+                                 <div className="min-w-0">
+                                   <span className="font-bold text-xs text-slate-900 dark:text-slate-100">
+                                     {product.remaining}x
+                                   </span>{' '}
+                                   <span className="text-[11px] text-slate-600 dark:text-slate-400">{presentationText}</span>
+                                 </div>
+                                 <div
+                                   className={`inline-flex items-center justify-center w-6 h-6 rounded-full border-2 flex-shrink-0 ${
+                                     isFulfilled
+                                       ? 'border-green-500 bg-green-50 dark:bg-green-900/20'
+                                       : 'border-slate-300 bg-slate-50 dark:bg-slate-800 dark:border-slate-600'
+                                   }`}
+                                   title={isFulfilled ? 'Completado' : 'Pendiente'}
+                                 >
+                                   <span className={`text-sm ${isFulfilled ? 'text-green-600 dark:text-green-400' : 'text-slate-400 dark:text-slate-500'}`}>✓</span>
+                                 </div>
+                               </div>
+                             </div>
+                           </div>
+                         )
+                       })}
+                     </div>
+                   </div>
+                 )
+               })}
             </div>
           </div>
 

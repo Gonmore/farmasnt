@@ -1641,7 +1641,7 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
         if (warehouseLocationIds && warehouseLocationIds.length > 0) {
           const fromAffects = m.fromLocationId ? warehouseLocationIds.includes(m.fromLocationId) : false
           const toAffects = m.toLocationId ? warehouseLocationIds.includes(m.toLocationId) : false
-          if (m.type === 'TRANSFER') {
+          if (m.type === 'TRANSFER' || (m.type === 'OUT' && m.referenceType === 'MOVEMENT_REQUEST' && m.toLocationId)) {
             affectsWarehouse = fromAffects || toAffects
             netDelta = (toAffects ? qty : 0) - (fromAffects ? qty : 0)
           } else if (m.type === 'IN') {
@@ -1664,30 +1664,7 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
         } else if (locationId) {
           const fromAffects = m.fromLocationId ? m.fromLocationId === locationId : false
           const toAffects = m.toLocationId ? m.toLocationId === locationId : false
-          if (m.type === 'TRANSFER') {
-            affectsWarehouse = fromAffects || toAffects
-            netDelta = (toAffects ? qty : 0) - (fromAffects ? qty : 0)
-          } else if (m.type === 'IN') {
-            affectsWarehouse = toAffects || (!m.toLocationId && !m.fromLocationId)
-            netDelta = toAffects || (!m.toLocationId && !m.fromLocationId) ? qty : 0
-          } else if (m.type === 'OUT') {
-            affectsWarehouse = fromAffects || (!m.fromLocationId && !m.toLocationId)
-            netDelta = fromAffects || (!m.fromLocationId && !m.toLocationId) ? -qty : 0
-          } else if (m.type === 'ADJUSTMENT') {
-            affectsWarehouse = fromAffects || toAffects || (!m.fromLocationId && !m.toLocationId)
-            if (m.toLocationId && toAffects) {
-              netDelta = qty
-            } else if (m.fromLocationId && fromAffects) {
-              netDelta = -qty
-            }
-          } else {
-            affectsWarehouse = fromAffects || toAffects
-            netDelta = qty
-          }
-        } else if (locationId) {
-          const fromAffects = m.fromLocationId ? m.fromLocationId === locationId : false
-          const toAffects = m.toLocationId ? m.toLocationId === locationId : false
-          if (m.type === 'TRANSFER') {
+          if (m.type === 'TRANSFER' || (m.type === 'OUT' && m.referenceType === 'MOVEMENT_REQUEST' && m.toLocationId)) {
             affectsWarehouse = fromAffects || toAffects
             netDelta = (toAffects ? qty : 0) - (fromAffects ? qty : 0)
           } else if (m.type === 'IN') {
