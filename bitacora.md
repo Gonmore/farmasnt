@@ -1,8 +1,24 @@
 # Bitácora de desarrollo — PharmaFlow Bolivia (farmaSNT)
 
-> Última actualización: 07 Ago 2026
+> Última actualización: 08 Ago 2026
 
 Este documento resume (a alto nivel) decisiones, hitos y cambios relevantes que se fueron incorporando al repositorio para llegar al estado actual del MVP.
+
+## **[08 Ago 2026] Ergonomía: deshabilitar scroll de rueda en inputs numéricos**
+
+### Objetivo alcanzado
+- Prevenir que la rueda del mouse cambie accidentalmente valores en inputs numéricos (`type="number"`) al hacer scroll sobre ellos, un problema frecuente al seleccionar productos y cantidades (100 → 101/99).
+
+### Frontend (`frontend/src/components/common/Input.tsx` + `frontend/src/main.tsx`)
+- `Input` component: agrega `onWheel` que cancela `preventDefault()` cuando `type === 'number'`, preservando el `onWheel` del consumidor (combinado) y no afectando inputs no numéricos.
+- `main.tsx`: hook `useEffect` global que registra un listener de `wheel` en fase de captura (`{ capture: true, passive: false }`) que cancela el scroll sobre cualquier `input[type=number"]` que no pase por el componente `Input` (cobertura completa).
+- Inputs nativos `<XAxis type="number">` de recharts no se ven afectados (no son `input`).
+
+### Operación
+- Frontend compilado correctamente (`npm --prefix frontend run build`).
+- Sin migraciones Prisma ni cambios de backend.
+
+---
 
 ## **[07 Ago 2026] Kardex de inventario — formato WAREHOUSE:Location, filtrado por sucursal, ajustes y ventas**
 
@@ -1116,7 +1132,64 @@ Tenant Admin (Clientes)
 
 - **Inventory Move Button Restriction**:
   - Botón "Mover" en inventario condicionado por permiso `stock:move`.
-  - BRANCH_SELLER no ve el botón "Mover" (no tiene `stock:move`).
-  - BRANCH_ADMIN mantiene acceso al botón "Mover" (tiene `stock:move`).
-  - Tenant admin mantiene control total.
+   - BRANCH_SELLER no ve el botón "Mover" (no tiene `stock:move`).
+   - BRANCH_ADMIN mantiene acceso al botón "Mover" (tiene `stock:move`).
+   - Tenant admin mantiene control total.
+
+---
+
+### **[07 Ago 2026] Diagnóstico de desajuste en kardex del lote 30-26264 en SUC-CBB**
+
+#### Contexto
+- `InventoryBalance` muestra **32400** unidades para el lote "30-26264" en la sucursal Cochabamba (Institucional).
+- El kardex filtrado por `affectsWarehouse=true` no concuerda con este balance.
+
+#### Causas raíz
+
+1. **Bug de código en el kardex** (`backend/src/adapters/http/routes/products.ts`):
+   - Los movimientos tipo `OUT` con `referenceType: MOVEMENT_REQUEST` que tienen `toLocationId` en la sucursal filtrada (transferencias inter-sucurals) **no se marcaban como `affectsWarehouse=true`**.
+   - El código solo verificaba `fromLocationId` para movimientos `OUT`, ignorando que `toLocationId` podría estar en la sucursal destino.
+   - **Movimientos afectados**: MSMS2026-668 (OUT 600, LPZ→CBB) y MSMS2026-669 (OUT 300, LPZ→CBB).
+   - **Fix aplicado**: Se trata `OUT` con `MOVEMENT_REQUEST` y `toLocationId` como `TRANSFER`, calculando `netDelta` basado en ambos `fromLocationId` y `toLocationId`.
+
+2. **Código duplicado elimado**:
+   - El bloque `else if (locationId)` estaba duplicado (líneas 1687-1710), causando dead code. Se eliminó la segunda instancia.
+
+3. **Problema de datos (requiere intervención manual)**:
+   - Movimientos **MS2026-955** (IN 18000, LPZ→CBB) y **MS2026-957** (IN 18000, LPZ→CBB) fueron creados el 25/06/25 y registrados en `AuditEvent` e `InventoryBalance`, pero **fueron eliminados** de la tabla `StockMovement`.
+   - Esto dejó el `InventoryBalance` con 36000 unidades extra que no aparecen en el kardex.
+   - Reconciliación: `32400 (InventoryBalance) - 36000 (fantasmas) = -3600` (kardex sin fix) o `-2700` (kardex con fix).
+    - **Decisión pendiente**: Restaurar los movimientos eliminados o ajustar el `InventoryBalance`. El `InventoryBalance` actual de 32400 se mantiene como source of truth para stock físico.
+
+---
+
+### **[08 Ago 2026] Solicitud de movimiento: sub-almacén destino + ajuste de atender solicitudes**
+
+#### Contexto
+- Los usuarios deben poder crear solicitudes de movimiento especificando el sub-almacén (location) de destino.
+- En la página "Atender solicitudes" (`/stock/fulfill-requests`), el input de "ubicación destino" fue eliminado del formulario principal. Ahora basta con elegir: almacén origen, ubicación origen y almacén destino. La ubicación destino se resuelve de la solicitud (`toLocationId`) si está disponible, o se elige en el modal "Atender solicitud".
+
+#### Backend (`backend/src/adapters/http/routes/stock.ts`)
+- `POST /api/v1/stock/movement-requests/bulk-fulfill`: `toLocationId` ahora es **opcional** en el schema.
+- Si `toLocationId` no se envía, se resuelve **por solicitud** usando `req.toLocationId`.
+- Si la solicitud no tiene `toLocationId` y no se proporciona uno global, retorna error 400.
+- Se agregó `toLocationId` al `select` del query de solicitudes en el handler de `bulk-fulfill`.
+
+#### Frontend (`frontend/src/pages/stock/BulkFulfillRequestsPageSimple.tsx`)
+- **Eliminado** el input "Ubicación destino" del formulario principal.
+- **Agregado** dropdown de "Ubicación destino" en el modal "Atender solicitud".
+- **Agregado** display de la ubicación destino en la lista de solicitudes.
+- El search ahora incluye `toLocation.code`.
+
+#### **[08 Ago 2026] Atender solicitudes: ubicación destino por solicitud**
+- **Eliminado** el input global "Ubicación destino" del modal de atender.
+- **"Lo solicitado" ahora se divide por solicitud**, mostrando:
+  - Dropdown de "Ubicación destino" por solicitud (poblado con locations del almacén destino).
+  - Si la solicitud tiene `toLocationId`, se muestra preseleccionado con ⭐.
+  - Si se selecciona otra ubicación, muestra ⚠️ con advertencia.
+  - Si la solicitud no tiene `toLocationId`, muestra ⚠️ pidiendo selección.
+- **Backend**: `POST /api/v1/stock/movement-requests/bulk-fulfill` acepta `toLocationId` opcional **por fulfillment**, resolviendo: fulfillment.toLocationId → global → req.toLocationId.
+- **`performFulfillment`** envía `toLocationId` por fulfillment desde `requestLocations[req.id]` o `req.toLocationId`.
+- **`getProductFulfillmentStatus`** ahora hace match por `productId`+`presentationId` (no por referencia) para soportar el listado dividido por solicitud.
+- `toLocationsQuery` se mantiene para poblar el dropdown (locations del warehouse destino).
 

@@ -1,4 +1,4 @@
-import { StrictMode } from 'react'
+import { StrictMode, useEffect } from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import './index.css'
@@ -22,22 +22,36 @@ const queryClient = new QueryClient({
   },
 })
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <TenantProvider>
-          <ThemeProvider>
-            <NotificationsProvider>
-              <CartProvider>
-                <ScrollProvider>
-                  <AppRouter />
-                </ScrollProvider>
-              </CartProvider>
-            </NotificationsProvider>
-          </ThemeProvider>
-        </TenantProvider>
-      </AuthProvider>
-    </QueryClientProvider>
-  </StrictMode>,
-)
+function Root() {
+  useEffect(() => {
+    const handleWheel = (e: WheelEvent) => {
+      if ((e.target as HTMLElement)?.matches('input[type="number"]')) {
+        e.preventDefault()
+      }
+    }
+    window.addEventListener('wheel', handleWheel, { capture: true, passive: false })
+    return () => window.removeEventListener('wheel', handleWheel, { capture: true })
+  }, [])
+
+  return (
+    <StrictMode>
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider>
+          <TenantProvider>
+            <ThemeProvider>
+              <NotificationsProvider>
+                <CartProvider>
+                  <ScrollProvider>
+                    <AppRouter />
+                  </ScrollProvider>
+                </CartProvider>
+              </NotificationsProvider>
+            </ThemeProvider>
+          </TenantProvider>
+        </AuthProvider>
+      </QueryClientProvider>
+    </StrictMode>
+  )
+}
+
+createRoot(document.getElementById('root')!).render(<Root />)
