@@ -2518,10 +2518,12 @@ export function ProductDetailPage() {
                       )}
                       {perUserWarehouseType === 'SALES' && (
                         <p className="text-sm text-slate-500 dark:text-slate-400">
-                          Tu sucursal activa es de tipo Venta: no podés crear lotes desde aquí.
-                        
-                      <Select
-                        label="Presentación (ingreso inicial)"
+                          Tu sucursal activa es de tipo Venta. Seleccioná un warehouse Proveedor para el ingreso inicial.
+                        </p>
+                      )}
+
+                       <Select
+                         label="Presentación (ingreso inicial)"
                         value={initialStockPresentationId}
                         onChange={(e) => {
                           setInitialStockPresentationId(e.target.value)

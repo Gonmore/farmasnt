@@ -84,6 +84,8 @@ export function usePermissions() {
   return {
     // Data
     user: data?.user,
+    warehouse: data?.user?.warehouse,
+    warehouseId: data?.user?.warehouseId,
     roles: data?.roles ?? [],
     permissions: data?.permissions ?? [],
     permissionCodes: data?.permissionCodes ?? [],

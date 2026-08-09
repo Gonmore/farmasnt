@@ -3,7 +3,6 @@ import { usePermissions } from './usePermissions';
 
 export function useNavigation(): NavGroup[] {
   const { isPlatformAdmin, isTenantAdmin, roles, hasPermission, isLoading } = usePermissions();
-  const isLogistica = roles.some((r) => r.code === 'LOGISTICA')
   const isBranchAdmin = roles.some((r) => r.code === 'BRANCH_ADMIN')
   const isBranchSeller = roles.some((r) => r.code === 'BRANCH_SELLER')
 

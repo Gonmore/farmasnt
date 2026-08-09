@@ -203,7 +203,8 @@ export function BulkFulfillRequestsPage() {
     // Si el destino era el mismo que el origen, lo limpiamos
     if (toWarehouseId === wid) {
       setToWarehouseId('')
-      setToLocationId('')
+      setRequestLocations({})
+      setSelectedRequestIds([])
     }
   }, [permissions.user?.warehouseId, activeWarehouses, fromWarehouseId, toWarehouseId])
 
@@ -535,6 +536,7 @@ export function BulkFulfillRequestsPage() {
 
     const fulfillments: Array<{
       requestId: string
+      toLocationId?: string
       items: Array<{ requestItemId: string; productId: string; batchId: string; quantity: number }>
     }> = []
 
@@ -595,15 +597,16 @@ export function BulkFulfillRequestsPage() {
               <Select
                 label="Almacén origen"
                 value={fromWarehouseId}
-                onChange={(e) => {
-                  setFromWarehouseId(e.target.value)
-                  setFromLocationId('')
-                  // Si el destino era el mismo que el origen, lo limpiamos
-                  if (toWarehouseId === e.target.value) {
-                    setToWarehouseId('')
-                    setToLocationId('')
-                  }
-                }}
+                   onChange={(e) => {
+                   setFromWarehouseId(e.target.value)
+                   setFromLocationId('')
+                   // Si el destino era el mismo que el origen, lo limpiamos
+                   if (toWarehouseId === e.target.value) {
+                     setToWarehouseId('')
+                     setRequestLocations({})
+                     setSelectedRequestIds([])
+                   }
+                 }}
                 options={[
                   { value: '', label: 'Selecciona almacén' },
                   ...availableFromWarehouses.map((w) => ({
@@ -630,11 +633,11 @@ export function BulkFulfillRequestsPage() {
               <Select
                 label="Almacén destino"
                 value={toWarehouseId}
-                onChange={(e) => {
-                  setToWarehouseId(e.target.value)
-                  setToLocationId('')
-                  setSelectedRequestIds([]) // Limpiar selección cuando cambia el destino
-                }}
+                 onChange={(e) => {
+                   setToWarehouseId(e.target.value)
+                   setRequestLocations({})
+                   setSelectedRequestIds([])
+                 }}
                 options={[
                   { value: '', label: 'Selecciona almacén' },
                   ...availableToWarehouses.map((w) => ({
@@ -776,7 +779,7 @@ export function BulkFulfillRequestsPage() {
                   setFromWarehouseId('')
                   setFromLocationId('')
                  setToWarehouseId('')
-                 setEditToLocationId('')
+                 setRequestLocations({})
                  setNote('')
                  setSelectedRequestIds([])
                 }}
@@ -813,9 +816,8 @@ export function BulkFulfillRequestsPage() {
           setRequestLocations({})
         }}
         title={`Transferencia de ${activeWarehouses.find(w => w.id === fromWarehouseId)?.name || 'Origen'} a ${activeWarehouses.find(w => w.id === toWarehouseId)?.name || 'Destino'}`}
-         maxWidth="6xl"
-         closable
-      >
+          maxWidth="6xl"
+       >
         <div className="flex flex-col gap-4 md:flex-row md:items-start">
           {/* Lo Solicitado (siempre visible a la izquierda) */}
           <div className="border border-slate-200 rounded-lg p-4 dark:border-slate-700 md:w-[30%]">
