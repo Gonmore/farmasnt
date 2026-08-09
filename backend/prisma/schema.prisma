@@ -29,6 +29,11 @@ enum LocationType {
   SUB_ALMACEN
 }
 
+enum WarehouseType {
+  PROVIDER // proveedor: puede crear lotes y ajustar stock (entrada por IN/ADJUSTMENT)
+  SALES    // venta: solo recepción por transferencias (TRANSFER/IN desde otro warehouse)
+}
+
 enum StockMovementType {
   IN
   OUT
@@ -496,6 +501,7 @@ model Warehouse {
   name      String
   city      String?
   isActive  Boolean  @default(true)
+  type      WarehouseType @default(SALES)
   version   Int      @default(1)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

@@ -69,11 +69,6 @@ export function useNavigation(): NavGroup[] {
   if (hasPermission('stock:read')) {
     const warehouseItems = [{ to: '/stock/inventory', label: '📊 Inventario' }]
 
-    // Sucursales: Logística + admin
-    if (isTenantAdmin || isLogistica) {
-      warehouseItems.push({ to: '/warehouse/warehouses', label: '🏬 Sucursales' })
-    }
-
     // Movimientos: tenant admin + stock manage + admin de sucursal
     if (isTenantAdmin || hasPermission('stock:manage') || isBranchAdmin) {
       warehouseItems.push({ to: '/stock/movements', label: '🚚 Movimientos' })
@@ -144,6 +139,7 @@ export function useNavigation(): NavGroup[] {
   // Sistema (solo Tenant Admin)
   if (isTenantAdmin) {
     const systemItems = [] as Array<{ to: string; label: string }>
+    systemItems.push({ to: '/warehouse/warehouses', label: '🏬 Sucursales' })
     if (hasPermission('audit:read')) systemItems.push({ to: '/audit/events', label: '📜 Auditoría' })
     if (hasPermission('admin:users:manage')) {
       systemItems.push({ to: '/admin/users', label: '👤 Usuarios' })

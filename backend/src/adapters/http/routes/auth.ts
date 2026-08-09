@@ -655,7 +655,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
           photoUrl: true,
           warehouseId: true,
           warehouse: {
-            select: { id: true, code: true, name: true, city: true, isActive: true },
+            select: { id: true, code: true, name: true, city: true, isActive: true, type: true },
           },
           version: true,
           tenant: {
@@ -703,7 +703,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
           fullName: true,
           warehouseId: true,
           warehouse: {
-            select: { id: true, code: true, name: true, city: true, isActive: true },
+            select: { id: true, code: true, name: true, city: true, isActive: true, type: true },
           },
           version: true,
           tenant: {

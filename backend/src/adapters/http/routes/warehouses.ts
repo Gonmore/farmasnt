@@ -9,6 +9,7 @@ const createWarehouseSchema = z.object({
   code: z.string().trim().min(1).max(32).regex(/^SUC-[A-Z0-9]+$/, 'Warehouse code must start with SUC- followed by uppercase letters and numbers'),
   name: z.string().trim().min(1).max(200),
   city: z.string().trim().min(1).max(120),
+  type: z.enum(['PROVIDER', 'SALES']).optional().default('SALES'),
 })
 
 const updateWarehouseSchema = z.object({
@@ -16,6 +17,7 @@ const updateWarehouseSchema = z.object({
   name: z.string().trim().min(1).max(200).optional(),
   city: z.string().trim().min(1).max(120).optional(),
   isActive: z.boolean().optional(),
+  type: z.enum(['PROVIDER', 'SALES']).optional(),
 })
 
 const createLocationSchema = z.object({
@@ -63,7 +65,7 @@ export async function registerWarehouseRoutes(app: FastifyInstance): Promise<voi
             }
           : {}),
         orderBy: { id: 'asc' },
-        select: { id: true, code: true, name: true, city: true, isActive: true, version: true, updatedAt: true },
+        select: { id: true, code: true, name: true, city: true, isActive: true, type: true, version: true, updatedAt: true },
       })
 
       const warehouseIds = items.map((w) => w.id)
@@ -149,9 +151,10 @@ export async function registerWarehouseRoutes(app: FastifyInstance): Promise<voi
               code: parsed.data.code,
               name: parsed.data.name,
               city: parsed.data.city.toUpperCase(),
+              type: parsed.data.type,
               createdBy: userId,
             },
-            select: { id: true, code: true, name: true, city: true, isActive: true, version: true, updatedAt: true },
+            select: { id: true, code: true, name: true, city: true, isActive: true, type: true, version: true, updatedAt: true },
           })
 
           // Create default location (BIN-01)
@@ -211,10 +214,11 @@ export async function registerWarehouseRoutes(app: FastifyInstance): Promise<voi
             ...(parsed.data.name !== undefined ? { name: parsed.data.name } : {}),
             ...(parsed.data.city !== undefined ? { city: parsed.data.city.toUpperCase() } : {}),
             ...(parsed.data.isActive !== undefined ? { isActive: parsed.data.isActive } : {}),
+            ...(parsed.data.type !== undefined ? { type: parsed.data.type } : {}),
             version: { increment: 1 },
             createdBy: userId,
           },
-          select: { id: true, code: true, name: true, city: true, isActive: true, version: true, updatedAt: true },
+          select: { id: true, code: true, name: true, city: true, isActive: true, type: true, version: true, updatedAt: true },
         })
 
         return reply.send(updated)

@@ -2608,6 +2608,40 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
             presentationQuantity = baseQty
           }
 
+          // Rule: only PROVIDER warehouses can create batches or adjust stock (IN / ADJUSTMENT).
+          // SALES warehouses receive stock only via transfer receipts (ADJUSTMENT never allowed in SALES).
+          const normalizedRefType = String(input.referenceType ?? '').trim().toUpperCase()
+          if (input.type === 'ADJUSTMENT') {
+            const affectedLocationIds: string[] = []
+            if (input.toLocationId) affectedLocationIds.push(input.toLocationId)
+            if (input.fromLocationId) affectedLocationIds.push(input.fromLocationId)
+            if (affectedLocationIds.length > 0) {
+              const locs = await (tx as any).location.findMany({
+                where: { tenantId, id: { in: affectedLocationIds } },
+                select: { warehouse: { select: { type: true } } },
+              })
+              const salesLoc = (locs ?? []).find((l: any) => l.warehouse?.type === 'SALES')
+              if (salesLoc) {
+                const err = new Error('Solo los warehouses tipo Proveedor pueden ajustar stock (ADJUSTMENT)') as Error & { statusCode?: number }
+                err.statusCode = 403
+                throw err
+              }
+            }
+          }
+          if (input.type === 'IN' && normalizedRefType !== 'MOVEMENT_REQUEST_RECEIPT') {
+            if (input.toLocationId) {
+              const toLoc = await (tx as any).location.findFirst({
+                where: { id: input.toLocationId, tenantId },
+                select: { warehouse: { select: { type: true } } },
+              })
+              if (toLoc?.warehouse?.type === 'SALES') {
+                const err = new Error('Only provider warehouses (Proveedor) can create batches or add initial stock (IN); sales warehouses receive stock only via transfers') as Error & { statusCode?: number }
+                err.statusCode = 403
+                throw err
+              }
+            }
+          }
+
           return createStockMovementTx(tx, {
             tenantId,
             userId,

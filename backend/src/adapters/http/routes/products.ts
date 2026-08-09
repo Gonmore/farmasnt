@@ -1863,15 +1863,25 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
           if (parsed.data.initialStock) {
             let resolvedToLocationId: string
 
+            // Resolve the target warehouse so we can enforce that only
+            // provider-type warehouses can create batches (initial stock IN).
+            let targetWarehouseType: 'PROVIDER' | 'SALES' | null = null
+
             if (parsed.data.initialStock.toLocationId) {
               resolvedToLocationId = parsed.data.initialStock.toLocationId
+              const locWh = await tx.location.findFirst({
+                where: { id: resolvedToLocationId, tenantId },
+                select: { warehouse: { select: { id: true, type: true } } },
+              })
+              targetWarehouseType = locWh?.warehouse?.type ?? null
             } else {
               const warehouseId = parsed.data.initialStock.warehouseId!
               const warehouse = await tx.warehouse.findFirst({
                 where: { id: warehouseId, tenantId, isActive: true },
-                select: { id: true },
+                select: { id: true, type: true },
               })
               if (!warehouse) throw httpError(404, 'Warehouse not found')
+              targetWarehouseType = warehouse.type
 
               const loc = await tx.location.findFirst({
                 where: { tenantId, warehouseId, isActive: true },
@@ -1880,6 +1890,10 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
               })
               if (!loc) throw httpError(409, 'Warehouse has no active locations')
               resolvedToLocationId = loc.id
+            }
+
+            if (targetWarehouseType !== 'PROVIDER') {
+              throw httpError(403, 'Only provider warehouses (Proveedor) can create batches / initial stock')
             }
 
               // Resolve quantity. Prefer presentation inputs when provided.

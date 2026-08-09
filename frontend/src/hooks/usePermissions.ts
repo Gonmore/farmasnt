@@ -27,6 +27,7 @@ export interface UserInfo {
     name: string;
     city: string | null;
     isActive: boolean;
+    type?: 'PROVIDER' | 'SALES';
   } | null;
   version?: number;
   tenant: {

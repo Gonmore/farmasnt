@@ -118,6 +118,7 @@ type WarehouseListItem = {
   code: string
   name: string
   isActive: boolean
+  type?: 'PROVIDER' | 'SALES'
 }
 
 type PresignResponse = {
@@ -430,6 +431,7 @@ async function deleteRecipe(token: string, productId: string): Promise<void> {
 export function ProductDetailPage() {
   const auth = useAuth()
   const perms = usePermissions()
+  const perUserWarehouseType = perms.warehouse?.type ?? null
   const navigate = useNavigate()
   const navGroups = useNavigation()
   const params = useParams<{ id: string }>()
@@ -2504,11 +2506,20 @@ export function ProductDetailPage() {
                         options={[
                           { value: '', label: 'Elegir sucursal' },
                           ...(warehousesQuery.data?.items ?? [])
-                            .filter((w) => w.isActive)
-                            .map((w) => ({ value: w.id, label: `${w.code} - ${w.name}` }))
+                            .filter((w) => w.isActive && w.type === 'PROVIDER')
+                            .map((w) => ({ value: w.id, label: `${w.code} - ${w.name} (Proveedor)` })),
                         ]}
                         disabled={batchMutation.isPending || warehousesQuery.isLoading}
                       />
+                      {!warehousesQuery.isLoading && (warehousesQuery.data?.items ?? []).filter((w) => w.isActive && w.type === 'PROVIDER').length === 0 && (
+                        <p className="text-sm text-amber-600 dark:text-amber-400">
+                          No hay sucursales de tipo Proveedor activas. Solo los warehouses Proveedor pueden crear lotes; los warehouses Venta ingresan stock por transferencias.
+                        </p>
+                      )}
+                      {perUserWarehouseType === 'SALES' && (
+                        <p className="text-sm text-slate-500 dark:text-slate-400">
+                          Tu sucursal activa es de tipo Venta: no podés crear lotes desde aquí.
+                        
                       <Select
                         label="Presentación (ingreso inicial)"
                         value={initialStockPresentationId}

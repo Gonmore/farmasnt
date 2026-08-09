@@ -1,8 +1,35 @@
 # Bitácora de desarrollo — PharmaFlow Bolivia (farmaSNT)
 
-> Última actualización: 08 Ago 2026
+> Última actualización: 09 Ago 2026
 
-Este documento resume (a alto nivel) decisiones, hitos y cambios relevantes que se fueron incorporando al repositorio para llegar al estado actual del MVP.
+Este documento suma (a alto nivel) decisiones, hitos y cambios relevantes que se fueron incorporando al repositorio para llegar al estado actual del MVP.
+
+## **[09 Ago 2026] Tipos de sucursal: Proveedor vs Venta + restricciones de stock**
+
+### Objetivo alcanzado
+- Las sucursales (warehouses) ahora tienen un **tipo** (`PROVIDER`/`SALES`). Solo los warehouses tipo **Proveedor** pueden crear lotes y ajustar stock (ingresos `IN`/`ADJUSTMENT`); los warehouses tipo **Venta** ingresan stock únicamente por transferencias (`TRANSFER`) o recepción de solicitudes (`MOVEMENT_REQUEST_RECEIPT`).
+
+### Backend
+- **Prisma** (`schema.prisma`): nuevo enum `WarehouseType { PROVIDER SALES }` y campo `type: WarehouseType @default(SALES)` en el modelo `Warehouse`.
+- **Migración** `20260809120000_add_warehouse_type/migration.sql`: `CREATE TYPE "WarehouseType"` + `ALTER TABLE "Warehouse" ADD COLUMN "type" "WarehouseType" NOT NULL DEFAULT 'SALES'` (warehouses existentes pasan a Venta).
+- **`warehouses.ts`**: `GET /warehouses` incluye `type`; `POST/ PATCH /warehouses` aceptan/actualizan `type` (default `SALES`).
+- **`products.ts`** (`POST /api/v1/products/:id/batches`): el `initialStock.warehouseId` (o el warehouse del `toLocationId`) debe ser `PROVIDER`, sino 403.
+- **`stock.ts`** (`POST /api/v1/stock/movements`):
+  - `ADJUSTMENT` sobre un warehouse `SALES` → 403 (bloqueado para ambos locations: `toLocationId`/`fromLocationId`).
+  - `IN` con `referenceType` distinto de `MOVEMENT_REQUEST_RECEIPT` sobre un warehouse `SALES` → 403. Las recepciones de transferencias (`MOVEMENT_REQUEST_RECEIPT`) siguen permitidas en warehouses Venta.
+- **`auth.ts`** (`GET /api/v1/auth/me`): incluye `warehouse.type` en la respuesta para que el cliente conozca el tipo del warehouse activo del usuario.
+
+### Frontend
+- **`useNavigation.ts`**: la entrada **"🏬 Sucursales"** pasó del grupo **Almacén** al grupo **Sistema** (solo `TenantAdmin` ve el menú Sistema); así solo los administradores acceden a la gestión de sucursales.
+- **`WarehousesPage.tsx`**: columna "Tipo" en la tabla; selector de tipo (Proveedor/Venta) en crear y editar; el `type` viaja en los payloads `POST/PATCH`.
+- **`ProductDetailPage.tsx`**: el selector de "Sucursal/Almacén (ingreso inicial)" al crear lotes se filtra a warehouses tipo **Proveedor**; se muestra aviso informativo cuando la sucursal activa del usuario es Venta o no hay Proveedores activos. El ajuste de lotes ya se restringe al warehouse de ingreso original (Proveedor) por la validación existente y el backend.
+
+### Operación
+- Nueva migración Prisma: `20260809120000_add_warehouse_type/migration.sql` — aplicar antes del deploy (`prisma migrate deploy`).
+- `npm --prefix backend run prisma:generate` ejecutado.
+- Typecheck OK en backend y frontend.
+
+---
 
 ## **[08 Ago 2026] Ergonomía: deshabilitar scroll de rueda en inputs numéricos**
 

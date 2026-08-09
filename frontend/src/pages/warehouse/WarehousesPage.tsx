@@ -10,7 +10,7 @@ import { MainLayout, PageContainer, Table, Loading, ErrorState, EmptyState, Pagi
 import { useNavigation } from '../../hooks'
 import { PencilIcon, ArrowPathIcon, MapPinIcon, PlusIcon, EyeIcon } from '@heroicons/react/24/outline'
 
-type WarehouseListItem = { id: string; code: string; name: string; city?: string | null; isActive: boolean; totalQuantity: string }
+type WarehouseListItem = { id: string; code: string; name: string; city?: string | null; isActive: boolean; type: 'PROVIDER' | 'SALES'; totalQuantity: string }
 type ListResponse = { items: WarehouseListItem[]; nextCursor: string | null }
 
 type WarehouseStockRow = {
@@ -76,10 +76,12 @@ export function WarehousesPage() {
   const [editCity, setEditCity] = useState('')
   const [editCode, setEditCode] = useState('')
   const [editIsActive, setEditIsActive] = useState(true)
+  const [editType, setEditType] = useState<'PROVIDER' | 'SALES'>('SALES')
   const [showCreate, setShowCreate] = useState(false)
   const [createCode, setCreateCode] = useState('')
   const [createName, setCreateName] = useState('')
   const [createCity, setCreateCity] = useState('')
+  const [createType, setCreateType] = useState<'PROVIDER' | 'SALES'>('SALES')
 
   const tenantCountry = (tenant.branding?.country ?? '').trim() || 'BOLIVIA'
 
@@ -115,11 +117,11 @@ export function WarehousesPage() {
   )
 
   const updateWarehouseMutation = useMutation({
-    mutationFn: async ({ id, code, name, city, isActive }: { id: string; code: string; name: string; city: string; isActive: boolean }) => {
+    mutationFn: async ({ id, code, name, city, isActive, type }: { id: string; code: string; name: string; city: string; isActive: boolean; type: 'PROVIDER' | 'SALES' }) => {
       return apiFetch(`/api/v1/warehouses/${id}`, {
         token: auth.accessToken!,
         method: 'PATCH',
-        body: JSON.stringify({ code, name, city, isActive }),
+        body: JSON.stringify({ code, name, city, isActive, type }),
       })
     },
     onSuccess: () => {
@@ -129,15 +131,16 @@ export function WarehousesPage() {
       setEditCity('')
       setEditCode('')
       setEditIsActive(true)
+      setEditType('SALES')
     },
   })
 
   const createWarehouseMutation = useMutation({
-    mutationFn: async ({ code, name, city }: { code: string; name: string; city: string }) => {
+    mutationFn: async ({ code, name, city, type }: { code: string; name: string; city: string; type: 'PROVIDER' | 'SALES' }) => {
       return apiFetch(`/api/v1/warehouses`, {
         token: auth.accessToken!,
         method: 'POST',
-        body: JSON.stringify({ code, name, city }),
+        body: JSON.stringify({ code, name, city, type }),
       })
     },
     onSuccess: () => {
@@ -146,6 +149,7 @@ export function WarehousesPage() {
       setCreateCode('')
       setCreateName('')
       setCreateCity('')
+      setCreateType('SALES')
     },
   })
 
@@ -192,11 +196,12 @@ export function WarehousesPage() {
     setEditCity((warehouse.city ?? '').toString())
     setEditCode(warehouse.code.replace(/^SUC-/, '').toUpperCase())
     setEditIsActive(warehouse.isActive)
+    setEditType(warehouse.type ?? 'SALES')
   }
 
   const handleSaveEdit = () => {
     if (editingWarehouse && editCode.trim() && editName.trim() && editCity.trim()) {
-      updateWarehouseMutation.mutate({ id: editingWarehouse.id, code: `SUC-${editCode.trim()}`, name: editName.trim(), city: editCity.trim(), isActive: editIsActive })
+      updateWarehouseMutation.mutate({ id: editingWarehouse.id, code: `SUC-${editCode.trim()}`, name: editName.trim(), city: editCity.trim(), isActive: editIsActive, type: editType })
     }
   }
 
@@ -206,6 +211,7 @@ export function WarehousesPage() {
     setEditCity('')
     setEditCode('')
     setEditIsActive(true)
+    setEditType('SALES')
   }
 
   const handleLoadMore = () => {
@@ -242,6 +248,14 @@ export function WarehousesPage() {
                   { header: 'Código', accessor: (w) => w.code },
                   { header: 'Nombre', accessor: (w) => w.name },
                   { header: 'Ciudad', accessor: (w) => w.city || '-' },
+                  {
+                    header: 'Tipo',
+                    accessor: (w) => (
+                      <span className={w.type === 'PROVIDER' ? 'text-blue-600 font-medium' : 'text-slate-500'}>
+                        {w.type === 'PROVIDER' ? 'Proveedor' : 'Venta'}
+                      </span>
+                    ),
+                  },
                   {
                     header: 'Estado',
                     accessor: (w) => (
@@ -316,14 +330,28 @@ export function WarehousesPage() {
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
               Ciudad
             </label>
-            <CitySelector
-              country={tenantCountry}
-              value={createCity}
-              onChange={setCreateCity}
-            />
-          </div>
+             <CitySelector
+               country={tenantCountry}
+               value={createCity}
+               onChange={setCreateCity}
+             />
+           </div>
 
-          {createWarehouseMutation.error && (
+           <div>
+             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+               Tipo de Sucursal
+             </label>
+             <Select
+               value={createType}
+               onChange={(e) => setCreateType(e.target.value as 'PROVIDER' | 'SALES')}
+               options={[
+                 { value: 'PROVIDER', label: 'Proveedor (crea lotes y ajusta stock)' },
+                 { value: 'SALES', label: 'Venta (ingresos por transferencias)' },
+               ]}
+             />
+           </div>
+
+           {createWarehouseMutation.error && (
             <div className="rounded-md bg-red-50 p-3 text-sm text-red-600 dark:bg-red-900/20 dark:text-red-400">
               Error:{' '}
               {(createWarehouseMutation.error as any)?.response?.data?.message ||
@@ -336,17 +364,18 @@ export function WarehousesPage() {
           <div className="flex justify-end gap-2">
             <Button
               variant="secondary"
-              onClick={() => {
-                setShowCreate(false)
-                setCreateCode('')
-                setCreateName('')
-                setCreateCity('')
-              }}
-            >
-              Cancelar
-            </Button>
-            <Button
-              onClick={() => createWarehouseMutation.mutate({ code: `SUC-${createCode.trim()}`, name: createName.trim(), city: createCity.trim() })}
+             onClick={() => {
+               setShowCreate(false)
+               setCreateCode('')
+               setCreateName('')
+               setCreateCity('')
+               setCreateType('SALES')
+             }}
+           >
+               Cancelar
+             </Button>
+             <Button
+               onClick={() => createWarehouseMutation.mutate({ code: `SUC-${createCode.trim()}`, name: createName.trim(), city: createCity.trim(), type: createType })}
               disabled={!createCode.trim() || !createName.trim() || !createCity.trim()}
               loading={createWarehouseMutation.isPending}
             >
@@ -394,29 +423,44 @@ export function WarehousesPage() {
             />
           </div>
 
-          <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Ciudad</label>
-            <CitySelector
-              country={tenantCountry}
-              value={editCity}
-              onChange={setEditCity}
-              disabled={updateWarehouseMutation.isPending}
-            />
-          </div>
+           <div>
+             <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Ciudad</label>
+             <CitySelector
+               country={tenantCountry}
+               value={editCity}
+               onChange={setEditCity}
+               disabled={updateWarehouseMutation.isPending}
+             />
+           </div>
 
-          <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              id="edit-is-active"
-              checked={editIsActive}
-              onChange={(e) => setEditIsActive(e.target.checked)}
-              disabled={updateWarehouseMutation.isPending}
-              className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-700"
-            />
-            <label htmlFor="edit-is-active" className="text-sm font-medium text-slate-700 dark:text-slate-300">
-              Sucursal activa
-            </label>
-          </div>
+           <div>
+             <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
+               Tipo de Sucursal
+             </label>
+             <Select
+               value={editType}
+               onChange={(e) => setEditType(e.target.value as 'PROVIDER' | 'SALES')}
+               options={[
+                 { value: 'PROVIDER', label: 'Proveedor (crea lotes y ajusta stock)' },
+                 { value: 'SALES', label: 'Venta (ingresos por transferencias)' },
+               ]}
+               disabled={updateWarehouseMutation.isPending}
+             />
+           </div>
+
+           <div className="flex items-center gap-2">
+             <input
+               type="checkbox"
+               id="edit-is-active"
+               checked={editIsActive}
+               onChange={(e) => setEditIsActive(e.target.checked)}
+               disabled={updateWarehouseMutation.isPending}
+               className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-700"
+             />
+             <label htmlFor="edit-is-active" className="text-sm font-medium text-slate-700 dark:text-slate-300">
+               Sucursal activa
+             </label>
+           </div>
 
           {updateWarehouseMutation.error && (
             <div className="rounded-md bg-red-50 p-3 text-sm text-red-600 dark:bg-red-900/20 dark:text-red-400">
