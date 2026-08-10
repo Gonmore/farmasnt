@@ -9,6 +9,9 @@ Esta referencia contempla los cambios de las versiones **2.0** (multi-marca/mult
 - `GET /api/v1/products/:id/kardex`: la respuesta `kardex[]` ahora incluye `fromWarehouseCode`, `toWarehouseCode`, `fromLocationCode`, `toLocationCode`. El saldo acumulado (`balance`) se calcula solo sobre movimientos que afectan la sucursal filtrada (`affectsWarehouse`). Para movimientos `OUT` con `referenceType: 'SALES_ORDER'`, el `toCode` contiene el número de orden y `toWarehouseCode` el nombre del cliente; el `detail` incluye `[SALES_ORDER] NRO - Cliente: Nombre`. Los ajustes (`ADJUSTMENT`) se incluyen correctamente cuando su location pertenece a la sucursal filtrada.
 - `GET /api/v1/stock/completed-movements`: la columna "Origen → Destino" en el frontend muestra `WAREHOUSE:Location` (código de sucursal sin prefijo `SUC-` + código de ubicación).
 
+### Cambios recientes (10 Ago 2026) — Carga automática de precios en cotizaciones
+- `GET /api/v1/sales/quotes/:id` y `POST/PUT /api/v1/sales/quotes/:id`: el `unitPrice` de cada línea se expresa en unidades base. Al crear o editar una cotización, si `unitPrice` no se envía, el backend resuelve el precio usando `priceOverride / unitsPerPresentation` de la presentación (si existe) o el `Product.price` como fallback. El frontend (`QuoteDetailPage`) replica esta lógica para previsualizar el precio al momento de seleccionar un producto o cambiar de presentación.
+
 Cambios relevantes en 2.2.0:
 - `GET /api/v1/products/:id/kardex` refactorizado para reconstruir el saldo línea a línea desde `AuditEvent` (`action = 'stock.movement.create'`), ordenado cronológicamente ASC. Muestra el kardex en unidades base (sin pestañas por presentación) con un resumen consolidado por lotes/presentaciones al final. El saldo actual proviene de `InventoryBalance` (fuente autoritativa).
 - `POST /api/v1/sales/orders/:id/deliver-with-returns` permite registrar la entrega junto con devoluciones parciales en un solo request.
@@ -83,6 +86,19 @@ Códigos usados por los guards:
 - `audit:read`
 - `report:sales:read`, `report:stock:read`
 - `platform:tenants:manage`
+
+---
+
+## Cambios recientes (10 Ago 2026) — Reportes de actividad por tipo de sucursal
+
+### Stock Reports: actividad de sucursales proveedor y venta
+- Nuevos endpoints:
+  - `GET /api/v1/reports/stock/provider-activity` — actividad de warehouses tipo `PROVIDER`: lotes creados, traspasos enviados (count + qty), ajustes (count + qty out).
+  - `GET /api/v1/reports/stock/sales-branch-activity` — actividad de warehouses tipo `SALES`: lotes recibidos, solicitudes aceptadas/rechazadas/pendientes, cotizaciones creadas, órdenes creadas, monto de ventas.
+- Ambas filtran por `WarehouseType` (`PROVIDER` / `SALES`) y aceptan query params `from` / `to` (date-time opcional).
+- **Filtro de fechas**: `from` es inclusivo (`>=`), `to` es exclusivo (`<`). Para reportar un mes completo, usar `from=YYYY-MM-DD` (primer día) y `to=YYYY-MM-DD` (primer día del mes siguiente). Ej: `from=2026-07-01&to=2026-08-01` reporta todo julio.
+- Si `from` o `to` no se envían, no se aplica filtro de fecha (todos los registros).
+- La UI (`StockReportsPage.tsx`) agrega pestañas "Proveedor" y "Ventas Suc." con KPIs y tablas, usando queries react-query.
 
 ---
 
@@ -2117,6 +2133,11 @@ Requiere permiso: `sales:order:write`.
 
 Notas
 - `409` si la cotización ya fue procesada (`status = PROCESSED`).
+- El `unitPrice` de cada línea se expresa en **unidades base** (precio por unidad individual del producto).
+- Si `unitPrice` no se envía, el backend lo resuelve:
+  - Si la presentación tiene `priceOverride`: `unitPrice = priceOverride / unitsPerPresentation`.
+  - Si no: `unitPrice = Product.price`.
+- El frontend (`QuoteDetailPage`) replica esta lógica para previsualizar el precio en tiempo real al seleccionar un producto o cambiar de presentación.
 
 ### POST /api/v1/sales/quotes/:id/process
 Requiere permiso: `sales:order:write`.
@@ -3054,6 +3075,66 @@ Response 200
   ]
 }
 ```
+
+#### GET /api/v1/reports/stock/provider-activity
+Requiere: módulo `WAREHOUSE` + permiso `report:stock:read`.
+
+Filtra actividad de warehouses tipo `PROVIDER`.
+
+Query
+- `from` (date-time, opcional)
+- `to` (date-time, opcional)
+
+Response 200
+```json
+{
+  "items": [
+    {
+      "warehouseId": "wh-1",
+      "warehouseCode": "WH-01",
+      "warehouseName": "Sucursal Proveedor",
+      "warehouseCity": "La Paz",
+      "batchesCreated": 5,
+      "transfersSent": 3,
+      "transfersSentQty": "150",
+      "adjustments": 2,
+      "adjustmentsOutQty": "30"
+    }
+  ]
+}
+```
+
+#### GET /api/v1/reports/stock/sales-branch-activity
+Requiere: módulo `WAREHOUSE` + permiso `report:stock:read`.
+
+Filtra actividad de warehouses tipo `SALES`.
+
+Query
+- `from` (date-time, opcional)
+- `to` (date-time, opcional)
+
+Response 200
+```json
+{
+  "items": [
+    {
+      "warehouseId": "wh-2",
+      "warehouseCode": "WH-02",
+      "warehouseName": "Sucursal Venta",
+      "warehouseCity": "Santa Cruz",
+      "batchesReceived": 8,
+      "requestsAccepted": 5,
+      "requestsRejected": 1,
+      "requestsPending": 2,
+      "quotesCreated": 12,
+      "ordersCreated": 10,
+      "salesAmount": "5200.00"
+    }
+  ]
+}
+```
+
+---
 
 #### POST /api/v1/reports/stock/email
 Requiere: módulo `WAREHOUSE` + permiso `report:stock:read`.

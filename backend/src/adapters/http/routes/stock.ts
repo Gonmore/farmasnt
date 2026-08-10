@@ -2635,7 +2635,7 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
                 select: { warehouse: { select: { type: true } } },
               })
               if (toLoc?.warehouse?.type === 'SALES') {
-                const err = new Error('Only provider warehouses (Proveedor) can create batches or add initial stock (IN); sales warehouses receive stock only via transfers') as Error & { statusCode?: number }
+                const err = new Error('Solo los almacenes (Proveedor) pueden crear lotes o agregar stock inicial (IN); los almacenes de ventas reciben stock solo mediante transferencias') as Error & { statusCode?: number }
                 err.statusCode = 403
                 throw err
               }

@@ -10,12 +10,12 @@ import { formatDateOnlyUtc } from '../../lib/date'
 import { blobToBase64, exportElementToPdf, exportModalContentToPdf, exportReactNodeToPdf, pdfBlobFromElement, pdfBlobFromReactNode } from '../../lib/exportPdf'
 import { exportToXlsx } from '../../lib/exportXlsx'
 import { getProductLabel } from '../../lib/productName'
-import { formatInteger } from '../../lib/numberFormat'
+import { formatInteger, formatMoney } from '../../lib/numberFormat'
 import { exportPickingToPdf, exportLabelToPdf } from '../../lib/movementRequestDocsPdf'
 import { useAuth } from '../../providers/AuthProvider'
 import { useTenant } from '../../providers/TenantProvider'
 
-type StockTab = 'EXISTENCIAS' | 'INPUTS' | 'TRANSFERS' | 'ROTATION' | 'NOMOVEMENT' | 'LOWSTOCK' | 'EXPIRY' | 'OPS'
+type StockTab = 'EXISTENCIAS' | 'INPUTS' | 'TRANSFERS' | 'ROTATION' | 'NOMOVEMENT' | 'LOWSTOCK' | 'EXPIRY' | 'OPS' | 'PROVIDER_ACTIVITY' | 'BRANCH_ACTIVITY'
 
 type StockExistenciasItem = {
   productId: string
@@ -247,6 +247,32 @@ type ReturnsByWarehouseItem = {
   quantity: string
 }
 
+type ProviderActivityItem = {
+  warehouseId: string
+  warehouseCode: string | null
+  warehouseName: string | null
+  warehouseCity: string | null
+  batchesCreated: number
+  transfersSent: number
+  transfersSentQty: string
+  adjustments: number
+  adjustmentsOutQty: string
+}
+
+type SalesBranchActivityItem = {
+  warehouseId: string
+  warehouseCode: string | null
+  warehouseName: string | null
+  warehouseCity: string | null
+  batchesReceived: number
+  requestsAccepted: number
+  requestsRejected: number
+  requestsPending: number
+  quotesCreated: number
+  ordersCreated: number
+  salesAmount: string
+}
+
 function toIsoDate(d: Date): string {
   const y = d.getFullYear()
   const m = String(d.getMonth() + 1).padStart(2, '0')
@@ -262,11 +288,39 @@ function startOfNextMonth(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth() + 1, 1)
 }
 
+async function fetchProviderActivity(
+  token: string,
+  q: { from?: string; to?: string; warehouseId?: string; locationId?: string },
+): Promise<{ items: ProviderActivityItem[] }> {
+  const params = new URLSearchParams()
+  if (q.from) params.set('from', q.from)
+  if (q.to) params.set('to', q.to)
+  if (q.warehouseId) params.set('warehouseId', q.warehouseId)
+  if (q.locationId) params.set('locationId', q.locationId)
+  return apiFetch(`/api/v1/reports/stock/provider-activity?${params}`, { token })
+}
+
+async function fetchSalesBranchActivity(
+  token: string,
+  q: { from?: string; to?: string; warehouseId?: string; locationId?: string },
+): Promise<{ items: SalesBranchActivityItem[] }> {
+  const params = new URLSearchParams()
+  if (q.from) params.set('from', q.from)
+  if (q.to) params.set('to', q.to)
+  if (q.warehouseId) params.set('warehouseId', q.warehouseId)
+  if (q.locationId) params.set('locationId', q.locationId)
+  return apiFetch(`/api/v1/reports/stock/sales-branch-activity?${params}`, { token })
+}
+
 function toNumber(value: string | number | null | undefined): number {
   if (value === null || value === undefined) return 0
   if (typeof value === 'number') return Number.isFinite(value) ? value : 0
   const n = Number(value)
   return Number.isFinite(n) ? n : 0
+}
+
+function money(n: number): string {
+  return formatMoney(n)
 }
 
 function formatDate(date: Date): string {
@@ -544,6 +598,7 @@ function parseEmails(raw: string): string[] {
 export function StockReportsPage() {
   const auth = useAuth()
   const tenant = useTenant()
+  const currency = tenant.branding?.currency || 'BOB'
   const navGroups = useNavigation()
   const location = useLocation()
 
@@ -560,7 +615,7 @@ export function StockReportsPage() {
     const qsFrom = sp.get('from')
     const qsTo = sp.get('to')
 
-    if (qsTab && ['EXISTENCIAS', 'INPUTS', 'TRANSFERS', 'ROTATION', 'NOMOVEMENT', 'LOWSTOCK', 'EXPIRY', 'OPS'].includes(qsTab)) {
+    if (qsTab && ['EXISTENCIAS', 'INPUTS', 'TRANSFERS', 'ROTATION', 'NOMOVEMENT', 'LOWSTOCK', 'EXPIRY', 'OPS', 'PROVIDER_ACTIVITY', 'BRANCH_ACTIVITY'].includes(qsTab)) {
       setTab(qsTab as StockTab)
     }
     if (qsFrom && /^\d{4}-\d{2}-\d{2}$/.test(qsFrom)) setFrom(qsFrom)
@@ -599,6 +654,8 @@ export function StockReportsPage() {
       case 'LOWSTOCK': return `Stock bajo / Por agotar`
       case 'EXPIRY': return `Productos próximos a vencer`
       case 'OPS': return `Solicitudes y devoluciones (${period})`
+      case 'PROVIDER_ACTIVITY': return `Actividad de Sucursales Proveedor (${period})`
+      case 'BRANCH_ACTIVITY': return `Actividad de Sucursales de Venta (${period})`
       default: return `Reporte de Stock (${period})`
     }
   }, [from, to, tab])
@@ -708,6 +765,18 @@ export function StockReportsPage() {
     queryKey: ['reports', 'stock', 'returnsByWarehouse', { from, to }],
     queryFn: () => fetchReturnsByWarehouse(auth.accessToken!, { from, to, take: 200 }),
     enabled: !!auth.accessToken && tab === 'OPS',
+  })
+
+  const providerActivityQuery = useQuery({
+    queryKey: ['reports', 'stock', 'providerActivity', { from, to }],
+    queryFn: () => fetchProviderActivity(auth.accessToken!, { from, to }),
+    enabled: !!auth.accessToken && tab === 'PROVIDER_ACTIVITY',
+  })
+
+  const salesBranchActivityQuery = useQuery({
+    queryKey: ['reports', 'stock', 'salesBranchActivity', { from, to }],
+    queryFn: () => fetchSalesBranchActivity(auth.accessToken!, { from, to }),
+    enabled: !!auth.accessToken && tab === 'BRANCH_ACTIVITY',
   })
 
   const buildOpsStructuredReport = async () => {
@@ -1386,6 +1455,12 @@ export function StockReportsPage() {
               </Button>
               <Button size="sm" variant={tab === 'OPS' ? 'primary' : 'outline'} onClick={() => setTab('OPS')}>
                 📨 Ops
+              </Button>
+              <Button size="sm" variant={tab === 'PROVIDER_ACTIVITY' ? 'primary' : 'outline'} onClick={() => setTab('PROVIDER_ACTIVITY')}>
+                🏭 Proveedor
+              </Button>
+              <Button size="sm" variant={tab === 'BRANCH_ACTIVITY' ? 'primary' : 'outline'} onClick={() => setTab('BRANCH_ACTIVITY')}>
+                🏪 Ventas Suc.
               </Button>
             </div>
             
@@ -3096,9 +3171,118 @@ export function StockReportsPage() {
                   </>
                 )
               })()}
-            </ReportSection>
-          )}
-        </div>
+             </ReportSection>
+           )}
+
+           {/* Reporte de Actividad de Sucursales Proveedor */}
+           {tab === 'PROVIDER_ACTIVITY' && (
+             <ReportSection
+               title="🏭 Actividad de Sucursales Proveedor"
+               subtitle="Lotes creados, transferencias enviadas y ajustes en almacenes de tipo Proveedor"
+               icon="🏭"
+             >
+               {providerActivityQuery.isLoading && <Loading />}
+               {providerActivityQuery.isError && <ErrorState message={(providerActivityQuery.error as any)?.message ?? 'Error cargando reporte'} />}
+               {!providerActivityQuery.isLoading && !providerActivityQuery.isError && (providerActivityQuery.data?.items?.length ?? 0) === 0 && (
+                 <EmptyState message="No hay actividad de sucursales proveedor en el rango seleccionado." />
+               )}
+               {!providerActivityQuery.isLoading && !providerActivityQuery.isError && (providerActivityQuery.data?.items?.length ?? 0) > 0 && (() => {
+                 const items = providerActivityQuery.data?.items ?? []
+                 const totalBatchesCreated = items.reduce((sum, i) => sum + i.batchesCreated, 0)
+                 const totalTransfersSent = items.reduce((sum, i) => sum + i.transfersSent, 0)
+                 const totalAdjustments = items.reduce((sum, i) => sum + i.adjustments, 0)
+                 const totalTransfersQty = items.reduce((sum, i) => sum + toNumber(i.transfersSentQty), 0)
+
+                 return (
+                   <>
+                     <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
+                       <KPICard icon="📦" label="Lotes Creados" value={totalBatchesCreated.toString()} color="primary" subtitle="Entradas IN" />
+                       <KPICard icon="🔄" label="Traspasos Enviados" value={totalTransfersSent.toString()} color="info" subtitle={`${formatInteger(totalTransfersQty)} unidades`} />
+                       <KPICard icon="📝" label="Ajustes" value={totalAdjustments.toString()} color="warning" subtitle="Ajustes de salida" />
+                       <KPICard icon="🏢" label="Sucursales" value={items.length.toString()} color="success" subtitle="Proveedor activos" />
+                     </div>
+
+                     <div className="rounded-lg border border-slate-200 dark:border-slate-700">
+                       <div className="bg-blue-50 dark:bg-blue-900/20 px-4 py-2 text-xs text-blue-700 dark:text-blue-300">
+                         ℹ️ Sucursales tipo Proveedor: pueden crear lotes y ajustar stock (entradas IN/ADJUSTMENT).
+                       </div>
+                       <Table
+                         columns={[
+                           { header: '🏢 Sucursal', accessor: (r: ProviderActivityItem) => `${r.warehouseCode ?? ''} ${r.warehouseName ?? ''}`.trim() || r.warehouseId },
+                           { header: '🏙️ Ciudad', accessor: (r: ProviderActivityItem) => r.warehouseCity ?? '-' },
+                           { header: '📦 Lotes Creados', accessor: (r: ProviderActivityItem) => r.batchesCreated, className: 'text-center' },
+                           { header: '🔄 Trasp. Enviados', accessor: (r: ProviderActivityItem) => r.transfersSent, className: 'text-center' },
+                           { header: '📦 Unid. Enviadas', accessor: (r: ProviderActivityItem) => formatInteger(toNumber(r.transfersSentQty)), className: 'text-right' },
+                           { header: '📝 Ajustes', accessor: (r: ProviderActivityItem) => r.adjustments, className: 'text-center' },
+                           { header: '📉 Unid. Ajustadas', accessor: (r: ProviderActivityItem) => formatInteger(toNumber(r.adjustmentsOutQty)), className: 'text-right' },
+                         ]}
+                         data={items}
+                         keyExtractor={(r) => r.warehouseId}
+                       />
+                     </div>
+                   </>
+                 )
+               })()}
+             </ReportSection>
+           )}
+
+           {/* Reporte de Actividad de Sucursales de Venta */}
+           {tab === 'BRANCH_ACTIVITY' && (
+             <ReportSection
+               title="🏪 Actividad de Sucursales de Venta"
+               subtitle="Lotes recibidos, solicitudes aceptadas/rechazadas, cotizaciones y ventas"
+               icon="🏪"
+             >
+               {salesBranchActivityQuery.isLoading && <Loading />}
+               {salesBranchActivityQuery.isError && <ErrorState message={(salesBranchActivityQuery.error as any)?.message ?? 'Error cargando reporte'} />}
+               {!salesBranchActivityQuery.isLoading && !salesBranchActivityQuery.isError && (salesBranchActivityQuery.data?.items?.length ?? 0) === 0 && (
+                 <EmptyState message="No hay actividad de sucursales de venta en el rango seleccionado." />
+               )}
+               {!salesBranchActivityQuery.isLoading && !salesBranchActivityQuery.isError && (salesBranchActivityQuery.data?.items?.length ?? 0) > 0 && (() => {
+                 const items = salesBranchActivityQuery.data?.items ?? []
+                 const totalBatchesReceived = items.reduce((sum, i) => sum + i.batchesReceived, 0)
+                 const totalAccepted = items.reduce((sum, i) => sum + i.requestsAccepted, 0)
+                 const totalRejected = items.reduce((sum, i) => sum + i.requestsRejected, 0)
+                 const totalQuotes = items.reduce((sum, i) => sum + i.quotesCreated, 0)
+                 const totalOrders = items.reduce((sum, i) => sum + i.ordersCreated, 0)
+                 const totalSales = items.reduce((sum, i) => sum + toNumber(i.salesAmount), 0)
+
+                 return (
+                   <>
+                     <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-5">
+                       <KPICard icon="📦" label="Lotes Recibidos" value={totalBatchesReceived.toString()} color="primary" subtitle="Transferencias" />
+                       <KPICard icon="👍" label="Solicitudes Aceptadas" value={totalAccepted.toString()} color="success" subtitle="Confirmadas" />
+                       <KPICard icon="👎" label="Solicitudes Rechazadas" value={totalRejected.toString()} color="warning" subtitle="Negadas" />
+                       <KPICard icon="📝" label="Cotizaciones" value={totalQuotes.toString()} color="info" subtitle="Emitidas" />
+                       <KPICard icon="💰" label={`Ventas (${currency})`} value={money(totalSales)} color="success" subtitle={`${totalOrders} órdenes`} />
+                     </div>
+
+                     <div className="rounded-lg border border-slate-200 dark:border-slate-700">
+                       <div className="bg-blue-50 dark:bg-blue-900/20 px-4 py-2 text-xs text-blue-700 dark:text-blue-300">
+                         ℹ️ Sucursales tipo Venta: reciben stock por transferencias y solicitudes, emiten cotizaciones y facturan ventas.
+                       </div>
+                       <Table
+                         columns={[
+                           { header: '🏢 Sucursal', accessor: (r: SalesBranchActivityItem) => `${r.warehouseCode ?? ''} ${r.warehouseName ?? ''}`.trim() || r.warehouseId },
+                           { header: '🏙️ Ciudad', accessor: (r: SalesBranchActivityItem) => r.warehouseCity ?? '-' },
+                           { header: '📥 Lotes Recibidos', accessor: (r: SalesBranchActivityItem) => r.batchesReceived, className: 'text-center' },
+                           { header: '✅ Aceptadas', accessor: (r: SalesBranchActivityItem) => r.requestsAccepted, className: 'text-center' },
+                           { header: '❌ Rechazadas', accessor: (r: SalesBranchActivityItem) => r.requestsRejected, className: 'text-center' },
+                           { header: '⏳ Pendientes', accessor: (r: SalesBranchActivityItem) => r.requestsPending, className: 'text-center' },
+                           { header: '📝 Cotizaciones', accessor: (r: SalesBranchActivityItem) => r.quotesCreated, className: 'text-center' },
+                           { header: '📋 Órdenes', accessor: (r: SalesBranchActivityItem) => r.ordersCreated, className: 'text-center' },
+                           { header: `💵 Ventas (${currency})`, accessor: (r: SalesBranchActivityItem) => money(toNumber(r.salesAmount)), className: 'text-right' },
+                         ]}
+                         data={items}
+                         keyExtractor={(r) => r.warehouseId}
+                       />
+                     </div>
+                   </>
+                 )
+               })()}
+             </ReportSection>
+           )}
+         </div>
 
         <Modal isOpen={emailModalOpen} onClose={() => setEmailModalOpen(false)} title="Enviar reporte por correo" maxWidth="md">
           <div className="space-y-3">

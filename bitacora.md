@@ -1,10 +1,65 @@
 # Bitácora de desarrollo — PharmaFlow Bolivia (farmaSNT)
 
-> Última actualización: 09 Ago 2026
+> Última actualización: 10 Ago 2026
 
 Este documento suma (a alto nivel) decisiones, hitos y cambios relevantes que se fueron incorporando al repositorio para llegar al estado actual del MVP.
 
-## **[09 Ago 2026] Tipos de sucursal: Proveedor vs Venta + restricciones de stock**
+## **[10 Ago 2026] Cotizaciones: carga automática de precio de producto al editar/agregar líneas**
+
+### Objetivo alcanzado
+- Al editar una cotización o agregar una nueva fila de producto, el precio unitario ahora se carga automáticamente desde el producto (`price`) y se recalcula al cambiar de presentación (considerando `priceOverride` de la presentación).
+
+### Frontend (`frontend/src/pages/sales/QuoteDetailPage.tsx`)
+- **Bug**: Al seleccionar un producto o agregar una fila nueva, `unitPriceBase` se inicializaba a `0`, no tomando el `price` del producto ni el `priceOverride` de la presentación por defecto. Al cambiar de presentación, el precio tampoco se recalculaba.
+- **Fix**:
+  - Nueva función `resolveUnitPriceBaseForPresentation`: si la presentación tiene `priceOverride`, devuelve `priceOverride / unitsPerPresentation` (precio base por unidad); si no, devuelve el `price` del producto.
+  - `ProductPresentation` type: añadido `priceOverride`.
+  - `DraftLine` type: añadido `productPrice` para conservar el precio del producto independientemente de la presentación.
+  - `buildDraftFromQuote`: inicializa `productPrice` y `unitPriceBase` desde `l.unitPrice`.
+  - `ProductSelector` onChange: inicializa `unitPriceBase` y `productPrice` usando `p.price` y la presentación por defecto.
+  - Select de presentación onChange: recalcula `unitPriceBase` usando `resolveUnitPriceBaseForPresentation` con `productPrice`.
+  - Creación de filas nuevas: inicializa `productPrice: 0`.
+
+### Backend
+- Sin cambios. El backend (`salesQuotes.ts`) ya resolvía correctamente el precio al crear/actualizar cotizaciones: usaba `line.unitPrice` si venía definido, o `product.price` / `priceOverride / unitsPerPresentation` si no. El problema era únicamente frontend.
+
+### Operación
+- TypeScript check OK en frontend y backend.
+- Sin migraciones Prisma nuevas.
+
+---
+
+## **[10 Ago 2026] Reportes: actividad de sucursales por tipo (Proveedor / Venta)**
+
+### Objetivo alcanzado
+- Nuevas pestañas en `StockReportsPage.tsx`: **Proveedor** y **Ventas Sucursal**, que muestran KPIs y tablas de actividad filtrada por `WarehouseType`.
+
+### API
+- `GET /api/v1/reports/stock/provider-activity`: para warehouses tipo `PROVIDER`. KPIs y tabla con lotes creados, transferencias enviadas (y qty), ajustes (y qty de salida).
+- `GET /api/v1/reports/stock/sales-branch-activity`: para warehouses tipo `SALES`. KPIs y tabla con lotes recibidos, solicitudes aceptadas/rechazadas/pendientes, cotizaciones creadas, órdenes creadas y monto de ventas.
+
+### Frontend
+- Tipos `ProviderActivityItem` y `SalesBranchActivityItem` agregados.
+- Queries `providerActivityQuery` y `salesBranchActivityQuery` (enabled solo en sus pestañas).
+- KPIs y tables con columnas adaptadas a cada tipo de sucursal.
+
+### Backend (`backend/src/adapters/http/routes/reports.ts`)
+- `ProviderActivityRow` y `SalesBranchActivityRow` types agregados.
+- Consultas SQL con CTE `provider_warehouses` / `sales_warehouses` filtrando por `WarehouseType`.
+- Los queries usan `db.$queryRaw<ProviderActivityRow[]>` y `db.$queryRaw<SalesBranchActivityRow[]>` para correctos tipos.
+- **Corrección de filtrado de fechas**: las consultas SQL usaban `BETWEEN ${from}::timestamptz AND ${to}::timestamptz`, pero cuando `from`/`to` son `null` (sin filtro) `BETWEEN NULL` devuelve 0 resultados. Reemplazado por patrón `(${from ?? null}::timestamptz IS NULL OR col >= ${from}) AND (${to ?? null}::timestamptz IS NULL OR col < ${to})` (to exclusivo), igual que el resto del archivo. Esto asegura que `from=2026-07-01&to=2026-08-01` reporte todo julio completo.
+- **Corrección `quotesCreated`**: ahora filtra por `Location.warehouseId = sw.id` (coteo previo a `Quote.locationId → Location.warehouseId`), no devolvía el total del tenant.
+
+### Frontend
+- El selector de fechas default: primer día del mes actual a primer día del mes siguiente (`startOfMonth` / `startOfNextMonth`), compatible con el filtro `to` exclusivo del backend.
+- Query params `from` / `to` en formato ISO date (`YYYY-MM-DD`), parseados por `z.coerce.date()` en el backend.
+
+### Verificación
+- Reporte de julio (`from=2026-07-01&to=2026-08-01`) validado contra endpoint `/api/v1/reports/stock/provider-activity` → 401 (auth correcto, ruta registrada sin duplicados).
+- Docker build OK (frontend y backend).
+- Container backend healthy en puerto 6000.
+
+---
 
 ### Objetivo alcanzado
 - Las sucursales (warehouses) ahora tienen un **tipo** (`PROVIDER`/`SALES`). Solo los warehouses tipo **Proveedor** pueden crear lotes y ajustar stock (ingresos `IN`/`ADJUSTMENT`); los warehouses tipo **Venta** ingresan stock únicamente por transferencias (`TRANSFER`) o recepción de solicitudes (`MOVEMENT_REQUEST_RECEIPT`).

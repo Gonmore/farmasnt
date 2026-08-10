@@ -336,6 +336,32 @@ type ExpiryAlertRow = {
   quantity: string | null
 }
 
+type ProviderActivityRow = {
+  warehouseId: string
+  warehouseCode: string | null
+  warehouseName: string | null
+  warehouseCity: string | null
+  batchesCreated: number
+  transfersSent: number
+  transfersSentQty: string | null
+  adjustments: number
+  adjustmentsOutQty: string | null
+}
+
+type SalesBranchActivityRow = {
+  warehouseId: string
+  warehouseCode: string | null
+  warehouseName: string | null
+  warehouseCity: string | null
+  batchesReceived: number
+  requestsAccepted: number
+  requestsRejected: number
+  requestsPending: number
+  quotesCreated: number
+  ordersCreated: number
+  salesAmount: string | null
+}
+
 export async function registerReportRoutes(app: FastifyInstance): Promise<void> {
   const db = prisma()
   const mailer = getMailer()
@@ -2743,4 +2769,221 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
       return reply.send({ items })
     },
   )
+
+  // Branch activity reports (filtered by warehouse type)
+  app.get(
+    '/api/v1/reports/stock/provider-activity',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requireStockReportOrBranchAccess()],
+    },
+    async (request, reply) => {
+      const parsed = dateRangeQuerySchema.safeParse(request.query)
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
+
+      const tenantId = request.auth!.tenantId
+      const { from, to } = parsed.data
+
+      const rows = await db.$queryRaw<ProviderActivityRow[]>`
+        WITH provider_warehouses AS (
+          SELECT id, code, name, city
+          FROM "Warehouse"
+          WHERE "tenantId" = ${tenantId}
+            AND type = 'PROVIDER'::"WarehouseType"
+            AND "isActive" = true
+        )
+        SELECT
+          pw.id as "warehouseId",
+          pw.code as "warehouseCode",
+          pw.name as "warehouseName",
+          pw.city as "warehouseCity",
+          (SELECT count(*) FROM "StockMovement" sm
+            JOIN "Location" l ON l.id = sm."toLocationId"
+            JOIN provider_warehouses pw2 ON pw2."id" = l."warehouseId"
+            WHERE sm."tenantId" = ${tenantId}
+              AND sm.type = 'IN'::"StockMovementType"
+              AND sm."referenceType" = 'RECEIPT'
+              AND (${from ?? null}::timestamptz IS NULL OR sm."createdAt" >= ${from ?? null}::timestamptz)
+              AND (${to ?? null}::timestamptz IS NULL OR sm."createdAt" < ${to ?? null}::timestamptz)
+              AND l."warehouseId" = pw.id
+          )::int as "batchesCreated",
+          (SELECT count(*) FROM "StockMovement" sm
+            JOIN "Location" l ON l.id = sm."fromLocationId"
+            JOIN provider_warehouses pw2 ON pw2."id" = l."warehouseId"
+            WHERE sm."tenantId" = ${tenantId}
+              AND sm.type = 'TRANSFER'::"StockMovementType"
+              AND (${from ?? null}::timestamptz IS NULL OR sm."createdAt" >= ${from ?? null}::timestamptz)
+              AND (${to ?? null}::timestamptz IS NULL OR sm."createdAt" < ${to ?? null}::timestamptz)
+              AND l."warehouseId" = pw.id
+          )::int as "transfersSent",
+          (SELECT sum(sm.quantity)::text FROM "StockMovement" sm
+            JOIN "Location" l ON l.id = sm."fromLocationId"
+            JOIN provider_warehouses pw2 ON pw2."id" = l."warehouseId"
+            WHERE sm."tenantId" = ${tenantId}
+              AND sm.type = 'TRANSFER'::"StockMovementType"
+              AND (${from ?? null}::timestamptz IS NULL OR sm."createdAt" >= ${from ?? null}::timestamptz)
+              AND (${to ?? null}::timestamptz IS NULL OR sm."createdAt" < ${to ?? null}::timestamptz)
+              AND l."warehouseId" = pw.id
+          ) as "transfersSentQty",
+          (SELECT count(*) FROM "StockMovement" sm
+            JOIN "Location" l ON l.id = sm."fromLocationId"
+            JOIN provider_warehouses pw2 ON pw2."id" = l."warehouseId"
+            WHERE sm."tenantId" = ${tenantId}
+              AND sm.type = 'ADJUSTMENT'::"StockMovementType"
+              AND (${from ?? null}::timestamptz IS NULL OR sm."createdAt" >= ${from ?? null}::timestamptz)
+              AND (${to ?? null}::timestamptz IS NULL OR sm."createdAt" < ${to ?? null}::timestamptz)
+              AND l."warehouseId" = pw.id
+          )::int as "adjustments",
+          (SELECT sum(sm.quantity)::text FROM "StockMovement" sm
+            JOIN "Location" l ON l.id = sm."fromLocationId"
+            JOIN provider_warehouses pw2 ON pw2."id" = l."warehouseId"
+            WHERE sm."tenantId" = ${tenantId}
+              AND sm.type = 'ADJUSTMENT'::"StockMovementType"
+              AND sm."toLocationId" IS NULL
+              AND (${from ?? null}::timestamptz IS NULL OR sm."createdAt" >= ${from ?? null}::timestamptz)
+              AND (${to ?? null}::timestamptz IS NULL OR sm."createdAt" < ${to ?? null}::timestamptz)
+              AND l."warehouseId" = pw.id
+          ) as "adjustmentsOutQty"
+        FROM provider_warehouses pw
+        ORDER BY pw.code ASC
+      `
+
+      const items = rows.map((r) => ({
+        warehouseId: r.warehouseId,
+        warehouseCode: r.warehouseCode,
+        warehouseName: r.warehouseName,
+        warehouseCity: r.warehouseCity,
+        batchesCreated: Number(r.batchesCreated ?? 0),
+        transfersSent: Number(r.transfersSent ?? 0),
+        transfersSentQty: r.transfersSentQty ?? '0',
+        adjustments: Number(r.adjustments ?? 0),
+        adjustmentsOutQty: r.adjustmentsOutQty ?? '0',
+      }))
+
+      return reply.send({ items })
+    },
+  )
+
+  app.get(
+    '/api/v1/reports/stock/sales-branch-activity',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requireStockReportOrBranchAccess()],
+    },
+    async (request, reply) => {
+      const parsed = dateRangeQuerySchema.safeParse(request.query)
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
+
+      const tenantId = request.auth!.tenantId
+      const { from, to } = parsed.data
+
+      const rows = await db.$queryRaw<SalesBranchActivityRow[]>`
+        WITH sales_warehouses AS (
+          SELECT id, code, name, city
+          FROM "Warehouse"
+          WHERE "tenantId" = ${tenantId}
+            AND type = 'SALES'::"WarehouseType"
+            AND "isActive" = true
+        )
+        SELECT
+          sw.id as "warehouseId",
+          sw.code as "warehouseCode",
+          sw.name as "warehouseName",
+          sw.city as "warehouseCity",
+          (SELECT count(*) FROM "StockMovement" sm
+            JOIN "Location" l ON l.id = sm."toLocationId"
+            JOIN sales_warehouses sw2 ON sw2."id" = l."warehouseId"
+            WHERE sm."tenantId" = ${tenantId}
+              AND sm.type = 'TRANSFER'::"StockMovementType"
+              AND sm."referenceType" = 'REQUEST_FULFILL'
+              AND (${from ?? null}::timestamptz IS NULL OR sm."createdAt" >= ${from ?? null}::timestamptz)
+              AND (${to ?? null}::timestamptz IS NULL OR sm."createdAt" < ${to ?? null}::timestamptz)
+              AND l."warehouseId" = sw.id
+          )::int as "batchesReceived",
+          (SELECT count(*) FROM "StockMovementRequest" smr
+            WHERE smr."tenantId" = ${tenantId}
+              AND smr."confirmationStatus" = 'ACCEPTED'::"StockMovementRequestConfirmationStatus"
+              AND (${from ?? null}::timestamptz IS NULL OR smr."confirmedAt" >= ${from ?? null}::timestamptz)
+              AND (${to ?? null}::timestamptz IS NULL OR smr."confirmedAt" < ${to ?? null}::timestamptz)
+              AND EXISTS (
+                SELECT 1 FROM "Warehouse" w
+                WHERE w.id = smr."warehouseId" AND w."tenantId" = ${tenantId}
+                  AND w.type = 'SALES'::"WarehouseType"
+                  AND w.id = sw.id
+              )
+          )::int as "requestsAccepted",
+          (SELECT count(*) FROM "StockMovementRequest" smr
+            WHERE smr."tenantId" = ${tenantId}
+              AND smr."confirmationStatus" = 'REJECTED'::"StockMovementRequestConfirmationStatus"
+              AND (${from ?? null}::timestamptz IS NULL OR smr."confirmedAt" >= ${from ?? null}::timestamptz)
+              AND (${to ?? null}::timestamptz IS NULL OR smr."confirmedAt" < ${to ?? null}::timestamptz)
+              AND EXISTS (
+                SELECT 1 FROM "Warehouse" w
+                WHERE w.id = smr."warehouseId" AND w."tenantId" = ${tenantId}
+                  AND w.type = 'SALES'::"WarehouseType"
+                  AND w.id = sw.id
+              )
+          )::int as "requestsRejected",
+          (SELECT count(*) FROM "StockMovementRequest" smr
+            WHERE smr."tenantId" = ${tenantId}
+              AND smr."confirmationStatus" = 'PENDING'::"StockMovementRequestConfirmationStatus"
+              AND (${from ?? null}::timestamptz IS NULL OR smr."createdAt" >= ${from ?? null}::timestamptz)
+              AND (${to ?? null}::timestamptz IS NULL OR smr."createdAt" < ${to ?? null}::timestamptz)
+              AND EXISTS (
+                SELECT 1 FROM "Warehouse" w
+                WHERE w.id = smr."warehouseId" AND w."tenantId" = ${tenantId}
+                  AND w.type = 'SALES'::"WarehouseType"
+                  AND w.id = sw.id
+              )
+          )::int as "requestsPending",
+          (SELECT count(*) FROM "Quote" q
+            LEFT JOIN "Location" ql ON ql.id = q."locationId"
+            WHERE q."tenantId" = ${tenantId}
+               AND (${from ?? null}::timestamptz IS NULL OR q."createdAt" >= ${from ?? null}::timestamptz)
+              AND (${to ?? null}::timestamptz IS NULL OR q."createdAt" < ${to ?? null}::timestamptz)
+              AND ql."warehouseId" = sw.id
+          )::int as "quotesCreated",
+          (SELECT count(*) FROM "SalesOrder" so
+            JOIN "StockMovement" sm ON sm."referenceType" = 'SALES_ORDER' AND sm."referenceId" = so."number"
+            JOIN "Location" l ON l.id = sm."fromLocationId"
+            JOIN sales_warehouses sw2 ON sw2."id" = l."warehouseId"
+            WHERE so."tenantId" = ${tenantId}
+              AND (${from ?? null}::timestamptz IS NULL OR so."createdAt" >= ${from ?? null}::timestamptz)
+              AND (${to ?? null}::timestamptz IS NULL OR so."createdAt" < ${to ?? null}::timestamptz)
+              AND l."warehouseId" = sw.id
+          )::int as "ordersCreated",
+          (SELECT sum(sol.quantity * sol."unitPrice")::text FROM "SalesOrder" so
+            JOIN "SalesOrderLine" sol ON sol."salesOrderId" = so."id" AND sol."tenantId" = so."tenantId"
+            JOIN "StockMovement" sm ON sm."referenceType" = 'SALES_ORDER' AND sm."referenceId" = so."number"
+            JOIN "Location" l ON l.id = sm."fromLocationId"
+            JOIN sales_warehouses sw2 ON sw2."id" = l."warehouseId"
+            WHERE so."tenantId" = ${tenantId}
+              AND (${from ?? null}::timestamptz IS NULL OR so."createdAt" >= ${from ?? null}::timestamptz)
+              AND (${to ?? null}::timestamptz IS NULL OR so."createdAt" < ${to ?? null}::timestamptz)
+              AND l."warehouseId" = sw.id
+          ) as "salesAmount"
+        FROM sales_warehouses sw
+        ORDER BY sw.code ASC
+      `
+
+      const items = rows.map((r) => ({
+        warehouseId: r.warehouseId,
+        warehouseCode: r.warehouseCode,
+        warehouseName: r.warehouseName,
+        warehouseCity: r.warehouseCity,
+        batchesReceived: Number(r.batchesReceived ?? 0),
+        requestsAccepted: Number(r.requestsAccepted ?? 0),
+        requestsRejected: Number(r.requestsRejected ?? 0),
+        requestsPending: Number(r.requestsPending ?? 0),
+        quotesCreated: Number(r.quotesCreated ?? 0),
+        ordersCreated: Number(r.ordersCreated ?? 0),
+        salesAmount: r.salesAmount ?? '0',
+      }))
+
+      return reply.send({ items })
+    },
+  )
+
+  // Fix: by-month siempre aplica take=1000 y status opcional incluye todos los estados
+  // El schema salesSummaryQuerySchema ya soporta status opcional, pero el endpoint
+  // original no aplicaba LIMIT. Se mantiene el endpoint existente, pero se asegura
+  // que el frontend envíe take=1000.
 }

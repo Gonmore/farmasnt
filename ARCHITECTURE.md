@@ -203,12 +203,15 @@ frontend/src/
 | `pages/sales/QuotesPage.tsx` | `GET /api/v1/sales/quotes` | `routes/salesQuotes.ts:584` |
 | | `POST /api/v1/sales/quotes` | `routes/salesQuotes.ts:674` |
 | | `GET /api/v1/sales/quotes/:id` | `routes/salesQuotes.ts:1435` |
-| | `PUT /api/v1/sales/quotes/:id` | `routes/salesQuotes.ts:1544` |
+| `pages/sales/QuoteDetailPage.tsx` (detalle + edición) | `GET /api/v1/sales/quotes/:id` | `routes/salesQuotes.ts:1435` | El frontend calcula `unitPriceBase` desde `Product.price` o `priceOverride / unitsPerPresentation` al seleccionar producto o cambiar presentación. |
+| | `PUT /api/v1/sales/quotes/:id` | `routes/salesQuotes.ts:1544` | El `unitPrice` se envía en unidades base; backend aplica `priceOverride` si no se envía. |
 | | `POST /api/v1/sales/quotes/:id/process` | `routes/salesQuotes.ts:959` |
 | | `GET /api/v1/sales/quotes/next-number` | `routes/salesOrders.ts:668` |
 | | `GET /api/v1/sales/quotes/sub-warehouses` | `routes/salesQuotes.ts:431` |
 | | `GET /api/v1/sales/quotes/:id/available-batches` | `routes/salesQuotes.ts:477` |
 | | `POST /api/v1/sales/quotes/:id/request-stock` | `routes/salesQuotes.ts:1270` |
+| | `GET /api/v1/products/:id/presentations` | `routes/products.ts:604` | Incluye `priceOverride` para cálculo de precios por presentación. |
+| | `GET /api/v1/catalog/search` | `routes/catalog.ts:21` | Con `includePresentations=true` devuelve `price` del producto y `priceOverride` de cada presentación. |
 | `pages/sales/OrdersPage.tsx` | `GET /api/v1/sales/orders` | `routes/salesOrders.ts:697` |
 | | `GET /api/v1/sales/orders/:id` | `routes/salesOrders.ts:852` |
 | | `POST /api/v1/sales/orders/:id/cancel` | `routes/salesOrders.ts:954` |
@@ -265,7 +268,11 @@ frontend/src/
 | | `POST /api/v1/reports/stock/schedules` | `routes/reports.ts:2539` |
 | | `PATCH /api/v1/reports/stock/schedules/:id` | `routes/reports.ts:2596` |
 | | `DELETE /api/v1/reports/stock/schedules/:id` | `routes/reports.ts:2658` |
+| | `GET /api/v1/reports/stock/provider-activity` | `routes/reports.ts:2774` |
+| | `GET /api/v1/reports/stock/sales-branch-activity` | `routes/reports.ts:2866` |
 | `pages/DashboardPage.tsx` | `GET /api/v1/dashboards/executive-summary` | `routes/dashboards.ts:10` |
+
+> **Nota de filtrado de fechas**: los reportes que aceptan `from` / `to` usan semántica de rango hábil: `from` es inclusive (`>=`), `to` es exclusivo (`<`). Para reportar un mes completo (ej. julio), enviar `from=2026-07-01` y `to=2026-08-01`. Si `from`/`to` son omáltos (null), no se filtra por fecha.
 | `pages/stock/InventoryPage.tsx` (ver stock) | `GET /api/v1/reports/stock/balances-expanded?warehouseId=...` | `routes/reports.ts:1436` |
 
 ### 3.6 Auditoría

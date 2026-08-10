@@ -61,6 +61,20 @@ type ProductPresentation = {
   sortOrder: number
 }
 
+function resolveUnitPriceBaseForPresentation(presentations: ProductPresentation[], presentationId: string | null, productPrice: number): number {
+  if (presentationId) {
+    const pres = presentations.find((p) => p.id === presentationId)
+    if (pres?.priceOverride !== null && pres?.priceOverride !== undefined) {
+      const override = Number(pres.priceOverride)
+      const units = Number(pres.unitsPerPresentation ?? 1)
+      if (Number.isFinite(override) && override >= 0) {
+        return units > 0 ? override / units : productPrice
+      }
+    }
+  }
+  return productPrice
+}
+
 type DraftLine = {
   key: string
   productId: string | null
@@ -71,6 +85,7 @@ type DraftLine = {
   presentationId: string | null
   presentationQuantity: number
   unitPriceBase: number
+  productPrice: number
   discountPct: number
 }
 
@@ -104,6 +119,7 @@ function buildDraftFromQuote(q: QuoteDetail, presentationsByProduct?: Map<string
     paymentMode: String(q.paymentMode ?? 'CASH'),
     lines: (q.lines ?? []).map((l) => {
       const pres = presentationsByProduct?.get(l.productId) ?? []
+      const basePrice = toNumberSafe(l.unitPrice, 0)
       return {
         key: l.id,
         productId: l.productId,
@@ -113,7 +129,8 @@ function buildDraftFromQuote(q: QuoteDetail, presentationsByProduct?: Map<string
         presentations: pres,
         presentationId: l.presentationId ?? null,
         presentationQuantity: toNumberSafe(l.presentationQuantity ?? l.quantity, 1),
-        unitPriceBase: toNumberSafe(l.unitPrice, 0),
+        unitPriceBase: basePrice,
+        productPrice: basePrice,
         discountPct: toNumberSafe(l.discountPct, 0),
       }
     }),
@@ -374,30 +391,34 @@ export function QuoteDetailPage() {
         accessor: (row: DraftLine) => (
           <ProductSelector
             value={row.productId ? { id: row.productId, label: lineLabel(row.productSku, row.productName) } : null}
-            onChange={(p) => {
-              const presentations = (p.presentations ?? []) as ProductPresentation[]
-              const presId = pickDefaultPresentationId(presentations)
-              setDraft((prev) => {
-                if (!prev) return prev
-                return {
-                  ...prev,
-                  lines: prev.lines.map((l) =>
-                    l.key === row.key
-                      ? {
-                          ...l,
-                          productId: p.id,
-                          productSku: p.sku,
-                          productName: p.name,
-                          baseUnitAbbreviation: p.baseUnitAbbreviation ?? 'u',
-                          presentations,
-                          presentationId: presId,
-                          presentationQuantity: 1,
-                        }
-                      : l,
-                  ),
-                }
-              })
-            }}
+             onChange={(p) => {
+               const presentations = (p.presentations ?? []) as ProductPresentation[]
+               const presId = pickDefaultPresentationId(presentations)
+               const productPrice = toNumberSafe(p.price, 0)
+               const unitPriceBase = resolveUnitPriceBaseForPresentation(presentations, presId, productPrice)
+               setDraft((prev) => {
+                 if (!prev) return prev
+                 return {
+                   ...prev,
+                   lines: prev.lines.map((l) =>
+                     l.key === row.key
+                       ? {
+                           ...l,
+                           productId: p.id,
+                           productSku: p.sku,
+                           productName: p.name,
+                           baseUnitAbbreviation: p.baseUnitAbbreviation ?? 'u',
+                           presentations,
+                           presentationId: presId,
+                           presentationQuantity: 1,
+                           unitPriceBase,
+                           productPrice,
+                         }
+                       : l,
+                   ),
+                 }
+               })
+             }}
             disabled={saveMutation.isPending}
             placeholder="Buscar por SKU o nombre..."
           />
@@ -421,16 +442,24 @@ export function QuoteDetailPage() {
             <Select
               options={options}
               value={row.presentationId ?? ''}
-              onChange={(e) => {
-                const nextId = e.target.value || null
-                setDraft((prev) => {
-                  if (!prev) return prev
-                  return {
-                    ...prev,
-                    lines: prev.lines.map((l) => (l.key === row.key ? { ...l, presentationId: nextId, presentationQuantity: 1 } : l)),
-                  }
-                })
-              }}
+               onChange={(e) => {
+                 const nextId = e.target.value || null
+                 setDraft((prev) => {
+                   if (!prev) return prev
+                   return {
+                     ...prev,
+                     lines: prev.lines.map((l) => {
+                       if (l.key !== row.key) return l
+                       return {
+                         ...l,
+                         presentationId: nextId,
+                         presentationQuantity: 1,
+                         unitPriceBase: resolveUnitPriceBaseForPresentation(l.presentations, nextId, l.productPrice),
+                       }
+                     }),
+                   }
+                 })
+               }}
               disabled={saveMutation.isPending || !row.productId}
             />
           )
@@ -949,6 +978,7 @@ export function QuoteDetailPage() {
                         presentationId: null,
                         presentationQuantity: 1,
                         unitPriceBase: 0,
+                        productPrice: 0,
                         discountPct: 0,
                       }
                       return { ...prev, lines: [...prev.lines, nextLine] }
