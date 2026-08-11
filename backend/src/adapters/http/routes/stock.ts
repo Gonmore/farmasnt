@@ -381,6 +381,26 @@ const movementRequestReturnBodySchema = z
     path: ['items'],
   })
 
+const movementRequestReceptionParamsSchema = z.object({
+  id: z.string().uuid(),
+})
+
+const movementRequestReceptionBodySchema = z.object({
+  items: z
+    .array(
+      z.object({
+        outMovementId: z.string().uuid(),
+        receivedQuantity: z.coerce.number().min(0).default(0),
+        returnedQuantity: z.coerce.number().min(0).default(0),
+        returnReason: z.string().trim().max(500).optional(),
+      }),
+    )
+    .min(1),
+  note: z.string().trim().max(1000).optional(),
+  photoUrl: z.string().trim().url().max(500).optional(),
+  photoKey: z.string().trim().max(200).optional(),
+})
+
 const movementRequestFulfillBodySchema = z.object({
   fromLocationId: z.string().uuid(),
   toLocationId: z.string().uuid(),
@@ -929,22 +949,34 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
               referenceType: { in: ['MOVEMENT_REQUEST_RECEIPT', 'MOVEMENT_REQUEST_RETURN'] },
               referenceId: { in: outMovementIds },
             },
-            select: { referenceId: true, referenceType: true, quantity: true },
+            select: { referenceId: true, referenceType: true, quantity: true, note: true, createdBy: true, createdAt: true },
           })
         : []
 
       const receivedByOutId = new Map<string, number>()
       const returnedByOutId = new Map<string, number>()
+      const receptionsByOutId = new Map<string, Array<{ type: 'RECEIPT' | 'RETURN'; quantity: number; note: string | null; createdBy: string | null; createdByName: string | null; createdAt: string | null }>>()
       for (const m of inLinked as any[]) {
         const outId = String(m.referenceId ?? '')
         if (!outId) continue
         const q = Number(m.quantity ?? 0)
         if (!Number.isFinite(q) || q <= 0) continue
-        if (m.referenceType === 'MOVEMENT_REQUEST_RECEIPT') {
+        const entry = {
+          type: m.referenceType === 'MOVEMENT_REQUEST_RECEIPT' ? ('RECEIPT' as const) : ('RETURN' as const),
+          quantity: q,
+          note: m.note ?? null,
+          createdBy: m.createdBy ?? null,
+          createdByName: m.createdBy ? (userMap.get(String(m.createdBy)) || String(m.createdBy)) : null,
+          createdAt: m.createdAt ? (typeof m.createdAt === 'string' ? m.createdAt : m.createdAt.toISOString()) : null,
+        }
+        if (entry.type === 'RECEIPT') {
           receivedByOutId.set(outId, (receivedByOutId.get(outId) ?? 0) + q)
-        } else if (m.referenceType === 'MOVEMENT_REQUEST_RETURN') {
+        } else {
           returnedByOutId.set(outId, (returnedByOutId.get(outId) ?? 0) + q)
         }
+        const arr = receptionsByOutId.get(outId) ?? []
+        arr.push(entry)
+        receptionsByOutId.set(outId, arr)
       }
 
       // Group movements by requestId
@@ -1107,7 +1139,8 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
                     : null
                 })()
               : null,
-            createdAt: m.createdAt.toISOString(),
+             createdAt: m.createdAt.toISOString(),
+             receptions: receptionsByOutId.get(String(m.id)) ?? [],
           })),
         })),
       })
@@ -3707,11 +3740,261 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
       } catch (e: any) {
         if (e.statusCode) return reply.status(e.statusCode).send({ message: e.message })
         throw e
-      }
-    },
-  )
+       }
+     },
+   )
 
-  // Get completed movements (movements, bulk transfers, fulfilled requests, returns)
+   // Unified reception + return endpoint.
+   // Allows receiving partial quantities and returning partial quantities in a single operation.
+   app.post(
+     '/api/v1/stock/movement-requests/:id/reception',
+     {
+       preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.StockMove)],
+     },
+     async (request, reply) => {
+       const parsedParams = movementRequestReceptionParamsSchema.safeParse(request.params)
+       if (!parsedParams.success) return reply.status(400).send({ message: 'Invalid params', issues: parsedParams.error.issues })
+       const parsedBody = movementRequestReceptionBodySchema.safeParse(request.body)
+       if (!parsedBody.success) return reply.status(400).send({ message: 'Invalid request', issues: parsedBody.error.issues })
+
+       const id = parsedParams.data.id
+       const input = parsedBody.data
+       const tenantId = request.auth!.tenantId
+       const userId = request.auth!.userId
+       const branchWarehouseId = branchWarehouseIdOf(request)
+       const debugMovementRequests = process.env.DEBUG_STOCK_MOVEMENT_REQUESTS === '1'
+
+       if (branchWarehouseId === '__MISSING__') {
+         return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+       }
+
+       try {
+         const result = await db.$transaction(async (tx) => {
+           const req = await tx.stockMovementRequest.findFirst({
+             where: { tenantId, id, status: { in: ['OPEN', 'SENT'] } },
+             select: { id: true, status: true },
+           })
+           if (!req) throw Object.assign(new Error('Request not found'), { statusCode: 404 })
+
+           const outMovements = await tx.stockMovement.findMany({
+             where: { tenantId, type: 'OUT', referenceType: 'MOVEMENT_REQUEST', referenceId: id },
+             select: {
+               id: true,
+               productId: true,
+               batchId: true,
+               fromLocationId: true,
+               toLocationId: true,
+               quantity: true,
+               presentationId: true,
+               presentationQuantity: true,
+             },
+           })
+           if (outMovements.length === 0) {
+             throw Object.assign(new Error('No hay envíos registrados para recepcionar'), { statusCode: 409 })
+           }
+
+           // Enforce destination branch
+           if (branchWarehouseId) {
+             const toLocationIds = Array.from(new Set(outMovements.map((m: any) => String(m.toLocationId ?? '')).filter(Boolean)))
+             const toLocations = toLocationIds.length
+               ? await tx.location.findMany({
+                   where: { tenantId, id: { in: toLocationIds } },
+                   select: { id: true, warehouseId: true },
+                 })
+               : []
+             const toWhByLoc = new Map(toLocations.map((l: any) => [l.id, l.warehouseId] as const))
+             const bad = toLocationIds.find((locId) => toWhByLoc.get(locId) !== branchWarehouseId)
+             if (bad) throw Object.assign(new Error('Solo puede recepcionar envíos destinados a su sucursal'), { statusCode: 403 })
+           }
+
+           // Compute received/returned quantities per OUT movement (idempotency check)
+           const outIds = outMovements.map((m: any) => String(m.id))
+           const linkedIns = outIds.length
+             ? await tx.stockMovement.findMany({
+                 where: {
+                   tenantId,
+                   type: 'IN',
+                   referenceType: { in: ['MOVEMENT_REQUEST_RECEIPT', 'MOVEMENT_REQUEST_RETURN'] },
+                   referenceId: { in: outIds },
+                 },
+                 select: { referenceId: true, referenceType: true, quantity: true },
+               })
+             : []
+
+           const receivedByOutId = new Map<string, number>()
+           const returnedByOutId = new Map<string, number>()
+           for (const m of linkedIns as any[]) {
+             const outId = String(m.referenceId ?? '')
+             if (!outId) continue
+             const q = Number(m.quantity ?? 0)
+             if (!Number.isFinite(q) || q <= 0) continue
+             if (m.referenceType === 'MOVEMENT_REQUEST_RECEIPT') {
+               receivedByOutId.set(outId, (receivedByOutId.get(outId) ?? 0) + q)
+             } else if (m.referenceType === 'MOVEMENT_REQUEST_RETURN') {
+               returnedByOutId.set(outId, (returnedByOutId.get(outId) ?? 0) + q)
+             }
+           }
+
+           const outById = new Map(outMovements.map((m: any) => [String(m.id), m] as const))
+
+           const createdMovements: any[] = []
+
+           // Build note for movements
+           const noteParts: string[] = []
+           if (input.photoUrl) noteParts.push(`Foto: ${input.photoUrl}`)
+           if (input.note) noteParts.push(input.note)
+           const movementNote = noteParts.length > 0 ? noteParts.join(' | ') : undefined
+
+           for (const item of input.items) {
+             const outId = String(item.outMovementId)
+             const out = outById.get(outId)
+             if (!out) throw Object.assign(new Error('Movimiento inválido'), { statusCode: 400 })
+
+             const outQty = Number(out.quantity)
+             const alreadyReceived = receivedByOutId.get(outId) ?? 0
+             const alreadyReturned = returnedByOutId.get(outId) ?? 0
+             const pending = Math.max(0, outQty - alreadyReceived - alreadyReturned)
+
+             const receiveQty = Number(item.receivedQuantity ?? 0)
+             const returnQty = Number(item.returnedQuantity ?? 0)
+
+             if (!Number.isFinite(receiveQty) || receiveQty < 0) throw Object.assign(new Error('Cantidad a recibir inválida'), { statusCode: 400 })
+             if (!Number.isFinite(returnQty) || returnQty < 0) throw Object.assign(new Error('Cantidad a devolver inválida'), { statusCode: 400 })
+             if (receiveQty + returnQty > pending + 1e-9) {
+               throw Object.assign(new Error('La cantidad a recibir y devolver excede lo pendiente'), { statusCode: 409 })
+             }
+             if (returnQty > 0 && !item.returnReason?.trim()) {
+               throw Object.assign(new Error('Debe indicar el motivo de la devolución'), { statusCode: 400 })
+             }
+
+             // Create receipt IN movement if applicable
+             if (receiveQty > 1e-9) {
+               const receiptMovement = await createStockMovementTx(tx, {
+                 tenantId,
+                 userId,
+                 type: 'IN',
+                 productId: out.productId,
+                 batchId: out.batchId ?? null,
+                 fromLocationId: null,
+                 toLocationId: out.toLocationId,
+                 quantity: receiveQty,
+                 presentationId: out.presentationId ?? null,
+                 presentationQuantity: out.presentationQuantity ? Number(out.presentationQuantity) : null,
+                 referenceType: 'MOVEMENT_REQUEST_RECEIPT',
+                 referenceId: outId,
+                 note: movementNote ?? 'Recepción de envío',
+               })
+               createdMovements.push(receiptMovement)
+             }
+
+             // Create return IN movement if applicable
+             if (returnQty > 1e-9) {
+               if (!out.fromLocationId) throw Object.assign(new Error('Movimiento origen inválido'), { statusCode: 409 })
+
+               const returnMovement = await createStockMovementTx(tx, {
+                 tenantId,
+                 userId,
+                 type: 'IN',
+                 productId: out.productId,
+                 batchId: out.batchId ?? null,
+                 fromLocationId: null,
+                 toLocationId: out.fromLocationId,
+                 quantity: returnQty,
+                 presentationId: out.presentationId ?? null,
+                 presentationQuantity: out.presentationQuantity ? Number(out.presentationQuantity) : null,
+                 referenceType: 'MOVEMENT_REQUEST_RETURN',
+                 referenceId: outId,
+                 note: `Devolución de envío: ${item.returnReason?.trim() ?? ''}${movementNote ? ` | ${movementNote}` : ''}`,
+               })
+               createdMovements.push(returnMovement)
+               returnedByOutId.set(outId, (returnedByOutId.get(outId) ?? 0) + returnQty)
+             }
+           }
+
+           // If request was fully sent, and all shipped qty is now resolved, close it.
+           if (req.status === 'SENT') {
+             const anyPending = outIds.some((outId: string) => {
+               const out = outById.get(outId)
+               const outQty = Number(out?.quantity ?? 0)
+               const pending = Math.max(0, outQty - (receivedByOutId.get(outId) ?? 0) - (returnedByOutId.get(outId) ?? 0))
+               return pending > 1e-9
+             })
+             if (!anyPending) {
+               await tx.stockMovementRequest.update({
+                 where: { id },
+                 data: {
+                   status: 'FULFILLED',
+                   confirmedAt: new Date(),
+                   confirmedBy: userId,
+                   confirmationNote: input.note ?? null,
+                 },
+               })
+             }
+           }
+
+           return { createdMovements }
+         })
+
+         if (debugMovementRequests) {
+           request.log.info(
+             {
+               tenantId,
+               requestId: id,
+               actorUserId: userId,
+               createdMovementCount: (result as any).createdMovements,
+             },
+             'stock.movement-requests.reception',
+           )
+         }
+
+         await audit.append({
+           tenantId,
+           actorUserId: userId,
+           action: 'stock.movement-request.reception',
+           entityType: 'StockMovementRequest',
+           entityId: id,
+           after: {
+             itemEntries: input.items.length,
+             hasPhoto: !!input.photoUrl,
+           },
+         })
+
+         const room = `tenant:${tenantId}`
+         for (const movement of result.createdMovements) {
+           app.io?.to(room).emit('stock.movement.created', movement.createdMovement)
+           if (movement.fromBalance) app.io?.to(room).emit('stock.balance.changed', movement.fromBalance)
+           if (movement.toBalance) app.io?.to(room).emit('stock.balance.changed', movement.toBalance)
+         }
+
+         // Emit request status update
+         const updatedReq = await db.stockMovementRequest.findFirst({
+           where: { tenantId, id },
+           select: { id: true, requestedCity: true, status: true },
+         })
+         if (updatedReq) {
+           app.io?.to(room).emit('stock.movement_request.updated', {
+             id: updatedReq.id,
+             status: updatedReq.status,
+             requestedCity: updatedReq.requestedCity,
+           })
+         }
+
+         const receivedCount = input.items.filter((i) => Number(i.receivedQuantity ?? 0) > 0).length
+         const returnedCount = input.items.filter((i) => Number(i.returnedQuantity ?? 0) > 0).length
+         const message =
+           returnedCount > 0
+             ? `Recepción registrada (${receivedCount} recibidos, ${returnedCount} devueltos)`
+             : `Recepción registrada (${receivedCount} recibidos)`
+
+         return reply.send({ message })
+       } catch (e: any) {
+         if (e.statusCode) return reply.status(e.statusCode).send({ message: e.message })
+         throw e
+       }
+     },
+   )
+
+   // Get completed movements (movements, bulk transfers, fulfilled requests, returns)
   app.get(
     '/api/v1/stock/completed-movements',
     {

@@ -4,50 +4,12 @@ import { apiFetch } from '../../lib/api'
 import { formatDateOnlyUtc } from '../../lib/date'
 import { matchesSearchQuery } from '../../lib/search'
 import { useAuth } from '../../providers/AuthProvider'
-import { MainLayout, PageContainer, Table, Button, Modal, Input, Select, Loading, ErrorState, EmptyState } from '../../components'
+import { MainLayout, PageContainer, Table, Button, Modal, Input, Loading, ErrorState, EmptyState } from '../../components'
 import { useNavigation } from '../../hooks'
 import { getProductLabel } from '../../lib/productName'
 import { MovementQuickActions } from '../../components/MovementQuickActions'
-import { EyeIcon, CheckCircleIcon } from '@heroicons/react/24/outline'
+import { EyeIcon } from '@heroicons/react/24/outline'
 import { useNotifications } from '../../providers/NotificationsProvider'
-
-type WarehouseListItem = {
-  id: string
-  code: string
-  name: string
-  city?: string | null
-  isActive: boolean
-}
-
-type LocationListItem = {
-  id: string
-  warehouseId: string
-  code: string
-  isActive: boolean
-}
-
-type ProductListItem = {
-  id: string
-  sku: string
-  name: string
-  genericName?: string | null
-  isActive: boolean
-}
-
-type ProductPresentation = {
-  id: string
-  name: string
-  unitsPerPresentation: string
-  isDefault?: boolean
-  isActive?: boolean
-}
-
-type ProductBatch = {
-  id: string
-  batchNumber: string
-  expiresAt: string | null
-  status: string
-}
 
 type StockReturnItem = {
   id: string
@@ -79,6 +41,26 @@ type StockReturn = {
   items: StockReturnItem[]
 }
 
+type ReceptionItemState = {
+  fullReception: boolean
+  returnQuantity: number
+  returnReason: string
+}
+
+type ReceptionItemInput = {
+  outMovementId: string
+  receivedQuantity: number
+  returnedQuantity: number
+  returnReason?: string
+}
+
+type ReceptionInput = {
+  items: ReceptionItemInput[]
+  note?: string
+  photoUrl?: string
+  photoKey?: string
+}
+
 async function listSentMovementRequests(token: string): Promise<{ items: any[] }> {
   const take = '50'
   const fetchByStatus = async (status: 'SENT' | 'OPEN') => {
@@ -94,8 +76,6 @@ async function listSentMovementRequests(token: string): Promise<{ items: any[] }
     return pending > 0
   }
 
-  // Sent: fully shipped, pending reception/return.
-  // Open: partial shipments (only include if there is something shipped pending).
   const merged = [...(sent.items ?? []).filter(withPendingShipments), ...(open.items ?? []).filter(withPendingShipments)]
 
   const dedup = new Map<string, any>()
@@ -110,26 +90,6 @@ async function listSentMovementRequests(token: string): Promise<{ items: any[] }
 
 async function listReturns(token: string): Promise<{ items: StockReturn[] }> {
   return apiFetch('/api/v1/stock/returns?take=50', { token })
-}
-
-async function listWarehouses(token: string): Promise<{ items: WarehouseListItem[] }> {
-  return apiFetch('/api/v1/warehouses?take=100', { token })
-}
-
-async function listLocations(token: string, warehouseId: string): Promise<{ items: LocationListItem[] }> {
-  return apiFetch(`/api/v1/warehouses/${encodeURIComponent(warehouseId)}/locations?take=100`, { token })
-}
-
-async function fetchProducts(token: string): Promise<{ items: ProductListItem[] }> {
-  return apiFetch('/api/v1/products?take=200', { token })
-}
-
-async function fetchProductPresentations(token: string, productId: string): Promise<{ items: ProductPresentation[] }> {
-  return apiFetch(`/api/v1/products/${encodeURIComponent(productId)}/presentations`, { token })
-}
-
-async function fetchProductBatches(token: string, productId: string): Promise<{ items: ProductBatch[] }> {
-  return apiFetch(`/api/v1/products/${encodeURIComponent(productId)}/batches?take=50`, { token })
 }
 
 async function presignReturnPhoto(token: string, fileName: string, contentType: string): Promise<{ uploadUrl: string; publicUrl: string; key: string; method: string }> {
@@ -149,41 +109,37 @@ async function uploadToPresignedUrl(uploadUrl: string, file: File, contentType: 
   if (!res.ok) throw new Error('No se pudo subir la foto')
 }
 
-async function confirmReception(token: string, requestId: string): Promise<{ message: string }> {
-  return apiFetch(`/api/v1/stock/movement-requests/${encodeURIComponent(requestId)}/receive`, {
-    token,
-    method: 'POST',
-  })
-}
-
-async function returnShipment(
-  token: string,
-  requestId: string,
-  input: { mode: 'ALL' | 'PARTIAL'; reason: string; items?: Array<{ outMovementId: string; quantity: number }> },
-): Promise<{ message: string }> {
-  return apiFetch(`/api/v1/stock/movement-requests/${encodeURIComponent(requestId)}/return`, {
+async function confirmReceptionUnified(token: string, requestId: string, input: ReceptionInput): Promise<{ message: string }> {
+  return apiFetch(`/api/v1/stock/movement-requests/${encodeURIComponent(requestId)}/reception`, {
     token,
     method: 'POST',
     body: JSON.stringify(input),
   })
 }
 
-async function createReturn(
-  token: string,
-  input: {
-    toLocationId: string
-    reason: string
-    photoKey: string
-    photoUrl: string
-    note?: string
-    items: Array<{ productId: string; batchId?: string | null; presentationId?: string; presentationQuantity?: number; quantity?: number; note?: string }>
-  },
-): Promise<{ id: string; createdAt: string }> {
-  return apiFetch('/api/v1/stock/returns', {
-    token,
-    method: 'POST',
-    body: JSON.stringify(input),
-  })
+function formatQty(value: number): string {
+  if (!Number.isFinite(value)) return '0'
+  const rounded = Math.round(value)
+  if (Math.abs(value - rounded) <= 1e-9) return String(rounded)
+  return String(Number(value.toFixed(2)))
+}
+
+function cleanCode(code: string | null | undefined): string {
+  if (!code) return ''
+  return code.replace(/^SUC-/, '')
+}
+
+function locLabel(code: string | null | undefined): string {
+  return code && code.trim() ? code : '—'
+}
+
+function whLocLabel(whCode: string | null | undefined, locCode: string | null | undefined): string {
+  const wh = cleanCode(whCode)
+  const loc = locLabel(locCode)
+  if (!wh && loc === '—') return '—'
+  if (!wh) return loc
+  if (loc === '—') return wh
+  return `${wh}:${loc}`
 }
 
 export function ReturnsPage() {
@@ -206,29 +162,15 @@ export function ReturnsPage() {
     refetchInterval: 15_000,
   })
 
-  const warehousesQuery = useQuery({
-    queryKey: ['warehouses', 'forReturns'],
-    queryFn: () => listWarehouses(auth.accessToken!),
-    enabled: !!auth.accessToken,
-  })
-
-  const productsQuery = useQuery({
-    queryKey: ['products', 'forReturns'],
-    queryFn: () => fetchProducts(auth.accessToken!),
-    enabled: !!auth.accessToken,
-  })
-
-  const activeWarehouses = useMemo(() => (warehousesQuery.data?.items ?? []).filter((w) => w.isActive), [warehousesQuery.data])
-  const activeProducts = useMemo(() => (productsQuery.data?.items ?? []).filter((p) => p.isActive), [productsQuery.data])
-
   const [activeTab, setActiveTab] = useState<'returns' | 'receptions'>('receptions')
   const [searchQuery, setSearchQuery] = useState('')
 
   const [selectedRequest, setSelectedRequest] = useState<any>(null)
-  const [showReturnModal, setShowReturnModal] = useState(false)
-  const [returnMode, setReturnMode] = useState<'ALL' | 'PARTIAL'>('ALL')
-  const [returnReason, setReturnReason] = useState('')
-  const [returnItems, setReturnItems] = useState<Record<string, number>>({})
+  const [showReceptionModal, setShowReceptionModal] = useState(false)
+  const [receptionItems, setReceptionItems] = useState<Record<string, ReceptionItemState>>({})
+  const [receptionNote, setReceptionNote] = useState('')
+  const [receptionPhotoFile, setReceptionPhotoFile] = useState<File | null>(null)
+  const [receptionPhotoError, setReceptionPhotoError] = useState<string | null>(null)
 
   const sortedReturns = useMemo(() => {
     const items = returnsQuery.data?.items ?? []
@@ -269,7 +211,7 @@ export function ReturnsPage() {
         .map((it: any) => [it.productSku, it.productName, it.genericName, it.presentationName, it.presentation?.name].filter(Boolean).join(' '))
         .join(' ')
       const movementText = (r.movements ?? [])
-        .map((m: any) => [m.productSku, m.productName, m.genericName, m.createdByName].filter(Boolean).join(' '))
+        .map((m: any) => [m.productSku, m.productName, m.genericName, m.createdByName, m.fromLocation?.code, m.toLocation?.code].filter(Boolean).join(' '))
         .join(' ')
 
       return matchesSearchQuery(searchQuery, [
@@ -299,220 +241,97 @@ export function ReturnsPage() {
   const pendingMovements = useMemo(() => {
     const ms = Array.isArray(selectedRequest?.movements) ? selectedRequest.movements : []
     return ms
-      .map((m: any) => ({ ...m, pendingQuantity: Number(m?.pendingQuantity ?? 0) }))
+      .map((m: any) => ({ ...m, pendingQuantity: Number(m?.pendingQuantity ?? 0), quantity: Number(m?.quantity ?? 0) }))
       .filter((m: any) => m.pendingQuantity > 0)
   }, [selectedRequest])
 
-  const [showCreateModal, setShowCreateModal] = useState(false)
-  const [createError, setCreateError] = useState<string | null>(null)
+  const matchItemToMovement = (m: any, items: any[]): any | undefined => {
+    const normalize = (v: any) => String(v ?? '').trim().toLowerCase()
+    const mSku = normalize(m.productSku)
+    const mName = normalize(m.productName)
+    const mGeneric = normalize(m.genericName)
 
-  const [warehouseId, setWarehouseId] = useState('')
-  const locationsQuery = useQuery({
-    queryKey: ['locations', 'forReturns', warehouseId],
-    queryFn: () => listLocations(auth.accessToken!, warehouseId),
-    enabled: !!auth.accessToken && !!warehouseId,
-  })
-  const activeLocations = useMemo(() => (locationsQuery.data?.items ?? []).filter((l) => l.isActive), [locationsQuery.data])
+    for (const it of items) {
+      const itSku = normalize(it.productSku)
+      const itName = normalize(it.productName)
+      const itGeneric = normalize(it.genericName)
 
-  const [toLocationId, setToLocationId] = useState('')
-  const [reason, setReason] = useState('')
-  const [note, setNote] = useState('')
-
-  const [photoFile, setPhotoFile] = useState<File | null>(null)
-
-  // Add-item form
-  const [itemProductId, setItemProductId] = useState('')
-  const [itemBatchId, setItemBatchId] = useState<string>('')
-  const [itemPresentationId, setItemPresentationId] = useState('')
-  const [itemPresentationQty, setItemPresentationQty] = useState<number>(1)
-  const [itemNote, setItemNote] = useState('')
-
-  const itemPresentationsQuery = useQuery({
-    queryKey: ['productPresentations', 'forReturnItem', itemProductId],
-    queryFn: () => fetchProductPresentations(auth.accessToken!, itemProductId),
-    enabled: !!auth.accessToken && !!itemProductId,
-  })
-
-  const itemBatchesQuery = useQuery({
-    queryKey: ['productBatches', 'forReturnItem', itemProductId],
-    queryFn: () => fetchProductBatches(auth.accessToken!, itemProductId),
-    enabled: !!auth.accessToken && !!itemProductId,
-  })
-
-  const abbreviateCity = (city: string) => {
-    if (!city) return '—'
-    const upper = city.toUpperCase()
-    if (upper.includes('COCHABAMBA')) return 'CBBA'
-    if (upper.includes('LA PAZ')) return 'LPZ'
-    if (upper.includes('SANTA CRUZ')) return 'SCZ'
-    if (upper.includes('ORURO')) return 'ORU'
-    if (upper.includes('POTOSI')) return 'PTS'
-    if (upper.includes('SUCRE')) return 'SCR'
-    if (upper.includes('TARIJA')) return 'TJA'
-    if (upper.includes('PANDO')) return 'PND'
-    if (upper.includes('BENI')) return 'BNI'
-    return upper.slice(0, 3)
+      if (mSku && itSku && mSku === itSku) return it
+      if (mName && itName && mGeneric && itGeneric && mName === itName && mGeneric === itGeneric) return it
+      if (mName && itName && mName === itName) return it
+    }
+    return undefined
   }
 
-  const activeItemPresentations = useMemo(
-    () => (itemPresentationsQuery.data?.items ?? []).filter((p) => (p.isActive ?? true) === true),
-    [itemPresentationsQuery.data],
-  )
-
-  const defaultPresentationId = useMemo(() => {
-    const defaults = activeItemPresentations.filter((p) => p.isDefault)
-    return (defaults[0]?.id ?? activeItemPresentations[0]?.id ?? '')
-  }, [activeItemPresentations])
-
-  const [items, setItems] = useState<Array<{ productId: string; batchId: string | null; presentationId: string | null; presentationQuantity: number | null; note?: string }>>([])
-
-  const productById = useMemo(() => {
-    const m = new Map<string, ProductListItem>()
-    for (const p of activeProducts) m.set(p.id, p)
-    return m
-  }, [activeProducts])
-
-  const addItem = () => {
-    setCreateError(null)
-    if (!itemProductId) {
-      setCreateError('Seleccioná un producto')
-      return
-    }
-
-    const p = productById.get(itemProductId)
-    if (!p) {
-      setCreateError('Producto inválido')
-      return
-    }
-
-    const hasPresentations = activeItemPresentations.length > 0
-    const presId = (itemPresentationId || defaultPresentationId || '').trim()
-
-    if (hasPresentations && !presId) {
-      setCreateError('Seleccioná una presentación')
-      return
-    }
-
-    if (!Number.isFinite(itemPresentationQty) || itemPresentationQty <= 0) {
-      setCreateError('Ingresá una cantidad válida')
-      return
-    }
-
-    setItems((prev) => [
-      ...prev,
-      {
-        productId: itemProductId,
-        batchId: itemBatchId ? itemBatchId : null,
-        presentationId: hasPresentations ? presId : null,
-        presentationQuantity: hasPresentations ? itemPresentationQty : null,
-        note: itemNote.trim() || undefined,
-      },
-    ])
-
-    setItemBatchId('')
-    setItemNote('')
-    setItemPresentationQty(1)
-  }
-
-  const removeItem = (idx: number) => {
-    setItems((prev) => prev.filter((_, i) => i !== idx))
-  }
-
-  const createMutation = useMutation({
+  const confirmReceptionMutation = useMutation({
     mutationFn: async () => {
-      setCreateError(null)
-      if (!toLocationId) throw new Error('Seleccioná la ubicación destino')
-      if (!reason.trim()) throw new Error('Ingresá un motivo')
-      if (!photoFile) throw new Error('Adjuntá una foto como evidencia')
-      if (items.length === 0) throw new Error('Agregá al menos un ítem')
+      if (!selectedRequest?.id) throw new Error('Envío inválido')
 
-      const presign = await presignReturnPhoto(auth.accessToken!, photoFile.name, photoFile.type || 'image/jpeg')
-      await uploadToPresignedUrl(presign.uploadUrl, photoFile, photoFile.type || 'image/jpeg')
+      const items: ReceptionItemInput[] = []
 
-      return createReturn(auth.accessToken!, {
-        toLocationId,
-        reason: reason.trim(),
-        note: note.trim() || undefined,
-        photoKey: presign.key,
-        photoUrl: presign.publicUrl,
-        items: items.map((it) => ({
-          productId: it.productId,
-          batchId: it.batchId ?? undefined,
-          ...(it.presentationId && it.presentationQuantity
-            ? { presentationId: it.presentationId, presentationQuantity: it.presentationQuantity }
-            : { quantity: 1 }),
-          note: it.note,
-        })),
+      for (const m of pendingMovements) {
+        const mid = String(m.id)
+        const state = receptionItems[mid] ?? { fullReception: true, returnQuantity: 0, returnReason: '' }
+        const pending = Number(m.pendingQuantity ?? 0)
+
+        let receivedQty = 0
+        let returnedQty = 0
+
+        if (state.fullReception) {
+          receivedQty = pending
+          returnedQty = 0
+        } else {
+          returnedQty = Math.min(Number(state.returnQuantity ?? 0), pending)
+          receivedQty = pending - returnedQty
+        }
+
+        if (receivedQty <= 1e-9 && returnedQty <= 1e-9) continue
+
+        const entry: ReceptionItemInput = {
+          outMovementId: mid,
+          receivedQuantity: receivedQty,
+          returnedQuantity: returnedQty,
+        }
+
+        if (returnedQty > 1e-9 && state.returnReason?.trim()) {
+          entry.returnReason = state.returnReason.trim()
+        }
+
+        items.push(entry)
+      }
+
+      if (items.length === 0) throw new Error('No hay cantidades pendientes para recepcionar')
+
+      let photoUrl: string | undefined
+      let photoKey: string | undefined
+
+      if (receptionPhotoFile) {
+        const presign = await presignReturnPhoto(auth.accessToken!, receptionPhotoFile.name, receptionPhotoFile.type || 'image/jpeg')
+        await uploadToPresignedUrl(presign.uploadUrl, receptionPhotoFile, receptionPhotoFile.type || 'image/jpeg')
+        photoUrl = presign.publicUrl
+        photoKey = presign.key
+      }
+
+      return confirmReceptionUnified(auth.accessToken!, selectedRequest.id, {
+        items,
+        note: receptionNote.trim() || undefined,
+        photoUrl,
+        photoKey,
       })
     },
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['stockReturns'] })
-      setShowCreateModal(false)
-      setCreateError(null)
-      setWarehouseId('')
-      setToLocationId('')
-      setReason('')
-      setNote('')
-      setPhotoFile(null)
-      setItemProductId('')
-      setItemBatchId('')
-      setItemPresentationId('')
-      setItemPresentationQty(1)
-      setItemNote('')
-      setItems([])
-    },
-    onError: (e: any) => {
-      setCreateError(e?.message ?? 'Error al crear devolución')
-    },
-  })
-
-  const confirmReceptionMutation = useMutation({
-    mutationFn: (requestId: string) => confirmReception(auth.accessToken!, requestId),
-    onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['sentMovementRequests'] })
       await queryClient.invalidateQueries({ queryKey: ['movement-requests'] })
-      notifications.notify({ kind: 'success', title: 'Recepción confirmada', body: 'Se registró la recepción del envío.' })
+      notifications.notify({ kind: 'success', title: 'Recepción registrada', body: 'Se registró la recepción/devolución del envío.' })
+      setShowReceptionModal(false)
+      setSelectedRequest(null)
+      setReceptionItems({})
+      setReceptionNote('')
+      setReceptionPhotoFile(null)
+      setReceptionPhotoError(null)
     },
     onError: (e: any) => {
       notifications.notify({ kind: 'error', title: 'No se pudo recepcionar', body: e?.message ?? 'Error desconocido' })
-    },
-  })
-
-  const returnMutation = useMutation({
-    mutationFn: async () => {
-      if (!selectedRequest?.id) throw new Error('Envío inválido')
-      const reason = returnReason.trim()
-      if (!reason) throw new Error('Ingresá un motivo')
-
-      if (returnMode === 'ALL') {
-        return returnShipment(auth.accessToken!, selectedRequest.id, { mode: 'ALL', reason })
-      }
-
-      const items = pendingMovements
-        .map((m: any) => ({ outMovementId: String(m.id), quantity: Number(returnItems[String(m.id)] ?? 0) }))
-        .filter((it: any) => Number.isFinite(it.quantity) && it.quantity > 0)
-
-      if (items.length === 0) throw new Error('Ingresá al menos una cantidad a devolver')
-
-      // Client-side guard: do not exceed pending.
-      for (const it of items) {
-        const m = pendingMovements.find((x: any) => String(x.id) === String(it.outMovementId))
-        const pending = Number(m?.pendingQuantity ?? 0)
-        if (it.quantity > pending) throw new Error('La cantidad a devolver excede lo pendiente')
-      }
-
-      return returnShipment(auth.accessToken!, selectedRequest.id, { mode: 'PARTIAL', reason, items })
-    },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['sentMovementRequests'] })
-      await queryClient.invalidateQueries({ queryKey: ['movement-requests'] })
-      notifications.notify({ kind: 'success', title: 'Devolución registrada', body: 'Se registró la devolución del envío.' })
-      setShowReturnModal(false)
-      setReturnReason('')
-      setReturnItems({})
-    },
-    onError: (e: any) => {
-      notifications.notify({ kind: 'error', title: 'No se pudo devolver', body: e?.message ?? 'Error desconocido' })
     },
   })
 
@@ -539,23 +358,46 @@ export function ReturnsPage() {
     [],
   )
 
+  const openReceptionModal = (r: any) => {
+    setSelectedRequest(r)
+    setShowReceptionModal(true)
+    setReceptionNote('')
+    setReceptionPhotoFile(null)
+    setReceptionPhotoError(null)
+
+    const ms = Array.isArray(r?.movements) ? r.movements : []
+    const pending = ms
+      .map((m: any) => ({ ...m, pendingQuantity: Number(m?.pendingQuantity ?? 0) }))
+      .filter((m: any) => m.pendingQuantity > 0)
+
+    const initial: Record<string, ReceptionItemState> = {}
+    for (const m of pending) {
+      initial[String(m.id)] = { fullReception: true, returnQuantity: 0, returnReason: '' }
+    }
+    setReceptionItems(initial)
+  }
+
   const receptionModal = selectedRequest ? (
     <Modal
-      isOpen={!!selectedRequest}
-      onClose={() => setSelectedRequest(null)}
-      title={`📦 Detalle del envío${selectedRequest.code ? ` — ${selectedRequest.code}` : ''}`}
-      maxWidth="3xl"
+      isOpen={showReceptionModal}
+      onClose={() => {
+        if (confirmReceptionMutation.isPending) return
+        setShowReceptionModal(false)
+        setSelectedRequest(null)
+      }}
+      title={`📦 Recepción/Devolución${selectedRequest.code ? ` — ${selectedRequest.code}` : ''}`}
+      maxWidth="6xl"
     >
       <div className="space-y-4">
         {(() => {
-          const fromCode = selectedRequest.originWarehouse?.city
-            ? abbreviateCity(selectedRequest.originWarehouse.city)
-            : selectedRequest.originWarehouse?.code?.replace(/^SUC-/, '') ?? '—'
-          const toCode = selectedRequest.warehouse?.city
-            ? abbreviateCity(selectedRequest.warehouse.city)
-            : selectedRequest.requestedCity
-              ? abbreviateCity(selectedRequest.requestedCity)
-              : selectedRequest.warehouse?.code?.replace(/^SUC-/, '') ?? '—'
+          const fromWarehouse = selectedRequest.originWarehouse?.code ?? selectedRequest.warehouse?.code ?? ''
+          const firstMovement = Array.isArray(selectedRequest.movements) && selectedRequest.movements.length > 0 ? selectedRequest.movements[0] : null
+          const fromLocation = firstMovement?.fromLocation?.code ?? selectedRequest.fromLocationId ?? null
+          const toWarehouse = selectedRequest.toLocation?.warehouse?.code ?? selectedRequest.warehouse?.code ?? ''
+          const toLocation = selectedRequest.toLocation?.code ?? null
+
+          const fromLabel = whLocLabel(fromWarehouse, fromLocation)
+          const toLabel = whLocLabel(toWarehouse, toLocation)
 
           const sentAt = new Date(selectedRequest.fulfilledAt || selectedRequest.createdAt)
           const tipo = selectedRequest.status === 'OPEN' ? 'Atención parcial' : 'Atención de solicitud'
@@ -563,8 +405,8 @@ export function ReturnsPage() {
           return (
             <div className="grid grid-cols-2 gap-4 text-sm">
               <div>
-                <div className="font-medium text-slate-900 dark:text-slate-100">ORG -&gt; DEST</div>
-                <div className="text-slate-600 dark:text-slate-400">{fromCode} -&gt; {toCode}</div>
+                <div className="font-medium text-slate-900 dark:text-slate-100">ORG → DEST</div>
+                <div className="text-slate-600 dark:text-slate-400">{fromLabel} → {toLabel}</div>
               </div>
               <div>
                 <div className="font-medium text-slate-900 dark:text-slate-100">Tipo</div>
@@ -589,431 +431,167 @@ export function ReturnsPage() {
           )
         })()}
 
-        {selectedRequest.status === 'OPEN' && Array.isArray(selectedRequest.items) &&
-          (() => {
-            const allMovements = Array.isArray(selectedRequest.movements) ? selectedRequest.movements : []
-            const normalize = (v: any) => String(v ?? '').trim().toLowerCase()
+        <div>
+          <div className="font-medium text-slate-900 dark:text-slate-100 mb-2">Productos enviados</div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 dark:bg-slate-800">
+                <tr className="border-b-2 border-slate-200 dark:border-slate-700">
+                  <th className="px-4 py-3 text-left font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-300">Lote</th>
+                  <th className="px-4 py-3 text-left font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-300">Producto</th>
+                  <th className="px-4 py-3 text-left font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-300">Presentación</th>
+                  <th className="px-4 py-3 text-right font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-300">Cant. enviada</th>
+                  <th className="px-4 py-3 text-right font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-300">Cant. solicitada</th>
+                  <th className="px-4 py-3 text-center font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-300">Recepción completa</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white dark:bg-slate-900">
+                {pendingMovements.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="px-4 py-4 text-center text-sm text-slate-500">
+                      No hay productos pendientes de recepción.
+                    </td>
+                  </tr>
+                ) : (
+                  pendingMovements.map((m: any) => {
+                    const mid = String(m.id)
+                    const state = receptionItems[mid] ?? { fullReception: true, returnQuantity: 0, returnReason: '' }
+                    const matchedItem = matchItemToMovement(m, selectedRequest.items ?? [])
+                    const requestedQty = matchedItem ? Number(matchedItem.requestedQuantity ?? matchedItem.quantity ?? 0) : ''
 
-            const formatQty = (v: number) => {
-              if (!Number.isFinite(v)) return '0'
-              const rounded = Math.round(v)
-              if (Math.abs(v - rounded) <= 1e-9) return String(rounded)
-              return String(Number(v.toFixed(2)))
-            }
-
-            const movementsForItem = (it: any) => {
-              const itSku = normalize(it.productSku)
-              const itName = normalize(it.productName)
-              const itGeneric = normalize(it.genericName)
-
-              return allMovements.filter((m: any) => {
-                const mSku = normalize(m.productSku)
-                const mName = normalize(m.productName)
-                const mGeneric = normalize(m.genericName)
-                if (itSku && mSku) return itSku === mSku
-                if (itName && mName && itGeneric && mGeneric) return itName === mName && itGeneric === mGeneric
-                if (itName && mName) return itName === mName
-                return false
-              })
-            }
-
-            return (
-              <div>
-                <div className="font-medium text-slate-900 dark:text-slate-100 mb-2">Solicitud</div>
-
-                <div className="rounded-lg border-2 border-blue-500 dark:border-blue-400 overflow-hidden">
-                  <div className="grid grid-cols-2 bg-slate-50 dark:bg-slate-800 text-sm">
-                    <div className="px-3 py-2 font-semibold text-slate-700 dark:text-slate-200">Solicitado</div>
-                    <div className="px-3 py-2 font-semibold text-slate-700 dark:text-slate-200">Enviado</div>
-                  </div>
-
-                  <div className="max-h-72 overflow-y-auto divide-y-2 divide-blue-200 dark:divide-blue-500/40">
-                    {selectedRequest.items.map((it: any) => {
-                      const requestedUnits = Number(it.requestedQuantity ?? 0)
-                      const remainingUnits = Number(it.remainingQuantity ?? 0)
-                      const sentUnits = Math.max(0, requestedUnits - remainingUnits)
-
-                      const unitsPerPresentation = Number(it.unitsPerPresentation ?? it.presentation?.unitsPerPresentation ?? 0)
-                      const requestedPres =
-                        it.presentationQuantity != null && Number.isFinite(Number(it.presentationQuantity))
-                          ? Number(it.presentationQuantity)
-                          : unitsPerPresentation > 0
-                            ? requestedUnits / unitsPerPresentation
-                            : requestedUnits
-                      const remainingPres = unitsPerPresentation > 0 ? remainingUnits / unitsPerPresentation : remainingUnits
-                      const sentPres = unitsPerPresentation > 0 ? sentUnits / unitsPerPresentation : sentUnits
-
-                      const isDone = remainingPres <= 1e-9
-
-                      const label = getProductLabel({ sku: it.productSku, name: it.productName, genericName: it.genericName } as any)
-                      const presentationName = it.presentation?.name ?? it.presentationName ?? '-'
-                      const shippedDetails = movementsForItem(it)
-
-                      return (
-                        <div key={it.id} className="grid grid-cols-2">
-                          <div className="p-3">
-                            <div className="flex items-start gap-2">
-                              {isDone ? <CheckCircleIcon className="w-5 h-5 text-emerald-600 mt-0.5" /> : null}
-                              <div className="flex-1">
-                                <div className="font-medium text-slate-900 dark:text-slate-100">{label || '—'}</div>
-                                <div className="mt-1 text-xs text-slate-600 dark:text-slate-400">
-                                  <div><strong>Presentación:</strong> {presentationName}</div>
-                                  <div className="flex flex-wrap gap-x-4 gap-y-1">
-                                    <div><strong>Solicitado:</strong> {formatQty(requestedPres)}</div>
-                                    <div>
-                                      <strong>Pendiente:</strong>{' '}
-                                      <span
-                                        className={
-                                          Math.max(0, remainingPres) <= 1e-9
-                                            ? 'text-emerald-700 dark:text-emerald-400'
-                                            : 'text-red-700 dark:text-red-400'
-                                        }
-                                      >
-                                        {formatQty(Math.max(0, remainingPres))}
-                                      </span>
-                                    </div>
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="p-3 bg-slate-50/50 dark:bg-slate-800/30 border-l-2 border-blue-200 dark:border-blue-500/40">
-                            {sentPres <= 1e-9 ? (
-                              <div className="h-full flex items-center">
-                                <div className="w-full border-t border-blue-200 dark:border-blue-500/40" />
-                              </div>
-                            ) : (
-                              <div className="space-y-2">
-                                <div className="text-sm text-slate-700 dark:text-slate-200">
-                                  <strong>Enviado:</strong> {formatQty(sentPres)}
-                                </div>
-
-                                {shippedDetails.length > 0 && (
-                                  <div className="space-y-1">
-                                    {shippedDetails.map((m: any, idx: number) => {
-                                      const mUnitsPerPresentation = Number(m.presentation?.unitsPerPresentation ?? unitsPerPresentation ?? 0)
-                                      const mPresQty =
-                                        m.presentationQuantity != null && Number.isFinite(Number(m.presentationQuantity))
-                                          ? Number(m.presentationQuantity)
-                                          : mUnitsPerPresentation > 0
-                                            ? Number(m.quantity ?? 0) / mUnitsPerPresentation
-                                            : Number(m.quantity ?? 0)
-
-                                      return (
-                                        <div
-                                          key={`${it.id}-${idx}`}
-                                          className="rounded-md border border-slate-200 bg-white p-2 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
-                                        >
-                                          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                                            <div><strong>Cant:</strong> {formatQty(mPresQty)}</div>
-                                            <div><strong>Pres:</strong> {m.presentation?.name ?? '-'}</div>
-                                          </div>
-                                          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-slate-600 dark:text-slate-400">
-                                            <div><strong>Lote:</strong> {m.batch?.batchNumber ?? '-'}</div>
-                                            <div><strong>Venc:</strong> {m.batch?.expiresAt ? formatDateOnlyUtc(m.batch.expiresAt) : '-'}</div>
-                                          </div>
-                                        </div>
-                                      )
-                                    })}
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              </div>
-            )
-          })()}
-
-        {selectedRequest.status !== 'OPEN' && (
-          <div>
-            <div className="font-medium text-slate-900 dark:text-slate-100 mb-2">Productos enviados</div>
-            <div className="space-y-2 max-h-60 overflow-y-auto">
-              {selectedRequest.movements?.map((movement: any, idx: number) => (
-                <div key={idx} className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800 rounded">
-                  <div className="flex-1">
-                    <div className="font-medium">
-                      {getProductLabel({ sku: movement.productSku, name: movement.productName, genericName: movement.genericName } as any) || '—'}
-                    </div>
-                    <div className="text-sm text-slate-600 dark:text-slate-400 grid grid-cols-2 gap-2 mt-1">
-                      <div><strong>Presentación:</strong> {movement.presentation?.name ?? '-'}</div>
-                      <div><strong>Cantidad:</strong> {movement.quantity} {Number(movement.pendingQuantity ?? 0) > 0 ? `(pendiente ${movement.pendingQuantity})` : ''}</div>
-                      <div><strong>Lote:</strong> {movement.batch?.batchNumber ?? '-'}</div>
-                      <div><strong>Vencimiento:</strong> {movement.batch?.expiresAt ? formatDateOnlyUtc(movement.batch.expiresAt) : '-'}</div>
-                    </div>
-                  </div>
-                </div>
-              )) || (
-                <div className="text-sm text-slate-500">No hay información detallada de envío disponible</div>
-              )}
-            </div>
+                    return (
+                      <tr key={mid} className="border-b border-slate-100 dark:border-slate-800">
+                        <td className="px-4 py-3 text-slate-900 dark:text-slate-100">{m.batch?.batchNumber ?? '-'}</td>
+                        <td className="px-4 py-3 text-slate-900 dark:text-slate-100">
+                          {getProductLabel({ sku: m.productSku, name: m.productName, genericName: m.genericName } as any) || '—'}
+                        </td>
+                        <td className="px-4 py-3 text-slate-700 dark:text-slate-300">{m.presentation?.name ?? m.presentationName ?? '-'}</td>
+                        <td className="px-4 py-3 text-right text-slate-900 dark:text-slate-100">{formatQty(Number(m.quantity))}</td>
+                        <td className="px-4 py-3 text-right text-slate-900 dark:text-slate-100">{requestedQty !== '' ? formatQty(Number(requestedQty)) : '-'}</td>
+                        <td className="px-4 py-3 text-center">
+                          <label className="inline-flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              checked={state.fullReception}
+                              onChange={(e) => {
+                                const checked = e.target.checked
+                                setReceptionItems((prev) => ({
+                                  ...prev,
+                                  [mid]: {
+                                    fullReception: checked,
+                                    returnQuantity: checked ? 0 : (prev[mid]?.returnQuantity ?? 0),
+                                    returnReason: checked ? '' : (prev[mid]?.returnReason ?? ''),
+                                  },
+                                }))
+                              }}
+                              className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                            />
+                            <span className="text-slate-700 dark:text-slate-300">Completo</span>
+                          </label>
+                        </td>
+                      </tr>
+                    )
+                  })
+                )}
+              </tbody>
+            </table>
           </div>
-        )}
 
-        <div className="flex justify-end gap-2 pt-4 border-t">
-          <Button variant="outline" onClick={() => setSelectedRequest(null)}>
-            Cerrar
-          </Button>
-          <Button
-            variant="danger"
-            onClick={() => {
-              setReturnMode('ALL')
-              setReturnReason('')
-              const seed: Record<string, number> = {}
-              for (const m of pendingMovements) seed[String(m.id)] = Number(m.pendingQuantity ?? 0)
-              setReturnItems(seed)
-              setShowReturnModal(true)
-            }}
-            disabled={pendingMovements.length === 0}
-          >
-            ↩️ Devolver
-          </Button>
-          <Button 
-            onClick={() => {
-              confirmReceptionMutation.mutate(selectedRequest.id)
-              setSelectedRequest(null)
-            }} 
-            disabled={confirmReceptionMutation.isPending}
-          >
-            {confirmReceptionMutation.isPending ? 'Confirmando…' : '✅ Confirmar recepción'}
-          </Button>
-        </div>
-      </div>
-    </Modal>
-  ) : null
+          {pendingMovements
+            .filter((m: any) => {
+              const state = receptionItems[String(m.id)]
+              return state && !state.fullReception
+            })
+            .map((m: any) => {
+              const mid = String(m.id)
+              const state = receptionItems[mid]
+              const pending = Number(m.pendingQuantity ?? 0)
 
-  const returnModal = selectedRequest ? (
-    <Modal
-      isOpen={showReturnModal}
-      onClose={() => {
-        if (returnMutation.isPending) return
-        setShowReturnModal(false)
-      }}
-      title="↩️ Devolver envío"
-      maxWidth="lg"
-    >
-      <div className="space-y-3">
-        <Input label="Motivo" value={returnReason} onChange={(e) => setReturnReason(e.target.value)} />
-
-        <Select
-          label="Tipo de devolución"
-          value={returnMode}
-          onChange={(e) => setReturnMode(e.target.value as any)}
-          options={[
-            { value: 'ALL', label: 'Devolver todo lo pendiente' },
-            { value: 'PARTIAL', label: 'Devolver solo algunos ítems' },
-          ]}
-        />
-
-        {returnMode === 'PARTIAL' && (
-          <div className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
-            <div className="mb-2 text-sm font-semibold">Ítems a devolver</div>
-            <div className="space-y-2">
-              {pendingMovements.length === 0 ? (
-                <div className="text-sm text-slate-500">No hay cantidades pendientes para devolver.</div>
-              ) : (
-                pendingMovements.map((m: any) => (
-                  <div key={m.id} className="grid grid-cols-1 gap-2 md:grid-cols-3 items-end rounded-md bg-slate-50 p-2 text-sm dark:bg-slate-800">
-                    <div className="md:col-span-2">
-                      <div className="font-medium">
-                        {getProductLabel({ sku: m.productSku, name: m.productName, genericName: m.genericName } as any) || '—'}
-                      </div>
-                      <div className="text-xs text-slate-600 dark:text-slate-300">
-                        Pendiente: {Number(m.pendingQuantity ?? 0)}
-                        {m.batch?.batchNumber ? ` · Lote ${m.batch.batchNumber}` : ''}
-                      </div>
-                    </div>
+              return (
+                <div key={`ret-${mid}`} className="grid grid-cols-1 gap-3 rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+                  <div className="text-sm font-medium text-slate-900 dark:text-slate-100">
+                    {getProductLabel({ sku: m.productSku, name: m.productName, genericName: m.genericName } as any) || '—'} — Lote {m.batch?.batchNumber ?? '-'}
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
                     <Input
-                      label="Cantidad"
+                      label={`Cant. a devolver (máx ${formatQty(pending)})`}
                       type="number"
-                      value={String(returnItems[String(m.id)] ?? 0)}
+                      min={0}
+                      max={pending}
+                      value={String(state?.returnQuantity ?? 0)}
                       onChange={(e) => {
                         const v = Number(e.target.value)
-                        setReturnItems((prev) => ({ ...prev, [String(m.id)]: v }))
+                        const valid = Number.isFinite(v) && v >= 0 ? Math.min(v, pending) : 0
+                        setReceptionItems((prev) => ({
+                          ...prev,
+                          [mid]: { ...prev[mid]!, returnQuantity: valid },
+                        }))
                       }}
                     />
+                    <div className="md:col-span-2">
+                      <Input
+                        label="Motivo de devolución"
+                        value={state?.returnReason ?? ''}
+                        onChange={(e) =>
+                          setReceptionItems((prev) => ({
+                            ...prev,
+                            [mid]: { ...prev[mid]!, returnReason: e.target.value },
+                          }))
+                        }
+                      />
+                    </div>
                   </div>
-                ))
-              )}
-            </div>
-          </div>
-        )}
-
-        <div className="flex justify-end gap-2 pt-2">
-          <Button variant="outline" onClick={() => setShowReturnModal(false)}>
-            Cancelar
-          </Button>
-          <Button variant="danger" onClick={() => returnMutation.mutate()} disabled={returnMutation.isPending}>
-            {returnMutation.isPending ? 'Devolviendo…' : 'Confirmar devolución'}
-          </Button>
+                  <div className="text-xs text-slate-600 dark:text-slate-400">
+                    Recibirán: {formatQty(pending - Number(state?.returnQuantity ?? 0))} | Devolverán: {formatQty(Number(state?.returnQuantity ?? 0))}
+                  </div>
+                </div>
+              )
+            })}
         </div>
-      </div>
-    </Modal>
-  ) : null
-
-  const createModal = (
-    <Modal
-      isOpen={showCreateModal}
-      onClose={() => {
-        if (createMutation.isPending) return
-        setShowCreateModal(false)
-      }}
-      title="➕ Registrar devolución"
-      maxWidth="lg"
-    >
-      <div className="space-y-3">
-        {createError && <div className="rounded-md border border-red-200 bg-red-50 p-2 text-sm text-red-700">{createError}</div>}
-
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          <Select
-            label="Sucursal"
-            value={warehouseId}
-            onChange={(e) => {
-              setWarehouseId(e.target.value)
-              setToLocationId('')
-            }}
-            options={[
-              { value: '', label: 'Seleccionar...' },
-              ...activeWarehouses.map((w) => ({ value: w.id, label: `${w.name}${w.city ? ` (${w.city})` : ''}` })),
-            ]}
-          />
-
-          <Select
-            label="Ubicación destino"
-            value={toLocationId}
-            onChange={(e) => setToLocationId(e.target.value)}
-            options={[
-              { value: '', label: 'Seleccionar...' },
-              ...activeLocations.map((l) => ({ value: l.id, label: l.code })),
-            ]}
-          />
-        </div>
-
-        <Input label="Motivo" value={reason} onChange={(e) => setReason(e.target.value)} />
-        <Input label="Nota (opcional)" value={note} onChange={(e) => setNote(e.target.value)} />
 
         <div>
-          <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-200">Evidencia (foto)</label>
+          <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-200">Evidencia (foto, opcional)</label>
           <input
             type="file"
             accept="image/*"
             onChange={(e) => {
               const f = e.target.files?.[0] ?? null
-              setPhotoFile(f)
+              setReceptionPhotoFile(f)
+              setReceptionPhotoError(null)
+              if (f && f.size > 5 * 1024 * 1024) {
+                setReceptionPhotoError('La foto no debe superar 5 MB')
+              }
             }}
             className="block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 file:mr-4 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-2 file:text-sm file:font-semibold dark:border-slate-700 dark:bg-slate-900 dark:text-white"
           />
-          {photoFile && <div className="mt-1 text-xs text-slate-500">{photoFile.name}</div>}
+          {receptionPhotoFile && <div className="mt-1 text-xs text-slate-500">{receptionPhotoFile.name}</div>}
+          {receptionPhotoError && <div className="mt-1 text-xs text-red-600">{receptionPhotoError}</div>}
         </div>
 
-        <div className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
-          <div className="mb-2 text-sm font-semibold">Ítems</div>
+        <Input
+          label="Nota general (opcional)"
+          value={receptionNote}
+          onChange={(e) => setReceptionNote(e.target.value)}
+        />
 
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            <Select
-              label="Producto"
-              value={itemProductId}
-              onChange={(e) => {
-                const next = e.target.value
-                setItemProductId(next)
-                setItemBatchId('')
-                setItemPresentationId('')
-              }}
-              options={[
-                { value: '', label: 'Seleccionar...' },
-                ...activeProducts.map((p) => ({ value: p.id, label: getProductLabel(p as any) })),
-              ]}
-            />
-
-            <Select
-              label="Lote (opcional)"
-              value={itemBatchId}
-              onChange={(e) => setItemBatchId(e.target.value)}
-              options={[
-                { value: '', label: 'Sin lote' },
-                ...(itemBatchesQuery.data?.items ?? []).map((b) => ({
-                  value: b.id,
-                  label: `${b.batchNumber}${b.expiresAt ? ` (vence ${formatDateOnlyUtc(b.expiresAt)})` : ''}`,
-                })),
-              ]}
-            />
-
-            <Select
-              label="Presentación"
-              value={itemPresentationId || defaultPresentationId}
-              onChange={(e) => setItemPresentationId(e.target.value)}
-              disabled={activeItemPresentations.length === 0}
-              options={
-                activeItemPresentations.length === 0
-                  ? [{ value: '', label: '(Sin presentaciones)' }]
-                  : activeItemPresentations.map((p) => ({ value: p.id, label: `${p.name} (${p.unitsPerPresentation}u)` }))
-              }
-            />
-
-            <Input
-              label="Cantidad (en presentación)"
-              type="number"
-              value={String(itemPresentationQty)}
-              onChange={(e) => setItemPresentationQty(Number(e.target.value))}
-            />
-          </div>
-
-          <Input label="Nota del ítem (opcional)" value={itemNote} onChange={(e) => setItemNote(e.target.value)} />
-
-          <div className="mt-2 flex justify-end">
-            <Button variant="outline" onClick={addItem}>
-              + Agregar
-            </Button>
-          </div>
-
-          <div className="mt-3 space-y-2">
-            {items.length === 0 && <div className="text-sm text-slate-500">Sin ítems agregados.</div>}
-            {items.map((it, idx) => {
-              const p = productById.get(it.productId)
-              const label = p ? getProductLabel(p as any) : it.productId
-              return (
-                <div key={`${it.productId}-${idx}`} className="flex items-center justify-between rounded-md bg-slate-50 p-2 text-sm dark:bg-slate-800">
-                  <div>
-                    <div className="font-medium">{label}</div>
-                    <div className="text-xs text-slate-600 dark:text-slate-300">
-                      {it.presentationQuantity ?? '-'} {it.presentationId ? 'presentación(es)' : 'unidad(es)'}
-                      {it.batchId ? ' · con lote' : ''}
-                      {it.note ? ` · ${it.note}` : ''}
-                    </div>
-                  </div>
-                  <Button size="sm" variant="ghost" onClick={() => removeItem(idx)}>
-                    Quitar
-                  </Button>
-                </div>
-              )
-            })}
-          </div>
-        </div>
-
-        <div className="flex justify-end gap-2">
-          <Button variant="outline" onClick={() => setShowCreateModal(false)}>
+        <div className="flex justify-end gap-2 pt-4 border-t">
+          <Button variant="outline" onClick={() => { setShowReceptionModal(false); setSelectedRequest(null) }} disabled={confirmReceptionMutation.isPending}>
             Cancelar
           </Button>
-          <Button onClick={() => createMutation.mutate()} disabled={createMutation.isPending}>
-            {createMutation.isPending ? 'Creando…' : 'Crear devolución'}
+          <Button onClick={() => confirmReceptionMutation.mutate()} disabled={confirmReceptionMutation.isPending}>
+            {confirmReceptionMutation.isPending ? 'Procesando…' : 'Confirmar recepción/devolución'}
           </Button>
         </div>
       </div>
     </Modal>
-  )
+  ) : null
 
   return (
     <MainLayout navGroups={navGroups}>
       <PageContainer title="↩️ Recepción/Devolución">
         <MovementQuickActions currentPath="/stock/returns" />
-        <div className="mb-3 flex items-center justify-between">
+        <div className="mb-3">
           <div className="text-sm text-slate-600 dark:text-slate-400">Recepción de envíos y devoluciones con evidencia.</div>
-          <Button onClick={() => setShowCreateModal(true)}>➕ Nueva devolución</Button>
         </div>
 
         <div className="mb-3 max-w-xl">
@@ -1102,21 +680,20 @@ export function ReturnsPage() {
                       </div>
                     ),
                   },
-                  { 
-                    header: 'ORG -> DEST', 
+                  {
+                    header: 'ORG → DEST',
                     accessor: (r: any) => {
-                      const fromCode = r.originWarehouse?.city
-                        ? abbreviateCity(r.originWarehouse.city)
-                        : r.originWarehouse?.code?.replace(/^SUC-/, '') ?? '—'
+                      const fromWarehouse = r.originWarehouse?.code ?? r.warehouse?.code ?? ''
+                      const firstMovement = Array.isArray(r.movements) && r.movements.length > 0 ? r.movements[0] : null
+                      const fromLocation = firstMovement?.fromLocation?.code ?? r.fromLocationId ?? null
+                      const toWarehouse = r.toLocation?.warehouse?.code ?? r.warehouse?.code ?? ''
+                      const toLocation = r.toLocation?.code ?? null
 
-                      const toCode = r.warehouse?.city
-                        ? abbreviateCity(r.warehouse.city)
-                        : r.requestedCity
-                          ? abbreviateCity(r.requestedCity)
-                          : r.warehouse?.code?.replace(/^SUC-/, '') ?? '—'
+                      const fromLabel = whLocLabel(fromWarehouse, fromLocation)
+                      const toLabel = whLocLabel(toWarehouse, toLocation)
 
-                      return `${fromCode} -> ${toCode}`
-                    }
+                      return `${fromLabel} → ${toLabel}`
+                    },
                   },
                   { header: 'Solicitante', accessor: (r: any) => r.requestedByName },
                   { header: 'Enviado por', accessor: (r: any) => r.fulfilledByName ?? '-' },
@@ -1129,7 +706,7 @@ export function ReturnsPage() {
                         size="sm"
                         variant="ghost"
                         icon={<EyeIcon className="w-4 h-4" />}
-                        onClick={() => setSelectedRequest(r)}
+                        onClick={() => openReceptionModal(r)}
                       >
                         Ver
                       </Button>
@@ -1144,8 +721,6 @@ export function ReturnsPage() {
         )}
 
         {receptionModal}
-        {returnModal}
-        {createModal}
       </PageContainer>
     </MainLayout>
   )

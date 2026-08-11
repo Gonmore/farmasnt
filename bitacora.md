@@ -1,8 +1,86 @@
 # Bitácora de desarrollo — PharmaFlow Bolivia (farmaSNT)
 
-> Última actualización: 10 Ago 2026
+> Última actualización: 11 Ago 2026
 
 Este documento suma (a alto nivel) decisiones, hitos y cambios relevantes que se fueron incorporando al repositorio para llegar al estado actual del MVP.
+
+## **[11 Ago 2026] Trazabilidad: lote en envíos, firmas con nombre, atención en líneas separadas + ruta Warehouse:Location en atendidas**
+
+### Objetivo alcanzado
+- En `/stock/movement-requests-traceability` (modal "Detalle de solicitud" y PDF "Exportar PDF") ahora se muestra el **lote** enviado en cada envío (solo aplica a solicitudes ya atendidas/recepcionadas que tienen `batch` en el movimiento `OUT`).
+- El cuadro de **firmas** del PDF ahora incluye directamente el **nombre de quien solicitó** (`requestedByName`) y el **nombre de quien atendió** (`fulfilledByName`), además de la línea de fecha.
+- En el PDF, **"Atendida:"** y **"Recepción/confirmación:"** se imprimen en **líneas separadas** (antes compartían la misma línea).
+- La **ruta** en formato `Warehouse:Location` ahora se aplica también a solicitudes ya enviadas/recepcionadas usando el `fromLocation` real del primer envío (`fromWarehouse:fromLocation → toWarehouse:toLocation`); para solicitudes solo creadas el destino puede mostrar solo el warehouse o `warehouse:location`.
+
+### Frontend
+- **`MovementRequestsTraceabilityPage.tsx`**:
+  - `TraceMovement` ahora incluye `batchNumber`, `fromWarehouseCode` y `fromLocationCode` (mapeados desde `batch.batchNumber` y `fromLocation` del movimiento `OUT`).
+  - Helper `buildRoute()` centraliza el formato: origen `warehouse:location` cuando hay envíos (origen real), destino siempre `warehouse:location`; para creadas sin envío usa `warehouse` (o `warehouse:location`) en destino.
+  - La sección "Envíos" del modal ahora muestra **Lote** y la ruta `fromWarehouse:fromLocation → toWarehouse:toLocation` por envío.
+  - `handleExportPdf` usa `buildRoute()` y pasa `batchNumber` por envío.
+- **`traceabilityPdf.ts`**:
+  - `TraceabilityPdfShipment` incluye `batchNumber`; la tabla "Envíos" agrega columna **Lote**.
+  - "Atendida:" y "Recepción/confirmación:" en líneas separadas.
+  - Firmas: "Solicita / Recibe" con `Nombre: <requestedByName>` y "Atiende / Envía" con `Nombre: <fulfilledByName>`.
+
+### Operación
+- TypeScript check OK en frontend.
+- No se requieren migraciones Prisma nuevas.
+
+---
+
+## **[11 Ago 2026] Recepción/Devolución unificada + formato Warehouse:Location en /stock/returns**
+
+### Objetivo alcanzado
+- Flujo unificado de recepción y devolución parcial en `/stock/returns`: un solo botón "Recepción/Devolución" que abre un modal con recepción completa por ítem, devolución parcial con motivo, upload de foto y nota general.
+- Consistencia de formato: la columna "ORG → DEST" en la tabla de recepciones y el header del modal "Ver" ahora usan el formato `Warehouse:location` (código de sucursal sin prefijo `SUC-` + código de ubicación), igual que `/stock/completed-movements`.
+
+### Backend
+- **Nuevo endpoint**: `POST /api/v1/stock/movement-requests/:id/reception` (`backend/src/adapters/http/routes/stock.ts:3734`) que crea movimientos `IN` con `referenceType: "MOVEMENT_REQUEST_RECEIPT"` (recepción) y/o `"MOVEMENT_REQUEST_RETURN"` (devolución) por ítem, valida `receivedQuantity + returnedQuantity ≤ pending`, requiere `returnReason` cuando hay devolución, cierra la solicitud si quedan 0 pendientes, y emite eventos socket.
+- Schemas: `movementRequestReceptionParamsSchema`, `movementRequestReceptionBodySchema`, `confirmReceptionUnifiedResponseSchema`.
+
+### Frontend
+- **`ReturnsPage.tsx`**: reescritura completa — eliminados botones "Nueva devolución", crear modal y modal de devolución antiguos. Único botón "Recepción/Devolución" → modal unificado con tabla de ítems enviados (lote, producto, presentación, cant. enviada, cant. solicitada, pendiente), checkbox "Recepción completa" por ítem (default checked), cuando se desmarca muestra "Cant. a devolver" + "Motivo" con resumen "Recibirán/Devolverán", upload de foto (presigned S3 via `POST /api/v1/stock/returns/photo-upload`) y nota general.
+- Helpers `cleanCode()`, `locLabel()`, `whLocLabel()` agregados mirror a `CompletedMovementsPage`.
+- La columna "ORG → DEST" en la tabla de recepciones y el header del modal "Ver" usan `whLocLabel(warehouseCode, locationCode)` → `WAREHOUSE:LOCATION` format (quitando `SUC-`).
+- El buscador client-side incluye ahora códigos de ubicación (`fromLocation?.code`).
+- Types: `ReceptionItemState`, `ReceptionItemInput`, `ReceptionInput` agregados; funciones API `confirmReceptionUnified()` y `presignReturnPhoto()`.
+
+### Operación
+- TypeScript check OK en frontend y backend.
+- No se requieren migraciones Prisma nuevas.
+
+---
+
+## **[11 Ago 2026] Trazabilidad de solicitudes: formato Warehouse:Location + timeline de atención/recepción + exportar PDF**
+
+### Objetivo alcanzado
+- `/stock/movement-requests-traceability` ahora muestra origen/destino en formato `Warehouse:location` (código sin prefijo `SUC-` + ubicación), consistente con `/stock/completed-movements` y `/stock/returns`.
+- El timeline y el detalle de envíos muestran fecha de atención (fulfillment) o atención parcial (fecha del primer envío), y registran quién y cuándo se recepcionó, incluyendo nota y preview de foto.
+- Nuevo botón "Exportar PDF" en el modal de detalle, que genera una nota de recepción con logo, código de solicitud como marca de agua, y campos para firmar por quien solicita/envía y quien recibe/atiende.
+
+### Backend (`backend/src/adapters/http/routes/stock.ts`)
+- **Endpoint `GET /api/v1/stock/movement-requests`**: extendido para incluir `receptions` en cada movimiento (`OUT`). Cada entrada `reception` contiene: `type` (RECEIPT o RETURN), `quantity`, `note` (incluye URL de foto como `Foto: <url>`), `createdBy`, `createdByName`, `createdAt`.
+- La consulta de movimientos `IN` (`MOVEMENT_REQUEST_RECEIPT` / `MOVEMENT_REQUEST_RETURN`) ahora selecciona `note`, `createdBy`, `createdAt` además de `referenceId`, `referenceType`, `quantity`.
+- Los usuarios de recepción se resuelven a `createdByName` using el `userMap` existente.
+
+### Frontend
+- **`MovementRequestsTraceabilityPage.tsx`**:
+  - Reemplazados helpers `abbreviateCity()` por `cleanCode()`, `locLabel()`, `whLocLabel()` importados de la misma lógica que `ReturnsPage.tsx` y `CompletedMovementsPage.tsx`.
+  - La columna "Ruta" en la tabla y el header del modal "Detalle de solicitud" usan formato `Warehouse:Location` (ej: `ALM:BIN-01 → SCZ:BIN-02`).
+  - Timeline actualizado: 1) Creada, 2) Atendida (usa `fulfilledAt` o fecha del primer envío si es parcial), 3) Envíos, 4) Recepción (quién, cuándo, nota, foto), 5) Estado actual.
+  - La sección "Envíos" muestra detalle de recepción por envío: quién recibió, cuándo, cantidades recibidas/devueltas, nota con preview de foto si existe.
+  - Filtro de búsqueda incluye ahora códigos de origen/destino y la ruta formateada.
+  - Nuevo botón "Exportar PDF" en el modal de detalle.
+- **`Modal.tsx`**: agregado prop `actions?: ReactNode` para renderizar botones de acción en el header del modal.
+- **`movementRequestDocsPdf.ts`**: función `exportMovementRequestTraceabilityToPdf()` — nota de trazabilidad con marca de agua (código de solicitud únicamente), logo del tenant, tres secciones tabulares (Solicitud / Atención / Recepción), preview de foto de recepción, y firmas sin caja para "Solicitante / Recibe" y "Atendido por / Envía".
+
+### Operación
+- TypeScript check OK en frontend y backend.
+- Vite build OK.
+- No se requieren migraciones Prisma nuevas.
+
+---
 
 ## **[10 Ago 2026] Cotizaciones: carga automática de precio de producto al editar/agregar líneas**
 

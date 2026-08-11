@@ -6,6 +6,8 @@ import { MainLayout, PageContainer, Table, Input, Button, Loading, ErrorState, E
 import { useNavigation } from '../../hooks'
 import { formatDateOnlyUtc } from '../../lib/date'
 import { matchesSearchQuery } from '../../lib/search'
+import { useTenant } from '../../providers/TenantProvider'
+import { exportTraceabilityToPDF } from '../../lib/traceabilityPdf'
 
 type TraceMovement = {
   id: string
@@ -23,6 +25,19 @@ type TraceMovement = {
   productSku?: string | null
   productName?: string | null
   genericName?: string | null
+  batchNumber?: string | null
+  fromWarehouseCode?: string | null
+  fromLocationCode?: string | null
+  receptions?: TraceReception[]
+}
+
+type TraceReception = {
+  type: 'RECEIPT' | 'RETURN'
+  quantity: number
+  note?: string | null
+  createdBy?: string | null
+  createdByName?: string | null
+  createdAt?: string | null
 }
 
 type MovementRequest = {
@@ -39,6 +54,8 @@ type MovementRequest = {
   confirmedByName?: string | null
   originWarehouse?: { id: string; code: string; name: string; city: string | null } | null
   warehouse?: { id: string; code: string | null; name: string | null; city: string | null } | null
+  toLocationId?: string | null
+  toLocation?: { id: string; code: string | null; warehouse?: { id: string; code: string | null; name: string | null; city: string | null } | null } | null
   items?: Array<{
     id?: string
     productId?: string
@@ -60,6 +77,21 @@ async function listMovementRequests(token: string): Promise<{ items: MovementReq
     items: (response.items ?? []).map((r: any) => ({
       ...r,
       code: String(r.code ?? ''),
+      toLocationId: r.toLocationId ? String(r.toLocationId) : null,
+      toLocation: r.toLocation
+        ? {
+            id: String(r.toLocation.id),
+            code: r.toLocation.code ?? null,
+            warehouse: r.toLocation.warehouse
+              ? {
+                  id: String(r.toLocation.warehouse.id),
+                  code: r.toLocation.warehouse.code ?? null,
+                  name: r.toLocation.warehouse.name ?? null,
+                  city: r.toLocation.warehouse.city ?? null,
+                }
+              : null,
+          }
+        : null,
       items: (Array.isArray(r.items) ? r.items : []).map((it: any) => ({
         ...it,
         id: it.id ? String(it.id) : undefined,
@@ -94,6 +126,19 @@ async function listMovementRequests(token: string): Promise<{ items: MovementReq
                   ? null
                   : Number(m.presentation.unitsPerPresentation)
                 : Number(m.unitsPerPresentation),
+            batchNumber: m.batch?.batchNumber ?? null,
+            fromWarehouseCode: m.fromLocation?.warehouse?.code ?? null,
+            fromLocationCode: m.fromLocation?.code ?? null,
+            receptions: Array.isArray(m.receptions)
+              ? m.receptions.map((rc: any) => ({
+                  type: rc.type === 'RETURN' ? 'RETURN' : 'RECEIPT',
+                  quantity: Number(rc.quantity ?? 0),
+                  note: rc.note ?? null,
+                  createdBy: rc.createdBy ?? null,
+                  createdByName: rc.createdByName ?? null,
+                  createdAt: rc.createdAt ?? null,
+                }))
+              : [],
           }))
         : [],
     })),
@@ -155,27 +200,65 @@ function getShipmentStateLabel(m: Pick<TraceMovement, 'pendingQuantity' | 'recei
   return { label: 'Recibido', className: 'text-emerald-700 dark:text-emerald-400' }
 }
 
-function abbreviateCity(city: string): string {
-  if (!city) return '—'
-  const upper = city.toUpperCase()
-  if (upper.includes('COCHABAMBA')) return 'CBBA'
-  if (upper.includes('LA PAZ')) return 'LPZ'
-  if (upper.includes('SANTA CRUZ')) return 'SCZ'
-  if (upper.includes('ORURO')) return 'ORU'
-  if (upper.includes('POTOSI')) return 'PTS'
-  if (upper.includes('SUCRE')) return 'SCR'
-  if (upper.includes('TARIJA')) return 'TJA'
-  if (upper.includes('PANDO')) return 'PND'
-  if (upper.includes('BENI')) return 'BNI'
-  return upper.slice(0, 3)
+function cleanCode(code: string | null | undefined): string {
+  if (!code) return '—'
+  return String(code).replace(/^SUC-/, '')
+}
+
+function locLabel(code: string | null | undefined): string {
+  return code && String(code).trim() ? String(code) : '—'
+}
+
+// Reception notes embed the photo URL as "Foto: <url>" (legacy storage).
+// Split it back into a clean note text + optional photo URL.
+function parseReceptionNote(raw: string | null | undefined): { text: string; photoUrl: string | null } {
+  if (!raw) return { text: '', photoUrl: null }
+  const match = String(raw).match(/Foto:\s*(\S+)/i)
+  const photoUrl = match ? match[1] : null
+  const text = String(raw)
+    .replace(/Foto:\s*\S+/i, '')
+    .replace(/^\s*\|\s*/, '')
+    .replace(/\s*\|\s*$/, '')
+    .replace(/\s*\|\s*/g, ' • ')
+    .trim()
+  return { text, photoUrl }
+}
+
+// Origin label in "warehouse:location" format. For any request with shipments
+// (SENT / partial / received) the product left a real location, so we use the
+// first OUT movement's fromWarehouse:fromLocation. Falls back to warehouse only
+// for created-only requests that have not shipped yet.
+function buildOrigin(r: MovementRequest): string {
+  const outMovements = (r.movements ?? []).filter((m) => m.type === 'OUT')
+  if (outMovements.length > 0) {
+    const firstOut = outMovements[0]
+    const fromWarehouseCode = cleanCode(firstOut.fromWarehouseCode) ?? cleanCode(r.originWarehouse?.code)
+    const fromLocCode = locLabel(firstOut.fromLocationCode)
+    return `${fromWarehouseCode}:${fromLocCode}`
+  }
+  return `${cleanCode(r.originWarehouse?.code)}`
+}
+
+// Destination label in "warehouse:location" format (with SUC- removed).
+function buildDest(r: MovementRequest): string {
+  const toWarehouseCode = cleanCode(r.warehouse?.code) ?? cleanCode(r.requestedCity)
+  const toLocCode = locLabel(r.toLocation?.code)
+  return `${toWarehouseCode}:${toLocCode}`
+}
+
+// Builds the route string in "warehouse:location -> warehouse:location" format.
+function buildRoute(r: MovementRequest): string {
+  return `${buildOrigin(r)} -> ${buildDest(r)}`
 }
 
 export function MovementRequestsTraceabilityPage() {
   const auth = useAuth()
   const navGroups = useNavigation()
+  const { branding } = useTenant()
 
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedRequest, setSelectedRequest] = useState<MovementRequest | null>(null)
+  const [exportingPdf, setExportingPdf] = useState(false)
 
   const movementRequestsQuery = useQuery({
     queryKey: ['movementRequests', 'traceability'],
@@ -238,6 +321,80 @@ export function MovementRequestsTraceabilityPage() {
     return { label: '✅ Recepcionada', pending, outCount }
   }
 
+  const handleExportPdf = async () => {
+    if (!selectedRequest) return
+    try {
+      setExportingPdf(true)
+      const route = buildRoute(selectedRequest)
+
+      const items = (selectedRequest.items ?? []).map((it) => {
+        const qty = getItemPresentationQty(it)
+        return {
+          productLabel: it.productName ?? it.productSku ?? it.genericName ?? 'Producto',
+          presentationName: it.presentationName ?? null,
+          requested: qty.requested,
+          remaining: qty.remaining,
+        }
+      })
+
+      const s = describeStatus(selectedRequest)
+      const c = countRequestItems(selectedRequest)
+      const outMovements = (selectedRequest.movements ?? []).filter((m) => m.type === 'OUT')
+      const outCount = outMovements.length
+      const hasShipments = outCount > 0
+      const shipmentsPendingReception = outMovements.filter((m) => Number(m.pendingQuantity ?? 0) > 1e-9).length
+      const shipmentsLabel = !hasShipments
+        ? 'sin envíos'
+        : shipmentsPendingReception > 0
+          ? `${shipmentsPendingReception} envío(s) pendiente(s) de recepción`
+          : `${outCount} envío(s) recibidos`
+      const itemsPendingShipmentLabel = c.pending > 0
+        ? `${c.pending} ítem(s) pendiente(s) de envío`
+        : 'sin ítems pendientes de envío'
+
+      const timeline = [
+        `1) 🟡 Creada — ${formatDateOnlyUtc(selectedRequest.createdAt)} (${selectedRequest.requestedByName ?? '—'})`,
+        `2) 🟠 Atendida/Parcial — ${selectedRequest.fulfilledAt ? formatDateOnlyUtc(selectedRequest.fulfilledAt) : '—'}${selectedRequest.fulfilledByName ? ` (${selectedRequest.fulfilledByName})` : ''}`,
+        `3) 📦 Envíos — ${hasShipments ? `${outCount} envío(s)` : '—'}`,
+        `4) Estado actual — ${s.label} • ${shipmentsLabel} • ${itemsPendingShipmentLabel}`,
+      ]
+
+      const shipments = [...outMovements]
+        .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+        .map((m) => ({
+          productLabel: m.productName ?? m.productSku ?? m.genericName ?? 'Producto',
+          batchNumber: m.batchNumber ?? null,
+          createdAt: new Date(m.createdAt).toLocaleString(),
+          createdByName: m.createdByName ?? null,
+          sentQuantity:
+            m.presentationQuantity !== null && m.presentationQuantity !== undefined
+              ? `${formatMaybeInt(Number(m.presentationQuantity))}${m.presentationName ? ` x ${m.presentationName}` : ''}`
+              : `${formatMaybeInt(Number(m.quantity ?? 0))} u`,
+          stateLabel: getShipmentStateLabel(m).label,
+        }))
+
+      await exportTraceabilityToPDF({
+        code: selectedRequest.code || '—',
+        route,
+        statusLabel: s.label,
+        createdAt: new Date(selectedRequest.createdAt).toLocaleString(),
+        requestedByName: selectedRequest.requestedByName ?? null,
+        fulfilledAt: selectedRequest.fulfilledAt ? new Date(selectedRequest.fulfilledAt).toLocaleString() : null,
+        fulfilledByName: selectedRequest.fulfilledByName ?? null,
+        confirmedAt: selectedRequest.confirmedAt ? new Date(selectedRequest.confirmedAt).toLocaleString() : null,
+        confirmedByName: selectedRequest.confirmedByName ?? null,
+        note: selectedRequest.note ?? null,
+        items,
+        timeline,
+        shipments,
+        tenantName: branding?.tenantName ?? 'PharmaFlow',
+        logoUrl: branding?.logoUrl ?? null,
+      })
+    } finally {
+      setExportingPdf(false)
+    }
+  }
+
   const columns = useMemo(
     () => [
       {
@@ -256,20 +413,10 @@ export function MovementRequestsTraceabilityPage() {
       {
         header: 'Código / Ruta',
         accessor: (r: MovementRequest) => {
-          const fromCode = r.originWarehouse?.city
-            ? abbreviateCity(r.originWarehouse.city)
-            : r.originWarehouse?.code?.replace(/^SUC-/, '') ?? '—'
-
-          const toCode = r.warehouse?.city
-            ? abbreviateCity(r.warehouse.city)
-            : r.requestedCity
-              ? abbreviateCity(r.requestedCity)
-              : r.warehouse?.code?.replace(/^SUC-/, '') ?? '—'
-
           return (
             <div className="leading-tight">
               <div className="font-medium text-slate-900 dark:text-slate-100">{r.code || '—'}</div>
-              <div className="text-xs text-slate-500 dark:text-slate-400">{fromCode} -&gt; {toCode}</div>
+              <div className="text-xs text-slate-500 dark:text-slate-400 font-mono">{buildOrigin(r)} -&gt; {buildDest(r)}</div>
             </div>
           )
         },
@@ -355,27 +502,23 @@ export function MovementRequestsTraceabilityPage() {
         onClose={() => setSelectedRequest(null)}
         title={`🧭 Detalle de solicitud${selectedRequest?.code ? ` — ${selectedRequest.code}` : ''}`}
         maxWidth="3xl"
+        actions={
+          <Button variant="secondary" size="sm" onClick={handleExportPdf} loading={exportingPdf}>
+            Exportar PDF
+          </Button>
+        }
       >
         {!selectedRequest ? null : (
           <div className="space-y-4">
             {(() => {
-              const origin = selectedRequest.originWarehouse
-              const dest = selectedRequest.warehouse
-
-              const fromCode = origin?.city ? abbreviateCity(origin.city) : origin?.code?.replace(/^SUC-/, '') ?? '—'
-              const toCode = dest?.city
-                ? abbreviateCity(dest.city)
-                : selectedRequest.requestedCity
-                  ? abbreviateCity(selectedRequest.requestedCity)
-                  : dest?.code?.replace(/^SUC-/, '') ?? '—'
-
+              const route = buildRoute(selectedRequest)
               const s = describeStatus(selectedRequest)
 
               return (
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2 text-sm">
                   <div className="rounded border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900">
                     <div className="text-xs text-slate-500">Ruta</div>
-                    <div className="font-medium text-slate-900 dark:text-slate-100">{fromCode} -&gt; {toCode}</div>
+                    <div className="font-medium text-slate-900 dark:text-slate-100 font-mono">{route}</div>
                   </div>
                   <div className="rounded border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900">
                     <div className="text-xs text-slate-500">Estado</div>
@@ -495,42 +638,156 @@ export function MovementRequestsTraceabilityPage() {
                 const sorted = [...outMovements].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
                 return (
                   <div className="space-y-2">
-                    {sorted.map((m) => (
-                      <div key={m.id} className="rounded border border-slate-200 px-3 py-2 dark:border-slate-700">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div className="font-medium text-slate-900 dark:text-slate-100">
-                            {m.productName ?? m.productSku ?? m.genericName ?? 'Producto'}
+                    {sorted.map((m) => {
+                      const fromWarehouseCode = cleanCode(m.fromWarehouseCode) ?? cleanCode(selectedRequest.originWarehouse?.code)
+                      const fromLocCode = locLabel(m.fromLocationCode)
+                      const fromCode = `${fromWarehouseCode}:${fromLocCode}`
+                      const toWarehouseCode = cleanCode(selectedRequest.warehouse?.code) ?? cleanCode(selectedRequest.requestedCity)
+                      const toLocCode = locLabel(selectedRequest.toLocation?.code)
+                      const toCode = `${toWarehouseCode}:${toLocCode}`
+                      return (
+                        <div key={m.id} className="rounded border border-slate-200 px-3 py-2 dark:border-slate-700">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="font-medium text-slate-900 dark:text-slate-100">
+                              {m.productName ?? m.productSku ?? m.genericName ?? 'Producto'}
+                            </div>
+                            <div className="text-xs text-slate-500 dark:text-slate-400">{new Date(m.createdAt).toLocaleString()}</div>
                           </div>
-                          <div className="text-xs text-slate-500 dark:text-slate-400">{new Date(m.createdAt).toLocaleString()}</div>
-                        </div>
-                        <div className="mt-1 text-xs text-slate-600 dark:text-slate-400">
-                          Enviado por: {m.createdByName ?? '—'}
-                        </div>
-                        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm">
-                          <div>
-                            <span className="text-slate-500 dark:text-slate-400">Enviado:</span>{' '}
-                            {m.presentationQuantity !== null && m.presentationQuantity !== undefined ? (
-                              <span className="text-slate-900 dark:text-slate-100">
-                                {formatMaybeInt(Number(m.presentationQuantity))}{m.presentationName ? ` x ${m.presentationName}` : ''}
-                              </span>
-                            ) : (
-                              <span className="text-slate-900 dark:text-slate-100">{formatMaybeInt(Number(m.quantity ?? 0))} u</span>
-                            )}
+                          <div className="mt-1 text-xs text-slate-600 dark:text-slate-400">
+                            Enviado por: {m.createdByName ?? '—'}
                           </div>
-                          <div>
-                            <span className="text-slate-500 dark:text-slate-400">Estado de envío:</span>{' '}
-                            {(() => {
-                              const st = getShipmentStateLabel(m)
-                              return <span className={st.className}>{st.label}</span>
-                            })()}
+                          {m.batchNumber ? (
+                            <div className="mt-1 text-xs text-slate-600 dark:text-slate-400">
+                              Lote: <span className="font-mono">{m.batchNumber}</span>
+                            </div>
+                          ) : null}
+                          <div className="mt-1 text-xs text-slate-600 dark:text-slate-400 font-mono">
+                            {fromCode} -&gt; {toCode}
+                          </div>
+                          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm">
+                            <div>
+                              <span className="text-slate-500 dark:text-slate-400">Enviado:</span>{' '}
+                              {m.presentationQuantity !== null && m.presentationQuantity !== undefined ? (
+                                <span className="text-slate-900 dark:text-slate-100">
+                                  {formatMaybeInt(Number(m.presentationQuantity))}{m.presentationName ? ` x ${m.presentationName}` : ''}
+                                </span>
+                              ) : (
+                                <span className="text-slate-900 dark:text-slate-100">{formatMaybeInt(Number(m.quantity ?? 0))} u</span>
+                              )}
+                            </div>
+                            <div>
+                              <span className="text-slate-500 dark:text-slate-400">Estado de envío:</span>{' '}
+                              {(() => {
+                                const st = getShipmentStateLabel(m)
+                                return <span className={st.className}>{st.label}</span>
+                              })()}
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 )
               })()}
             </div>
+            {(() => {
+              type RecView = {
+                outId: string
+                productLabel: string
+                sentQty: number
+                receivedQty: number
+                returnedQty: number
+                photoUrl: string | null
+                text: string
+                createdByName: string | null
+                createdAt: string | null
+              }
+              const outMovements = (selectedRequest.movements ?? []).filter((m) => m.type === 'OUT')
+              const isReceived = !!selectedRequest.confirmedAt || selectedRequest.status === 'FULFILLED'
+              if (!isReceived || outMovements.length === 0) return null
+
+              const views: RecView[] = []
+              let hasAbnormal = false
+              for (const m of outMovements) {
+                const receptions = Array.isArray(m.receptions) ? m.receptions : []
+                if (receptions.length === 0) continue
+                const receivedQty = receptions.filter((rc) => rc.type === 'RECEIPT').reduce((s, rc) => s + Number(rc.quantity ?? 0), 0)
+                const returnedQty = receptions.filter((rc) => rc.type === 'RETURN').reduce((s, rc) => s + Number(rc.quantity ?? 0), 0)
+                const note = receptions.map((rc) => parseReceptionNote(rc.note)).reduce<{ text: string; photoUrl: string | null }>(
+                  (acc, cur) => ({
+                    text: [acc.text, cur.text].filter(Boolean).join(' • '),
+                    photoUrl: acc.photoUrl ?? cur.photoUrl,
+                  }),
+                  { text: '', photoUrl: null },
+                )
+                const sentQty = Number(m.quantity ?? 0)
+                const isPartial = receivedQty + returnedQty < sentQty - 1e-9 || returnedQty > 1e-9
+                if (note.text || note.photoUrl || isPartial) hasAbnormal = true
+                views.push({
+                  outId: m.id,
+                  productLabel: m.productName ?? m.productSku ?? m.genericName ?? 'Producto',
+                  sentQty,
+                  receivedQty,
+                  returnedQty,
+                  photoUrl: note.photoUrl,
+                  text: note.text,
+                  createdByName: receptions[0].createdByName ?? null,
+                  createdAt: receptions[0].createdAt ?? null,
+                })
+              }
+
+              if (!hasAbnormal) return null
+
+              return (
+                <div className="rounded border border-slate-200 bg-white p-3 text-sm dark:border-slate-700 dark:bg-slate-900">
+                  <div className="font-medium text-slate-900 dark:text-slate-100 mb-2">📥 Detalle de recepción</div>
+                  <div className="space-y-2">
+                    {views.map((v) => (
+                      <div key={v.outId} className="rounded border border-slate-200 px-3 py-2 dark:border-slate-700">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="font-medium text-slate-900 dark:text-slate-100">{v.productLabel}</div>
+                          <div className="text-xs text-slate-500 dark:text-slate-400">
+                            {v.createdAt ? new Date(v.createdAt).toLocaleString() : ''}
+                            {v.createdByName ? ` • ${v.createdByName}` : ''}
+                          </div>
+                        </div>
+                        <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm">
+                          <span>
+                            <span className="text-slate-500 dark:text-slate-400">Enviado:</span>{' '}
+                            <span className="text-slate-900 dark:text-slate-100">{formatMaybeInt(v.sentQty)} u</span>
+                          </span>
+                          <span>
+                            <span className="text-slate-500 dark:text-slate-400">Recibido:</span>{' '}
+                            <span className={v.receivedQty < v.sentQty - 1e-9 ? 'text-amber-700 dark:text-amber-300' : 'text-emerald-700 dark:text-emerald-400'}>
+                              {formatMaybeInt(v.receivedQty)} u
+                            </span>
+                          </span>
+                          {v.returnedQty > 1e-9 ? (
+                            <span>
+                              <span className="text-slate-500 dark:text-slate-400">Devuelto:</span>{' '}
+                              <span className="text-red-700 dark:text-red-400">{formatMaybeInt(v.returnedQty)} u</span>
+                            </span>
+                          ) : null}
+                        </div>
+                        {v.text ? (
+                          <div className="mt-1 text-xs text-slate-600 dark:text-slate-400">
+                            Nota: {v.text}
+                          </div>
+                        ) : null}
+                        {v.photoUrl ? (
+                          <div className="mt-2">
+                            <a href={v.photoUrl} target="_blank" rel="noreferrer">
+                              <img src={v.photoUrl} alt="Foto de recepción" className="max-h-40 rounded border border-slate-200 dark:border-slate-700" />
+                            </a>
+                          </div>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )
+            })()}
+
           </div>
         )}
       </Modal>

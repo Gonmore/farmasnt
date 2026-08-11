@@ -44,6 +44,7 @@ type MovementRequest = {
   confirmedByName?: string | null
   confirmationNote?: string | null
   originWarehouse?: { id: string; code: string; name: string; city: string | null } | null
+  toLocation?: { id: string; code: string | null; warehouse?: { id: string; code: string | null; name: string | null; city: string | null } | null } | null
   warehouse?: { id: string; code: string | null; name: string | null; city: string | null } | null
   movements?: Array<{
     id: string
@@ -118,6 +119,23 @@ type ClientListItem = {
   name: string
   city?: string | null
   isActive: boolean
+}
+
+function cleanCode(code: string | null | undefined): string {
+  if (!code) return '—'
+  return String(code).replace(/^SUC-/, '')
+}
+
+function locLabel(code: string | null | undefined): string {
+  return code && String(code).trim() ? String(code) : '—'
+}
+
+// "warehouse:location" destination label (SUC- prefix stripped).
+function destLabel(r: MovementRequest): string {
+  const wh = cleanCode(r.warehouse?.code) ?? cleanCode(r.requestedCity)
+  const loc = locLabel(r.toLocation?.code)
+  if (wh === '—' && loc === '—') return '—'
+  return `${wh}:${loc}`
 }
 
 async function fetchProducts(token: string): Promise<{ items: ProductListItem[] }> {
@@ -1053,7 +1071,7 @@ export function MovementsPage() {
               </div>
               <div>
                 <div className="font-medium text-slate-900 dark:text-slate-100">Destino</div>
-                <div className="text-slate-600 dark:text-slate-400">{selectedRequest.warehouse?.name ?? selectedRequest.requestedCity}</div>
+                <div className="text-slate-600 dark:text-slate-400 font-mono">{destLabel(selectedRequest)}</div>
               </div>
               <div>
                 <div className="font-medium text-slate-900 dark:text-slate-100">Solicitado por</div>
@@ -2314,7 +2332,7 @@ export function MovementsPage() {
                   accessor: (r) => (
                     <div className="leading-tight">
                       <div className="text-[11px] text-slate-500 dark:text-slate-400">{r.code}</div>
-                      <div>{r.requestedCity}</div>
+                      <div className="font-mono">{destLabel(r)}</div>
                     </div>
                   ),
                 },

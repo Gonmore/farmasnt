@@ -43,6 +43,13 @@ ssh "$SERVER_USER@$SERVER_IP" "SERVER_PATH=$SERVER_PATH VERSION=$VERSION bash -s
   # Le decimos a docker compose que use nuestro nuevo archivo de versión
   docker compose --env-file .env --env-file .env.version pull
 
+  echo "🧬 Resolviendo migraciones fallidas conocidas (si las hay)..."
+  # Las migraciones que fallan porque los cambios ya fueron aplicados manualmente en la BD.
+  # Se marcan como 'applied' para que migrate deploy no intente re-aplicarlas.
+  echo "  → 20260727130000_location_in_quote: resolviendo como 'applied' (si está fallida)..."
+  docker compose --env-file .env --env-file .env.version --profile tools run --rm backend-migrate </dev/null \
+    npx prisma migrate resolve --applied "20260727130000_location_in_quote" || true
+
   echo "🧬 Aplicando migraciones Prisma (si hay nuevas)..."
   docker compose --env-file .env --env-file .env.version --profile tools run --rm backend-migrate </dev/null
   

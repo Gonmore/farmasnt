@@ -9,7 +9,18 @@ Esta referencia contempla los cambios de las versiones **2.0** (multi-marca/mult
 - `GET /api/v1/products/:id/kardex`: la respuesta `kardex[]` ahora incluye `fromWarehouseCode`, `toWarehouseCode`, `fromLocationCode`, `toLocationCode`. El saldo acumulado (`balance`) se calcula solo sobre movimientos que afectan la sucursal filtrada (`affectsWarehouse`). Para movimientos `OUT` con `referenceType: 'SALES_ORDER'`, el `toCode` contiene el número de orden y `toWarehouseCode` el nombre del cliente; el `detail` incluye `[SALES_ORDER] NRO - Cliente: Nombre`. Los ajustes (`ADJUSTMENT`) se incluyen correctamente cuando su location pertenece a la sucursal filtrada.
 - `GET /api/v1/stock/completed-movements`: la columna "Origen → Destino" en el frontend muestra `WAREHOUSE:Location` (código de sucursal sin prefijo `SUC-` + código de ubicación).
 
-### Cambios recientes (10 Ago 2026) — Carga automática de precios en cotizaciones
+### Cambios recientes (11 Ago 2026) — Recepción/Devolución unificada en /stock/returns
+
+- `POST /api/v1/stock/movement-requests/:id/reception`: endpoint unificado que crea movimientos `IN` (`MOVEMENT_REQUEST_RECEIPT` y/o `MOVEMENT_REQUEST_RETURN`) por ítem, valida `receivedQuantity + returnedQuantity ≤ pending`, requiere `returnReason` cuando hay devolución, y cierra la solicitud si quedan 0 pendientes. Reemplaza a los endpoints separados `:id/receive` y `:id/return` en la UI de recepciones.
+- Frontend `/stock/returns`: botón único "Recepción/Devolución" → modal unificado con "Recepción completa" por ítem, devolución parcial con motivo, upload de foto y nota general.
+- Formato "ORG → DEST" en recepciones y modal "Ver" usa `Warehouse:location` (código sin prefijo `SUC-` + ubicación), igual que `/stock/completed-movements`.
+
+### Cambios recientes (11 Ago 2026) — Trazabilidad: Warehouse:Location + timeline de recepción + exportar PDF
+
+- `GET /api/v1/stock/movement-requests`: cada movimiento `OUT` en la respuesta `items[].movements[]` ahora incluye `receptions[]`, un arreglo de entradas de recepción/devolución con `type` (`RECEIPT` | `RETURN`), `quantity`, `note` (incluye URL de foto como `Foto: <url>`), `createdBy`, `createdByName`, `createdAt`. Permite mostrar quién y cuándo se recepcionó, con nota y preview de foto.
+- Frontend `/stock/movement-requests-traceability`: la ruta origen/destino usa formato `Warehouse:Location` (código sin `SUC-` + ubicación), y en solicitudes ya atendidas/recepcionadas el origen usa el `fromWarehouse:fromLocation` real del envío. La sección "Envíos" muestra el lote enviado (`batch.batchNumber`) y la ruta por envío. El timeline indica fecha de atención (`fulfilledAt`) o atención parcial (fecha del primer envío). Nuevo botón "Exportar PDF" en el modal de detalle que genera una nota de recepción con logo, código de solicitud como marca de agua, "Atendida"/"Recepción" en líneas separadas, y firmas con el nombre de quien solicitó y quien atendió.
+
+## Cambios recientes (10 Ago 2026) — Carga automática de precios en cotizaciones
 - `GET /api/v1/sales/quotes/:id` y `POST/PUT /api/v1/sales/quotes/:id`: el `unitPrice` de cada línea se expresa en unidades base. Al crear o editar una cotización, si `unitPrice` no se envía, el backend resuelve el precio usando `priceOverride / unitsPerPresentation` de la presentación (si existe) o el `Product.price` como fallback. El frontend (`QuoteDetailPage`) replica esta lógica para previsualizar el precio al momento de seleccionar un producto o cambiar de presentación.
 
 Cambios relevantes en 2.2.0:
@@ -1843,9 +1854,42 @@ Response 200
 { "message": "Recepción confirmada exitosamente" }
 ```
 
----
+### POST /api/v1/stock/movement-requests/:id/reception
+Requiere permiso: `stock:move`.
 
-### POST /api/v1/stock/returns/photo-upload
+Endpoint unificado para **recepcionar y devolver** parcialmente los productos de un envío en un solo request. Reemplaza a los botones separados de "recepcionar" y "devolver" en la UI de `/stock/returns`.
+
+Body
+```json
+{
+  "items": [
+    {
+      "outMovementId": "<uuid del movimiento OUT enviado>",
+      "receivedQuantity": 95,
+      "returnedQuantity": 5,
+      "returnReason": "Producto dañado en el envío"
+    }
+  ],
+  "note": "observaciones generales (opcional)",
+  "photoUrl": "https://... (opcional)",
+  "photoKey": "tenants/.../stock-returns/photo-...jpg (opcional)"
+}
+```
+
+Notas
+- Cada `item` corresponde a un movimiento `OUT` con `pendingQuantity > 0`.
+- `receivedQuantity + returnedQuantity <= pendingQuantity` (el resto sigue pendiente).
+- Si `returnedQuantity > 0`, se requiere `returnReason` (mínimo 1 carácter).
+- Para "recepción completa" de un ítem: `receivedQuantity = pending`, `returnedQuantity = 0`.
+- Crea movimientos `IN` con `referenceType: "MOVEMENT_REQUEST_RECEIPT"` (recepción) y/o `MOVEMENT_REQUEST_RETURN` (devolución, hacia `fromLocationId` del `OUT`).
+- Si la solicitud estaba en `SENT` y quedan 0 cantidades pendientes después de la operación, se marca `FULFILLED` con `confirmedAt/confirmedBy`.
+- `photoUrl` / `photoKey` se almacenan en las notas de los movimientos `IN` creados (el modelo `StockMovement` no tiene campos de foto; la foto se sube con antelación vía `POST /api/v1/stock/returns/photo-upload`).
+- El usuario scope-branch debe tener la sucursal seleccionada (`409` si falta) y solo puede operar envíos cuyo `toLocationId` pertenece a su sucursal (`403` si no).
+
+Response 200
+```json
+{ "message": "Recepción registrada (5 recibidos, 1 devueltos)" }
+```
 Requiere permiso: `stock:move`.
 
 Genera una URL presignada para subir la foto de evidencia (S3/MinIO compatible).

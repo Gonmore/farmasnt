@@ -180,12 +180,14 @@ frontend/src/
 | | `POST /api/v1/stock/movement-requests/:id/confirm` | `routes/stock.ts:2076` |
 | | `POST /api/v1/stock/movement-requests/:id/cancel` | `routes/stock.ts:1490` |
 | `pages/stock/BulkFulfillPage.tsx` | `POST /api/v1/stock/movement-requests/bulk-fulfill` | `routes/stock.ts:3047` |
-| `pages/stock/ReturnsPage.tsx` | `GET /api/v1/stock/returns` | `routes/stock.ts:517` |
-| | `POST /api/v1/stock/returns` | `routes/stock.ts:670` |
-| | `GET /api/v1/stock/returns/:id` | `routes/stock.ts:615` |
-| | `POST /api/v1/stock/returns/photo-upload` | `routes/stock.ts:471` |
-| | `POST /api/v1/stock/movement-requests/:id/receive` | `routes/stock.ts:3300` |
-| | `POST /api/v1/stock/movement-requests/:id/return` | `routes/stock.ts:3490` |
+| `pages/stock/ReturnsPage.tsx` | `GET /api/v1/stock/returns` | `routes/stock.ts:517` | Receptions tab: unified "Recepción/Devolución" modal (11 Ago 2026) |
+| | | `POST /api/v1/stock/returns` | `routes/stock.ts:670` |
+| | | `GET /api/v1/stock/returns/:id` | `routes/stock.ts:615` |
+| | | `POST /api/v1/stock/returns/photo-upload` | `routes/stock.ts:471` |
+| | | `GET /api/v1/stock/movement-requests?status=SENT` | `routes/stock.ts:792` | Receptions tab data source |
+| | | `POST /api/v1/stock/movement-requests/:id/reception` | `routes/stock.ts:3737` | Unified reception + return endpoint |
+| | `POST /api/v1/stock/movement-requests/:id/reception` | `routes/stock.ts:3737` | Unified reception + return endpoint (created 11 Ago 2026) |
+| `pages/stock/MovementRequestsTraceabilityPage.tsx` | `GET /api/v1/stock/movement-requests` | `routes/stock.ts:792` | Traceability: Warehouse:Location route (origin `fromWarehouse:fromLocation` on attended/received), batch per shipment, PDF export with signature names (11 Ago 2026) |
 | `pages/stock/MovementsPage.tsx` (historial) | `GET /api/v1/stock/completed-movements` | `routes/stock.ts:3665` |
 | | `GET /api/v1/stock/completed-movements/:id/picking` | `routes/stock.ts:4133` |
 | | `GET /api/v1/stock/completed-movements/:id/label` | `routes/stock.ts:4350` |
