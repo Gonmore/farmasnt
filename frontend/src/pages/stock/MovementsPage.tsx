@@ -37,6 +37,7 @@ type MovementRequest = {
   toLocationId?: string | null
   note?: string | null
   requestedByName: string | null
+  requestedBy?: string | null
   createdAt: string
   fulfilledAt: string | null
   fulfilledByName?: string | null
@@ -305,6 +306,10 @@ export function MovementsPage() {
   const permissions = usePermissions()
   const navGroups = useNavigation()
   const queryClient = useQueryClient()
+
+  // Solo el Administrador de Sucursal Proveedor (BRANCH_PROVIDER) puede crear lotes (Entrada)
+  // y ajustar existencias; el Administrador de Sucursal normal (BRANCH_ADMIN) no.
+  const isBranchProvider = permissions.roles.some((r) => r.code === 'BRANCH_PROVIDER')
 
   const [type, setType] = useState('')
   const [activeTab, setActiveTab] = useState<'operations' | 'history'>('operations')
@@ -752,9 +757,14 @@ export function MovementsPage() {
     const data = productBatchesQuery.data
     if (!data?.hasStockRead) return []
 
+    // Usuarios con scope de sucursal (no admin de tenant) solo ven lotes de su propio almacén.
+    const branchScoped = permissions.hasPermission('scope:branch') && !permissions.isTenantAdmin
+    const ownWarehouseId = permissions.warehouseId ?? null
+
     const rows: any[] = []
     for (const batch of data.items) {
       for (const loc of batch.locations ?? []) {
+        if (branchScoped && ownWarehouseId && loc.warehouseId !== ownWarehouseId) continue
         const total = Number(loc.quantity || '0')
         const reserved = Number(loc.reservedQuantity ?? '0')
         const available = Number(loc.availableQuantity ?? String(Math.max(0, total - reserved)))
@@ -776,7 +786,7 @@ export function MovementsPage() {
       }
     }
     return rows.filter((r) => Number(r.totalQuantity || '0') > 0)
-  }, [productBatchesQuery.data])
+  }, [productBatchesQuery.data, permissions])
 
   const selectableStockRows = useMemo(
     () => stockRows.filter((r) => Number(r.availableQuantity || '0') > 0),
@@ -1438,12 +1448,16 @@ export function MovementsPage() {
             onChange={(e) => handleTypeChange(e.target.value)}
             options={[
               { value: '', label: 'Selecciona tipo de movimiento' },
-              { value: 'IN', label: '📥 Entrada (creación de nuevo lote)' },
+              ...(isBranchProvider
+                ? [{ value: 'IN', label: '📥 Entrada (creación de nuevo lote)' }]
+                : []),
               { value: 'TRANSFER', label: '🔄 Transferencia (cambiar ubicación de existencias)' },
               { value: 'REPACK', label: '📦 Reempaque (armar/desarmar presentación)' },
               { value: 'OUT', label: '📤 Salida (venta o baja de existencias)' },
               { value: 'OUT_SAMPLE', label: '🧪 Salida producto de muestra' },
-              { value: 'ADJUSTMENT', label: '⚖️ Ajuste (modificar lote)' },
+              ...(isBranchProvider
+                ? [{ value: 'ADJUSTMENT', label: '⚖️ Ajuste (modificar lote)' }]
+                : []),
             ]}
           />
         </div>
@@ -2391,6 +2405,10 @@ export function MovementsPage() {
                     const isPartial = isPending && !isUnfulfilled
                     const canView = r.status !== 'OPEN' || isPartial
 
+                    // Solo el creador de la solicitud (o tenant admin) puede editar/cancelar.
+                    const currentUserId = permissions.user?.id
+                    const canManage = !!currentUserId && r.requestedBy === currentUserId
+
                     return (
                       <div className="flex items-center justify-end gap-1">
                         {canView ? (
@@ -2406,7 +2424,7 @@ export function MovementsPage() {
                           />
                         ) : null}
 
-                        {isPending && isUnfulfilled ? (
+                        {isPending && isUnfulfilled && canManage ? (
                           <>
                             <Button
                               variant="ghost"

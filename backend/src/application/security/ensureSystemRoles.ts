@@ -81,6 +81,13 @@ async function ensureSystemRolesForTenantInternal(db: DbClient, tenantId: string
     select: { id: true },
   })
 
+  const branchProviderRole = await db.role.upsert({
+    where: { tenantId_code: { tenantId, code: 'BRANCH_PROVIDER' } },
+    update: { name: 'Administrador de Sucursal Proveedor' },
+    create: { tenantId, code: 'BRANCH_PROVIDER', name: 'Administrador de Sucursal Proveedor', isSystem: true, createdBy: null },
+    select: { id: true },
+  })
+
   const laboratorioRole = await db.role.upsert({
     where: { tenantId_code: { tenantId, code: 'LABORATORIO' } },
     update: { name: 'Laboratorio' },
@@ -129,6 +136,19 @@ async function ensureSystemRolesForTenantInternal(db: DbClient, tenantId: string
   // BRANCH_ADMIN: must be able to request/ship/receive stock movements for its own branch.
   const branchAdminPerms: string[] = [...branchSellerPerms, Permissions.StockMove]
 
+  // BRANCH_PROVIDER: admin de sucursal de tipo PROVEEDOR. Crea/ajusta lotes (catalog:write)
+  // y puede ver/atender TODAS las solicitudes de transferencia (sin filtro de ciudad en el backend).
+  const branchProviderPerms: string[] = [
+    Permissions.ScopeBranch,
+    Permissions.CatalogRead,
+    Permissions.CatalogWrite,
+    Permissions.StockRead,
+    Permissions.StockManage,
+    Permissions.StockMove,
+    Permissions.StockDeliver,
+    Permissions.ReportStockRead,
+  ]
+
   const laboratorioPerms: string[] = [Permissions.CatalogRead, Permissions.StockRead, Permissions.StockManage]
 
   const tenantAdminPerms: string[] = [
@@ -165,6 +185,7 @@ async function ensureSystemRolesForTenantInternal(db: DbClient, tenantId: string
   await attachPerms(logisticaRole.id, logisticaPerms)
   await attachPerms(branchAdminRole.id, branchAdminPerms)
   await attachPerms(branchSellerRole.id, branchSellerPerms)
+  await attachPerms(branchProviderRole.id, branchProviderPerms)
   await attachPerms(laboratorioRole.id, laboratorioPerms)
 
   if (tenantAdminRole) {

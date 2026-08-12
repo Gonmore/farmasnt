@@ -5,6 +5,7 @@ export function useNavigation(): NavGroup[] {
   const { isPlatformAdmin, isTenantAdmin, roles, hasPermission, isLoading } = usePermissions();
   const isBranchAdmin = roles.some((r) => r.code === 'BRANCH_ADMIN')
   const isBranchSeller = roles.some((r) => r.code === 'BRANCH_SELLER')
+  const isBranchProvider = roles.some((r) => r.code === 'BRANCH_PROVIDER')
 
   // Mientras carga, mostrar navegación mínima
   if (isLoading) {
@@ -118,8 +119,8 @@ export function useNavigation(): NavGroup[] {
     groups.push({ title: 'Reportes', items: reportItems })
   }
 
-  // Laboratorio (MVP: reutiliza permisos de stock, pero excluir branch admins y sellers)
-  if (hasPermission('stock:read') && !isBranchAdmin && !isBranchSeller) {
+  // Laboratorio (MVP: reutiliza permisos de stock, pero excluir branch admins, sellers y providers)
+  if (hasPermission('stock:read') && !isBranchAdmin && !isBranchSeller && !isBranchProvider) {
     const labItems = [] as Array<{ to: string; label: string }>
     labItems.push({ to: '/laboratory/labs', label: '🧪 Configuración' })
     labItems.push({ to: '/laboratory/production', label: '🏭 Producción' })

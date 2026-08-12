@@ -10,6 +10,7 @@ VERSION=$(date +%Y%m%d%H%M)
 
 echo "🏗️  1. Iniciando construcción de versión: $VERSION"
 
+
 # Build & Push Backend
 docker build -t $USER_DOCKER/backend-farmasnt:$VERSION ./backend
 docker push $USER_DOCKER/backend-farmasnt:$VERSION

@@ -275,13 +275,12 @@ export function PaymentsPage() {
                       {!p.paidAt && (
                         <Button
                           size="sm"
-                          variant="secondary"
+                          variant="success"
                           icon={<CheckCircleIcon className="w-4 h-4" />}
                           disabled={payMutation.isPending}
                           onClick={() => {
                             handleOpenPayModal(p)
                           }}
-                          className="!border-green-600 !text-green-700 hover:!bg-green-50 dark:!border-green-500 dark:!text-green-400 dark:hover:!bg-green-900/20"
                         >
                           <span className="hidden md:inline">Confirmar Pago</span>
                         </Button>

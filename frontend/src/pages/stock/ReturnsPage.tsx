@@ -4,6 +4,7 @@ import { apiFetch } from '../../lib/api'
 import { formatDateOnlyUtc } from '../../lib/date'
 import { matchesSearchQuery } from '../../lib/search'
 import { useAuth } from '../../providers/AuthProvider'
+import { usePermissions } from '../../hooks'
 import { MainLayout, PageContainer, Table, Button, Modal, Input, Loading, ErrorState, EmptyState } from '../../components'
 import { useNavigation } from '../../hooks'
 import { getProductLabel } from '../../lib/productName'
@@ -61,10 +62,11 @@ type ReceptionInput = {
   photoKey?: string
 }
 
-async function listSentMovementRequests(token: string): Promise<{ items: any[] }> {
+async function listSentMovementRequests(token: string, warehouseId?: string): Promise<{ items: any[] }> {
   const take = '50'
   const fetchByStatus = async (status: 'SENT' | 'OPEN') => {
     const params = new URLSearchParams({ take, status })
+    if (warehouseId) params.set('warehouseId', warehouseId)
     return apiFetch(`/api/v1/stock/movement-requests?${params.toString()}`, { token }) as Promise<{ items: any[] }>
   }
 
@@ -142,8 +144,30 @@ function whLocLabel(whCode: string | null | undefined, locCode: string | null | 
   return `${wh}:${loc}`
 }
 
+function firstOutMovement(r: any): any {
+  if (!Array.isArray(r?.movements) || r.movements.length === 0) return null
+  return r.movements[0]
+}
+
+function destLocCodeOf(r: any): string | null {
+  const reqLoc = r?.toLocation?.code ?? null
+  if (reqLoc) return reqLoc
+  const m = firstOutMovement(r)
+  return m?.toLocation?.code ?? m?.toLocationId ?? null
+}
+
+function destWarehouseCodeOf(r: any): string {
+  return (
+    r?.toLocation?.warehouse?.code ??
+    firstOutMovement(r)?.toLocation?.warehouse?.code ??
+    r?.warehouse?.code ??
+    ''
+  )
+}
+
 export function ReturnsPage() {
   const auth = useAuth()
+  const permissions = usePermissions()
   const navGroups = useNavigation()
   const queryClient = useQueryClient()
   const notifications = useNotifications()
@@ -156,8 +180,8 @@ export function ReturnsPage() {
   })
 
   const sentRequestsQuery = useQuery({
-    queryKey: ['sentMovementRequests'],
-    queryFn: () => listSentMovementRequests(auth.accessToken!),
+    queryKey: ['sentMovementRequests', permissions.user?.warehouseId],
+    queryFn: () => listSentMovementRequests(auth.accessToken!, permissions.hasPermission('scope:branch') && !permissions.isTenantAdmin ? permissions.user?.warehouseId ?? undefined : undefined),
     enabled: !!auth.accessToken,
     refetchInterval: 15_000,
   })
@@ -393,8 +417,8 @@ export function ReturnsPage() {
           const fromWarehouse = selectedRequest.originWarehouse?.code ?? selectedRequest.warehouse?.code ?? ''
           const firstMovement = Array.isArray(selectedRequest.movements) && selectedRequest.movements.length > 0 ? selectedRequest.movements[0] : null
           const fromLocation = firstMovement?.fromLocation?.code ?? selectedRequest.fromLocationId ?? null
-          const toWarehouse = selectedRequest.toLocation?.warehouse?.code ?? selectedRequest.warehouse?.code ?? ''
-          const toLocation = selectedRequest.toLocation?.code ?? null
+          const toWarehouse = destWarehouseCodeOf(selectedRequest)
+          const toLocation = destLocCodeOf(selectedRequest)
 
           const fromLabel = whLocLabel(fromWarehouse, fromLocation)
           const toLabel = whLocLabel(toWarehouse, toLocation)
@@ -683,13 +707,13 @@ export function ReturnsPage() {
                   {
                     header: 'ORG → DEST',
                     accessor: (r: any) => {
+                      const firstMovement = firstOutMovement(r)
                       const fromWarehouse = r.originWarehouse?.code ?? r.warehouse?.code ?? ''
-                      const firstMovement = Array.isArray(r.movements) && r.movements.length > 0 ? r.movements[0] : null
                       const fromLocation = firstMovement?.fromLocation?.code ?? r.fromLocationId ?? null
-                      const toWarehouse = r.toLocation?.warehouse?.code ?? r.warehouse?.code ?? ''
-                      const toLocation = r.toLocation?.code ?? null
-
                       const fromLabel = whLocLabel(fromWarehouse, fromLocation)
+
+                      const toWarehouse = destWarehouseCodeOf(r)
+                      const toLocation = destLocCodeOf(r)
                       const toLabel = whLocLabel(toWarehouse, toLocation)
 
                       return `${fromLabel} → ${toLabel}`

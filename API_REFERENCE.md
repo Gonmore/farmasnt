@@ -1,8 +1,8 @@
-# API Reference — PharmaFlow Bolivia (MVP)
+﻿# API Reference — PharmaFlow Bolivia (MVP)
 
-## Versión 2.2.0
+## Versión 2.2.1
 
-Esta referencia contempla los cambios de las versiones **2.0** (multi-marca/multi-empresa), **2.0.1** (orden alfabético), **2.1.0** (branding numérico + existencias + salida de muestra), **2.1.1** (badges operativos + restricción de edición de lotes), **2.1.2** (historial de movimientos), **2.1.3** (advertencia de atención parcial), **2.1.4** (reportes de ventas: estado por defecto "Todos" y `take` elevado a 1000), **2.2.0** (kardex unificado AuditEvent-based, modal de entrega con devoluciones, sub-almacén en solicitudes, upload PDF de comprobantes).
+Esta referencia contempla los cambios de las versiones **2.0** (multi-marca/multi-empresa), **2.0.1** (orden alfabético), **2.1.0** (branding numérico + existencias + salida de muestra), **2.1.1** (badges operativos + restricción de edición de lotes), **2.1.2** (historial de movimientos), **2.1.3** (advertencia de atención parcial), **2.1.4** (reportes de ventas: estado por defecto "Todos" y `take` elevado a 1000), **2.2.0** (kardex unificado AuditEvent-based, modal de entrega con devoluciones, sub-almacén en solicitudes, upload PDF de comprobantes) y **2.2.1** (rol `BRANCH_PROVIDER`, visibilidad total de transferencias para proveedor, y edición de inventario solo en almacén propio en ambas vistas).
 
 ## Cambios recientes (07 Ago 2026) — Kardex formato WAREHOUSE:Location + ventas con cliente
 
@@ -19,6 +19,15 @@ Esta referencia contempla los cambios de las versiones **2.0** (multi-marca/mult
 
 - `GET /api/v1/stock/movement-requests`: cada movimiento `OUT` en la respuesta `items[].movements[]` ahora incluye `receptions[]`, un arreglo de entradas de recepción/devolución con `type` (`RECEIPT` | `RETURN`), `quantity`, `note` (incluye URL de foto como `Foto: <url>`), `createdBy`, `createdByName`, `createdAt`. Permite mostrar quién y cuándo se recepcionó, con nota y preview de foto.
 - Frontend `/stock/movement-requests-traceability`: la ruta origen/destino usa formato `Warehouse:Location` (código sin `SUC-` + ubicación), y en solicitudes ya atendidas/recepcionadas el origen usa el `fromWarehouse:fromLocation` real del envío. La sección "Envíos" muestra el lote enviado (`batch.batchNumber`) y la ruta por envío. El timeline indica fecha de atención (`fulfilledAt`) o atención parcial (fecha del primer envío). Nuevo botón "Exportar PDF" en el modal de detalle que genera una nota de recepción con logo, código de solicitud como marca de agua, "Atendida"/"Recepción" en líneas separadas, y firmas con el nombre de quien solicitó y quien atendió.
+- `GET /api/v1/stock/movement-requests`: cada movimiento OUT en `items[].movements[]` ahora también expone `toLocationId` y `toLocation` (`{id, code, warehouse}`), usado por `/stock/returns` para mostrar el destino en formato `Warehouse:Location` cuando la solicitud no trae `toLocation`.
+- Frontend `/stock/movements`: la lista de solicitudes y el modal "Detalle de solicitud" ahora muestran el destino en formato `Warehouse:Location` (código sin `SUC-` + ubicación), igual que `/stock/completed-movements` y `/stock/returns`.
+
+### Cambios recientes (12 Ago 2026) — Rol BRANCH_PROVIDER y visibilidad total de transferencias
+
+- Nuevo rol de sistema `BRANCH_PROVIDER` ("Administrador de Sucursal Proveedor") con permisos `scope:branch`, `catalog:read`, `catalog:write`, `stock:read`, `stock:manage`, `stock:move`, `stock:deliver`, `report:stock:read`. Pensado para almacenes tipo `PROVIDER` que crean/ajustan lotes y atienden solicitudes de transferencia.
+- `GET /api/v1/stock/movement-requests` y `GET /api/v1/stock/returns`: cuando el almacén del usuario es de tipo `PROVIDER`, `branchCityOf` devuelve `null`, por lo que el backend no aplica filtro de ciudad y el usuario ve/atiene TODAS las solicitudes (lectura de almacenes tipo venta). Los almacenes `SALES` siguen restringidos a su ciudad.
+- `AuthContext`/`request.auth` ahora incluye `warehouseType` (`PROVIDER` | `SALES` | null), derivado de `user.warehouse.type`.
+- Frontend `/stock/inventory`: tanto la vista "Por Producto" como "Por Sucursal" aplican `canEditWarehouse(warehouseId)` — solo se habilitan el editor de ubicación (`TRANSFER` vía `POST /api/v1/stock/movements`) y el cambio de estado de lote (`PATCH /api/v1/products/:productId/batches/:batchId/status`) en el almacén propio del usuario con scope de sucursal; los demás almacenes quedan en solo lectura. El backend refuerza esto con `403` en ADJUSTMENT/IN hacia almacenes ajenos.
 
 ## Cambios recientes (10 Ago 2026) — Carga automática de precios en cotizaciones
 - `GET /api/v1/sales/quotes/:id` y `POST/PUT /api/v1/sales/quotes/:id`: el `unitPrice` de cada línea se expresa en unidades base. Al crear o editar una cotización, si `unitPrice` no se envía, el backend resuelve el precio usando `priceOverride / unitsPerPresentation` de la presentación (si existe) o el `Product.price` como fallback. El frontend (`QuoteDetailPage`) replica esta lógica para previsualizar el precio al momento de seleccionar un producto o cambiar de presentación.

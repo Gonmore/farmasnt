@@ -459,7 +459,7 @@ function formatPresentation(p: {
   return parts.length ? parts.join(' ') : null
 }
 
-function InlineLocationEditor({ batch, token }: { batch: any; token: string }) {
+function InlineLocationEditor({ batch, token, disabled }: { batch: any; token: string; disabled?: boolean }) {
   const [selectedLoc, setSelectedLoc] = useState(batch.locationId)
   const queryClient = useQueryClient()
 
@@ -475,6 +475,10 @@ function InlineLocationEditor({ batch, token }: { batch: any; token: string }) {
     enabled: !!token && !!batch.warehouseId,
     staleTime: 1000 * 60 * 5, // Cache por 5 minutos para no saturar la API
   })
+
+  if (disabled) {
+    return <span className="text-xs text-slate-500 dark:text-slate-400">{batch.locationCode ?? '—'}</span>
+  }
 
   const moveMutation = useMutation({
     mutationFn: async () => {
@@ -796,6 +800,13 @@ export function InventoryPage() {
   const canSeeBatchFlow = perms.hasPermission('stock:read') && perms.hasPermission('catalog:read')
   const canChangeBatchStatus = perms.hasPermission('stock:manage')
 
+  // Usuarios de sucursal (scope:branch) solo pueden editar su propio almacén;
+  // el resto es solo lectura. El backend refuerza esto, pero lo indicamos en la UI.
+  const isBranchScoped = perms.hasPermission('scope:branch') && !perms.isTenantAdmin
+  const userWarehouseId = perms.warehouseId ?? null
+  const canEditWarehouse = (warehouseId: string | undefined): boolean =>
+    !isBranchScoped || !userWarehouseId || warehouseId === userWarehouseId
+
   const [groupBy, setGroupBy] = useState<'product' | 'warehouse'>('product')
   const [expandedProduct, setExpandedProduct] = useState<string | null>(null)
   const [expandedWarehouse, setExpandedWarehouse] = useState<string | null>(null)
@@ -1009,7 +1020,7 @@ export function InventoryPage() {
       },
       {
         header: 'Ubicación',
-        accessor: (b, _index) => <InlineLocationEditor batch={b} token={auth.accessToken!} />,
+        accessor: (b, _index) => <InlineLocationEditor batch={b} token={auth.accessToken!} disabled={!canEditWarehouse(b.warehouseId)} />,
         width: '180px',
       },
     ]
@@ -1043,6 +1054,8 @@ export function InventoryPage() {
               <Button
                 size="sm"
                 variant="outline"
+                disabled={!canEditWarehouse(b.warehouseId)}
+                title={canEditWarehouse(b.warehouseId) ? undefined : 'Solo lectura: no es tu almacén'}
                 onClick={() =>
                   setStatusChangeItem({
                     productId: b.productId,
@@ -1099,7 +1112,7 @@ export function InventoryPage() {
       },
       { 
         header: '📍 Ubicación', 
-        accessor: (b, _index) => <InlineLocationEditor batch={b} token={auth.accessToken!} /> 
+        accessor: (b, _index) => <InlineLocationEditor batch={b} token={auth.accessToken!} disabled={!canEditWarehouse(b.warehouseId)} /> 
       },
       { header: '📊 Total', accessor: (b, _index) => formatQtyByBatchPresentation(Number(b.quantity), b) },
       {
@@ -1124,34 +1137,59 @@ export function InventoryPage() {
       { header: '✅ Disponible', accessor: (b, _index) => formatQtyByBatchPresentation(Number(b.availableQuantity), b) },
     ]
 
-    // Action column: flow
-    if (canSeeBatchFlow) {
+    // Action column: flow + optional status change
+    if (canSeeBatchFlow || canChangeBatchStatus) {
       baseColumns.push({
         header: '🚀 Acción',
         accessor: (b, _index) => (
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => {
-              if (!b.batchId) return
-              setFlowItem({
-                productId: b.productId,
-                productName: b.productName,
-                batchId: b.batchId,
-                batchNumber: b.batchNumber,
-              })
-            }}
-            disabled={!b.batchId}
-          >
-            Ver flujo
-          </Button>
+          <div className="flex gap-2">
+            {canSeeBatchFlow ? (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  if (!b.batchId) return
+                  setFlowItem({
+                    productId: b.productId,
+                    productName: b.productName,
+                    batchId: b.batchId,
+                    batchNumber: b.batchNumber,
+                  })
+                }}
+                disabled={!b.batchId}
+              >
+                Ver flujo
+              </Button>
+            ) : null}
+
+            {canChangeBatchStatus && b.batchId ? (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!canEditWarehouse(b.warehouseId)}
+                title={canEditWarehouse(b.warehouseId) ? undefined : 'Solo lectura: no es tu almacén'}
+                onClick={() =>
+                  setStatusChangeItem({
+                    productId: b.productId,
+                    productName: b.productName,
+                    batchId: b.batchId,
+                    batchNumber: b.batchNumber,
+                    currentStatus: b.status,
+                    version: b.version,
+                  })
+                }
+              >
+                Estado
+              </Button>
+            ) : null}
+          </div>
         ),
-        width: '120px',
+        width: '200px',
       })
     }
 
     return baseColumns
-  }, [canSeeBatchFlow, loadingReservations, auth.accessToken])
+  }, [canSeeBatchFlow, canChangeBatchStatus, loadingReservations, auth.accessToken])
 
   const productGroups = useMemo<ProductGroup[]>(() => {
     if (!balancesQuery.data?.items) return []
@@ -1369,6 +1407,11 @@ export function InventoryPage() {
   return (
     <MainLayout navGroups={navGroups}>
       <PageContainer title="📦 Inventario Completo">
+        {perms.isBranchProvider && (
+          <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-200">
+            Modo sucursal: puedes <strong>editar únicamente tu almacén</strong> ({perms.warehouse?.code ?? '—'}). El resto de almacenes se muestra en <strong>solo lectura</strong>.
+          </div>
+        )}
         {/* Botones de filtro - segunda fila en móvil */}
         <div className="mb-4 flex flex-wrap gap-2">
           <Button

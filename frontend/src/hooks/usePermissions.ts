@@ -81,11 +81,17 @@ export function usePermissions() {
   const isPlatformAdmin = data?.isPlatformAdmin ?? false;
   const isTenantAdmin = !isPlatformAdmin && (data?.roles.some((r) => r.code === 'TENANT_ADMIN') ?? false);
 
+  const isBranchAdmin = data?.roles.some((r) => r.code === 'BRANCH_ADMIN') ?? false;
+  const isBranchSeller = data?.roles.some((r) => r.code === 'BRANCH_SELLER') ?? false;
+  const isBranchProvider = data?.roles.some((r) => r.code === 'BRANCH_PROVIDER') ?? false;
+  const warehouseType = data?.user?.warehouse?.type ?? null;
+
   return {
     // Data
     user: data?.user,
     warehouse: data?.user?.warehouse,
     warehouseId: data?.user?.warehouseId,
+    warehouseType,
     roles: data?.roles ?? [],
     permissions: data?.permissions ?? [],
     permissionCodes: data?.permissionCodes ?? [],
@@ -100,6 +106,9 @@ export function usePermissions() {
     // Flags
     isPlatformAdmin,
     isTenantAdmin,
+    isBranchAdmin,
+    isBranchSeller,
+    isBranchProvider,
     
     // State
     isLoading,

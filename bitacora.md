@@ -1,4 +1,4 @@
-# Bitácora de desarrollo — PharmaFlow Bolivia (farmaSNT)
+﻿# Bitácora de desarrollo — PharmaFlow Bolivia (farmaSNT)
 
 > Última actualización: 11 Ago 2026
 
@@ -26,6 +26,78 @@ Este documento suma (a alto nivel) decisiones, hitos y cambios relevantes que se
 ### Operación
 - TypeScript check OK en frontend.
 - No se requieren migraciones Prisma nuevas.
+
+## **[11 Ago 2026] /stock/movements — destino en formato Warehouse:Location (vista y modal)**
+
+- En `/stock/movements`, la lista de solicitudes (columna "Destino") y el modal "Detalle de solicitud" ahora muestran el destino en formato `Warehouse:Location` (`codigoSucursal:codigoUbicacion`, sin prefijo `SUC-`), consistente con `/stock/completed-movements`, `/stock/returns` y la trazabilidad.
+- Para solicitudes antiguas que no incluyen `toLocation`, el destino queda como `warehouse` (o `warehouse:—`) sin romper la vista; el formato completo se aplica cuando la ubicación destino existe.
+
+### Frontend
+- **`MovementsPage.tsx`**:
+  - `MovementRequest` ahora tipa `toLocation` (ya venía en el spread de la API).
+  - Helpers `cleanCode()` (quita `SUC-`), `locLabel()` y `destLabel(r)` producen `warehouse:location`.
+  - Columna "Destino" de la tabla y campo "Destino" del modal usan `destLabel(r)`.
+
+### Operación
+- TypeScript check OK en frontend.
+
+## **[12 Ago 2026] /stock/returns — destino en formato Warehouse:Location (ORG → DEST) en Recepciones**
+
+- En la pestaña "Recepciones" de `/stock/returns`, la columna "ORG → DEST" (tabla) y el bloque "ORG → DEST" del modal "Ver" ahora muestran el **destino** en formato `Warehouse:Location` (`codigoSucursal:codigoUbicacion`, sin prefijo `SUC-`), igual que el origen. Antes el destino solo mostraba el warehouse porque para algunas solicitudes `toLocation.code` venía nulo en la solicitud, aunque el envío (movimiento OUT) sí apuntaba a una ubicación destino concreta.
+- El destino se resuelve con `destLocCodeOf(r)` / `destWarehouseCodeOf(r)`: usa `toLocation` de la solicitud si existe, si no la `toLocation` del primer movimiento OUT del envío.
+
+### Backend
+- **`stock.ts` (`GET /api/v1/stock/movement-requests`)**: la consulta de movimientos ahora también recolecta `toLocationId` y construye `toLocationMap`; cada movimiento OUT expone `toLocationId` y `toLocation` (`{id, code, warehouse}`). Sin cambios de contrato para campos ya existentes.
+
+### Frontend
+- **`ReturnsPage.tsx`**: helpers `firstOutMovement(r)`, `destLocCodeOf(r)`, `destWarehouseCodeOf(r)`; la columna "ORG → DEST" y el modal usan `whLocLabel` para ambos extremos.
+
+### Operación
+- TypeScript check OK en frontend y backend.
+
+## **[12 Ago 2026] Nuevo rol BRANCH_PROVIDER + visibilidad total de transferencias para sucursales proveedor**
+
+- Se creó el rol de sistema **`BRANCH_PROVIDER`** ("Administrador de Sucursal Proveedor") para usuarios de almacenes tipo `PROVIDER`, cuya labor es crear/ajustar lotes y atender solicitudes de transferencia de cualquier sucursal de venta.
+- Permisos del rol: `scope:branch`, `catalog:read`, `catalog:write`, `stock:read`, `stock:manage`, `stock:move`, `stock:deliver`, `report:stock:read`.
+- Backend: `branchCityOf()` en `stock.ts` y `reports.ts` ahora devuelve `null` (sin filtro de ciudad) cuando el almacén del usuario es de tipo `PROVIDER`. Esto permite que `/api/v1/stock/movement-requests`, `/stock/returns` y `/reports/stock/balances-expanded` (inventario) devuelvan TODOS los datos (lectura de sucursales tipo venta), sin restricción de ciudad. Los almacenes tipo `SALES` siguen restringidos a su ciudad.
+- Corrección crítica: `request.auth.warehouseType` no se cargaba (el `user.include` en `server.ts` solo traía `city` de `warehouse`); ahora se selecciona `type` y se propaga a `AuthContext`/`request.auth`. Sin esto, la relajación de PROVIDER nunca se activaba.
+- La edición de stock sigue restringida por backend: `POST /api/v1/stock/movements` rechaza (`403`) ADJUSTMENT/IN hacia almacenes `SALES`, por lo que el proveedor solo edita su propio almacén.
+
+### Frontend
+- `usePermissions.ts`: expone `isBranchProvider` y `warehouseType`.
+- `useNavigation.ts`: el grupo "Catálogo → Productos" aparece con `catalog:write`; se excluye al proveedor de "Laboratorio".
+- `BulkFulfillRequestsPageSimple.tsx`: si `isBranchProvider`, lista TODAS las solicitudes de movimiento (sin filtro por ciudad de destino).
+- `InventoryPage.tsx`: banner "Modo sucursal" y acciones (cambio de estado, editor de ubicación inline) deshabilitadas para almacenes que no son el propio del usuario (solo lectura en los demás).
+
+### Operación
+- `ensureSystemRoles` siembra el rol en todos los tenants al arrancar. Los usuarios proveedor existentes deben asignárselo manualmente (rol de sistema).
+- TypeScript check OK en frontend y backend.
+
+## **[12 Ago 2026] Inventario "Por Sucursal": mismo modo solo-lectura que "Por Producto"**
+
+- En `/stock/inventory`, la vista **"Por Sucursal"** ahora aplica las mismas reglas de solo-lectura que la vista "Por Producto" para usuarios con scope de sucursal (`scope:branch`): la edición solo está habilitada en el almacén propio del usuario; los demás almacenes quedan en solo lectura (backend ya lo refuerza).
+- Antes, la columna "Ubicación" pasaba `InlineLocationEditor` sin `disabled` en la vista por sucursal, y la columna "Acción" solo mostraba "Ver flujo" (sin botón "Estado"), por lo que el editor de ubicación permitía mover stock de cualquier almacén y el cambio de estado de lote estaba ausente en esta vista.
+
+### Frontend (`frontend/src/pages/stock/InventoryPage.tsx`)
+- `warehouseColumns` ("Por Sucursal"):
+  - Columna "📍 Ubicación": `InlineLocationEditor` ahora recibe `disabled={!canEditWarehouse(b.warehouseId)}`.
+  - Columna "🚀 Acción": ahora es condicional (`canSeeBatchFlow || canChangeBatchStatus`) e incluye el botón "Estado" con `disabled={!canEditWarehouse(b.warehouseId)}` y tooltip "Solo lectura: no es tu almacén", idéntico a la vista "Por Producto".
+- El banner "Modo sucursal" (líneas superiores) ya advertía esta restricción; ahora la UI la respeta en ambas vistas.
+
+### Operación
+- TypeScript check OK en frontend.
+
+---
+
+## **[12 Ago 2026] Ajustes BRANCH_PROVIDER: edición solo del creador, atención por almacén destino, recepciones propias**
+
+- **/stock/movements**: el botón "Editar"/"Cancelar" de una solicitud OPEN ahora solo es visible para quien la creó (`requestedBy === usuario`) o Tenant Admin; antes aparecía para cualquiera.
+- **/stock/fulfill-requests**: para `BRANCH_PROVIDER` el Almacén Origen se auto-selecciona (su warehouse) y se deshabilita; la "Ubicación origen" ya no se elige arriba. Al elegir Almacén Destino, la lista de solicitudes se filtra por `warehouseId === destino`. El modal de atención carga los lotes de **todo el almacén origen** (todas sus ubicaciones) y cada lote seleccionado conserva su `fromLocationId`.
+- **Backend `bulk-fulfill`**: `fromLocationId` ahora es opcional a nivel global y se acepta **por ítem** (`items[].fromLocationId`), cayendo al global si no se indica. El stock se valida y el OUT se crea por la ubicación de cada lote.
+- **/stock/returns**: se revierte la visibilidad total para PROVIDER; ahora las devoluciones y el contador "Recepción/Devolución" (menú rápido) se filtran por el `warehouseId` propio del usuario de sucursal (no por ciudad), mostrando solo lo enviado a su almacén.
+
+### Operación
+- TypeScript check OK en frontend y backend.
 
 ---
 

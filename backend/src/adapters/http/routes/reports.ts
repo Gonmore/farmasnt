@@ -370,6 +370,8 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
     if (request.auth?.isTenantAdmin) return null
     const scoped = !!request.auth?.permissions?.has(Permissions.ScopeBranch)
     if (!scoped) return null
+    // Sucursales de tipo PROVEEDOR ven inventario de todas las ciudades (solo lectura).
+    if (request.auth?.warehouseType === 'PROVIDER') return null
     const city = String(request.auth?.warehouseCity ?? '').trim()
     return city ? city.toUpperCase() : '__MISSING__'
   }

@@ -3,6 +3,7 @@ import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { apiFetch } from '../lib/api'
 import { useAuth } from '../providers/AuthProvider'
+import { usePermissions } from '../hooks'
 
 export type QuickActionBadgeDetail = {
   label: string
@@ -40,9 +41,10 @@ async function fetchMovementRequestsByCity(token: string): Promise<{ items: Move
   return apiFetch(`/api/v1/reports/stock/movement-requests/by-city?${params.toString()}`, { token })
 }
 
-async function listPendingReceptionRequests(token: string): Promise<{ items: PendingReceptionRequest[] }> {
+async function listPendingReceptionRequests(token: string, warehouseId?: string): Promise<{ items: PendingReceptionRequest[] }> {
   const fetchByStatus = async (status: 'SENT' | 'OPEN') => {
     const params = new URLSearchParams({ take: '100', status })
+    if (warehouseId) params.set('warehouseId', warehouseId)
     return apiFetch<{ items: PendingReceptionRequest[] }>(`/api/v1/stock/movement-requests?${params.toString()}`, { token })
   }
 
@@ -135,6 +137,8 @@ function QuickActionCard(props: { to: string; title: string; subtitle: string; i
 
 export function MovementQuickActions({ currentPath, badges }: { currentPath: string; badges?: Record<string, QuickActionBadgeInfo | undefined> }) {
   const auth = useAuth()
+  const permissions = usePermissions()
+  const branchWarehouseId = permissions.hasPermission('scope:branch') && !permissions.isTenantAdmin ? permissions.user?.warehouseId ?? undefined : undefined
 
   const movementRequestsByCityQuery = useQuery({
     queryKey: ['movementRequestsByCity', 'quickActions'],
@@ -144,8 +148,8 @@ export function MovementQuickActions({ currentPath, badges }: { currentPath: str
   })
 
   const pendingReceptionRequestsQuery = useQuery({
-    queryKey: ['pendingReceptionRequests', 'quickActions'],
-    queryFn: () => listPendingReceptionRequests(auth.accessToken!),
+    queryKey: ['pendingReceptionRequests', 'quickActions', branchWarehouseId],
+    queryFn: () => listPendingReceptionRequests(auth.accessToken!, branchWarehouseId),
     enabled: !!auth.accessToken,
     refetchInterval: 15_000,
   })

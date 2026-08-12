@@ -118,7 +118,7 @@ export async function createHttpServer() {
     // not the tenant where the user record lives.
     const user = await db.user.findFirst({
       where: { id: claims.sub, isActive: true },
-      select: { id: true, tenantId: true, warehouseId: true, warehouse: { select: { city: true } }, tenant: { select: { isActive: true } } },
+      select: { id: true, tenantId: true, warehouseId: true, warehouse: { select: { city: true, type: true } }, tenant: { select: { isActive: true } } },
     })
 
     if (!user) return
@@ -155,6 +155,7 @@ export async function createHttpServer() {
       permissions,
       warehouseId: (user as any).warehouseId ?? null,
       warehouseCity: (user as any).warehouse?.city ?? null,
+      warehouseType: (user as any).warehouse?.type ?? null,
       isTenantAdmin,
     }
   })

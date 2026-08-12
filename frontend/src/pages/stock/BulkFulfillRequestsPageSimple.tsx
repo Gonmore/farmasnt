@@ -41,6 +41,7 @@ type MovementRequest = {
   confirmedAt?: string | null
   confirmationNote?: string | null
    warehouse?: { id: string; code: string | null; name: string | null; city: string | null } | null
+   warehouseId?: string | null
    toLocationId?: string | null
    toLocation?: { id: string; code: string; warehouse: { id: string; code: string; name: string; city: string | null } } | null
    movements?: Array<{ id: string; type: 'OUT' | 'IN' }>
@@ -67,11 +68,13 @@ type StockBatch = {
   unitsPerPresentation: number | null
   quantity: number // base units (inventoryBalance.quantity)
   expiryDate: string | null
+  locationId: string
+  locationCode: string
 }
 
-async function listLocationStock(token: string, locationId: string): Promise<{ items: StockBatch[] }> {
-  const data = await apiFetch<{ items: any[] }>(`/api/v1/reports/stock/balances-expanded?locationId=${locationId}&take=1000`, { token })
-  
+async function listWarehouseStock(token: string, warehouseId: string): Promise<{ items: StockBatch[] }> {
+  const data = await apiFetch<{ items: any[] }>(`/api/v1/reports/stock/balances-expanded?warehouseId=${warehouseId}&take=2000`, { token })
+
   const items: StockBatch[] = data.items
     .filter((item: any) => item.quantity > 0)
     .map((item: any) => {
@@ -83,7 +86,7 @@ async function listLocationStock(token: string, locationId: string): Promise<{ i
         // Use default presentation or first one
         presentation = item.product.presentations.find((p: any) => p.isDefault) || item.product.presentations[0]
       }
-      
+
       return {
         id: item.id,
         batchId: item.batchId,
@@ -96,9 +99,11 @@ async function listLocationStock(token: string, locationId: string): Promise<{ i
         unitsPerPresentation: presentation?.unitsPerPresentation || null,
         quantity: Number(item.quantity),
         expiryDate: item.batch?.expiresAt || null,
+        locationId: item.location?.id ?? '',
+        locationCode: item.location?.code ?? '',
       }
     })
-  
+
   return { items }
 }
 
@@ -172,18 +177,22 @@ export function BulkFulfillRequestsPage() {
   })
 
   const locationStockQuery = useQuery({
-    queryKey: ['locationStock', fromLocationId],
-    queryFn: () => listLocationStock(auth.accessToken!, fromLocationId),
-    enabled: !!auth.accessToken && !!fromLocationId && isFulfillModalOpen,
+    queryKey: ['warehouseStock', fromWarehouseId],
+    queryFn: () => listWarehouseStock(auth.accessToken!, fromWarehouseId),
+    enabled: !!auth.accessToken && !!fromWarehouseId && isFulfillModalOpen,
   })
 
   const movementRequestsQuery = useQuery({
-    queryKey: ['movement-requests', toWarehouseId],
+    queryKey: ['movement-requests', toWarehouseId, permissions.isBranchProvider],
     queryFn: () => {
+      // Las sucursales PROVEEDOR atienden solicitudes de cualquier ciudad: sin filtro de ciudad.
+      if (permissions.isBranchProvider) {
+        return listMovementRequests(auth.accessToken!)
+      }
       const destinationCity = activeWarehouses.find((w) => w.id === toWarehouseId)?.city
       return listMovementRequests(auth.accessToken!, destinationCity || undefined)
     },
-    enabled: !!auth.accessToken && !!toWarehouseId,
+    enabled: !!auth.accessToken && (permissions.isBranchProvider || !!toWarehouseId),
   })
 
   const activeWarehouses = useMemo(
@@ -211,7 +220,7 @@ export function BulkFulfillRequestsPage() {
   const availableFromWarehouses = activeWarehouses
   const availableToWarehouses = activeWarehouses.filter((w) => w.id !== fromWarehouseId)
 
-   const canSubmit = !!fromWarehouseId && !!fromLocationId && !!toWarehouseId
+   const canSubmit = !!fromWarehouseId && !!toWarehouseId
 
   const filteredRequests = useMemo(() => {
     if (!movementRequestsQuery.data?.items) return []
@@ -220,13 +229,18 @@ export function BulkFulfillRequestsPage() {
       const hasPendingItems = (request.items ?? []).some((it) => Number(it.remainingQuantity ?? 0) > 1e-9)
       if (!hasPendingItems) return false
 
+      // Para administradores de sucursal proveedor, filtrar por el almacén destino elegido.
+      if (permissions.isBranchProvider && toWarehouseId && request.warehouseId !== toWarehouseId) {
+        return false
+      }
+
       if (request.status === 'OPEN') return true
       if (request.status === 'CANCELLED') return false
       const outCount = (request.movements ?? []).filter((m) => m.type === 'OUT').length
       // Historical inconsistency: SENT/FULFILLED without OUT => treat as pending.
       return outCount === 0
     })
-  }, [movementRequestsQuery.data])
+  }, [movementRequestsQuery.data, permissions.isBranchProvider, toWarehouseId])
 
   const visibleRequests = useMemo(() => {
     return filteredRequests.filter((r: MovementRequest) => {
@@ -474,9 +488,10 @@ export function BulkFulfillRequestsPage() {
           productId: string
           batchId: string
           quantity: number // base units
+          fromLocationId: string
         }>
       }>
-      fromLocationId: string
+      fromLocationId?: string
       note?: string
     }) => {
       return apiFetch<{ sentRequestIds: string[]; touchedRequestIds: string[]; movementCount: number }>(
@@ -522,26 +537,27 @@ export function BulkFulfillRequestsPage() {
         return {
           productId: batch.productId,
           batchId: batch.batchId,
+          fromLocationId: batch.locationId,
           remainingUnits: count * unitsPer,
         }
       })
-      .filter(Boolean) as Array<{ productId: string; batchId: string; remainingUnits: number }>
+      .filter(Boolean) as Array<{ productId: string; batchId: string; fromLocationId: string; remainingUnits: number }>
 
-    const selectionsByProduct = new Map<string, Array<{ batchId: string; remainingUnits: number }>>()
+    const selectionsByProduct = new Map<string, Array<{ batchId: string; fromLocationId: string; remainingUnits: number }>>()
     for (const s of selections) {
       const list = selectionsByProduct.get(s.productId) ?? []
-      list.push({ batchId: s.batchId, remainingUnits: s.remainingUnits })
+      list.push({ batchId: s.batchId, fromLocationId: s.fromLocationId, remainingUnits: s.remainingUnits })
       selectionsByProduct.set(s.productId, list)
     }
 
     const fulfillments: Array<{
       requestId: string
       toLocationId?: string
-      items: Array<{ requestItemId: string; productId: string; batchId: string; quantity: number }>
+      items: Array<{ requestItemId: string; productId: string; batchId: string; quantity: number; fromLocationId: string }>
     }> = []
 
     for (const req of selectedRequests) {
-      const items: Array<{ requestItemId: string; productId: string; batchId: string; quantity: number }> = []
+      const items: Array<{ requestItemId: string; productId: string; batchId: string; quantity: number; fromLocationId: string }> = []
 
       for (const it of req.items) {
         let needUnits = Number(it.remainingQuantity ?? 0)
@@ -559,6 +575,7 @@ export function BulkFulfillRequestsPage() {
             productId: it.productId,
             batchId: b.batchId,
             quantity: take,
+            fromLocationId: b.fromLocationId,
           })
           b.remainingUnits -= take
           needUnits -= take
@@ -570,9 +587,9 @@ export function BulkFulfillRequestsPage() {
       }
     }
 
-     const payload: { fulfillments: Array<{ requestId: string; toLocationId?: string; items: Array<{ requestItemId: string; productId: string; batchId: string; quantity: number }> }>
-        fromLocationId: string
-        note?: string } = { fulfillments, fromLocationId, note: note.trim() || undefined }
+     const payload: { fulfillments: Array<{ requestId: string; toLocationId?: string; items: Array<{ requestItemId: string; productId: string; batchId: string; quantity: number; fromLocationId: string }> }>
+        fromLocationId?: string
+        note?: string } = { fulfillments, fromLocationId: fromWarehouseId || undefined, note: note.trim() || undefined }
 
       // Validate that every selected request has a destination location
       for (const req of selectedRequests) {
@@ -600,7 +617,6 @@ export function BulkFulfillRequestsPage() {
                    onChange={(e) => {
                    setFromWarehouseId(e.target.value)
                    setFromLocationId('')
-                   // Si el destino era el mismo que el origen, lo limpiamos
                    if (toWarehouseId === e.target.value) {
                      setToWarehouseId('')
                      setRequestLocations({})
@@ -617,18 +633,20 @@ export function BulkFulfillRequestsPage() {
                 disabled={warehousesQuery.isLoading || isBranchScoped}
               />
 
-              <Select
-                label="Ubicación origen"
-                value={fromLocationId}
-                onChange={(e) => setFromLocationId(e.target.value)}
-                options={[
-                  { value: '', label: 'Selecciona ubicación' },
-                  ...(fromLocationsQuery.data?.items ?? [])
-                    .filter((l) => l.isActive)
-                    .map((l) => ({ value: l.id, label: l.code })),
-                ]}
-                disabled={!fromWarehouseId || fromLocationsQuery.isLoading}
-              />
+              {!permissions.isBranchProvider && (
+                <Select
+                  label="Ubicación origen"
+                  value={fromLocationId}
+                  onChange={(e) => setFromLocationId(e.target.value)}
+                  options={[
+                    { value: '', label: 'Selecciona ubicación' },
+                    ...(fromLocationsQuery.data?.items ?? [])
+                      .filter((l) => l.isActive)
+                      .map((l) => ({ value: l.id, label: l.code })),
+                  ]}
+                  disabled={!fromWarehouseId || fromLocationsQuery.isLoading}
+                />
+              )}
 
               <Select
                 label="Almacén destino"
@@ -967,6 +985,9 @@ export function BulkFulfillRequestsPage() {
                                 <div>
                                   <div className="text-xs text-slate-700 dark:text-slate-300">
                                     {productBatches[0].batchNumber}
+                                    {productBatches[0].locationCode ? (
+                                      <span className="ml-1 text-slate-500 dark:text-slate-400">@ {productBatches[0].locationCode}</span>
+                                    ) : null}
                                   </div>
                                   <div className={`text-xs px-2 py-1 rounded-full inline-block ${getExpiryColor(productBatches[0].expiryDate)}`}>
                                     {productBatches[0].expiryDate ? formatDateOnlyUtc(productBatches[0].expiryDate, 'es-ES') : 'Sin fecha'}

@@ -1,4 +1,4 @@
-# Architecture — PharmaFlow Bolivia (farmaSNT)
+﻿# Architecture — PharmaFlow Bolivia (farmaSNT)
 
 > Fuente de verdad para la estructura del proyecto y el mapeo frontend ↔ backend.  
 > Última actualización: 07 Ago 2026
@@ -167,12 +167,14 @@ frontend/src/
 | `pages/stock/InventoryPage.tsx` (stock) | `GET /api/v1/warehouses` | `routes/warehouses.ts:54` |
 | `pages/stock/InventoryPage.tsx` (ver stock) | `GET /api/v1/reports/stock/balances-expanded` | `routes/reports.ts:1435` |
 | `pages/stock/InventoryPage.tsx` (kardex — vista "Por Sucursal") | `GET /api/v1/products/:id/kardex` | `routes/products.ts:1391` | Filtra movimientos por `warehouseId`; muestra origen/destino como `WAREHOUSE:Location`; incluye `fromWarehouseCode`/`toWarehouseCode`; para ventas (`OUT+SALES_ORDER`) el destino muestra `NRO_ORDEN: NombreCliente`; saldo acumulado filtrado por `affectsWarehouse`. |
+| `pages/stock/InventoryPage.tsx` (ediciones — vista "Por Sucursal") | `PATCH /api/v1/products/:productId/batches/:batchId/status`, `POST /api/v1/stock/movements` | `routes/products.ts:1758`, `routes/stock.ts:2506` | Ambas vistas ("Por Producto" y "Por Sucursal") aplican `canEditWarehouse(warehouseId)`: solo edita ubicación (TRANSFER) y estado de lote en el almacén propio del usuario con scope de sucursal (`scope:branch`); los demás almacenes quedan en solo lectura. |
 | `pages/stock/InventoryPage.tsx` (kardex export) | `GET /api/v1/products/:id/kardex` | `routes/products.ts:1391` (datos para exportToXlsx) | Exporta origen/destino con formato `WAREHOUSE:Location`, filtrando solo movimientos `affectsWarehouse`. |
 | `pages/stock/CompletedMovementsPage.tsx` (historial) | `GET /api/v1/stock/completed-movements` | `routes/stock.ts:3665` | Columna "Origen → Destino" muestra `WAREHOUSE:Location` (sin prefijo `SUC-`). |
 | `components/MovementHistoryTab.tsx` (historial) | `GET /api/v1/stock/completed-movements` | `routes/stock.ts:3665` | Columna "Origen → Destino" muestra `WAREHOUSE:Location` con `SUC-` removido. |
-| `pages/stock/MovementsPage.tsx` | `POST /api/v1/stock/movements` | `routes/stock.ts:2506` |
+| `pages/stock/MovementsPage.tsx` | `POST /api/v1/stock/movements` | `routes/stock.ts:2506` | | Lista de solicitudes y modal "Detalle de solicitud" muestran destino como `Warehouse:Location` (sin `SUC-`)
 | | `GET /api/v1/warehouses/:id/locations` | `routes/warehouses.ts:200` |
 | `pages/stock/MovementRequestsPage.tsx` | `GET /api/v1/stock/movement-requests` | `routes/stock.ts:792` |
+| | | | | Rol `BRANCH_PROVIDER` (12 Ago 2026): almacenes `PROVIDER` ven/atenden TODAS las solicitudes sin filtro de ciudad (`branchCityOf` devuelve null para `warehouseType=PROVIDER`).
 | | `POST /api/v1/stock/movement-requests` | `routes/stock.ts:1117` |
 | | `PUT /api/v1/stock/movement-requests/:id` | `routes/stock.ts:1323` |
 | | `POST /api/v1/stock/movement-requests/:id/plan` | `routes/stock.ts:1574` |
@@ -337,7 +339,7 @@ frontend/src/
 ## 5. Reglas de negocio críticas
 
 1. **Multi-tenant**: todas las queries filtran por `tenantId`. El `request.auth` incluye `tenantId`, `userId`, `permissions`, `isTenantAdmin`, `warehouseId`, `warehouseCity`.
-2. **ScopeBranch**: usuarios con `Permissions.ScopeBranch` están restringidos a movimientos/reports de su ciudad/warehouse. `TENANT_ADMIN` y platform admin no se ven afectados.
+2. **ScopeBranch**: usuarios con `Permissions.ScopeBranch` están restringidos a movimientos/reports de su ciudad/warehouse. `TENANT_ADMIN` y platform admin no se ven afectados. En inventario, un usuario con scope de sucursal solo puede **editar** (ubicación/estado de lote) su propio almacén (`canEditWarehouse`); el resto de almacenes se muestra en solo lectura (UI) y el backend rechaza `403` ADJUSTMENT/IN hacia almacenes ajenos. El rol `BRANCH_PROVIDER` (almacén tipo `PROVIDER`) ve TODAS las solicitudes de transferencia sin filtro de ciudad pero solo edita su propio almacén.
 3. **Optimistic locking**: `version` en `Product`, `Batch`, `Tenant`, `TenantModule`, `Role`, `User`, etc. Retorna `409` si no coincide.
 4. **FEFO**: los movimientos `OUT`/`TRANSFER` priorizan lotes con `expiresAt` más próximo. Se bloquean movimientos de lotes vencidos.
 5. **Presentaciones**: las cantidades en UI se expresan en presentación (cajas); el backend convierte a unidades base usando `unitsPerPresentation`.

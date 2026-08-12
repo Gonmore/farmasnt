@@ -10,6 +10,7 @@ export type AuthContext = {
   permissions: Set<string>
   warehouseId?: string | null
   warehouseCity?: string | null
+  warehouseType?: 'PROVIDER' | 'SALES' | null
   isTenantAdmin?: boolean
 }
 
