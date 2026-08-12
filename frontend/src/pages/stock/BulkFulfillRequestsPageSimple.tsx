@@ -589,7 +589,7 @@ export function BulkFulfillRequestsPage() {
 
      const payload: { fulfillments: Array<{ requestId: string; toLocationId?: string; items: Array<{ requestItemId: string; productId: string; batchId: string; quantity: number; fromLocationId: string }> }>
         fromLocationId?: string
-        note?: string } = { fulfillments, fromLocationId: fromWarehouseId || undefined, note: note.trim() || undefined }
+        note?: string } = { fulfillments, note: note.trim() || undefined }
 
       // Validate that every selected request has a destination location
       for (const req of selectedRequests) {
