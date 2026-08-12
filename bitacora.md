@@ -73,6 +73,24 @@ Este documento suma (a alto nivel) decisiones, hitos y cambios relevantes que se
 - `ensureSystemRoles` siembra el rol en todos los tenants al arrancar. Los usuarios proveedor existentes deben asignárselo manualmente (rol de sistema).
 - TypeScript check OK en frontend y backend.
 
+## **[12 Ago 2026] Autonomía de sucursales en reportes de stock**
+
+- Por criterio de autonomía, los usuarios con `scope:branch` (BRANCH_ADMIN y BRANCH_PROVIDER) solo pueden ver reportes de **su propia sucursal**; los administradores sin scope de sucursal (Tenant Admin / roles globales) mantienen el selector "Sucursal" para elegir un almacén concreto o "Todas las sucursales".
+- Antes, los usuarios de sucursal tipo `SALES` se filtraban por ciudad (`branchCityOf`) y los `PROVIDER` veían inventario de todas las ciudades. Ahora el filtro se basa en el `warehouseId` propio del usuario autenticado para todos los tipos de sucursal.
+
+### Backend (`backend/src/adapters/http/routes/reports.ts`)
+- Nuevos helpers `branchOwnWarehouseIdOf(request)` y `resolveBranchWarehouseId(request, requestedWarehouseId)`: para usuarios con `scope:branch` (no Tenant Admin) fuerzan el `warehouseId` efectivo a su almacén propio (rechazan con `409` si no tiene sucursal seleccionada). Para admins devuelven el `warehouseId` recibido (o `null` = todas).
+- Aplicado a: `balances-expanded`, `existencias`, `low-stock`, `expiry-alerts`, `rotation`, `transfers-between-warehouses`, `returns/summary`, `returns/by-warehouse` y `movements-expanded`. Los reportes de ciudad (`movement-requests/by-city`) y de actividad por tipo (`provider-activity`, `sales-branch-activity`) mantienen su lógica por tipo de almacén.
+- `WarehouseType.PROVIDER` ya no implica "ver todas las sucursales" en reportes de stock; la visibilidad total de transferencias (movement-requests) se mantiene solo a nivel operativo de atención.
+
+### Frontend (`frontend/src/pages/reports/StockReportsPage.tsx`)
+- Se agrega `usePermissions`; `isBranchScoped` oculta el `Select` "Sucursal" y muestra un indicador de solo lectura ("Mi sucursal"). `effectiveWarehouseId` fija el almacén propio en todas las queries (`existencias`, `balancesExpanded`, ubicaciones) y habilita el selector de Sub almacén.
+
+### Operación
+- TypeScript check OK en frontend y backend.
+
+---
+
 ## **[12 Ago 2026] Inventario "Por Sucursal": mismo modo solo-lectura que "Por Producto"**
 
 - En `/stock/inventory`, la vista **"Por Sucursal"** ahora aplica las mismas reglas de solo-lectura que la vista "Por Producto" para usuarios con scope de sucursal (`scope:branch`): la edición solo está habilitada en el almacén propio del usuario; los demás almacenes quedan en solo lectura (backend ya lo refuerza).

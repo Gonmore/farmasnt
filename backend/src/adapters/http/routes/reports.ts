@@ -376,6 +376,26 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
     return city ? city.toUpperCase() : '__MISSING__'
   }
 
+  // Autonomía de sucursal: usuarios con scope:branch (no admin de tenant) solo pueden
+  // ver reportes de SU PROPIA sucursal. Devuelve el id del almacén propio o null (admin).
+  function branchOwnWarehouseIdOf(request: any): string | null {
+    if (request.auth?.isTenantAdmin) return null
+    const scoped = !!request.auth?.permissions?.has(Permissions.ScopeBranch)
+    if (!scoped) return null
+    const ownId = request.auth?.warehouseId ?? null
+    return ownId ? String(ownId) : '__MISSING__'
+  }
+
+  // Fuerza el warehouseId efectivo para reportes de stock:
+  // - Si el usuario es de sucursal, SIEMPRE usa su propio almacén (ignora/valida input).
+  // - Si es admin (sin scope:branch), respeta el warehouseId recibido (o null = todas).
+  function resolveBranchWarehouseId(request: any, requestedWarehouseId: string | undefined): string | null {
+    const ownId = branchOwnWarehouseIdOf(request)
+    if (!ownId) return requestedWarehouseId ?? null
+    if (ownId === '__MISSING__') return '__MISSING__'
+    return ownId
+  }
+
   // SALES reports
   app.get(
     '/api/v1/reports/sales/summary',
@@ -898,6 +918,10 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
       const tenantId = request.auth!.tenantId
       const { take } = parsed.data
 
+      // Autonomía de sucursal: usuarios con scope:branch solo ven SU almacén propio.
+      const resolvedWarehouseId = resolveBranchWarehouseId(request, undefined)
+      const ownWhId = resolvedWarehouseId === '__MISSING__' ? null : resolvedWarehouseId
+
       // Get current stock and compare with a default minStock of 10 (or less for products with low sales)
       // TODO: Add minStock field to Product model for configurable thresholds
       const rows = await db.$queryRaw<LowStockRow[]>`
@@ -906,7 +930,9 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
             ib."productId",
             sum(ib.quantity - ib."reservedQuantity") as total_stock
           FROM "InventoryBalance" ib
+          JOIN "Location" loc ON loc.id = ib."locationId" AND loc."tenantId" = ib."tenantId"
           WHERE ib."tenantId" = ${tenantId}
+            AND (${ownWhId ?? null}::text IS NULL OR loc."warehouseId" = ${ownWhId ?? null})
           GROUP BY ib."productId"
         ),
         daily_sales AS (
@@ -978,6 +1004,10 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
       const tenantId = request.auth!.tenantId
       const { daysAhead, take } = parsed.data
 
+      // Autonomía de sucursal: usuarios con scope:branch solo ven SU almacén propio.
+      const resolvedWarehouseId = resolveBranchWarehouseId(request, undefined)
+      const ownWhId = resolvedWarehouseId === '__MISSING__' ? null : resolvedWarehouseId
+
       // Get current balances for batches that are expiring soon
       const rows = await db.$queryRaw<ExpiryAlertRow[]>`
         SELECT
@@ -998,6 +1028,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
         JOIN "Warehouse" w ON w.id = l."warehouseId" AND w."tenantId" = l."tenantId"
         JOIN "Batch" b ON b.id = ib."batchId" AND b."tenantId" = ib."tenantId"
         WHERE ib."tenantId" = ${tenantId}
+          AND (${ownWhId ?? null}::text IS NULL OR w.id = ${ownWhId ?? null})
           AND ib."batchId" IS NOT NULL
           AND (ib.quantity - ib."reservedQuantity") > 0
           AND b."expiresAt" IS NOT NULL
@@ -1040,6 +1071,10 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
       const tenantId = request.auth!.tenantId
       const { from, to, take } = parsed.data
 
+      // Autonomía de sucursal: usuarios con scope:branch solo ven SU almacén propio.
+      const resolvedWarehouseId = resolveBranchWarehouseId(request, undefined)
+      const ownWhId = resolvedWarehouseId === '__MISSING__' ? null : resolvedWarehouseId
+
       const rows = await db.$queryRaw<
         {
           productId: string
@@ -1072,7 +1107,9 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
                 OR (sm.type = 'ADJUSTMENT'::"StockMovementType" AND sm."toLocationId" IS NULL)
             )::text as "qtyOut"
           FROM "StockMovement" sm
+          JOIN "Location" sml ON sml.id = COALESCE(sm."fromLocationId", sm."toLocationId") AND sml."tenantId" = sm."tenantId"
           WHERE sm."tenantId" = ${tenantId}
+            AND (${ownWhId ?? null}::text IS NULL OR sml."warehouseId" = ${ownWhId ?? null})
             AND (${from ?? null}::timestamptz IS NULL OR sm."createdAt" >= ${from ?? null})
             AND (${to ?? null}::timestamptz IS NULL OR sm."createdAt" < ${to ?? null})
           GROUP BY sm."productId"
@@ -1082,7 +1119,9 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
             ib."productId",
             sum(ib.quantity - ib."reservedQuantity")::text as total_stock
           FROM "InventoryBalance" ib
+          JOIN "Location" ibloc ON ibloc.id = ib."locationId" AND ibloc."tenantId" = ib."tenantId"
           WHERE ib."tenantId" = ${tenantId}
+            AND (${ownWhId ?? null}::text IS NULL OR ibloc."warehouseId" = ${ownWhId ?? null})
           GROUP BY ib."productId"
         )
         SELECT
@@ -1469,31 +1508,14 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
       if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
 
       const tenantId = request.auth!.tenantId
-      const branchCity = branchCityOf(request)
-      const { warehouseId, locationId, productId, take } = parsed.data
+      const { locationId, productId, take } = parsed.data
 
-      // For branch-scoped users, restrict to their branch warehouses unless a specific warehouse is requested
-      let allowedWarehouseIds: string[] | undefined
-      if (branchCity && !request.auth?.isTenantAdmin) {
-        if (warehouseId) {
-          // Verify the requested warehouse belongs to their branch
-          const wh = await db.warehouse.findFirst({
-            where: { tenantId, id: warehouseId },
-            select: { city: true },
-          })
-          const whCity = String(wh?.city ?? '').trim().toUpperCase()
-          if (!whCity || whCity !== branchCity) {
-            return reply.status(403).send({ message: 'Solo puede ver inventario de su sucursal' })
-          }
-        } else {
-          // Get warehouses for their branch
-          const branchWarehouses = await db.warehouse.findMany({
-            where: { tenantId, city: { equals: branchCity, mode: 'insensitive' as const } },
-            select: { id: true },
-          })
-          allowedWarehouseIds = branchWarehouses.map(w => w.id)
-        }
+      // Autonomía de sucursal: usuarios con scope:branch solo ven SU almacén propio.
+      const resolvedWarehouseId = resolveBranchWarehouseId(request, parsed.data.warehouseId)
+      if (resolvedWarehouseId === '__MISSING__') {
+        return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
       }
+      const warehouseId = resolvedWarehouseId ?? undefined
 
       const items = await db.inventoryBalance.findMany({
         where: {
@@ -1506,13 +1528,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
                   warehouseId,
                 },
               }
-            : allowedWarehouseIds
-              ? {
-                  location: {
-                    warehouseId: { in: allowedWarehouseIds },
-                  },
-                }
-              : {}),
+            : {}),
         },
         take,
         orderBy: [{ updatedAt: 'desc' }],
@@ -1603,24 +1619,16 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
       if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
 
       const tenantId = request.auth!.tenantId
-      const branchCity = branchCityOf(request)
-      if (branchCity === '__MISSING__') return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
 
-      const { from, to, take, warehouseId, locationId } = parsed.data
+      const { from, to, take, locationId } = parsed.data
+
+      // Autonomía de sucursal: usuarios con scope:branch solo ven SU almacén propio.
+      const resolvedWarehouseId = resolveBranchWarehouseId(request, parsed.data.warehouseId)
+      if (resolvedWarehouseId === '__MISSING__') return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+      const warehouseId = resolvedWarehouseId ?? undefined
 
       let allowedWarehouseIds: string[] | undefined
-      if (branchCity && !request.auth?.isTenantAdmin) {
-        const branchWarehouses = await db.warehouse.findMany({
-          where: { tenantId, city: { equals: branchCity, mode: 'insensitive' as const } },
-          select: { id: true },
-        })
-        allowedWarehouseIds = branchWarehouses.map((warehouse) => warehouse.id)
-      }
-
-      // Merge explicit warehouseId filter (from report selector) with the branch-scoped restriction, if any.
-      if (warehouseId) {
-        allowedWarehouseIds = allowedWarehouseIds ? allowedWarehouseIds.filter((id) => id === warehouseId) : [warehouseId]
-      }
+      if (warehouseId) allowedWarehouseIds = [warehouseId]
 
       let allowedLocationIds: string[] | undefined
       if (allowedWarehouseIds) {
@@ -1886,6 +1894,10 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
       const tenantId = request.auth!.tenantId
       const { from, to, take } = parsed.data
 
+      // Autonomía de sucursal: usuarios con scope:branch solo ven transferencias de SU almacén.
+      const resolvedWarehouseId = resolveBranchWarehouseId(request, undefined)
+      const ownWhId = resolvedWarehouseId === '__MISSING__' ? null : resolvedWarehouseId
+
       const rows = await db.$queryRaw<StockTransfersBetweenWarehousesRow[]>`
         SELECT
           wf.id as "fromWarehouseId",
@@ -1903,6 +1915,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
         LEFT JOIN "Warehouse" wt ON wt.id = lt."warehouseId"
         WHERE sm."tenantId" = ${tenantId}
           AND sm.type = 'TRANSFER'::"StockMovementType"
+          AND (${ownWhId ?? null}::text IS NULL OR wf.id = ${ownWhId ?? null} OR wt.id = ${ownWhId ?? null})
           AND (${from ?? null}::timestamptz IS NULL OR sm."createdAt" >= ${from ?? null})
           AND (${to ?? null}::timestamptz IS NULL OR sm."createdAt" < ${to ?? null})
         GROUP BY wf.id, wf.code, wf.name, wt.id, wt.code, wt.name
@@ -2429,8 +2442,11 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
       if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
 
       const tenantId = request.auth!.tenantId
-      const branchCity = branchCityOf(request)
-      if (branchCity === '__MISSING__') return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+
+      // Autonomía de sucursal: usuarios con scope:branch solo ven SU almacén propio.
+      const resolvedWarehouseId = resolveBranchWarehouseId(request, undefined)
+      if (resolvedWarehouseId === '__MISSING__') return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+      const ownWhId = resolvedWarehouseId
 
       const { from, to } = parsed.data
       const rows = await db.$queryRaw<StockReturnsSummaryRow[]>`
@@ -2445,7 +2461,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
         WHERE sr."tenantId" = ${tenantId}
           AND (${from ?? null}::timestamptz IS NULL OR sr."createdAt" >= ${from ?? null})
           AND (${to ?? null}::timestamptz IS NULL OR sr."createdAt" < ${to ?? null})
-          AND (${branchCity ?? null}::text IS NULL OR upper(coalesce(w."city", '')) = upper(${branchCity ?? null}))
+          AND (${ownWhId ?? null}::text IS NULL OR w.id = ${ownWhId ?? null})
       `
 
       const r = rows[0] ?? { returnsCount: BigInt(0), itemsCount: BigInt(0), quantity: '0' }
@@ -2467,8 +2483,11 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
       if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
 
       const tenantId = request.auth!.tenantId
-      const branchCity = branchCityOf(request)
-      if (branchCity === '__MISSING__') return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+
+      // Autonomía de sucursal: usuarios con scope:branch solo ven SU almacén propio.
+      const resolvedWarehouseId = resolveBranchWarehouseId(request, undefined)
+      if (resolvedWarehouseId === '__MISSING__') return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+      const ownWhId = resolvedWarehouseId
 
       const { from, to, take } = parsed.data
       const rows = await db.$queryRaw<StockReturnsByWarehouseRow[]>`
@@ -2487,7 +2506,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
         WHERE sr."tenantId" = ${tenantId}
           AND (${from ?? null}::timestamptz IS NULL OR sr."createdAt" >= ${from ?? null})
           AND (${to ?? null}::timestamptz IS NULL OR sr."createdAt" < ${to ?? null})
-          AND (${branchCity ?? null}::text IS NULL OR upper(coalesce(w."city", '')) = upper(${branchCity ?? null}))
+          AND (${ownWhId ?? null}::text IS NULL OR w.id = ${ownWhId ?? null})
         GROUP BY w.id, w.code, w.name, w.city
         ORDER BY count(distinct sr.id) DESC NULLS LAST
         LIMIT ${take}
@@ -2705,6 +2724,22 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
       if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
 
       const tenantId = request.auth!.tenantId
+
+      // Autonomía de sucursal: usuarios con scope:branch solo ven SU almacén propio.
+      const resolvedWarehouseId = resolveBranchWarehouseId(request, undefined)
+      if (resolvedWarehouseId === '__MISSING__') return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+      const ownWhId = resolvedWarehouseId
+
+      // Para usuarios de sucursal, forzamos el filtro por las ubicaciones de su almacén.
+      let scopeLocationIds: string[] | undefined
+      if (ownWhId) {
+        const whLocations = await db.location.findMany({
+          where: { tenantId, warehouseId: ownWhId },
+          select: { id: true },
+        })
+        scopeLocationIds = whLocations.map((l) => l.id)
+      }
+
       const { from, to, productId, locationId, take } = parsed.data
 
       const createdAtFilter: { gte?: Date; lt?: Date } = {}
@@ -2715,11 +2750,18 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
         where: {
           tenantId,
           ...(productId ? { productId } : {}),
-          ...(locationId
+          ...(scopeLocationIds
             ? {
-                OR: [{ fromLocationId: locationId }, { toLocationId: locationId }],
+                OR: [
+                  { fromLocationId: { in: scopeLocationIds } },
+                  { toLocationId: { in: scopeLocationIds } },
+                ],
               }
-            : {}),
+            : locationId
+              ? {
+                  OR: [{ fromLocationId: locationId }, { toLocationId: locationId }],
+                }
+              : {}),
           ...(Object.keys(createdAtFilter).length > 0 ? { createdAt: createdAtFilter } : {}),
         },
         take,

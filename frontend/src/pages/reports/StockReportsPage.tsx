@@ -4,7 +4,7 @@ import { useLocation } from 'react-router-dom'
 import { ResponsiveContainer, BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip, Legend, PieChart, Pie, Cell } from 'recharts'
 import { MainLayout, PageContainer, Button, IconButton, Input, Select, Loading, ErrorState, EmptyState, Modal, Table } from '../../components'
 import { KPICard, ReportSection, StockExistenciasDocument, StockExpiryDocument, StockInputsDocument, StockLowStockDocument, StockOpsDocument, StockRotationDocument, StockTransfersDocument, reportColors, getChartColor, chartTooltipStyle, chartGridStyle, chartAxisStyle } from '../../components/reports'
-import { useNavigation } from '../../hooks'
+import { useNavigation, usePermissions } from '../../hooks'
 import { apiFetch } from '../../lib/api'
 import { formatDateOnlyUtc } from '../../lib/date'
 import { blobToBase64, exportElementToPdf, exportModalContentToPdf, exportReactNodeToPdf, pdfBlobFromElement, pdfBlobFromReactNode } from '../../lib/exportPdf'
@@ -598,9 +598,14 @@ function parseEmails(raw: string): string[] {
 export function StockReportsPage() {
   const auth = useAuth()
   const tenant = useTenant()
+  const perms = usePermissions()
   const currency = tenant.branding?.currency || 'BOB'
   const navGroups = useNavigation()
   const location = useLocation()
+
+  // Autonomía de sucursal: usuarios con scope:branch solo ven SU almacén propio.
+  const isBranchScoped = perms.hasPermission('scope:branch') && !perms.isTenantAdmin
+  const ownWarehouseId = perms.warehouseId ?? null
 
   const today = new Date()
   const [tab, setTab] = useState<StockTab>('EXISTENCIAS')
@@ -677,14 +682,17 @@ export function StockReportsPage() {
     enabled: !!auth.accessToken,
   })
 
+  // Para usuarios de sucursal, el almacén efectivo es SIEMPRE el propio (el backend lo refuerza).
+  const effectiveWarehouseId = isBranchScoped && ownWarehouseId ? ownWarehouseId : warehouseId
+
   const warehouseLocationsQuery = useQuery({
-    queryKey: ['warehouseLocations', warehouseId],
-    queryFn: () => fetchWarehouseLocationsList(auth.accessToken!, warehouseId),
-    enabled: !!auth.accessToken && !!warehouseId,
+    queryKey: ['warehouseLocations', effectiveWarehouseId],
+    queryFn: () => fetchWarehouseLocationsList(auth.accessToken!, effectiveWarehouseId),
+    enabled: !!auth.accessToken && !!effectiveWarehouseId,
   })
 
   const existenciasQuery = useQuery({
-    queryKey: ['reports', 'stock', 'existencias', { from, to, warehouseId, locationId }],
+    queryKey: ['reports', 'stock', 'existencias', { from, to, warehouseId: effectiveWarehouseId, locationId }],
     queryFn: () => fetchExistencias(auth.accessToken!, { from, to, take: 5000, warehouseId: warehouseId || undefined, locationId: locationId || undefined }),
     enabled: !!auth.accessToken && tab === 'EXISTENCIAS',
   })
@@ -714,8 +722,8 @@ export function StockReportsPage() {
   })
 
   const stockBalancesExpandedQuery = useQuery({
-    queryKey: ['reports', 'stock', 'balancesExpanded', { tab, warehouseId, locationId }],
-    queryFn: () => fetchBalancesExpanded(auth.accessToken!, { take: 5000, warehouseId: warehouseId || undefined, locationId: locationId || undefined }),
+    queryKey: ['reports', 'stock', 'balancesExpanded', { tab, warehouseId: effectiveWarehouseId, locationId }],
+    queryFn: () => fetchBalancesExpanded(auth.accessToken!, { take: 5000, warehouseId: effectiveWarehouseId || undefined, locationId: locationId || undefined }),
     enabled: !!auth.accessToken && ['INPUTS', 'ROTATION', 'NOMOVEMENT', 'LOWSTOCK'].includes(tab),
   })
 
@@ -1519,6 +1527,12 @@ export function StockReportsPage() {
             </div>
           </div>
           <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
+            {isBranchScoped ? (
+              <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                <span className="block text-xs font-medium text-slate-500 dark:text-slate-400">Sucursal</span>
+                {perms.warehouse?.code ?? 'Mi sucursal'} — solo lectura
+              </div>
+            ) : (
             <Select
               label="Sucursal"
               value={warehouseId}
@@ -1531,13 +1545,14 @@ export function StockReportsPage() {
                 ...(warehousesQuery.data?.items ?? []).map((w) => ({ value: w.id, label: `${w.code} - ${w.name}` })),
               ]}
             />
+            )}
             <Select
               label="Sub almacén / Ubicación"
               value={locationId}
               onChange={(e) => setLocationId(e.target.value)}
-              disabled={!warehouseId}
+              disabled={!effectiveWarehouseId}
               options={[
-                { value: '', label: warehouseId ? 'Todas las ubicaciones' : 'Elija una sucursal primero' },
+                { value: '', label: effectiveWarehouseId ? 'Todas las ubicaciones' : 'Elija una sucursal primero' },
                 ...(warehouseLocationsQuery.data?.items ?? []).filter((l) => l.isActive).map((l) => ({ value: l.id, label: l.code })),
               ]}
             />
