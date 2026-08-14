@@ -1,5 +1,9 @@
 ﻿# API Reference — PharmaFlow Bolivia (MVP)
 
+## Versión 2.2.2
+
+Esta versión corrige un doble conteo de saldo en el kardex para transferencias inter-sucursales y agrega la columna "Movimiento" al modal.
+
 ## Versión 2.2.1
 
 Esta referencia contempla los cambios de las versiones **2.0** (multi-marca/multi-empresa), **2.0.1** (orden alfabético), **2.1.0** (branding numérico + existencias + salida de muestra), **2.1.1** (badges operativos + restricción de edición de lotes), **2.1.2** (historial de movimientos), **2.1.3** (advertencia de atención parcial), **2.1.4** (reportes de ventas: estado por defecto "Todos" y `take` elevado a 1000), **2.2.0** (kardex unificado AuditEvent-based, modal de entrega con devoluciones, sub-almacén en solicitudes, upload PDF de comprobantes) y **2.2.1** (rol `BRANCH_PROVIDER`, visibilidad total de transferencias para proveedor, y edición de inventario solo en almacén propio en ambas vistas).
@@ -1014,11 +1018,13 @@ Query (opcionales)
 - `to` (date-time, opcional) — fecha máxima (exclusivo).
 
 Notas
-- El saldo acumulado (`runningBalance` en `summary`) se toma del `AuditEvent.after.toBalance.quantity` (o `fromBalance` según el rol) cuando el evento está disponible; si no hay evento de auditoría, se cae al acumulado de `entry - exit`.
+- El saldo acumulado (`runningBalance` en `summary`) se toma del `AuditEvent.after` balance que corresponde a la ubicación que pertenece a la sucursal filtrada (`toBalance` si la ubicación de destino está en la sucursal, `fromBalance` si la de origen está en la sucursal); si no hay evento de auditoría disponible, se cae al acumulado de `entry - exit`.
 - El saldo actual (`currentStock`) proviene de la suma de `InventoryBalance.quantity` para la sucursal filtrada (fuente autoritativa), no del cálculo acumulado.
 - Los movimientos que no afectan a la sucursal filtrada se marcan con `affectsWarehouse=false`.
 - Para movimientos `OUT` con `referenceType: 'SALES_ORDER'`: `toCode` = número de orden de venta, `toWarehouseCode` = nombre del cliente. El `detail` incluye `[SALES_ORDER] NRO - Cliente: Nombre`.
 - La respuesta incluye `fromWarehouseCode` y `toWarehouseCode` (códigos de sucursal de origen/destino) y `fromLocationCode`/`toLocationCode` (códigos de ubicación).
+- Los movimientos `OUT` con `referenceType: 'MOVEMENT_REQUEST'` solo afectan el almacén origen (el movimiento `IN` de recepción maneja el destino), evitando doble conteo.
+- El kardex incluye `movementNumber` (código del movimiento, ej. `MS2026-0001`) para trazabilidad.
 
 Response 200
 ```json
@@ -1456,10 +1462,12 @@ Lista "Movimientos realizados" para UI, unificando:
 Notes
 - Si el usuario tiene scope de sucursal (`ScopeBranch`), el backend exige sucursal seleccionada; si falta, responde `409`.
 - Los resultados se combinan y ordenan por `completedAt` desc, luego se paginan. Cada origen (movimientos individuales, transferencias masivas, atenciones de solicitud, devoluciones) se consulta con un `take` interno de 300, por lo que el listado combinado puede contener hasta ~1200 registros antes de quedarse sin más páginas.
+ - **Filtro por recepción**: query param opcional `receiptStatus` (`PENDING` | `RECEIVED`) filtra la lista combinada antes de paginar. Las transferencias (simples y masivas) enviadas a otra sucursal aparecen como `PENDING` hasta ser recepcionadas por el destino (`POST /api/v1/stock/transfers/:id/receive`). Un `TRANSFER` o `OUT` de solicitud (`MOVEMENT_REQUEST` / `REQUEST_FULFILL`) entre **el mismo warehouse** (distintas ubicaciones) **no** pasa a `PENDING` (se marca `RECEIVED`); solo los inter-warehouse requieren recepción. El backend recalcula `receiptStatus` comparando `warehouseId` de las ubicaciones origen/destino, por lo que los movimientos históricos entre ubicaciones del mismo warehouse no aparecen como pendientes. El backend ya filtra por la sucursal del usuario, por lo que un destino solo ve las `PENDING` que le corresponden.
 
 Query (paginación cursor)
-- `take` (1..100, default 50): tamaño de página.
+- `take` (1..100, default 50): tamaño de página. **No exceder 100** (devuelve `400`).
 - `cursor` (string opcional): offset entero no negativo devuelto como `nextCursor` en la página anterior. Es opaco para el cliente.
+- `receiptStatus` (opcional): `PENDING` | `RECEIVED`.
 
 Response 200
 ```json
@@ -1469,6 +1477,7 @@ Response 200
       "id": "...",
       "type": "FULFILL_REQUEST",
       "typeLabel": "Atención de solicitud - SOL260001",
+      "number": null,
       "createdAt": "2026-03-05T12:00:00.000Z",
       "completedAt": "2026-03-05T12:10:00.000Z",
       "fromWarehouseCode": "CEN",
@@ -1479,17 +1488,21 @@ Response 200
       "totalQuantity": 120,
       "totalQuantityUnits": 120,
       "totalQuantityPresentations": 12,
-      "canExportPicking": true,
-      "canExportLabel": true
-    }
-  ],
-  "nextCursor": "50" // string con el offset para la página siguiente, o null si no hay más
+       "receiptStatus": "RECEIVED",
+       "requestCode": "SOL260001",
+       "canExportPicking": true,
+       "canExportLabel": true
+     }
+   ],
+   "nextCursor": "50" // string con el offset para la página siguiente, o null si no hay más
 }
 ```
 
 Notas de cantidades
 - `totalQuantity` y `totalQuantityUnits` representan unidades base (tal como se persisten en movimientos).
 - `totalQuantityPresentations` representa la cantidad expresada en presentación (ej. cajas), calculada como `quantityUnits / unitsPerPresentation` según la presentación del lote. Puede ser decimal.
+- `number`: para movimientos individuales es el código del movimiento (`MSYYYY-N`); para transferencias masivas es el `referenceId` del grupo; es `null` para atenciones de solicitud (`FULFILL_REQUEST`), que identifican a la solicitud con `requestCode` (`SOLYY####`).
+- `requestCode`: código humano de la solicitud de movimiento (`SOLYY####`), presente solo para `FULFILL_REQUEST`; `null` en los demás tipos.
 
 ### GET /api/v1/stock/completed-movements/:id/picking
 Requiere permiso: `stock:move`.
@@ -1511,12 +1524,14 @@ Response 200
   "meta": {
     "requestId": "...",
     "requestCode": "SOL260001",
+    "movementCode": null,
     "generatedAtIso": "2026-03-05T12:34:56.000Z",
     "fromWarehouseLabel": "CEN - Central (SANTA CRUZ)",
     "fromLocationCode": "A1",
     "toWarehouseLabel": "SCZ - Sucursal SCZ (SANTA CRUZ)",
     "toLocationCode": "BIN-01",
-    "requestedByName": "Juan Pérez"
+    "requestedByName": "Juan Pérez",
+    "sentByName": "María López"
   },
   "requestedItems": [
     {
@@ -1536,14 +1551,19 @@ Response 200
       "quantityUnits": 100,
       "quantityPresentations": 10,
       "unitsPerPresentation": 10,
-      "presentationLabel": "Caja (10u)"
+      "presentationLabel": "Caja (10u)",
+      "movementNumber": "MS2026-20"
     }
   ]
 }
 ```
 
 Notas
-- `meta.requestCode` se devuelve cuando `type=FULFILL_REQUEST` (código humano `SOLYY####`). En los demás tipos puede venir `null`.
+- `meta.requestCode` se devuelve cuando `type=FULFILL_REQUEST` (código humano `SOLYY####`). En los demás tipos viene `null` (no hay solicitud).
+ - `meta.movementCode` es el código del movimiento: para `MOVEMENT` es el `number` (`MSYYYY-N`); para `BULK_TRANSFER` es el `referenceId` del grupo; para `FULFILL_REQUEST` es el `number` del primer movimiento de envío (`OUT`) (puede ser `null` si la solicitud no ha sido enviada todavía). Cada `sentLine.movementNumber` también expone el código por línea.
+- `meta.requestedByName` es quien solicitó (solo en `FULFILL_REQUEST`); para movimientos sin solicitud viene `null`.
+- `meta.sentByName` es siempre quien envió/atendió (usuario creador del movimiento de envío); está presente en todos los tipos.
+- Cada `sentLine.movementNumber` es el código del movimiento de esa línea (permite trazar línea a línea cuando una solicitud se atiende con varios movimientos).
 - `quantityPresentations` puede ser decimal (no se redondea hacia arriba).
 
 ### GET /api/v1/stock/completed-movements/:id/label
@@ -1574,6 +1594,43 @@ Response 200
   "observaciones": "—"
 }
 ```
+
+### POST /api/v1/stock/transfers/:id/receive
+Requiere permiso: `stock:move`.
+
+Confirma la **recepción** de una transferencia (simple o masiva) pendiente de recepción en la sucursal destino. El stock ya fue descontado en el origen y creado en el destino al enviar (modelo "IN pendiente"); este endpoint solo marca `receiptStatus = RECEIVED` (con `receivedAt`/`receivedBy`). Si se indica devolución parcial de ítems, crea un **TRANSFER inverso** (destino → origen) por la cantidad devuelta, manteniendo el stock consistente.
+
+Params
+- `id` (uuid): para una transferencia simple es el `id` del movimiento `TRANSFER`; para una transferencia masiva es el `referenceId` del grupo (`BULK_TRANSFER`).
+
+Body
+```json
+{
+  "note": "Recibido en buen estado",
+  "photoUrl": "https://.../foto.png",
+  "items": [
+    { "movementId": "<uuid-del-movimiento>", "returnedQuantity": 0, "returnReason": null }
+  ]
+}
+```
+- `note` (string, opcional, nullable): nota general de recepción.
+- `photoUrl` (string, opcional, nullable): URL de evidencia (foto) ya subida vía presigned (se adjunta en la nota).
+- `items` (array, opcional): por cada ítem/movimiento de la transferencia.
+  - `movementId` (uuid): **id del movimiento** (no el código `MS…`); se obtiene en `sentLines[].movementId` del endpoint de picking.
+  - `returnedQuantity` (number ≥ 0): cantidad a devolver de ese ítem. `0` (o ausente) = recepción completa.
+  - `returnReason` (string, requerido si `returnedQuantity > 0`): motivo de la devolución.
+
+Notas
+- Solo el **administrador de la sucursal destino** (`BRANCH_ADMIN` / `BRANCH_PROVIDER`) puede confirmar: el backend valida que `toLocation` pertenezca a la sucursal del usuario autenticado; de lo contrario responde `403`.
+- Si el usuario tiene scope de sucursal pero no tiene sucursal seleccionada, responde `409`.
+- Si la transferencia ya fue recepcionada, responde `409`. Si no existe o no está pendiente, responde `404`.
+- Si `returnedQuantity > 0` y `returnReason` vacío → `400`. Si `returnedQuantity` excede lo enviado → `400`.
+
+Response 200
+```json
+{ "ok": true, "received": 1, "returns": 1 }
+```
+(`received` = movimientos marcados RECEIVED; `returns` = TRANSFER inversos creados por devolución).
 
 ### GET /api/v1/stock/movement-requests
 Requiere permiso: `stock:read`.

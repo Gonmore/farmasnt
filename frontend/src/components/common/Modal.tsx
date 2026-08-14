@@ -7,6 +7,8 @@ export interface ModalProps {
   children: React.ReactNode
   maxWidth?: 'sm' | 'md' | 'lg' | 'xl' | '2xl' | '3xl' | '4xl' | '5xl' | '6xl'
   actions?: React.ReactNode
+  closeOnBackdropClick?: boolean
+  closeOnEsc?: boolean
 }
 
 const maxWidthClasses = {
@@ -21,19 +23,19 @@ const maxWidthClasses = {
   '6xl': 'max-w-6xl',
 }
 
-export function Modal({ isOpen, onClose, title, children, maxWidth = 'md', actions }: ModalProps) {
+export function Modal({ isOpen, onClose, title, children, maxWidth = 'md', actions, closeOnBackdropClick = true, closeOnEsc = true }: ModalProps) {
   const modalRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && isOpen) {
+      if (event.key === 'Escape' && isOpen && closeOnEsc) {
         onClose()
       }
     }
 
     document.addEventListener('keydown', handleEscape)
     return () => document.removeEventListener('keydown', handleEscape)
-  }, [isOpen, onClose])
+  }, [isOpen, onClose, closeOnEsc])
 
   useEffect(() => {
     if (isOpen) {
@@ -52,7 +54,7 @@ export function Modal({ isOpen, onClose, title, children, maxWidth = 'md', actio
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
       onClick={(e) => {
-        if (e.target === e.currentTarget) {
+        if (closeOnBackdropClick && e.target === e.currentTarget) {
           onClose()
         }
       }}

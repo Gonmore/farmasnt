@@ -1638,16 +1638,21 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
         // Determine if this movement affects the filtered warehouse (branch)
         let affectsWarehouse = true
         let netDelta = 0
+        let fromAffects = false
+        let toAffects = false
         if (warehouseLocationIds && warehouseLocationIds.length > 0) {
-          const fromAffects = m.fromLocationId ? warehouseLocationIds.includes(m.fromLocationId) : false
-          const toAffects = m.toLocationId ? warehouseLocationIds.includes(m.toLocationId) : false
-          if (m.type === 'TRANSFER' || (m.type === 'OUT' && m.referenceType === 'MOVEMENT_REQUEST' && m.toLocationId)) {
+          fromAffects = m.fromLocationId ? warehouseLocationIds.includes(m.fromLocationId) : false
+          toAffects = m.toLocationId ? warehouseLocationIds.includes(m.toLocationId) : false
+          if (m.type === 'TRANSFER') {
             affectsWarehouse = fromAffects || toAffects
             netDelta = (toAffects ? qty : 0) - (fromAffects ? qty : 0)
           } else if (m.type === 'IN') {
             affectsWarehouse = toAffects || (!m.toLocationId && !m.fromLocationId)
             netDelta = toAffects || (!m.toLocationId && !m.fromLocationId) ? qty : 0
           } else if (m.type === 'OUT') {
+            // MOVEMENT_REQUEST OUT shipments only affect the source; the destination
+            // balance is handled by the corresponding IN receipt movement. Treating
+            // them as TRANSFER-like would double-count at the destination.
             affectsWarehouse = fromAffects || (!m.fromLocationId && !m.toLocationId)
             netDelta = fromAffects || (!m.fromLocationId && !m.toLocationId) ? -qty : 0
           } else if (m.type === 'ADJUSTMENT') {
@@ -1662,9 +1667,9 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
             netDelta = qty
           }
         } else if (locationId) {
-          const fromAffects = m.fromLocationId ? m.fromLocationId === locationId : false
-          const toAffects = m.toLocationId ? m.toLocationId === locationId : false
-          if (m.type === 'TRANSFER' || (m.type === 'OUT' && m.referenceType === 'MOVEMENT_REQUEST' && m.toLocationId)) {
+          fromAffects = m.fromLocationId ? m.fromLocationId === locationId : false
+          toAffects = m.toLocationId ? m.toLocationId === locationId : false
+          if (m.type === 'TRANSFER') {
             affectsWarehouse = fromAffects || toAffects
             netDelta = (toAffects ? qty : 0) - (fromAffects ? qty : 0)
           } else if (m.type === 'IN') {
@@ -1684,6 +1689,9 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
             affectsWarehouse = fromAffects || toAffects
             netDelta = qty
           }
+        } else {
+          fromAffects = !!m.fromLocationId
+          toAffects = !!m.toLocationId
         }
 
         const entry = netDelta > 0 ? Math.abs(qty) : 0
@@ -1702,8 +1710,25 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
             toBalQty = Number(ae.toBalance.quantity ?? 0)
           }
           if (affectsWarehouse) {
-            balanceValue = toBalQty ?? fromBalQty ?? runningBalance
-            runningBalance = balanceValue
+            // Select the audit balance from the location that is actually in the
+            // filtered warehouse.  For TRANSFER movements both fromBalance and
+            // toBalance exist; previously toBalQty was always preferred, which
+            // set the running balance to the *destination* balance when the
+            // viewer was looking at the *source* warehouse — producing a
+            // double-counting appearance.
+            let auditBalance: number | null = null
+            if (toAffects && toBalQty !== null) {
+              auditBalance = toBalQty
+            } else if (fromAffects && fromBalQty !== null) {
+              auditBalance = fromBalQty
+            }
+            if (auditBalance !== null) {
+              balanceValue = auditBalance
+              runningBalance = auditBalance
+            } else {
+              runningBalance += entry - exit
+              balanceValue = runningBalance
+            }
           }
         } else {
           if (affectsWarehouse) {

@@ -19,21 +19,51 @@ export type PickingPdfSentLine = {
   quantityPresentations?: number
   unitsPerPresentation?: number
   presentationLabel: string
+  movementNumber?: string | null
 }
 
 export type PickingPdfMeta = {
   requestId: string
   requestCode?: string | null
+  movementCode?: string | null
   generatedAtIso: string
   fromWarehouseLabel: string
   fromLocationCode: string
   toWarehouseLabel: string
   toLocationCode: string
   requestedByName?: string | null
+  sentByName?: string | null
 }
 
 type PickingPdfOptions = {
-  logoDataUrl?: string | null
+  logoUrl?: string | null
+}
+
+export function loadLogoDataUrl(logoUrl?: string | null): Promise<{ dataUrl: string; width: number; height: number } | null> {
+  if (!logoUrl) return Promise.resolve(null)
+  return new Promise((resolve) => {
+    try {
+      const img = new Image()
+      img.crossOrigin = 'anonymous'
+      img.onload = () => {
+        try {
+          const canvas = document.createElement('canvas')
+          const ctx = canvas.getContext('2d')
+          if (!ctx) return resolve(null)
+          canvas.width = img.naturalWidth
+          canvas.height = img.naturalHeight
+          ctx.drawImage(img, 0, 0)
+          resolve({ dataUrl: canvas.toDataURL('image/png'), width: img.naturalWidth, height: img.naturalHeight })
+        } catch {
+          resolve(null)
+        }
+      }
+      img.onerror = () => resolve(null)
+      img.src = logoUrl
+    } catch {
+      resolve(null)
+    }
+  })
 }
 
 export type LabelPdfData = {
@@ -64,12 +94,12 @@ function savePdf(pdf: jsPDF, filename: string): void {
   pdf.save(filename)
 }
 
-export function exportPickingToPdf(
+export async function exportPickingToPdf(
   meta: PickingPdfMeta,
   requested: PickingPdfRequestedLine[],
   sent: PickingPdfSentLine[],
   options?: PickingPdfOptions,
-): void {
+): Promise<void> {
   const pdf = new jsPDF('p', 'mm', 'letter')
   const pageWidth = pdf.internal.pageSize.getWidth()
   const pageHeight = pdf.internal.pageSize.getHeight()
@@ -78,26 +108,35 @@ export function exportPickingToPdf(
   const marginBottom = 18
   const tableFontSize = 8
 
-  const title = 'PICKING'
+   const title = 'PICKING'
 
-  const tryDrawLogo = () => {
-    const logo = String(options?.logoDataUrl ?? '').trim()
-    if (!logo) return
+    const logoDataUrl = await loadLogoDataUrl(options?.logoUrl)
 
-    const typeMatch = /^data:image\/(png|jpeg|jpg);/i.exec(logo)
-    const imageType = typeMatch?.[1]?.toLowerCase() === 'png' ? 'PNG' : 'JPEG'
+    const tryDrawLogo = () => {
+      if (!logoDataUrl?.dataUrl) return
 
-    // Place logo on top-right, inside margins.
-    const w = 28
-    const h = 14
-    const x = pageWidth - margin - w
-    const y = margin + 2
-    try {
-      pdf.addImage(logo, imageType as any, x, y, w, h)
-    } catch {
-      // Best-effort only
+      const logo = logoDataUrl.dataUrl
+      const typeMatch = /^data:image\/(png|jpeg|jpg);/i.exec(logo)
+      const imageType = typeMatch?.[1]?.toLowerCase() === 'png' ? 'PNG' : 'JPEG'
+
+      const iw = logoDataUrl.width
+      const ih = logoDataUrl.height
+      if (!iw || !ih) return
+
+      // Preserve aspect ratio; fit within a max box, anchored top-right.
+      const maxW = 32
+      const maxH = 16
+      const ratio = Math.min(maxW / iw, maxH / ih, 1)
+      const w = Math.round(iw * ratio)
+      const h = Math.round(ih * ratio)
+      const x = pageWidth - margin - w
+      const y = margin + 2
+      try {
+        pdf.addImage(logo, imageType as any, x, y, w, h)
+      } catch {
+        // Best-effort only
+      }
     }
-  }
 
   const header = () => {
     pdf.setFont('helvetica', 'bold')
@@ -113,7 +152,9 @@ export function exportPickingToPdf(
     const infoLines = [
       `Fecha: ${sanitizePdfText(dateStr)}`,
       ...(meta.requestCode ? [`Solicitud: ${sanitizePdfText(meta.requestCode)}`] : []),
+      ...(meta.movementCode ? [`Movimiento: ${sanitizePdfText(meta.movementCode)}`] : []),
       `Solicitante: ${sanitizePdfText(meta.requestedByName ?? '—')}`,
+      `Enviado por: ${sanitizePdfText(meta.sentByName ?? '—')}`,
       `Origen: ${sanitizePdfText(meta.fromWarehouseLabel)} · ${sanitizePdfText(meta.fromLocationCode)}`,
       `Destino: ${sanitizePdfText(meta.toWarehouseLabel)} · ${sanitizePdfText(meta.toLocationCode)}`,
     ]
@@ -211,19 +252,21 @@ export function exportPickingToPdf(
   y = drawSectionTitle('ENVIADO', y)
 
   const col = {
-    lote: { w: 34 },
-    vence: { w: 28 },
+    mov: { w: 24 },
+    lote: { w: 30 },
+    vence: { w: 26 },
     cant: { w: 14 },
-    pres: { w: 30 },
+    pres: { w: 28 },
   }
-  const productW = pageWidth - margin * 2 - col.lote.w - col.vence.w - col.cant.w - col.pres.w
+  const productW = pageWidth - margin * 2 - col.mov.w - col.lote.w - col.vence.w - col.cant.w - col.pres.w
 
   const x = {
     prod: margin,
-    lote: margin + productW,
-    vence: margin + productW + col.lote.w,
-    cant: margin + productW + col.lote.w + col.vence.w,
-    pres: margin + productW + col.lote.w + col.vence.w + col.cant.w,
+    mov: margin + productW,
+    lote: margin + productW + col.mov.w,
+    vence: margin + productW + col.mov.w + col.lote.w,
+    cant: margin + productW + col.mov.w + col.lote.w + col.vence.w,
+    pres: margin + productW + col.mov.w + col.lote.w + col.vence.w + col.cant.w,
   }
 
   const sorted = [...(sent ?? [])].sort((a, b) => {
@@ -241,6 +284,7 @@ export function exportPickingToPdf(
     pdf.setFont('helvetica', 'bold')
     pdf.setFontSize(tableFontSize)
     pdf.text('Producto', x.prod, yy)
+    pdf.text('Mov', x.mov, yy)
     pdf.text('Lote', x.lote, yy)
     pdf.text('Vence', x.vence, yy)
     pdf.text('Cant', x.cant, yy)
@@ -255,6 +299,7 @@ export function exportPickingToPdf(
   pdf.setFontSize(tableFontSize)
 
   for (const line of sorted) {
+    const mov = sanitizePdfText(line.movementNumber ?? '—')
     const lote = sanitizePdfText(line.batchNumber ?? '—')
     const vence = line.expiresAt ? sanitizePdfText(formatDateOnlyUtc(line.expiresAt)) : '—'
     const qtyValue = line.quantityPresentations ?? line.quantityUnits
@@ -267,6 +312,7 @@ export function exportPickingToPdf(
     y = ensureSpace(y, rowH + 8)
 
     pdf.text(productLines, x.prod, y)
+    pdf.text(mov, x.mov, y)
     pdf.text(lote, x.lote, y)
     pdf.text(vence, x.vence, y)
     pdf.text(qty, x.cant, y)

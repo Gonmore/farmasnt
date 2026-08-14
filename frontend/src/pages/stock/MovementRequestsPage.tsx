@@ -448,6 +448,7 @@ export function MovementRequestsPage() {
           setConfirmError(null)
         }}
         title="Detalle de solicitud"
+        closeOnBackdropClick={false}
         maxWidth="lg"
       >
         {!selectedRequest && <div className="text-sm text-slate-600 dark:text-slate-300">Cargando...</div>}
@@ -569,6 +570,7 @@ export function MovementRequestsPage() {
           setCreateError(null)
         }}
         title="Crear solicitud de movimiento"
+        closeOnBackdropClick={false}
         maxWidth="lg"
       >
         <form

@@ -215,7 +215,7 @@ export function BulkTransferPage() {
       const fromLocation = fromLocationsQuery.data?.items.find(l => l.id === fromLocationId)
       const toLocation = toLocationsQuery.data?.items.find(l => l.id === toLocationId)
 
-      exportPickingToPdf(
+      await exportPickingToPdf(
         {
           requestId: data.referenceId,
           generatedAtIso: new Date().toISOString(),
@@ -242,6 +242,7 @@ export function BulkTransferPage() {
             presentationLabel,
           }
         }),
+        { logoUrl: tenant?.branding?.logoUrl ?? null },
       )
 
       // Generate label PDF
@@ -503,7 +504,7 @@ export function BulkTransferPage() {
         </div>
         </div>
 
-        <Modal isOpen={isConfirmModalOpen} onClose={() => setIsConfirmModalOpen(false)} title="Confirmar Transferencia" maxWidth="lg">
+        <Modal isOpen={isConfirmModalOpen} onClose={() => setIsConfirmModalOpen(false)} title="Confirmar Transferencia" maxWidth="lg" closeOnBackdropClick={false}>
           <div className="space-y-4">
             <div className="rounded-md border border-slate-200 p-4 text-sm dark:border-slate-700">
               <div className="mb-2 text-slate-900 dark:text-slate-100">

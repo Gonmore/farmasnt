@@ -1,197 +1,280 @@
-Ôªø# Bit√°cora de desarrollo ‚Äî PharmaFlow Bolivia (farmaSNT)
+# Bit·cora de desarrollo ó PharmaFlow Bolivia (farmaSNT)
 
-> √öltima actualizaci√≥n: 11 Ago 2026
+> ⁄ltima actualizaciÛn: 14 Ago 2026
 
 Este documento suma (a alto nivel) decisiones, hitos y cambios relevantes que se fueron incorporando al repositorio para llegar al estado actual del MVP.
 
-## **[11 Ago 2026] Trazabilidad: lote en env√≠os, firmas con nombre, atenci√≥n en l√≠neas separadas + ruta Warehouse:Location en atendidas**
+## **[14 Ago 2026] Kardex: correcciÛn de doble conteo en transferencias + columna Movimiento + modal ancho**
 
 ### Objetivo alcanzado
-- En `/stock/movement-requests-traceability` (modal "Detalle de solicitud" y PDF "Exportar PDF") ahora se muestra el **lote** enviado en cada env√≠o (solo aplica a solicitudes ya atendidas/recepcionadas que tienen `batch` en el movimiento `OUT`).
-- El cuadro de **firmas** del PDF ahora incluye directamente el **nombre de quien solicit√≥** (`requestedByName`) y el **nombre de quien atendi√≥** (`fulfilledByName`), adem√°s de la l√≠nea de fecha.
-- En el PDF, **"Atendida:"** y **"Recepci√≥n/confirmaci√≥n:"** se imprimen en **l√≠neas separadas** (antes compart√≠an la misma l√≠nea).
-- La **ruta** en formato `Warehouse:Location` ahora se aplica tambi√©n a solicitudes ya enviadas/recepcionadas usando el `fromLocation` real del primer env√≠o (`fromWarehouse:fromLocation ‚Üí toWarehouse:toLocation`); para solicitudes solo creadas el destino puede mostrar solo el warehouse o `warehouse:location`.
+- Corregido doble conteo de saldo en el kardex para transferencias inter-sucursales.
+- Agregada columna "Movimiento" (cÛdigo del movimiento `MSYYYY-N`) en la tabla y exportaciÛn Excel.
+- Ampliado el modal de kardex de `5xl` a `6xl` para acomodar la nueva columna.
+
+### Backend (`backend/src/adapters/http/routes/products.ts`)
+
+**Bug 1 ó Balance tomado del almacÈn equivocado:** El c·lculo de saldo acumulado usaba `toBalQty ?? fromBalQty`, siempre prefiriendo el balance del **destino** del movimiento. Para una `TRANSFER` hacia otra sucursal, al ver la **sucursal origen** el saldo se establecÌa al balance del destino (incorrecto), produciendo la apariencia de doble conteo. Se elevaron `fromAffects`/`toAffects` al scope del loop y se usa el balance (`fromBalQty` o `toBalQty`) de la ubicaciÛn que realmente pertenece al almacÈn filtrado.
+
+**Bug 2 ó OUT de `MOVEMENT_REQUEST` tratado como TRANSFER:** Los movimientos `OUT` con `referenceType: 'MOVEMENT_REQUEST'` (envÌos de solicitudes) eran tratados como `TRANSFER` (afectaban origen y destino simult·neamente), sumando `+qty` tanto en el movimiento de envÌo como en el movimiento `IN` de recepciÛn (`MOVEMENT_REQUEST_RECEIPT`), duplicando el stock en el destino. Se eliminÛ `OUT + MOVEMENT_REQUEST` de la condiciÛn `TRANSFER` en ambos branches (`warehouseLocationIds` y `locationId`), dejando que los `OUT` solo afecten el origen (el destino lo maneja el movimiento `IN` de recepciÛn).
+
+**Sin migraciones Prisma nuevas** (solo cambios en lÛgica de query).
+
+### Frontend (`frontend/src/pages/stock/InventoryPage.tsx`)
+- El modal de kardex cambia `maxWidth` de `"5xl"` a `"6xl"`.
+- Nueva columna "Movimiento" en la tabla del kardex (`m.movementNumber`) y en la exportaciÛn a Excel (`'Movimiento'` field). El campo `movementNumber` ya existÌa en la respuesta del backend (`KardexItem`).
+
+### OperaciÛn
+- TypeScript check OK en backend y frontend.
+- Docker build OK para backend y frontend.
+- No se requieren migraciones Prisma nuevas.
+
+---
+
+## **[13 Ago 2026] Modal de recepciÛn de transferencias con devoluciÛn parcial por Ìtem (igual que solicitudes)**
+
+### Objetivo alcanzado
+- El botÛn "Recepcionar" de la secciÛn **"Transferencias pendientes de recepciÛn"** en `/stock/returns` (pestaÒa RecepciÛn/DevoluciÛn) ahora abre un **modal** óen lugar de recepcionar directoó que permite, por cada Ìtem de la transferencia:
+  - Marcar **recepciÛn completa** (por defecto), o
+  - Indicar **cantidad a devolver** + **motivo** (obligatorio si hay devoluciÛn), igual que el modal de recepciÛn de solicitudes.
+- El modal tambiÈn admite **foto de evidencia** (upload presigned S3, `POST /api/v1/stock/returns/photo-upload`) y una **nota general**.
+- Al confirmar, el backend (`POST /api/v1/stock/transfers/:id/receive`) marca la transferencia como `RECEIVED` y, si hubo devoluciones, crea un **TRANSFER inverso** (destino ? origen) por la cantidad devuelta, manteniendo el stock consistente. La foto y la nota se registran en el movimiento.
+
+### Backend (`backend/src/adapters/http/routes/stock.ts`)
+- El endpoint `POST /api/v1/stock/transfers/:id/receive` ahora acepta `note`, `photoUrl` y `items: [{ movementId, returnedQuantity, returnReason }]`.
+  - `movementId` es el **id** del movimiento (UUID), no el cÛdigo; el endpoint de picking ahora incluye `movementId` en cada `sentLine`.
+  - Por cada Ìtem con `returnedQuantity > 0` y `returnReason` v·lido crea un TRANSFER inverso vÌa `createStockMovementTx` (origen = `toLocationId` original, destino = `fromLocationId` original) con `referenceType: null` (aparece en "Movimientos Realizados" como trazabilidad) y nota `DevoluciÛn de transferencia: <motivo>`.
+  - Validaciones: la devoluciÛn no puede exceder lo enviado, el motivo es obligatorio, y la sucursal destino debe coincidir con la del usuario (ya existente).
+- `GET /api/v1/stock/completed-movements/:id/picking`: cada `sentLine` ahora incluye `movementId` (UUID) adem·s de `movementNumber`.
+
+### Frontend (`frontend/src/pages/stock/ReturnsPage.tsx`)
+- Se agregÛ el estado y la mutaciÛn `transferReceptionMutation` + `openTransferReceptionModal(m)` que carga las lÌneas vÌa el endpoint de picking y pre-carga "recepciÛn completa" por Ìtem.
+- Nuevo `transferReceptionModal`: lista Ìtems con checkbox "RecepciÛn completa", campos "Cantidad a devolver" y "Motivo de devoluciÛn" (cuando no es completa), input de foto (`presignReturnPhoto`/`uploadToPresignedUrl`) y nota general; botÛn "Confirmar recepciÛn".
+- El botÛn "Recepcionar" de la tabla de transferencias pendientes ahora llama a `openTransferReceptionModal(m)` (antes recepcionaba directo).
+
+### OperaciÛn
+- `tsc` limpio en backend y frontend; `npm run build` (frontend) y build de Docker OK.
+- Verificado end-to-end con un almacÈn PROVEEDOR ? SALES: transferencia creada queda `PENDING`; recepciÛn completa devuelve `{ok:true, received:1, returns:0}`; recepciÛn con devoluciÛn parcial (3 de 10) devuelve `{ok:true, received:1, returns:1}` (TRANSFER inverso creado); re-recepcionar devuelve `409`.
+
+---
+
+## **[13 Ago 2026] Picking con cÛdigo de solicitud + cÛdigo de movimiento + solicitante/enviado, y correcciÛn de recepciÛn de transferencias en /stock/returns**
+
+### Objetivo alcanzado
+- El documento **Picking** (PDF y modal de detalle en "Movimientos Realizados") ahora muestra siempre:
+  - **CÛdigo de solicitud** (`requestCode`, p.ej. `SOL260004`) cuando el movimiento corresponde a una atenciÛn de solicitud; `null` para transferencias/movimientos sin solicitud.
+  - **CÛdigo de movimiento** (movementCode): para un movimiento individual es su 
+umber (MS2026-N); para una transferencia masiva es el eferenceId del grupo; para FULFILL_REQUEST es el 
+umber del primer movimiento de envÌo (OUT) (puede ser 
+ull si la solicitud no ha sido enviada todavÌa).
+  - **Solicitante** (`requestedByName`): quien pidiÛ la solicitud; `ó` cuando el movimiento no deriva de una solicitud (siempre hay "quien enviÛ", pero no siempre "quien solicitÛ").
+  - **Enviado por** (`sentByName`): siempre presente (usuario que creÛ/atendiÛ el envÌo).
+  - Cada lÌnea enviada del picking incluye ahora **`movementNumber`** (cÛdigo del movimiento de esa lÌnea), de modo que una solicitud atendida con varios movimientos queda trazada lÌnea a lÌnea.
+- CorrecciÛn de un bug que impedÌa ver las **transferencias pendientes de recepciÛn** en la pestaÒa "RecepciÛn/DevoluciÛn" de `/stock/returns`: la consulta usaba `take=200`, pero el esquema del endpoint limita `take` a 100, por lo que devolvÌa `400` y la secciÛn nunca se renderizaba. Ahora usa `take=100` y adem·s el backend acepta el filtro server-side `receiptStatus=PENDING`, garantizando que la transferencia pendiente aparezca aunque haya mucho historial.
+
+### Backend (`backend/src/adapters/http/routes/stock.ts`)
+- **`GET /api/v1/stock/completed-movements`**: `completedMovementsQuerySchema` agrega `receiptStatus: enum(['PENDING','RECEIVED']).optional()`; el handler filtra la lista combinada por `receiptStatus` antes de paginar.
+- **`GET /api/v1/stock/completed-movements/:id/picking`**: la respuesta `meta` ahora incluye `movementCode` y `sentByName`; `requestedByName` solo se asigna para `FULFILL_REQUEST` (antes se reusaba el creador como "solicitante" en movimientos sin solicitud). Cada `sentLine` incluye `movementNumber`.
+
+### Frontend
+- **`lib/movementRequestDocsPdf.ts`**: `PickingPdfMeta` agrega `movementCode` y `sentByName`; `PickingPdfSentLine` agrega `movementNumber`. El PDF "PICKING" muestra en el encabezado `Solicitud`, `Movimiento`, `Solicitante` y `Enviado por`, y la tabla "ENVIADO" suma la columna "Mov" (cÛdigo de movimiento por lÌnea).
+- **`pages/stock/CompletedMovementsPage.tsx`**: `handleExportPicking` mapea los nuevos campos; el modal de detalle muestra "CÛdigo de solicitud" (cuando existe), "Solicitante" y "Enviado por" por separado, y la tabla de lÌneas enviadas incluye la columna "Mov".
+- **`pages/stock/ReturnsPage.tsx`**: `pendingTransfersQuery` usa `take=100&receiptStatus=PENDING` (antes `take=200`), corrigiendo la secciÛn "Transferencias pendientes de recepciÛn".
+
+### OperaciÛn
+- `tsc` limpio en backend y frontend.
+- Verificado con `admin@demo.local`: el picking de una `FULFILL_REQUEST` devuelve `requestCode=SOL260004`, `requestedByName`/`sentByName` correctos y `movementNumber` por lÌnea; el picking de un `TRANSFER` devuelve `movementCode=MS2026-14`, `requestedByName=null` y `sentByName` poblado. El filtro `receiptStatus=PENDING` responde `200`.
+- No se requieren migraciones Prisma nuevas.
+
+---
+
+## **[11 Ago 2026] Trazabilidad: lote en envÌos, firmas con nombre, atenciÛn en lÌneas separadas + ruta Warehouse:Location en atendidas**
+
+### Objetivo alcanzado
+- En `/stock/movement-requests-traceability` (modal "Detalle de solicitud" y PDF "Exportar PDF") ahora se muestra el **lote** enviado en cada envÌo (solo aplica a solicitudes ya atendidas/recepcionadas que tienen `batch` en el movimiento `OUT`).
+- El cuadro de **firmas** del PDF ahora incluye directamente el **nombre de quien solicitÛ** (`requestedByName`) y el **nombre de quien atendiÛ** (`fulfilledByName`), adem·s de la lÌnea de fecha.
+- En el PDF, **"Atendida:"** y **"RecepciÛn/confirmaciÛn:"** se imprimen en **lÌneas separadas** (antes compartÌan la misma lÌnea).
+- La **ruta** en formato `Warehouse:Location` ahora se aplica tambiÈn a solicitudes ya enviadas/recepcionadas usando el `fromLocation` real del primer envÌo (`fromWarehouse:fromLocation ? toWarehouse:toLocation`); para solicitudes solo creadas el destino puede mostrar solo el warehouse o `warehouse:location`.
 
 ### Frontend
 - **`MovementRequestsTraceabilityPage.tsx`**:
   - `TraceMovement` ahora incluye `batchNumber`, `fromWarehouseCode` y `fromLocationCode` (mapeados desde `batch.batchNumber` y `fromLocation` del movimiento `OUT`).
-  - Helper `buildRoute()` centraliza el formato: origen `warehouse:location` cuando hay env√≠os (origen real), destino siempre `warehouse:location`; para creadas sin env√≠o usa `warehouse` (o `warehouse:location`) en destino.
-  - La secci√≥n "Env√≠os" del modal ahora muestra **Lote** y la ruta `fromWarehouse:fromLocation ‚Üí toWarehouse:toLocation` por env√≠o.
-  - `handleExportPdf` usa `buildRoute()` y pasa `batchNumber` por env√≠o.
+  - Helper `buildRoute()` centraliza el formato: origen `warehouse:location` cuando hay envÌos (origen real), destino siempre `warehouse:location`; para creadas sin envÌo usa `warehouse` (o `warehouse:location`) en destino.
+  - La secciÛn "EnvÌos" del modal ahora muestra **Lote** y la ruta `fromWarehouse:fromLocation ? toWarehouse:toLocation` por envÌo.
+  - `handleExportPdf` usa `buildRoute()` y pasa `batchNumber` por envÌo.
 - **`traceabilityPdf.ts`**:
-  - `TraceabilityPdfShipment` incluye `batchNumber`; la tabla "Env√≠os" agrega columna **Lote**.
-  - "Atendida:" y "Recepci√≥n/confirmaci√≥n:" en l√≠neas separadas.
-  - Firmas: "Solicita / Recibe" con `Nombre: <requestedByName>` y "Atiende / Env√≠a" con `Nombre: <fulfilledByName>`.
+  - `TraceabilityPdfShipment` incluye `batchNumber`; la tabla "EnvÌos" agrega columna **Lote**.
+  - "Atendida:" y "RecepciÛn/confirmaciÛn:" en lÌneas separadas.
+  - Firmas: "Solicita / Recibe" con `Nombre: <requestedByName>` y "Atiende / EnvÌa" con `Nombre: <fulfilledByName>`.
 
-### Operaci√≥n
+### OperaciÛn
 - TypeScript check OK en frontend.
 - No se requieren migraciones Prisma nuevas.
 
-## **[11 Ago 2026] /stock/movements ‚Äî destino en formato Warehouse:Location (vista y modal)**
+## **[11 Ago 2026] /stock/movements ó destino en formato Warehouse:Location (vista y modal)**
 
 - En `/stock/movements`, la lista de solicitudes (columna "Destino") y el modal "Detalle de solicitud" ahora muestran el destino en formato `Warehouse:Location` (`codigoSucursal:codigoUbicacion`, sin prefijo `SUC-`), consistente con `/stock/completed-movements`, `/stock/returns` y la trazabilidad.
-- Para solicitudes antiguas que no incluyen `toLocation`, el destino queda como `warehouse` (o `warehouse:‚Äî`) sin romper la vista; el formato completo se aplica cuando la ubicaci√≥n destino existe.
+- Para solicitudes antiguas que no incluyen `toLocation`, el destino queda como `warehouse` (o `warehouse:ó`) sin romper la vista; el formato completo se aplica cuando la ubicaciÛn destino existe.
 
 ### Frontend
 - **`MovementsPage.tsx`**:
-  - `MovementRequest` ahora tipa `toLocation` (ya ven√≠a en el spread de la API).
+  - `MovementRequest` ahora tipa `toLocation` (ya venÌa en el spread de la API).
   - Helpers `cleanCode()` (quita `SUC-`), `locLabel()` y `destLabel(r)` producen `warehouse:location`.
   - Columna "Destino" de la tabla y campo "Destino" del modal usan `destLabel(r)`.
 
-### Operaci√≥n
+### OperaciÛn
 - TypeScript check OK en frontend.
 
-## **[12 Ago 2026] /stock/returns ‚Äî destino en formato Warehouse:Location (ORG ‚Üí DEST) en Recepciones**
+## **[12 Ago 2026] /stock/returns ó destino en formato Warehouse:Location (ORG ? DEST) en Recepciones**
 
-- En la pesta√±a "Recepciones" de `/stock/returns`, la columna "ORG ‚Üí DEST" (tabla) y el bloque "ORG ‚Üí DEST" del modal "Ver" ahora muestran el **destino** en formato `Warehouse:Location` (`codigoSucursal:codigoUbicacion`, sin prefijo `SUC-`), igual que el origen. Antes el destino solo mostraba el warehouse porque para algunas solicitudes `toLocation.code` ven√≠a nulo en la solicitud, aunque el env√≠o (movimiento OUT) s√≠ apuntaba a una ubicaci√≥n destino concreta.
-- El destino se resuelve con `destLocCodeOf(r)` / `destWarehouseCodeOf(r)`: usa `toLocation` de la solicitud si existe, si no la `toLocation` del primer movimiento OUT del env√≠o.
+- En la pestaÒa "Recepciones" de `/stock/returns`, la columna "ORG ? DEST" (tabla) y el bloque "ORG ? DEST" del modal "Ver" ahora muestran el **destino** en formato `Warehouse:Location` (`codigoSucursal:codigoUbicacion`, sin prefijo `SUC-`), igual que el origen. Antes el destino solo mostraba el warehouse porque para algunas solicitudes `toLocation.code` venÌa nulo en la solicitud, aunque el envÌo (movimiento OUT) sÌ apuntaba a una ubicaciÛn destino concreta.
+- El destino se resuelve con `destLocCodeOf(r)` / `destWarehouseCodeOf(r)`: usa `toLocation` de la solicitud si existe, si no la `toLocation` del primer movimiento OUT del envÌo.
 
 ### Backend
-- **`stock.ts` (`GET /api/v1/stock/movement-requests`)**: la consulta de movimientos ahora tambi√©n recolecta `toLocationId` y construye `toLocationMap`; cada movimiento OUT expone `toLocationId` y `toLocation` (`{id, code, warehouse}`). Sin cambios de contrato para campos ya existentes.
+- **`stock.ts` (`GET /api/v1/stock/movement-requests`)**: la consulta de movimientos ahora tambiÈn recolecta `toLocationId` y construye `toLocationMap`; cada movimiento OUT expone `toLocationId` y `toLocation` (`{id, code, warehouse}`). Sin cambios de contrato para campos ya existentes.
 
 ### Frontend
-- **`ReturnsPage.tsx`**: helpers `firstOutMovement(r)`, `destLocCodeOf(r)`, `destWarehouseCodeOf(r)`; la columna "ORG ‚Üí DEST" y el modal usan `whLocLabel` para ambos extremos.
+- **`ReturnsPage.tsx`**: helpers `firstOutMovement(r)`, `destLocCodeOf(r)`, `destWarehouseCodeOf(r)`; la columna "ORG ? DEST" y el modal usan `whLocLabel` para ambos extremos.
 
-### Operaci√≥n
+### OperaciÛn
 - TypeScript check OK en frontend y backend.
 
 ## **[12 Ago 2026] Nuevo rol BRANCH_PROVIDER + visibilidad total de transferencias para sucursales proveedor**
 
-- Se cre√≥ el rol de sistema **`BRANCH_PROVIDER`** ("Administrador de Sucursal Proveedor") para usuarios de almacenes tipo `PROVIDER`, cuya labor es crear/ajustar lotes y atender solicitudes de transferencia de cualquier sucursal de venta.
+- Se creÛ el rol de sistema **`BRANCH_PROVIDER`** ("Administrador de Sucursal Proveedor") para usuarios de almacenes tipo `PROVIDER`, cuya labor es crear/ajustar lotes y atender solicitudes de transferencia de cualquier sucursal de venta.
 - Permisos del rol: `scope:branch`, `catalog:read`, `catalog:write`, `stock:read`, `stock:manage`, `stock:move`, `stock:deliver`, `report:stock:read`.
-- Backend: `branchCityOf()` en `stock.ts` y `reports.ts` ahora devuelve `null` (sin filtro de ciudad) cuando el almac√©n del usuario es de tipo `PROVIDER`. Esto permite que `/api/v1/stock/movement-requests`, `/stock/returns` y `/reports/stock/balances-expanded` (inventario) devuelvan TODOS los datos (lectura de sucursales tipo venta), sin restricci√≥n de ciudad. Los almacenes tipo `SALES` siguen restringidos a su ciudad.
-- Correcci√≥n cr√≠tica: `request.auth.warehouseType` no se cargaba (el `user.include` en `server.ts` solo tra√≠a `city` de `warehouse`); ahora se selecciona `type` y se propaga a `AuthContext`/`request.auth`. Sin esto, la relajaci√≥n de PROVIDER nunca se activaba.
-- La edici√≥n de stock sigue restringida por backend: `POST /api/v1/stock/movements` rechaza (`403`) ADJUSTMENT/IN hacia almacenes `SALES`, por lo que el proveedor solo edita su propio almac√©n.
+- Backend: `branchCityOf()` en `stock.ts` y `reports.ts` ahora devuelve `null` (sin filtro de ciudad) cuando el almacÈn del usuario es de tipo `PROVIDER`. Esto permite que `/api/v1/stock/movement-requests`, `/stock/returns` y `/reports/stock/balances-expanded` (inventario) devuelvan TODOS los datos (lectura de sucursales tipo venta), sin restricciÛn de ciudad. Los almacenes tipo `SALES` siguen restringidos a su ciudad.
+- CorrecciÛn crÌtica: `request.auth.warehouseType` no se cargaba (el `user.include` en `server.ts` solo traÌa `city` de `warehouse`); ahora se selecciona `type` y se propaga a `AuthContext`/`request.auth`. Sin esto, la relajaciÛn de PROVIDER nunca se activaba.
+- La ediciÛn de stock sigue restringida por backend: `POST /api/v1/stock/movements` rechaza (`403`) ADJUSTMENT/IN hacia almacenes `SALES`, por lo que el proveedor solo edita su propio almacÈn.
 
 ### Frontend
 - `usePermissions.ts`: expone `isBranchProvider` y `warehouseType`.
-- `useNavigation.ts`: el grupo "Cat√°logo ‚Üí Productos" aparece con `catalog:write`; se excluye al proveedor de "Laboratorio".
+- `useNavigation.ts`: el grupo "Cat·logo ? Productos" aparece con `catalog:write`; se excluye al proveedor de "Laboratorio".
 - `BulkFulfillRequestsPageSimple.tsx`: si `isBranchProvider`, lista TODAS las solicitudes de movimiento (sin filtro por ciudad de destino).
-- `InventoryPage.tsx`: banner "Modo sucursal" y acciones (cambio de estado, editor de ubicaci√≥n inline) deshabilitadas para almacenes que no son el propio del usuario (solo lectura en los dem√°s).
+- `InventoryPage.tsx`: banner "Modo sucursal" y acciones (cambio de estado, editor de ubicaciÛn inline) deshabilitadas para almacenes que no son el propio del usuario (solo lectura en los dem·s).
 
-### Operaci√≥n
-- `ensureSystemRoles` siembra el rol en todos los tenants al arrancar. Los usuarios proveedor existentes deben asign√°rselo manualmente (rol de sistema).
+### OperaciÛn
+- `ensureSystemRoles` siembra el rol en todos los tenants al arrancar. Los usuarios proveedor existentes deben asign·rselo manualmente (rol de sistema).
 - TypeScript check OK en frontend y backend.
 
-## **[12 Ago 2026] Autonom√≠a de sucursales en reportes de stock**
+## **[12 Ago 2026] AutonomÌa de sucursales en reportes de stock**
 
-- Por criterio de autonom√≠a, los usuarios con `scope:branch` (BRANCH_ADMIN y BRANCH_PROVIDER) solo pueden ver reportes de **su propia sucursal**; los administradores sin scope de sucursal (Tenant Admin / roles globales) mantienen el selector "Sucursal" para elegir un almac√©n concreto o "Todas las sucursales".
-- Antes, los usuarios de sucursal tipo `SALES` se filtraban por ciudad (`branchCityOf`) y los `PROVIDER` ve√≠an inventario de todas las ciudades. Ahora el filtro se basa en el `warehouseId` propio del usuario autenticado para todos los tipos de sucursal.
+- Por criterio de autonomÌa, los usuarios con `scope:branch` (BRANCH_ADMIN y BRANCH_PROVIDER) solo pueden ver reportes de **su propia sucursal**; los administradores sin scope de sucursal (Tenant Admin / roles globales) mantienen el selector "Sucursal" para elegir un almacÈn concreto o "Todas las sucursales".
+- Antes, los usuarios de sucursal tipo `SALES` se filtraban por ciudad (`branchCityOf`) y los `PROVIDER` veÌan inventario de todas las ciudades. Ahora el filtro se basa en el `warehouseId` propio del usuario autenticado para todos los tipos de sucursal.
 
 ### Backend (`backend/src/adapters/http/routes/reports.ts`)
-- Nuevos helpers `branchOwnWarehouseIdOf(request)` y `resolveBranchWarehouseId(request, requestedWarehouseId)`: para usuarios con `scope:branch` (no Tenant Admin) fuerzan el `warehouseId` efectivo a su almac√©n propio (rechazan con `409` si no tiene sucursal seleccionada). Para admins devuelven el `warehouseId` recibido (o `null` = todas).
-- Aplicado a: `balances-expanded`, `existencias`, `low-stock`, `expiry-alerts`, `rotation`, `transfers-between-warehouses`, `returns/summary`, `returns/by-warehouse` y `movements-expanded`. Los reportes de ciudad (`movement-requests/by-city`) y de actividad por tipo (`provider-activity`, `sales-branch-activity`) mantienen su l√≥gica por tipo de almac√©n.
-- `WarehouseType.PROVIDER` ya no implica "ver todas las sucursales" en reportes de stock; la visibilidad total de transferencias (movement-requests) se mantiene solo a nivel operativo de atenci√≥n.
+- Nuevos helpers `branchOwnWarehouseIdOf(request)` y `resolveBranchWarehouseId(request, requestedWarehouseId)`: para usuarios con `scope:branch` (no Tenant Admin) fuerzan el `warehouseId` efectivo a su almacÈn propio (rechazan con `409` si no tiene sucursal seleccionada). Para admins devuelven el `warehouseId` recibido (o `null` = todas).
+- Aplicado a: `balances-expanded`, `existencias`, `low-stock`, `expiry-alerts`, `rotation`, `transfers-between-warehouses`, `returns/summary`, `returns/by-warehouse` y `movements-expanded`. Los reportes de ciudad (`movement-requests/by-city`) y de actividad por tipo (`provider-activity`, `sales-branch-activity`) mantienen su lÛgica por tipo de almacÈn.
+- `WarehouseType.PROVIDER` ya no implica "ver todas las sucursales" en reportes de stock; la visibilidad total de transferencias (movement-requests) se mantiene solo a nivel operativo de atenciÛn.
 
 ### Frontend (`frontend/src/pages/reports/StockReportsPage.tsx`)
-- Se agrega `usePermissions`; `isBranchScoped` oculta el `Select` "Sucursal" y muestra un indicador de solo lectura ("Mi sucursal"). `effectiveWarehouseId` fija el almac√©n propio en todas las queries (`existencias`, `balancesExpanded`, ubicaciones) y habilita el selector de Sub almac√©n.
+- Se agrega `usePermissions`; `isBranchScoped` oculta el `Select` "Sucursal" y muestra un indicador de solo lectura ("Mi sucursal"). `effectiveWarehouseId` fija el almacÈn propio en todas las queries (`existencias`, `balancesExpanded`, ubicaciones) y habilita el selector de Sub almacÈn.
 
-### Operaci√≥n
+### OperaciÛn
 - TypeScript check OK en frontend y backend.
 
 ---
 
 ## **[12 Ago 2026] Inventario "Por Sucursal": mismo modo solo-lectura que "Por Producto"**
 
-- En `/stock/inventory`, la vista **"Por Sucursal"** ahora aplica las mismas reglas de solo-lectura que la vista "Por Producto" para usuarios con scope de sucursal (`scope:branch`): la edici√≥n solo est√° habilitada en el almac√©n propio del usuario; los dem√°s almacenes quedan en solo lectura (backend ya lo refuerza).
-- Antes, la columna "Ubicaci√≥n" pasaba `InlineLocationEditor` sin `disabled` en la vista por sucursal, y la columna "Acci√≥n" solo mostraba "Ver flujo" (sin bot√≥n "Estado"), por lo que el editor de ubicaci√≥n permit√≠a mover stock de cualquier almac√©n y el cambio de estado de lote estaba ausente en esta vista.
+- En `/stock/inventory`, la vista **"Por Sucursal"** ahora aplica las mismas reglas de solo-lectura que la vista "Por Producto" para usuarios con scope de sucursal (`scope:branch`): la ediciÛn solo est· habilitada en el almacÈn propio del usuario; los dem·s almacenes quedan en solo lectura (backend ya lo refuerza).
+- Antes, la columna "UbicaciÛn" pasaba `InlineLocationEditor` sin `disabled` en la vista por sucursal, y la columna "AcciÛn" solo mostraba "Ver flujo" (sin botÛn "Estado"), por lo que el editor de ubicaciÛn permitÌa mover stock de cualquier almacÈn y el cambio de estado de lote estaba ausente en esta vista.
 
 ### Frontend (`frontend/src/pages/stock/InventoryPage.tsx`)
 - `warehouseColumns` ("Por Sucursal"):
-  - Columna "üìç Ubicaci√≥n": `InlineLocationEditor` ahora recibe `disabled={!canEditWarehouse(b.warehouseId)}`.
-  - Columna "üöÄ Acci√≥n": ahora es condicional (`canSeeBatchFlow || canChangeBatchStatus`) e incluye el bot√≥n "Estado" con `disabled={!canEditWarehouse(b.warehouseId)}` y tooltip "Solo lectura: no es tu almac√©n", id√©ntico a la vista "Por Producto".
-- El banner "Modo sucursal" (l√≠neas superiores) ya advert√≠a esta restricci√≥n; ahora la UI la respeta en ambas vistas.
+  - Columna "?? UbicaciÛn": `InlineLocationEditor` ahora recibe `disabled={!canEditWarehouse(b.warehouseId)}`.
+  - Columna "?? AcciÛn": ahora es condicional (`canSeeBatchFlow || canChangeBatchStatus`) e incluye el botÛn "Estado" con `disabled={!canEditWarehouse(b.warehouseId)}` y tooltip "Solo lectura: no es tu almacÈn", idÈntico a la vista "Por Producto".
+- El banner "Modo sucursal" (lÌneas superiores) ya advertÌa esta restricciÛn; ahora la UI la respeta en ambas vistas.
 
-### Operaci√≥n
+### OperaciÛn
 - TypeScript check OK en frontend.
 
 ---
 
-## **[12 Ago 2026] Ajustes BRANCH_PROVIDER: edici√≥n solo del creador, atenci√≥n por almac√©n destino, recepciones propias**
+## **[12 Ago 2026] Ajustes BRANCH_PROVIDER: ediciÛn solo del creador, atenciÛn por almacÈn destino, recepciones propias**
 
-- **/stock/movements**: el bot√≥n "Editar"/"Cancelar" de una solicitud OPEN ahora solo es visible para quien la cre√≥ (`requestedBy === usuario`) o Tenant Admin; antes aparec√≠a para cualquiera.
-- **/stock/fulfill-requests**: para `BRANCH_PROVIDER` el Almac√©n Origen se auto-selecciona (su warehouse) y se deshabilita; la "Ubicaci√≥n origen" ya no se elige arriba. Al elegir Almac√©n Destino, la lista de solicitudes se filtra por `warehouseId === destino`. El modal de atenci√≥n carga los lotes de **todo el almac√©n origen** (todas sus ubicaciones) y cada lote seleccionado conserva su `fromLocationId`.
-- **Backend `bulk-fulfill`**: `fromLocationId` ahora es opcional a nivel global y se acepta **por √≠tem** (`items[].fromLocationId`), cayendo al global si no se indica. El stock se valida y el OUT se crea por la ubicaci√≥n de cada lote.
-- **/stock/returns**: se revierte la visibilidad total para PROVIDER; ahora las devoluciones y el contador "Recepci√≥n/Devoluci√≥n" (men√∫ r√°pido) se filtran por el `warehouseId` propio del usuario de sucursal (no por ciudad), mostrando solo lo enviado a su almac√©n.
+- **/stock/movements**: el botÛn "Editar"/"Cancelar" de una solicitud OPEN ahora solo es visible para quien la creÛ (`requestedBy === usuario`) o Tenant Admin; antes aparecÌa para cualquiera.
+- **/stock/fulfill-requests**: para `BRANCH_PROVIDER` el AlmacÈn Origen se auto-selecciona (su warehouse) y se deshabilita; la "UbicaciÛn origen" ya no se elige arriba. Al elegir AlmacÈn Destino, la lista de solicitudes se filtra por `warehouseId === destino`. El modal de atenciÛn carga los lotes de **todo el almacÈn origen** (todas sus ubicaciones) y cada lote seleccionado conserva su `fromLocationId`.
+- **Backend `bulk-fulfill`**: `fromLocationId` ahora es opcional a nivel global y se acepta **por Ìtem** (`items[].fromLocationId`), cayendo al global si no se indica. El stock se valida y el OUT se crea por la ubicaciÛn de cada lote.
+- **/stock/returns**: se revierte la visibilidad total para PROVIDER; ahora las devoluciones y el contador "RecepciÛn/DevoluciÛn" (men˙ r·pido) se filtran por el `warehouseId` propio del usuario de sucursal (no por ciudad), mostrando solo lo enviado a su almacÈn.
 
-### Operaci√≥n
+### OperaciÛn
 - TypeScript check OK en frontend y backend.
 
 ---
 
-## **[11 Ago 2026] Recepci√≥n/Devoluci√≥n unificada + formato Warehouse:Location en /stock/returns**
+## **[11 Ago 2026] RecepciÛn/DevoluciÛn unificada + formato Warehouse:Location en /stock/returns**
 
 ### Objetivo alcanzado
-- Flujo unificado de recepci√≥n y devoluci√≥n parcial en `/stock/returns`: un solo bot√≥n "Recepci√≥n/Devoluci√≥n" que abre un modal con recepci√≥n completa por √≠tem, devoluci√≥n parcial con motivo, upload de foto y nota general.
-- Consistencia de formato: la columna "ORG ‚Üí DEST" en la tabla de recepciones y el header del modal "Ver" ahora usan el formato `Warehouse:location` (c√≥digo de sucursal sin prefijo `SUC-` + c√≥digo de ubicaci√≥n), igual que `/stock/completed-movements`.
+- Flujo unificado de recepciÛn y devoluciÛn parcial en `/stock/returns`: un solo botÛn "RecepciÛn/DevoluciÛn" que abre un modal con recepciÛn completa por Ìtem, devoluciÛn parcial con motivo, upload de foto y nota general.
+- Consistencia de formato: la columna "ORG ? DEST" en la tabla de recepciones y el header del modal "Ver" ahora usan el formato `Warehouse:location` (cÛdigo de sucursal sin prefijo `SUC-` + cÛdigo de ubicaciÛn), igual que `/stock/completed-movements`.
 
 ### Backend
-- **Nuevo endpoint**: `POST /api/v1/stock/movement-requests/:id/reception` (`backend/src/adapters/http/routes/stock.ts:3734`) que crea movimientos `IN` con `referenceType: "MOVEMENT_REQUEST_RECEIPT"` (recepci√≥n) y/o `"MOVEMENT_REQUEST_RETURN"` (devoluci√≥n) por √≠tem, valida `receivedQuantity + returnedQuantity ‚â§ pending`, requiere `returnReason` cuando hay devoluci√≥n, cierra la solicitud si quedan 0 pendientes, y emite eventos socket.
+- **Nuevo endpoint**: `POST /api/v1/stock/movement-requests/:id/reception` (`backend/src/adapters/http/routes/stock.ts:3734`) que crea movimientos `IN` con `referenceType: "MOVEMENT_REQUEST_RECEIPT"` (recepciÛn) y/o `"MOVEMENT_REQUEST_RETURN"` (devoluciÛn) por Ìtem, valida `receivedQuantity + returnedQuantity = pending`, requiere `returnReason` cuando hay devoluciÛn, cierra la solicitud si quedan 0 pendientes, y emite eventos socket.
 - Schemas: `movementRequestReceptionParamsSchema`, `movementRequestReceptionBodySchema`, `confirmReceptionUnifiedResponseSchema`.
 
 ### Frontend
-- **`ReturnsPage.tsx`**: reescritura completa ‚Äî eliminados botones "Nueva devoluci√≥n", crear modal y modal de devoluci√≥n antiguos. √önico bot√≥n "Recepci√≥n/Devoluci√≥n" ‚Üí modal unificado con tabla de √≠tems enviados (lote, producto, presentaci√≥n, cant. enviada, cant. solicitada, pendiente), checkbox "Recepci√≥n completa" por √≠tem (default checked), cuando se desmarca muestra "Cant. a devolver" + "Motivo" con resumen "Recibir√°n/Devolver√°n", upload de foto (presigned S3 via `POST /api/v1/stock/returns/photo-upload`) y nota general.
+- **`ReturnsPage.tsx`**: reescritura completa ó eliminados botones "Nueva devoluciÛn", crear modal y modal de devoluciÛn antiguos. ⁄nico botÛn "RecepciÛn/DevoluciÛn" ? modal unificado con tabla de Ìtems enviados (lote, producto, presentaciÛn, cant. enviada, cant. solicitada, pendiente), checkbox "RecepciÛn completa" por Ìtem (default checked), cuando se desmarca muestra "Cant. a devolver" + "Motivo" con resumen "Recibir·n/Devolver·n", upload de foto (presigned S3 via `POST /api/v1/stock/returns/photo-upload`) y nota general.
 - Helpers `cleanCode()`, `locLabel()`, `whLocLabel()` agregados mirror a `CompletedMovementsPage`.
-- La columna "ORG ‚Üí DEST" en la tabla de recepciones y el header del modal "Ver" usan `whLocLabel(warehouseCode, locationCode)` ‚Üí `WAREHOUSE:LOCATION` format (quitando `SUC-`).
-- El buscador client-side incluye ahora c√≥digos de ubicaci√≥n (`fromLocation?.code`).
+- La columna "ORG ? DEST" en la tabla de recepciones y el header del modal "Ver" usan `whLocLabel(warehouseCode, locationCode)` ? `WAREHOUSE:LOCATION` format (quitando `SUC-`).
+- El buscador client-side incluye ahora cÛdigos de ubicaciÛn (`fromLocation?.code`).
 - Types: `ReceptionItemState`, `ReceptionItemInput`, `ReceptionInput` agregados; funciones API `confirmReceptionUnified()` y `presignReturnPhoto()`.
 
-### Operaci√≥n
+### OperaciÛn
 - TypeScript check OK en frontend y backend.
 - No se requieren migraciones Prisma nuevas.
 
 ---
 
-## **[11 Ago 2026] Trazabilidad de solicitudes: formato Warehouse:Location + timeline de atenci√≥n/recepci√≥n + exportar PDF**
+## **[11 Ago 2026] Trazabilidad de solicitudes: formato Warehouse:Location + timeline de atenciÛn/recepciÛn + exportar PDF**
 
 ### Objetivo alcanzado
-- `/stock/movement-requests-traceability` ahora muestra origen/destino en formato `Warehouse:location` (c√≥digo sin prefijo `SUC-` + ubicaci√≥n), consistente con `/stock/completed-movements` y `/stock/returns`.
-- El timeline y el detalle de env√≠os muestran fecha de atenci√≥n (fulfillment) o atenci√≥n parcial (fecha del primer env√≠o), y registran qui√©n y cu√°ndo se recepcion√≥, incluyendo nota y preview de foto.
-- Nuevo bot√≥n "Exportar PDF" en el modal de detalle, que genera una nota de recepci√≥n con logo, c√≥digo de solicitud como marca de agua, y campos para firmar por quien solicita/env√≠a y quien recibe/atiende.
+- `/stock/movement-requests-traceability` ahora muestra origen/destino en formato `Warehouse:location` (cÛdigo sin prefijo `SUC-` + ubicaciÛn), consistente con `/stock/completed-movements` y `/stock/returns`.
+- El timeline y el detalle de envÌos muestran fecha de atenciÛn (fulfillment) o atenciÛn parcial (fecha del primer envÌo), y registran quiÈn y cu·ndo se recepcionÛ, incluyendo nota y preview de foto.
+- Nuevo botÛn "Exportar PDF" en el modal de detalle, que genera una nota de recepciÛn con logo, cÛdigo de solicitud como marca de agua, y campos para firmar por quien solicita/envÌa y quien recibe/atiende.
 
 ### Backend (`backend/src/adapters/http/routes/stock.ts`)
 - **Endpoint `GET /api/v1/stock/movement-requests`**: extendido para incluir `receptions` en cada movimiento (`OUT`). Cada entrada `reception` contiene: `type` (RECEIPT o RETURN), `quantity`, `note` (incluye URL de foto como `Foto: <url>`), `createdBy`, `createdByName`, `createdAt`.
-- La consulta de movimientos `IN` (`MOVEMENT_REQUEST_RECEIPT` / `MOVEMENT_REQUEST_RETURN`) ahora selecciona `note`, `createdBy`, `createdAt` adem√°s de `referenceId`, `referenceType`, `quantity`.
-- Los usuarios de recepci√≥n se resuelven a `createdByName` using el `userMap` existente.
+- La consulta de movimientos `IN` (`MOVEMENT_REQUEST_RECEIPT` / `MOVEMENT_REQUEST_RETURN`) ahora selecciona `note`, `createdBy`, `createdAt` adem·s de `referenceId`, `referenceType`, `quantity`.
+- Los usuarios de recepciÛn se resuelven a `createdByName` using el `userMap` existente.
 
 ### Frontend
 - **`MovementRequestsTraceabilityPage.tsx`**:
-  - Reemplazados helpers `abbreviateCity()` por `cleanCode()`, `locLabel()`, `whLocLabel()` importados de la misma l√≥gica que `ReturnsPage.tsx` y `CompletedMovementsPage.tsx`.
-  - La columna "Ruta" en la tabla y el header del modal "Detalle de solicitud" usan formato `Warehouse:Location` (ej: `ALM:BIN-01 ‚Üí SCZ:BIN-02`).
-  - Timeline actualizado: 1) Creada, 2) Atendida (usa `fulfilledAt` o fecha del primer env√≠o si es parcial), 3) Env√≠os, 4) Recepci√≥n (qui√©n, cu√°ndo, nota, foto), 5) Estado actual.
-  - La secci√≥n "Env√≠os" muestra detalle de recepci√≥n por env√≠o: qui√©n recibi√≥, cu√°ndo, cantidades recibidas/devueltas, nota con preview de foto si existe.
-  - Filtro de b√∫squeda incluye ahora c√≥digos de origen/destino y la ruta formateada.
-  - Nuevo bot√≥n "Exportar PDF" en el modal de detalle.
-- **`Modal.tsx`**: agregado prop `actions?: ReactNode` para renderizar botones de acci√≥n en el header del modal.
-- **`movementRequestDocsPdf.ts`**: funci√≥n `exportMovementRequestTraceabilityToPdf()` ‚Äî nota de trazabilidad con marca de agua (c√≥digo de solicitud √∫nicamente), logo del tenant, tres secciones tabulares (Solicitud / Atenci√≥n / Recepci√≥n), preview de foto de recepci√≥n, y firmas sin caja para "Solicitante / Recibe" y "Atendido por / Env√≠a".
+  - Reemplazados helpers `abbreviateCity()` por `cleanCode()`, `locLabel()`, `whLocLabel()` importados de la misma lÛgica que `ReturnsPage.tsx` y `CompletedMovementsPage.tsx`.
+  - La columna "Ruta" en la tabla y el header del modal "Detalle de solicitud" usan formato `Warehouse:Location` (ej: `ALM:BIN-01 ? SCZ:BIN-02`).
+  - Timeline actualizado: 1) Creada, 2) Atendida (usa `fulfilledAt` o fecha del primer envÌo si es parcial), 3) EnvÌos, 4) RecepciÛn (quiÈn, cu·ndo, nota, foto), 5) Estado actual.
+  - La secciÛn "EnvÌos" muestra detalle de recepciÛn por envÌo: quiÈn recibiÛ, cu·ndo, cantidades recibidas/devueltas, nota con preview de foto si existe.
+  - Filtro de b˙squeda incluye ahora cÛdigos de origen/destino y la ruta formateada.
+  - Nuevo botÛn "Exportar PDF" en el modal de detalle.
+- **`Modal.tsx`**: agregado prop `actions?: ReactNode` para renderizar botones de acciÛn en el header del modal.
+- **`movementRequestDocsPdf.ts`**: funciÛn `exportMovementRequestTraceabilityToPdf()` ó nota de trazabilidad con marca de agua (cÛdigo de solicitud ˙nicamente), logo del tenant, tres secciones tabulares (Solicitud / AtenciÛn / RecepciÛn), preview de foto de recepciÛn, y firmas sin caja para "Solicitante / Recibe" y "Atendido por / EnvÌa".
 
-### Operaci√≥n
+### OperaciÛn
 - TypeScript check OK en frontend y backend.
 - Vite build OK.
 - No se requieren migraciones Prisma nuevas.
 
 ---
 
-## **[10 Ago 2026] Cotizaciones: carga autom√°tica de precio de producto al editar/agregar l√≠neas**
+## **[10 Ago 2026] Cotizaciones: carga autom·tica de precio de producto al editar/agregar lÌneas**
 
 ### Objetivo alcanzado
-- Al editar una cotizaci√≥n o agregar una nueva fila de producto, el precio unitario ahora se carga autom√°ticamente desde el producto (`price`) y se recalcula al cambiar de presentaci√≥n (considerando `priceOverride` de la presentaci√≥n).
+- Al editar una cotizaciÛn o agregar una nueva fila de producto, el precio unitario ahora se carga autom·ticamente desde el producto (`price`) y se recalcula al cambiar de presentaciÛn (considerando `priceOverride` de la presentaciÛn).
 
 ### Frontend (`frontend/src/pages/sales/QuoteDetailPage.tsx`)
-- **Bug**: Al seleccionar un producto o agregar una fila nueva, `unitPriceBase` se inicializaba a `0`, no tomando el `price` del producto ni el `priceOverride` de la presentaci√≥n por defecto. Al cambiar de presentaci√≥n, el precio tampoco se recalculaba.
+- **Bug**: Al seleccionar un producto o agregar una fila nueva, `unitPriceBase` se inicializaba a `0`, no tomando el `price` del producto ni el `priceOverride` de la presentaciÛn por defecto. Al cambiar de presentaciÛn, el precio tampoco se recalculaba.
 - **Fix**:
-  - Nueva funci√≥n `resolveUnitPriceBaseForPresentation`: si la presentaci√≥n tiene `priceOverride`, devuelve `priceOverride / unitsPerPresentation` (precio base por unidad); si no, devuelve el `price` del producto.
-  - `ProductPresentation` type: a√±adido `priceOverride`.
-  - `DraftLine` type: a√±adido `productPrice` para conservar el precio del producto independientemente de la presentaci√≥n.
+  - Nueva funciÛn `resolveUnitPriceBaseForPresentation`: si la presentaciÛn tiene `priceOverride`, devuelve `priceOverride / unitsPerPresentation` (precio base por unidad); si no, devuelve el `price` del producto.
+  - `ProductPresentation` type: aÒadido `priceOverride`.
+  - `DraftLine` type: aÒadido `productPrice` para conservar el precio del producto independientemente de la presentaciÛn.
   - `buildDraftFromQuote`: inicializa `productPrice` y `unitPriceBase` desde `l.unitPrice`.
-  - `ProductSelector` onChange: inicializa `unitPriceBase` y `productPrice` usando `p.price` y la presentaci√≥n por defecto.
-  - Select de presentaci√≥n onChange: recalcula `unitPriceBase` usando `resolveUnitPriceBaseForPresentation` con `productPrice`.
-  - Creaci√≥n de filas nuevas: inicializa `productPrice: 0`.
+  - `ProductSelector` onChange: inicializa `unitPriceBase` y `productPrice` usando `p.price` y la presentaciÛn por defecto.
+  - Select de presentaciÛn onChange: recalcula `unitPriceBase` usando `resolveUnitPriceBaseForPresentation` con `productPrice`.
+  - CreaciÛn de filas nuevas: inicializa `productPrice: 0`.
 
 ### Backend
-- Sin cambios. El backend (`salesQuotes.ts`) ya resolv√≠a correctamente el precio al crear/actualizar cotizaciones: usaba `line.unitPrice` si ven√≠a definido, o `product.price` / `priceOverride / unitsPerPresentation` si no. El problema era √∫nicamente frontend.
+- Sin cambios. El backend (`salesQuotes.ts`) ya resolvÌa correctamente el precio al crear/actualizar cotizaciones: usaba `line.unitPrice` si venÌa definido, o `product.price` / `priceOverride / unitsPerPresentation` si no. El problema era ˙nicamente frontend.
 
-### Operaci√≥n
+### OperaciÛn
 - TypeScript check OK en frontend y backend.
 - Sin migraciones Prisma nuevas.
 
@@ -200,371 +283,371 @@ Este documento suma (a alto nivel) decisiones, hitos y cambios relevantes que se
 ## **[10 Ago 2026] Reportes: actividad de sucursales por tipo (Proveedor / Venta)**
 
 ### Objetivo alcanzado
-- Nuevas pesta√±as en `StockReportsPage.tsx`: **Proveedor** y **Ventas Sucursal**, que muestran KPIs y tablas de actividad filtrada por `WarehouseType`.
+- Nuevas pestaÒas en `StockReportsPage.tsx`: **Proveedor** y **Ventas Sucursal**, que muestran KPIs y tablas de actividad filtrada por `WarehouseType`.
 
 ### API
 - `GET /api/v1/reports/stock/provider-activity`: para warehouses tipo `PROVIDER`. KPIs y tabla con lotes creados, transferencias enviadas (y qty), ajustes (y qty de salida).
-- `GET /api/v1/reports/stock/sales-branch-activity`: para warehouses tipo `SALES`. KPIs y tabla con lotes recibidos, solicitudes aceptadas/rechazadas/pendientes, cotizaciones creadas, √≥rdenes creadas y monto de ventas.
+- `GET /api/v1/reports/stock/sales-branch-activity`: para warehouses tipo `SALES`. KPIs y tabla con lotes recibidos, solicitudes aceptadas/rechazadas/pendientes, cotizaciones creadas, Ûrdenes creadas y monto de ventas.
 
 ### Frontend
 - Tipos `ProviderActivityItem` y `SalesBranchActivityItem` agregados.
-- Queries `providerActivityQuery` y `salesBranchActivityQuery` (enabled solo en sus pesta√±as).
+- Queries `providerActivityQuery` y `salesBranchActivityQuery` (enabled solo en sus pestaÒas).
 - KPIs y tables con columnas adaptadas a cada tipo de sucursal.
 
 ### Backend (`backend/src/adapters/http/routes/reports.ts`)
 - `ProviderActivityRow` y `SalesBranchActivityRow` types agregados.
 - Consultas SQL con CTE `provider_warehouses` / `sales_warehouses` filtrando por `WarehouseType`.
 - Los queries usan `db.$queryRaw<ProviderActivityRow[]>` y `db.$queryRaw<SalesBranchActivityRow[]>` para correctos tipos.
-- **Correcci√≥n de filtrado de fechas**: las consultas SQL usaban `BETWEEN ${from}::timestamptz AND ${to}::timestamptz`, pero cuando `from`/`to` son `null` (sin filtro) `BETWEEN NULL` devuelve 0 resultados. Reemplazado por patr√≥n `(${from ?? null}::timestamptz IS NULL OR col >= ${from}) AND (${to ?? null}::timestamptz IS NULL OR col < ${to})` (to exclusivo), igual que el resto del archivo. Esto asegura que `from=2026-07-01&to=2026-08-01` reporte todo julio completo.
-- **Correcci√≥n `quotesCreated`**: ahora filtra por `Location.warehouseId = sw.id` (coteo previo a `Quote.locationId ‚Üí Location.warehouseId`), no devolv√≠a el total del tenant.
+- **CorrecciÛn de filtrado de fechas**: las consultas SQL usaban `BETWEEN ${from}::timestamptz AND ${to}::timestamptz`, pero cuando `from`/`to` son `null` (sin filtro) `BETWEEN NULL` devuelve 0 resultados. Reemplazado por patrÛn `(${from ?? null}::timestamptz IS NULL OR col >= ${from}) AND (${to ?? null}::timestamptz IS NULL OR col < ${to})` (to exclusivo), igual que el resto del archivo. Esto asegura que `from=2026-07-01&to=2026-08-01` reporte todo julio completo.
+- **CorrecciÛn `quotesCreated`**: ahora filtra por `Location.warehouseId = sw.id` (coteo previo a `Quote.locationId ? Location.warehouseId`), no devolvÌa el total del tenant.
 
 ### Frontend
-- El selector de fechas default: primer d√≠a del mes actual a primer d√≠a del mes siguiente (`startOfMonth` / `startOfNextMonth`), compatible con el filtro `to` exclusivo del backend.
+- El selector de fechas default: primer dÌa del mes actual a primer dÌa del mes siguiente (`startOfMonth` / `startOfNextMonth`), compatible con el filtro `to` exclusivo del backend.
 - Query params `from` / `to` en formato ISO date (`YYYY-MM-DD`), parseados por `z.coerce.date()` en el backend.
 
-### Verificaci√≥n
-- Reporte de julio (`from=2026-07-01&to=2026-08-01`) validado contra endpoint `/api/v1/reports/stock/provider-activity` ‚Üí 401 (auth correcto, ruta registrada sin duplicados).
+### VerificaciÛn
+- Reporte de julio (`from=2026-07-01&to=2026-08-01`) validado contra endpoint `/api/v1/reports/stock/provider-activity` ? 401 (auth correcto, ruta registrada sin duplicados).
 - Docker build OK (frontend y backend).
 - Container backend healthy en puerto 6000.
 
 ---
 
 ### Objetivo alcanzado
-- Las sucursales (warehouses) ahora tienen un **tipo** (`PROVIDER`/`SALES`). Solo los warehouses tipo **Proveedor** pueden crear lotes y ajustar stock (ingresos `IN`/`ADJUSTMENT`); los warehouses tipo **Venta** ingresan stock √∫nicamente por transferencias (`TRANSFER`) o recepci√≥n de solicitudes (`MOVEMENT_REQUEST_RECEIPT`).
+- Las sucursales (warehouses) ahora tienen un **tipo** (`PROVIDER`/`SALES`). Solo los warehouses tipo **Proveedor** pueden crear lotes y ajustar stock (ingresos `IN`/`ADJUSTMENT`); los warehouses tipo **Venta** ingresan stock ˙nicamente por transferencias (`TRANSFER`) o recepciÛn de solicitudes (`MOVEMENT_REQUEST_RECEIPT`).
 
 ### Backend
 - **Prisma** (`schema.prisma`): nuevo enum `WarehouseType { PROVIDER SALES }` y campo `type: WarehouseType @default(SALES)` en el modelo `Warehouse`.
-- **Migraci√≥n** `20260809120000_add_warehouse_type/migration.sql`: `CREATE TYPE "WarehouseType"` + `ALTER TABLE "Warehouse" ADD COLUMN "type" "WarehouseType" NOT NULL DEFAULT 'SALES'` (warehouses existentes pasan a Venta).
+- **MigraciÛn** `20260809120000_add_warehouse_type/migration.sql`: `CREATE TYPE "WarehouseType"` + `ALTER TABLE "Warehouse" ADD COLUMN "type" "WarehouseType" NOT NULL DEFAULT 'SALES'` (warehouses existentes pasan a Venta).
 - **`warehouses.ts`**: `GET /warehouses` incluye `type`; `POST/ PATCH /warehouses` aceptan/actualizan `type` (default `SALES`).
 - **`products.ts`** (`POST /api/v1/products/:id/batches`): el `initialStock.warehouseId` (o el warehouse del `toLocationId`) debe ser `PROVIDER`, sino 403.
 - **`stock.ts`** (`POST /api/v1/stock/movements`):
-  - `ADJUSTMENT` sobre un warehouse `SALES` ‚Üí 403 (bloqueado para ambos locations: `toLocationId`/`fromLocationId`).
-  - `IN` con `referenceType` distinto de `MOVEMENT_REQUEST_RECEIPT` sobre un warehouse `SALES` ‚Üí 403. Las recepciones de transferencias (`MOVEMENT_REQUEST_RECEIPT`) siguen permitidas en warehouses Venta.
+  - `ADJUSTMENT` sobre un warehouse `SALES` ? 403 (bloqueado para ambos locations: `toLocationId`/`fromLocationId`).
+  - `IN` con `referenceType` distinto de `MOVEMENT_REQUEST_RECEIPT` sobre un warehouse `SALES` ? 403. Las recepciones de transferencias (`MOVEMENT_REQUEST_RECEIPT`) siguen permitidas en warehouses Venta.
 - **`auth.ts`** (`GET /api/v1/auth/me`): incluye `warehouse.type` en la respuesta para que el cliente conozca el tipo del warehouse activo del usuario.
 
 ### Frontend
-- **`useNavigation.ts`**: la entrada **"üè¨ Sucursales"** pas√≥ del grupo **Almac√©n** al grupo **Sistema** (solo `TenantAdmin` ve el men√∫ Sistema); as√≠ solo los administradores acceden a la gesti√≥n de sucursales.
+- **`useNavigation.ts`**: la entrada **"?? Sucursales"** pasÛ del grupo **AlmacÈn** al grupo **Sistema** (solo `TenantAdmin` ve el men˙ Sistema); asÌ solo los administradores acceden a la gestiÛn de sucursales.
 - **`WarehousesPage.tsx`**: columna "Tipo" en la tabla; selector de tipo (Proveedor/Venta) en crear y editar; el `type` viaja en los payloads `POST/PATCH`.
-- **`ProductDetailPage.tsx`**: el selector de "Sucursal/Almac√©n (ingreso inicial)" al crear lotes se filtra a warehouses tipo **Proveedor**; se muestra aviso informativo cuando la sucursal activa del usuario es Venta o no hay Proveedores activos. El ajuste de lotes ya se restringe al warehouse de ingreso original (Proveedor) por la validaci√≥n existente y el backend.
+- **`ProductDetailPage.tsx`**: el selector de "Sucursal/AlmacÈn (ingreso inicial)" al crear lotes se filtra a warehouses tipo **Proveedor**; se muestra aviso informativo cuando la sucursal activa del usuario es Venta o no hay Proveedores activos. El ajuste de lotes ya se restringe al warehouse de ingreso original (Proveedor) por la validaciÛn existente y el backend.
 
-### Operaci√≥n
-- Nueva migraci√≥n Prisma: `20260809120000_add_warehouse_type/migration.sql` ‚Äî aplicar antes del deploy (`prisma migrate deploy`).
+### OperaciÛn
+- Nueva migraciÛn Prisma: `20260809120000_add_warehouse_type/migration.sql` ó aplicar antes del deploy (`prisma migrate deploy`).
 - `npm --prefix backend run prisma:generate` ejecutado.
 - Typecheck OK en backend y frontend.
 
 ---
 
-## **[08 Ago 2026] Ergonom√≠a: deshabilitar scroll de rueda en inputs num√©ricos**
+## **[08 Ago 2026] ErgonomÌa: deshabilitar scroll de rueda en inputs numÈricos**
 
 ### Objetivo alcanzado
-- Prevenir que la rueda del mouse cambie accidentalmente valores en inputs num√©ricos (`type="number"`) al hacer scroll sobre ellos, un problema frecuente al seleccionar productos y cantidades (100 ‚Üí 101/99).
+- Prevenir que la rueda del mouse cambie accidentalmente valores en inputs numÈricos (`type="number"`) al hacer scroll sobre ellos, un problema frecuente al seleccionar productos y cantidades (100 ? 101/99).
 
 ### Frontend (`frontend/src/components/common/Input.tsx` + `frontend/src/main.tsx`)
-- `Input` component: agrega `onWheel` que cancela `preventDefault()` cuando `type === 'number'`, preservando el `onWheel` del consumidor (combinado) y no afectando inputs no num√©ricos.
+- `Input` component: agrega `onWheel` que cancela `preventDefault()` cuando `type === 'number'`, preservando el `onWheel` del consumidor (combinado) y no afectando inputs no numÈricos.
 - `main.tsx`: hook `useEffect` global que registra un listener de `wheel` en fase de captura (`{ capture: true, passive: false }`) que cancela el scroll sobre cualquier `input[type=number"]` que no pase por el componente `Input` (cobertura completa).
 - Inputs nativos `<XAxis type="number">` de recharts no se ven afectados (no son `input`).
 
-### Operaci√≥n
+### OperaciÛn
 - Frontend compilado correctamente (`npm --prefix frontend run build`).
 - Sin migraciones Prisma ni cambios de backend.
 
 ---
 
-## **[07 Ago 2026] Kardex de inventario ‚Äî formato WAREHOUSE:Location, filtrado por sucursal, ajustes y ventas**
+## **[07 Ago 2026] Kardex de inventario ó formato WAREHOUSE:Location, filtrado por sucursal, ajustes y ventas**
 
 ### Objetivo alcanzado
-- Refinamiento del kardex de inventario para mostrar Origen y Destino con el formato `WAREHOUSE:Location` (c√≥digo de sucursal sin prefijo `SUC-` + c√≥digo de ubicaci√≥n), filtrar movimientos por la sucursal consultada, incluir ajustes de stock, y mostrar √≥rdenes de venta con nombre del cliente en la columna Destino.
+- Refinamiento del kardex de inventario para mostrar Origen y Destino con el formato `WAREHOUSE:Location` (cÛdigo de sucursal sin prefijo `SUC-` + cÛdigo de ubicaciÛn), filtrar movimientos por la sucursal consultada, incluir ajustes de stock, y mostrar Ûrdenes de venta con nombre del cliente en la columna Destino.
 
 ### Backend (`backend/src/adapters/http/routes/products.ts`)
 - `GET /api/v1/products/:id/kardex`: agrega `fromWarehouseCode`, `toWarehouseCode`, `fromLocationCode`, `toLocationCode` a la respuesta (`KardexRow` y `KardexItem`).
-- Para movimientos `OUT` + `SALES_ORDER`: el `toCode` se muestra como el n√∫mero de orden y `toWarehouseCode` como el nombre del cliente. La columna "Detalle" incluye el nombre del cliente para estas ventas.
+- Para movimientos `OUT` + `SALES_ORDER`: el `toCode` se muestra como el n˙mero de orden y `toWarehouseCode` como el nombre del cliente. La columna "Detalle" incluye el nombre del cliente para estas ventas.
 - Nueva query secundaria extrae `customer.name` desde `salesOrder` (lookup por `referenceId = order.number`) para enriquecer el kardex.
 - El `runningBalance` (Saldo acumulado) se calcula solo sobre movimientos que afectan la sucursal filtrada (`affectsWarehouse`), respetando `entry`/`exit` por tipo (IN/OUT/TRANSFER/ADJUSTMENT).
-- La l√≥gica de `affectsWarehouse` incluye correctamente `type: 'ADJUSTMENT'` (tanto para `warehouseLocationIds` como para `locationId`).
+- La lÛgica de `affectsWarehouse` incluye correctamente `type: 'ADJUSTMENT'` (tanto para `warehouseLocationIds` como para `locationId`).
 
 ### Frontend (`frontend/src/pages/stock/InventoryPage.tsx`)
 - Header del kardex muestra la sucursal a la derecha (`Sucursal: LPZ`).
-- Columnas "Origen" y "Destino" usan el formato `WAREHOUSE:Location` (ej: `LPZ:Privado ‚Üí SCZ:P√∫blico`), sin prefijo `SUC-` en el c√≥digo de sucursal.
+- Columnas "Origen" y "Destino" usan el formato `WAREHOUSE:Location` (ej: `LPZ:Privado ? SCZ:P˙blico`), sin prefijo `SUC-` en el cÛdigo de sucursal.
 - El kardex filtra y muestra solo movimientos con `affectsWarehouse === true` (transferencias, ingresos, salidas, ajustes, recepciones y devoluciones que impactan la sucursal).
-- El saldo acumulado (`Saldo` columna) se calcula sobre movimientos filtrados, mostrando el saldo total del producto en la sucursal en cada paso (ej: 2000 ‚Üí 1960 tras una venta de 40).
-- Exportaci√≥n a Excel refleja el mismo formato y filtrado.
+- El saldo acumulado (`Saldo` columna) se calcula sobre movimientos filtrados, mostrando el saldo total del producto en la sucursal en cada paso (ej: 2000 ? 1960 tras una venta de 40).
+- ExportaciÛn a Excel refleja el mismo formato y filtrado.
 - Los ajustes (`ADJUSTMENT`) aparecen correctamente cuando su `fromLocationId`/`toLocationId` pertenece a la sucursal filtrada.
 - Las ventas (`OUT` + `SALES_ORDER`) muestran `NRO_ORDEN: NombreCliente` en la columna "Destino".
 
 ### Frontend (`frontend/src/pages/stock/CompletedMovementsPage.tsx`)
-- Columna "Origen ‚Üí Destino" usa el formato `WAREHOUSE:Location` (sin prefijo `SUC-`) para movimientos completados.
+- Columna "Origen ? Destino" usa el formato `WAREHOUSE:Location` (sin prefijo `SUC-`) para movimientos completados.
 
 ### Frontend (`frontend/src/components/MovementHistoryTab.tsx`)
-- Columna "Origen ‚Üí Destino" usa el formato `WAREHOUSE:Location` con `SUC-` removido de los c√≥digos de sucursal.
+- Columna "Origen ? Destino" usa el formato `WAREHOUSE:Location` con `SUC-` removido de los cÛdigos de sucursal.
 
-### Operaci√≥n
+### OperaciÛn
 - Backend y frontend compilados correctamente sin errores de tipado.
 - No se requieren migraciones Prisma nuevas para estos cambios (solo cambios en queries y rendering).
 
 ---
 
 ### Objetivo alcanzado
-- Se implementaron 4 features: Kardex por presentaci√≥n con exportaci√≥n Excel, modal de entrega con manejo de devoluciones parciales, enrutamiento a sub-almac√©n en solicitudes de movimiento, y soporte de upload de comprobantes en PDF.
+- Se implementaron 4 features: Kardex por presentaciÛn con exportaciÛn Excel, modal de entrega con manejo de devoluciones parciales, enrutamiento a sub-almacÈn en solicitudes de movimiento, y soporte de upload de comprobantes en PDF.
 
 ### Frontend
-- **Kardex (`InventoryPage.tsx`)**: el bot√≥n "Kardex" se movi√≥ de la vista "Por Producto" a la vista "Por Sucursal", donde aparece en el header de cada producto. El `KardexModalContent` ahora acepta `warehouseId` y pasa `warehouseId` como query param al endpoint, filtrando movimientos por la sucursal. El kardex muestra todos los movimientos del producto (no solo los de la sucursal) con un badge "S√≠/Otra sucursal" indicando si cada movimiento afecta a la sucursal filtrada. El balance acumulado solo incluye movimientos que afectan a la sucursal. La tabla incluye columnas de "Origen", "Destino" y "Sucursal". Exportaci√≥n a Excel actualizada.
-- **`ImageUpload.tsx`**: omite compresi√≥n para archivos PDF (contentType `application/pdf`); preview muestra √≠cono üìÑ en lugar de imagen roto.
-- **`DeliveriesPage.tsx`**: bot√≥n "Marcar como entregado" abre `DeliveryModal` (reemplaza `window.confirm`) con modos NORMAL/PARCIAL, editor de l√≠neas de devoluci√≥n (cantidad, motivo, nota por l√≠nea) y exportaci√≥n Excel; `deliverOrder()` env√≠a el endpoint `deliver-with-returns`.
-- **`MovementRequestsPage.tsx`**: modal de creaci√≥n agrega "Sub-Almac√©n destino" (`Select` poblado desde locations del warehouse destino); env√≠a `toLocationId` en `createMovementRequest`; el detalle muestra `toLocation.code`.
+- **Kardex (`InventoryPage.tsx`)**: el botÛn "Kardex" se moviÛ de la vista "Por Producto" a la vista "Por Sucursal", donde aparece en el header de cada producto. El `KardexModalContent` ahora acepta `warehouseId` y pasa `warehouseId` como query param al endpoint, filtrando movimientos por la sucursal. El kardex muestra todos los movimientos del producto (no solo los de la sucursal) con un badge "SÌ/Otra sucursal" indicando si cada movimiento afecta a la sucursal filtrada. El balance acumulado solo incluye movimientos que afectan a la sucursal. La tabla incluye columnas de "Origen", "Destino" y "Sucursal". ExportaciÛn a Excel actualizada.
+- **`ImageUpload.tsx`**: omite compresiÛn para archivos PDF (contentType `application/pdf`); preview muestra Ìcono ?? en lugar de imagen roto.
+- **`DeliveriesPage.tsx`**: botÛn "Marcar como entregado" abre `DeliveryModal` (reemplaza `window.confirm`) con modos NORMAL/PARCIAL, editor de lÌneas de devoluciÛn (cantidad, motivo, nota por lÌnea) y exportaciÛn Excel; `deliverOrder()` envÌa el endpoint `deliver-with-returns`.
+- **`MovementRequestsPage.tsx`**: modal de creaciÛn agrega "Sub-AlmacÈn destino" (`Select` poblado desde locations del warehouse destino); envÌa `toLocationId` en `createMovementRequest`; el detalle muestra `toLocation.code`.
 - **`PaymentsPage.tsx`**: el `accept` del `ImageUpload` incluye `application/pdf`.
 
 ### Backend
-- **`Product` kardex**: `GET /api/v1/products/:id/kardex` (routes/products.ts:1391) devuelve movimientos agrupados por presentaci√≥n con saldos acumulados, datos de lote/ubicaci√≥n y saldos finales por presentaci√≥n. Acepta query params `presentationId`, `warehouseId`, `locationId`, `from`, `to`. Los movimientos sin `presentationId` (ej. ingresos iniciales de lote) se atribuyen a la presentaci√≥n default en el balance. El `presById` ahora incluye todas las presentaciones activas del producto, no solo las presentes en movimientos.
-- **Kardex general unificado (AuditEvent-based)**: el endpoint `GET /api/v1/products/:id/kardex` fue refactorizado para reconstruir el saldo l√≠nea a l√≠nea desde `AuditEvent` (`action = 'stock.movement.create'`), ordenado cronol√≥gicamente ASC. El flujo: Sucursal ‚Üí Locations ‚Üí InventoryBalance IDs ‚Üí AuditEvents. El kardex muestra todo en unidades base con columnas: Fecha, Lote, Presentaci√≥n, Origen, Destino, Entrada, Salida, Saldo, Sucursal. Transferencias (`TRANSFER`) solo afectan si from/to est√°n en la sucursal; movimientos `IN`/`OUT` sin ubicaci√≥n se atribuyen a la sucursal. El `AuditEvent.after` contiene `{ movement, fromBalance, toBalance }`; el saldo se toma del `fromBalance`/`toBalance` cuando est√° disponible (respaldo autoritativo), cayendo al acumulado si no hay evento. El saldo actual proviene de `InventoryBalance` (fuente autoritativa). Se eliminaron las pesta√±as por presentaci√≥n en el frontend; el modal ahora muestra una tabla unificada + resumen consolidado por lotes/presentaciones al pie (ej: "Total: 4,550 unidades distribuidas en 5 lotes: - 2,550 en unidades sueltas - 1,000 en 100 cajas de 10u"). La columna "Detalle" se reemplaz√≥ por tooltip.
-- **`StockMovementRequest` + `Location`**: migraci√≥n `20260803143835_add_kardex_and_movement_request_to_location` agrega `toLocationId` (UUID) a `StockMovementRequest` y relaci√≥n `Location.movementRequestDestinations`; listado/plan incluyen `toLocationId` + `toLocation` con warehouse anidado.
+- **`Product` kardex**: `GET /api/v1/products/:id/kardex` (routes/products.ts:1391) devuelve movimientos agrupados por presentaciÛn con saldos acumulados, datos de lote/ubicaciÛn y saldos finales por presentaciÛn. Acepta query params `presentationId`, `warehouseId`, `locationId`, `from`, `to`. Los movimientos sin `presentationId` (ej. ingresos iniciales de lote) se atribuyen a la presentaciÛn default en el balance. El `presById` ahora incluye todas las presentaciones activas del producto, no solo las presentes en movimientos.
+- **Kardex general unificado (AuditEvent-based)**: el endpoint `GET /api/v1/products/:id/kardex` fue refactorizado para reconstruir el saldo lÌnea a lÌnea desde `AuditEvent` (`action = 'stock.movement.create'`), ordenado cronolÛgicamente ASC. El flujo: Sucursal ? Locations ? InventoryBalance IDs ? AuditEvents. El kardex muestra todo en unidades base con columnas: Fecha, Lote, PresentaciÛn, Origen, Destino, Entrada, Salida, Saldo, Sucursal. Transferencias (`TRANSFER`) solo afectan si from/to est·n en la sucursal; movimientos `IN`/`OUT` sin ubicaciÛn se atribuyen a la sucursal. El `AuditEvent.after` contiene `{ movement, fromBalance, toBalance }`; el saldo se toma del `fromBalance`/`toBalance` cuando est· disponible (respaldo autoritativo), cayendo al acumulado si no hay evento. El saldo actual proviene de `InventoryBalance` (fuente autoritativa). Se eliminaron las pestaÒas por presentaciÛn en el frontend; el modal ahora muestra una tabla unificada + resumen consolidado por lotes/presentaciones al pie (ej: "Total: 4,550 unidades distribuidas en 5 lotes: - 2,550 en unidades sueltas - 1,000 en 100 cajas de 10u"). La columna "Detalle" se reemplazÛ por tooltip.
+- **`StockMovementRequest` + `Location`**: migraciÛn `20260803143835_add_kardex_and_movement_request_to_location` agrega `toLocationId` (UUID) a `StockMovementRequest` y relaciÛn `Location.movementRequestDestinations`; listado/plan incluyen `toLocationId` + `toLocation` con warehouse anidado.
 - **Entregas con devoluciones**: `POST /api/v1/sales/orders/:id/deliver-with-returns` (routes/salesOrders.ts:1333) con `orderDeliverWithReturnsSchema` acepta `returns[]`; `POST /api/v1/sales/orders/:id/return` para devoluciones standalone.
-- **Upload de comprobantes PDF**: `POST /api/v1/sales/payments/proof-upload` (routes/salesPayments.ts:91) acepta `application/pdf` en `allowedContentTypes`; `POST /api/v1/stock/returns/photo-upload` tambi√©n acepta `application/pdf`.
+- **Upload de comprobantes PDF**: `POST /api/v1/sales/payments/proof-upload` (routes/salesPayments.ts:91) acepta `application/pdf` en `allowedContentTypes`; `POST /api/v1/stock/returns/photo-upload` tambiÈn acepta `application/pdf`.
 
-### Operaci√≥n
-- Nueva migraci√≥n Prisma: `20260803143835_add_kardex_and_movement_request_to_location/migration.sql`.
+### OperaciÛn
+- Nueva migraciÛn Prisma: `20260803143835_add_kardex_and_movement_request_to_location/migration.sql`.
 - `npm run prisma:generate --prefix backend` ejecutado.
 - Backend compilado correctamente con `npm --prefix backend run build`.
 - Frontend compilado correctamente con `npm --prefix frontend run build`.
-- Deploy manual con `deploy.sh` requiere aplicar la nueva migraci√≥n antes de reiniciar servicios.
+- Deploy manual con `deploy.sh` requiere aplicar la nueva migraciÛn antes de reiniciar servicios.
 
 ---
 
-## **[08 Jul 2026] Versi√≥n 2.1.4 ‚Äî Reportes de ventas: estado por defecto "Todos" y sin recorte de filas**
+## **[08 Jul 2026] VersiÛn 2.1.4 ó Reportes de ventas: estado por defecto "Todos" y sin recorte de filas**
 
 ### Objetivo alcanzado
-- Se corrigi√≥ que **Reportes > Ventas** mostrara por defecto solo √≥rdenes `FULFILLED`, ocultando `DRAFT`/`CONFIRMED`/`CANCELLED` salvo que el usuario cambiara manualmente el filtro de estado.
-- Se corrigi√≥ que los reportes agregados (por cliente, por ciudad, top productos, m√°rgenes) y los drill-down de √≥rdenes recortaran silenciosamente filas m√°s all√° de un l√≠mite fijo bajo (15/20/25/30/100), dando la impresi√≥n de que faltaban ventas.
+- Se corrigiÛ que **Reportes > Ventas** mostrara por defecto solo Ûrdenes `FULFILLED`, ocultando `DRAFT`/`CONFIRMED`/`CANCELLED` salvo que el usuario cambiara manualmente el filtro de estado.
+- Se corrigiÛ que los reportes agregados (por cliente, por ciudad, top productos, m·rgenes) y los drill-down de Ûrdenes recortaran silenciosamente filas m·s all· de un lÌmite fijo bajo (15/20/25/30/100), dando la impresiÛn de que faltaban ventas.
 
 ### Frontend
-- `SalesReportsPage.tsx`: el estado inicial del filtro de estado pasa de `'FULFILLED'` a `'ALL'` ("TODOS"), consistente en todas las pesta√±as (Mes, Clientes, Ciudades, Top Productos, Comparaci√≥n, M√°rgenes).
-- Se subieron los `take` hardcodeados de las consultas agregadas (clientes, ciudades, top productos, m√°rgenes) y de los drill-down por ciudad/cliente/producto de 15‚Äì100 a 1000, para que el reporte muestre todas las filas disponibles en un solo llamado.
+- `SalesReportsPage.tsx`: el estado inicial del filtro de estado pasa de `'FULFILLED'` a `'ALL'` ("TODOS"), consistente en todas las pestaÒas (Mes, Clientes, Ciudades, Top Productos, ComparaciÛn, M·rgenes).
+- Se subieron los `take` hardcodeados de las consultas agregadas (clientes, ciudades, top productos, m·rgenes) y de los drill-down por ciudad/cliente/producto de 15ñ100 a 1000, para que el reporte muestre todas las filas disponibles en un solo llamado.
 
 ### Backend
-- Se elev√≥ el tope m√°ximo permitido de `take` en los endpoints `reports/sales/top-products`, `reports/sales/margins`, `reports/sales/by-customer` y `reports/sales/by-city` de 50/200 a 1000.
-- Se elev√≥ el tope m√°ximo de `take` en `GET /api/v1/sales/orders` (usado por los drill-down) de 100 a 1000. El valor por defecto no cambi√≥, por lo que otros consumidores del endpoint (ej. entregas) no se ven afectados.
-- **Pendiente/mejora futura**: el l√≠mite de 1000 sigue siendo un tope fijo; si un tenant llega a superar esa cantidad de filas en un reporte agregado o de drill-down, se recomienda reemplazarlo por paginaci√≥n real (cursor) en vez de seguir subiendo el n√∫mero.
+- Se elevÛ el tope m·ximo permitido de `take` en los endpoints `reports/sales/top-products`, `reports/sales/margins`, `reports/sales/by-customer` y `reports/sales/by-city` de 50/200 a 1000.
+- Se elevÛ el tope m·ximo de `take` en `GET /api/v1/sales/orders` (usado por los drill-down) de 100 a 1000. El valor por defecto no cambiÛ, por lo que otros consumidores del endpoint (ej. entregas) no se ven afectados.
+- **Pendiente/mejora futura**: el lÌmite de 1000 sigue siendo un tope fijo; si un tenant llega a superar esa cantidad de filas en un reporte agregado o de drill-down, se recomienda reemplazarlo por paginaciÛn real (cursor) en vez de seguir subiendo el n˙mero.
 
-### Operaci√≥n
+### OperaciÛn
 - Sin migraciones Prisma nuevas.
 - Backend compilado correctamente con `npm --prefix backend run build`.
 - Frontend compilado correctamente con `npm --prefix frontend run build`.
 - Deploy manual con `deploy.sh` no requiere pasos adicionales.
 
-## **[14 May 2026] Versi√≥n 2.1.3 ‚Äî Advertencia de atenci√≥n parcial en solicitudes**
+## **[14 May 2026] VersiÛn 2.1.3 ó Advertencia de atenciÛn parcial en solicitudes**
 
 ### Objetivo alcanzado
-- En la pantalla **Atender solicitudes** (`/stock/fulfill-requests`), al seleccionar lotes que no cubren todos los √≠tems solicitados, el flujo de confirmaci√≥n muestra al operador un resumen visual antes de proceder.
+- En la pantalla **Atender solicitudes** (`/stock/fulfill-requests`), al seleccionar lotes que no cubren todos los Ìtems solicitados, el flujo de confirmaciÛn muestra al operador un resumen visual antes de proceder.
 
 ### Frontend
-- El bot√≥n *Confirmar Transferencia* detecta si alg√∫n √≠tem queda sin cobertura completa (`isPartialFulfillment`) y cambia a amarillo.
-- Al pulsarlo, se abre un modal intermedio con la lista de √≠tems clasificados: **Completo** (verde ‚úì), **Parcial** (amarillo ‚ö†) y **No atendido** (rojo ‚úó), indicando las cantidades enviadas vs. requeridas.
-- El modal ofrece dos acciones: *Volver a revisar* (cierra el modal) y *Confirmar atenci√≥n parcial* (procede con el env√≠o).
-- La l√≥gica de construcci√≥n del payload (`performFulfillment`) fue extra√≠da del `onClick` inline a una funci√≥n reutilizable compartida por ambos caminos de confirmaci√≥n.
+- El botÛn *Confirmar Transferencia* detecta si alg˙n Ìtem queda sin cobertura completa (`isPartialFulfillment`) y cambia a amarillo.
+- Al pulsarlo, se abre un modal intermedio con la lista de Ìtems clasificados: **Completo** (verde ?), **Parcial** (amarillo ?) y **No atendido** (rojo ?), indicando las cantidades enviadas vs. requeridas.
+- El modal ofrece dos acciones: *Volver a revisar* (cierra el modal) y *Confirmar atenciÛn parcial* (procede con el envÌo).
+- La lÛgica de construcciÛn del payload (`performFulfillment`) fue extraÌda del `onClick` inline a una funciÛn reutilizable compartida por ambos caminos de confirmaciÛn.
 
 ### Backend
 - Sin cambios. El endpoint `POST /api/v1/stock/movement-requests/bulk-fulfill` acepta atenciones parciales desde antes.
 
-### Operaci√≥n
+### OperaciÛn
 - Sin migraciones Prisma nuevas.
 - Frontend compilable sin errores (`npm --prefix frontend run build`).
 - Deploy manual con `deploy.sh` no requiere pasos adicionales.
 
-## **[13 May 2026] Versi√≥n 2.1.2 ‚Äî Historial de movimientos con b√∫squeda por lote, producto y usuario**
+## **[13 May 2026] VersiÛn 2.1.2 ó Historial de movimientos con b˙squeda por lote, producto y usuario**
 
 ### Objetivo alcanzado
-- Se a√±adi√≥ la vista **Hist. Movimientos** en `/stock/movements` como pesta√±a adicional junto al formulario existente.
+- Se aÒadiÛ la vista **Hist. Movimientos** en `/stock/movements` como pestaÒa adicional junto al formulario existente.
 - Permite consultar el historial completo de movimientos realizados con cuatro modos de filtrado interactivos, sin requerir cambios en backend.
 
 ### Frontend
-- `/stock/movements` incorpora una segunda pesta√±a `üìã Hist. Movimientos` (componente `MovementHistoryTab`).
-- **Por fecha**: ordena ascendente o descendente; opcionalmente filtra por una fecha espec√≠fica.
-- **Por lote**: buscador con autocompletado ‚Äî al seleccionar un lote muestra todos los movimientos (ingresos, transferencias, ajustes, salidas, etc.) que contienen ese lote en cualquiera de sus l√≠neas.
-- **Por producto**: buscador con autocompletado ‚Äî muestra todos los movimientos asociados al producto elegido.
-- **Por usuario**: buscador con autocompletado ‚Äî muestra todos los movimientos realizados o solicitados por ese usuario.
-- En modos lote/producto, el componente precarga en segundo plano el detalle de picking de cada movimiento para construir el √≠ndice de b√∫squeda. El √≠ndice almacena **todas las l√≠neas** del picking (no solo la primera), garantizando trazabilidad completa en movimientos con m√∫ltiples √≠tems.
-- El dropdown de sugerencias filtra conforme el usuario escribe y desaparece al confirmar la selecci√≥n, que se muestra como chip con opci√≥n de cambio.
+- `/stock/movements` incorpora una segunda pestaÒa `?? Hist. Movimientos` (componente `MovementHistoryTab`).
+- **Por fecha**: ordena ascendente o descendente; opcionalmente filtra por una fecha especÌfica.
+- **Por lote**: buscador con autocompletado ó al seleccionar un lote muestra todos los movimientos (ingresos, transferencias, ajustes, salidas, etc.) que contienen ese lote en cualquiera de sus lÌneas.
+- **Por producto**: buscador con autocompletado ó muestra todos los movimientos asociados al producto elegido.
+- **Por usuario**: buscador con autocompletado ó muestra todos los movimientos realizados o solicitados por ese usuario.
+- En modos lote/producto, el componente precarga en segundo plano el detalle de picking de cada movimiento para construir el Ìndice de b˙squeda. El Ìndice almacena **todas las lÌneas** del picking (no solo la primera), garantizando trazabilidad completa en movimientos con m˙ltiples Ìtems.
+- El dropdown de sugerencias filtra conforme el usuario escribe y desaparece al confirmar la selecciÛn, que se muestra como chip con opciÛn de cambio.
 
 ### Backend
 - Sin cambios. La vista consume endpoints ya existentes: `GET /api/v1/stock/completed-movements` y `GET /api/v1/stock/completed-movements/:id/picking`.
 
-### Operaci√≥n
+### OperaciÛn
 - Sin migraciones Prisma nuevas.
 - Frontend compilable sin errores (`npm --prefix frontend run build`).
 - Deploy manual con `deploy.sh` no requiere pasos adicionales.
 
-## **[02 Abr 2026] Versi√≥n 2.1.1 ‚Äî badges operativos + restricci√≥n de edici√≥n de lotes**
+## **[02 Abr 2026] VersiÛn 2.1.1 ó badges operativos + restricciÛn de ediciÛn de lotes**
 
 ### Objetivo alcanzado
-- Se cerr√≥ la entrega `2.1.1` para reforzar visibilidad operativa en stock y endurecer el control funcional sobre la edici√≥n manual de lotes ya distribuidos.
-- La release mantiene el mismo esquema de despliegue manual v√≠a `deploy.sh` y no introduce migraciones Prisma nuevas.
+- Se cerrÛ la entrega `2.1.1` para reforzar visibilidad operativa en stock y endurecer el control funcional sobre la ediciÛn manual de lotes ya distribuidos.
+- La release mantiene el mismo esquema de despliegue manual vÌa `deploy.sh` y no introduce migraciones Prisma nuevas.
 
 ### Backend
-- `GET /api/v1/products/:id/batches` ahora deriva y devuelve `originWarehouseId`, `originWarehouseCode`, `originWarehouseName`, `originLocationId` y `originLocationCode` seg√∫n el primer ingreso del lote.
-- Esa metadata se calcula a partir del movimiento inbound m√°s antiguo con `toLocationId`, manteniendo el contrato suficiente para que frontend limite ajustes al almac√©n de origen.
+- `GET /api/v1/products/:id/batches` ahora deriva y devuelve `originWarehouseId`, `originWarehouseCode`, `originWarehouseName`, `originLocationId` y `originLocationCode` seg˙n el primer ingreso del lote.
+- Esa metadata se calcula a partir del movimiento inbound m·s antiguo con `toLocationId`, manteniendo el contrato suficiente para que frontend limite ajustes al almacÈn de origen.
 
 ### Frontend
-- El men√∫ compartido `Accesos r√°pidos` en stock ahora muestra badges persistentes para `Atender solicitudes` y `Recepci√≥n/Devoluci√≥n` en todas las vistas que reutilizan el componente.
-- El badge de solicitudes pendientes muestra desglose por sucursal en hover y el de recepci√≥n/devoluci√≥n respeta el scope del usuario autenticado.
-- El modal de edici√≥n de lotes en `/catalog/products/:id` ya no permite editar fechas de fabricaci√≥n o vencimiento.
-- La edici√≥n de cantidades queda acotada al remanente todav√≠a existente en el almac√©n del primer ingreso del lote, evitando saltarse el flujo normal de solicitud, atenci√≥n, env√≠o y recepci√≥n.
+- El men˙ compartido `Accesos r·pidos` en stock ahora muestra badges persistentes para `Atender solicitudes` y `RecepciÛn/DevoluciÛn` en todas las vistas que reutilizan el componente.
+- El badge de solicitudes pendientes muestra desglose por sucursal en hover y el de recepciÛn/devoluciÛn respeta el scope del usuario autenticado.
+- El modal de ediciÛn de lotes en `/catalog/products/:id` ya no permite editar fechas de fabricaciÛn o vencimiento.
+- La ediciÛn de cantidades queda acotada al remanente todavÌa existente en el almacÈn del primer ingreso del lote, evitando saltarse el flujo normal de solicitud, atenciÛn, envÌo y recepciÛn.
 
-### Operaci√≥n
+### OperaciÛn
 - Frontend compilado correctamente con `npm --prefix frontend run build`.
 - Backend compilado correctamente con `npm --prefix backend run build`.
 - El estado del repo queda listo para deploy manual usando `deploy.sh`.
 
-## **[01 Abr 2026] Versi√≥n 2.1.0 ‚Äî branding num√©rico + existencias + salida de muestra**
+## **[01 Abr 2026] VersiÛn 2.1.0 ó branding numÈrico + existencias + salida de muestra**
 
 ### Objetivo alcanzado
-- Se consolid√≥ una entrega operativa `2.1.0` enfocada en consistencia num√©rica, trazabilidad de stock y mejora del flujo manual de movimientos.
+- Se consolidÛ una entrega operativa `2.1.0` enfocada en consistencia numÈrica, trazabilidad de stock y mejora del flujo manual de movimientos.
 - La release incorpora cambios funcionales visibles para branding, reportes y salidas de stock sin alterar el mecanismo de despliegue manual basado en `deploy.sh`.
 
 ### Backend
-- `Tenant` ahora persiste `thousandSeparator` y se incluye la migraci√≥n `20260331110000_tenant_thousand_separator`.
-- Los endpoints de branding/admin/tenant exponen y toleran correctamente el nuevo campo incluso frente a entornos que a√∫n no migraron.
+- `Tenant` ahora persiste `thousandSeparator` y se incluye la migraciÛn `20260331110000_tenant_thousand_separator`.
+- Los endpoints de branding/admin/tenant exponen y toleran correctamente el nuevo campo incluso frente a entornos que a˙n no migraron.
 - `POST /api/v1/stock/movements` valida `MANUAL_SALE`, `MANUAL_DISCARD` y `PRODUCT_SAMPLE` con sus reglas de negocio.
-- `GET /api/v1/products/:id/batches` expone `warehouseCity` por ubicaci√≥n para habilitar restricciones por ciudad en frontend.
-- Se agreg√≥ `GET /api/v1/reports/stock/existencias` para consolidar stock actual y movimientos del per√≠odo.
+- `GET /api/v1/products/:id/batches` expone `warehouseCity` por ubicaciÛn para habilitar restricciones por ciudad en frontend.
+- Se agregÛ `GET /api/v1/reports/stock/existencias` para consolidar stock actual y movimientos del perÌodo.
 
 ### Frontend
-- Branding por tenant permite elegir separador de miles y el formato se reutiliza en reportes, ventas, cat√°logo y documentos PDF.
-- `Reportes > Stock` agrega la pesta√±a `Existencias` con KPIs, tablas por sucursal y exportaci√≥n PDF/XLSX.
-- `/stock/movements` agrega `Salida producto de muestra` como flujo independiente, con selecci√≥n de cliente final y restricci√≥n a clientes de Cochabamba cuando el lote pertenece a esa ciudad.
+- Branding por tenant permite elegir separador de miles y el formato se reutiliza en reportes, ventas, cat·logo y documentos PDF.
+- `Reportes > Stock` agrega la pestaÒa `Existencias` con KPIs, tablas por sucursal y exportaciÛn PDF/XLSX.
+- `/stock/movements` agrega `Salida producto de muestra` como flujo independiente, con selecciÛn de cliente final y restricciÛn a clientes de Cochabamba cuando el lote pertenece a esa ciudad.
 - Se redujo el retardo al seleccionar lote memoizando el armado de filas de stock y evitando consultas de clientes prematuras.
 
-### Operaci√≥n
+### OperaciÛn
 - Frontend compilado correctamente con `npm --prefix frontend run build`.
 - Backend compilado correctamente con `npm --prefix backend run build`.
-- La entrega queda lista para deploy manual; al ejecutarse `deploy.sh` debe aplicar la nueva migraci√≥n antes de reiniciar servicios.
+- La entrega queda lista para deploy manual; al ejecutarse `deploy.sh` debe aplicar la nueva migraciÛn antes de reiniciar servicios.
 
-## **[31 Mar 2026] Versi√≥n 2.0.1 ‚Äî orden alfab√©tico en cat√°logo e inventario**
+## **[31 Mar 2026] VersiÛn 2.0.1 ó orden alfabÈtico en cat·logo e inventario**
 
 ### Objetivo alcanzado
-- Se homogeniz√≥ el orden visual de productos en pantallas operativas clave para que el usuario vea los listados en orden alfab√©tico por nombre.
-- La entrega se considera versi√≥n `2.0.1` por tratarse de un ajuste funcional y de usabilidad sin cambios de esquema.
+- Se homogenizÛ el orden visual de productos en pantallas operativas clave para que el usuario vea los listados en orden alfabÈtico por nombre.
+- La entrega se considera versiÛn `2.0.1` por tratarse de un ajuste funcional y de usabilidad sin cambios de esquema.
 
 ### Frontend
-- `/catalog/products` ordena alfab√©ticamente tanto el listado normal como los resultados de b√∫squeda.
-- `/catalog/commercial` y `/catalog/seller` ordenan alfab√©ticamente los productos visibles antes de renderizarlos.
-- `/stock/inventory` ordena alfab√©ticamente la vista por producto y tambi√©n los productos dentro de cada sucursal en la vista por sucursal.
-- Se centraliz√≥ el criterio en un helper compartido de ordenamiento para evitar divergencias entre pantallas.
+- `/catalog/products` ordena alfabÈticamente tanto el listado normal como los resultados de b˙squeda.
+- `/catalog/commercial` y `/catalog/seller` ordenan alfabÈticamente los productos visibles antes de renderizarlos.
+- `/stock/inventory` ordena alfabÈticamente la vista por producto y tambiÈn los productos dentro de cada sucursal en la vista por sucursal.
+- Se centralizÛ el criterio en un helper compartido de ordenamiento para evitar divergencias entre pantallas.
 
-### Operaci√≥n
+### OperaciÛn
 - No se agregaron migraciones Prisma ni cambios de despliegue.
 - El estado del repo queda listo para deploy manual usando `deploy.sh`.
 
-## **[27 Mar 2026] Cat√°logo y ventas: unidad base configurable + PDFs autoajustables**
+## **[27 Mar 2026] Cat·logo y ventas: unidad base configurable + PDFs autoajustables**
 
 ### Objetivo alcanzado
-- Se resolvi√≥ el solapamiento en PDFs de cotizaci√≥n y nota de entrega reemplazando el render fijo por filas con altura variable y textos envueltos.
-- Se incorpor√≥ una abreviatura de unidad base configurable por producto para que la UI y los documentos ya no dependan de `u` como sufijo fijo.
+- Se resolviÛ el solapamiento en PDFs de cotizaciÛn y nota de entrega reemplazando el render fijo por filas con altura variable y textos envueltos.
+- Se incorporÛ una abreviatura de unidad base configurable por producto para que la UI y los documentos ya no dependan de `u` como sufijo fijo.
 
 ### Backend
-- Se agreg√≥ `Product.baseUnitAbbreviation` con default `u` en Prisma.
-- Se incorpor√≥ la migraci√≥n `20260327120000_product_base_unit_abbreviation`.
-- Se normaliz√≥ la abreviatura en altas y ediciones de productos.
-- Se expuso el nuevo campo en respuestas de cat√°logo, productos, cotizaciones, √≥rdenes y stock donde aplica.
+- Se agregÛ `Product.baseUnitAbbreviation` con default `u` en Prisma.
+- Se incorporÛ la migraciÛn `20260327120000_product_base_unit_abbreviation`.
+- Se normalizÛ la abreviatura en altas y ediciones de productos.
+- Se expuso el nuevo campo en respuestas de cat·logo, productos, cotizaciones, Ûrdenes y stock donde aplica.
 
 ### Frontend
 - `/catalog/products` permite editar la abreviatura de unidad base del producto.
-- Se centraliz√≥ el formateo de presentaciones y cantidades para reutilizarlo en cat√°logo, carrito, cotizaciones, entregas, stock y laboratorio.
-- La exportaci√≥n PDF ahora distribuye mejor columnas y calcula la altura real de cada fila antes de dibujarla.
-- Se elimin√≥ el trazado de l√≠neas horizontales entre registros en los PDFs exportados, tanto en documentos manuales con jsPDF como en reportes capturados desde HTML.
+- Se centralizÛ el formateo de presentaciones y cantidades para reutilizarlo en cat·logo, carrito, cotizaciones, entregas, stock y laboratorio.
+- La exportaciÛn PDF ahora distribuye mejor columnas y calcula la altura real de cada fila antes de dibujarla.
+- Se eliminÛ el trazado de lÌneas horizontales entre registros en los PDFs exportados, tanto en documentos manuales con jsPDF como en reportes capturados desde HTML.
 
-### Operaci√≥n
-- La migraci√≥n qued√≥ aplicada y validada en el entorno Docker local.
-- El estado del repo qued√≥ listo para deploy manual usando `deploy.sh`.
+### OperaciÛn
+- La migraciÛn quedÛ aplicada y validada en el entorno Docker local.
+- El estado del repo quedÛ listo para deploy manual usando `deploy.sh`.
 
-## **[25 Mar 2026] Versi√≥n 2.0 ‚Äî Multi-marca / multi-empresa**
+## **[25 Mar 2026] VersiÛn 2.0 ó Multi-marca / multi-empresa**
 
 ### Objetivo alcanzado
-- Se cerr√≥ la primera versi√≥n operativa del flujo multi-marca con cambio de empresa desde sesi√≥n autenticada.
-- La versi√≥n objetivo de esta entrega pasa a ser `2.0`.
+- Se cerrÛ la primera versiÛn operativa del flujo multi-marca con cambio de empresa desde sesiÛn autenticada.
+- La versiÛn objetivo de esta entrega pasa a ser `2.0`.
 
 ### Backend
 - Se agregaron `TenantGroup`, `TenantGroupMember` y `UserTenantAccess` al esquema Prisma.
-- Se incorpor√≥ la migraci√≥n `20260324120000_tenant_groups_multi_brand`.
+- Se incorporÛ la migraciÛn `20260324120000_tenant_groups_multi_brand`.
 - Se sumaron endpoints platform para crear/listar/eliminar grupos y administrar miembros.
 - Se sumaron endpoints admin para listar y guardar accesos cruzados por usuario.
-- Se agreg√≥ `POST /api/v1/auth/switch-tenant`.
-- Se corrigi√≥ el auth hook para aceptar JWTs cuyo tenant activo difiere del tenant base del usuario.
-- Se corrigi√≥ el retorno al tenant principal para que no requiera grant expl√≠cito en `UserTenantAccess`.
+- Se agregÛ `POST /api/v1/auth/switch-tenant`.
+- Se corrigiÛ el auth hook para aceptar JWTs cuyo tenant activo difiere del tenant base del usuario.
+- Se corrigiÛ el retorno al tenant principal para que no requiera grant explÌcito en `UserTenantAccess`.
 
 ### Frontend
-- Se agreg√≥ pantalla de grupos de empresas para platform admin.
-- Se agreg√≥ modal de empresas por usuario en administraci√≥n.
-- Se agreg√≥ selector de empresa en el men√∫ del usuario.
-- Se corrigi√≥ el marcado de tenant activo para usar el contexto actual y no siempre el tenant base.
+- Se agregÛ pantalla de grupos de empresas para platform admin.
+- Se agregÛ modal de empresas por usuario en administraciÛn.
+- Se agregÛ selector de empresa en el men˙ del usuario.
+- Se corrigiÛ el marcado de tenant activo para usar el contexto actual y no siempre el tenant base.
 
-### Operaci√≥n
-- La base local qued√≥ migrada y validada.
-- `deploy.sh` permanece como flujo manual previsto para subir la versi√≥n 2.0 a producci√≥n.
+### OperaciÛn
+- La base local quedÛ migrada y validada.
+- `deploy.sh` permanece como flujo manual previsto para subir la versiÛn 2.0 a producciÛn.
 
 ## Objetivo del producto
-SaaS **multi-tenant** con **single DB** (row-level `tenantId`), backend Node.js/TypeScript (estilo Clean/Hex), frontend React/Vite/Tailwind/TanStack Query, PostgreSQL, **auditor√≠a GxP-friendly inmutable** (append-only), **Socket.io** para eventos en tiempo real, **RBAC** estricto por permisos, y b√∫squeda r√°pida.
+SaaS **multi-tenant** con **single DB** (row-level `tenantId`), backend Node.js/TypeScript (estilo Clean/Hex), frontend React/Vite/Tailwind/TanStack Query, PostgreSQL, **auditorÌa GxP-friendly inmutable** (append-only), **Socket.io** para eventos en tiempo real, **RBAC** estricto por permisos, y b˙squeda r·pida.
 
 ## Hitos principales
 
-## **[20 Mar 2026] Cat√°logo: unicidad de presentaciones por formato + unidades**
+## **[20 Mar 2026] Cat·logo: unicidad de presentaciones por formato + unidades**
 
 ### Presentaciones de producto
-- Se cambi√≥ la regla de negocio de `ProductPresentation`: la unicidad ya no depende solo del formato/nombre.
-- Desde este ajuste, la combinaci√≥n √∫nica es `tenantId + productId + name + unitsPerPresentation`.
-- Resultado esperado en cat√°logo: ahora se permiten m√∫ltiples presentaciones `Caja` para el mismo producto siempre que cambie la cantidad de unidades que contiene cada caja.
-- Ejemplos v√°lidos: `Caja` de 20 unidades y `Caja` de 50 unidades para el mismo producto.
+- Se cambiÛ la regla de negocio de `ProductPresentation`: la unicidad ya no depende solo del formato/nombre.
+- Desde este ajuste, la combinaciÛn ˙nica es `tenantId + productId + name + unitsPerPresentation`.
+- Resultado esperado en cat·logo: ahora se permiten m˙ltiples presentaciones `Caja` para el mismo producto siempre que cambie la cantidad de unidades que contiene cada caja.
+- Ejemplos v·lidos: `Caja` de 20 unidades y `Caja` de 50 unidades para el mismo producto.
 - Sigue bloqueado el duplicado exacto de formato con la misma cantidad de unidades.
 
 ### Backend y frontend alineados
-- Backend: se actualiz√≥ la validaci√≥n y el mapeo de conflictos √∫nicos para devolver un `409` espec√≠fico cuando se repite la combinaci√≥n `formato + unidades`.
+- Backend: se actualizÛ la validaciÛn y el mapeo de conflictos ˙nicos para devolver un `409` especÌfico cuando se repite la combinaciÛn `formato + unidades`.
 - Frontend: se ajustaron las validaciones del detalle de producto para permitir formatos repetidos con diferente `unitsPerPresentation` y bloquear solo duplicados exactos.
 
-### Persistencia y operaci√≥n
-- Se agreg√≥ la migraci√≥n `20260320120000_product_presentation_name_units_unique` para reemplazar el √≠ndice √∫nico anterior por uno compuesto con `unitsPerPresentation`.
-- La migraci√≥n fue aplicada y validada en el entorno local Docker contra `postgres-local`.
+### Persistencia y operaciÛn
+- Se agregÛ la migraciÛn `20260320120000_product_presentation_name_units_unique` para reemplazar el Ìndice ˙nico anterior por uno compuesto con `unitsPerPresentation`.
+- La migraciÛn fue aplicada y validada en el entorno local Docker contra `postgres-local`.
 
-### 1) Base t√©cnica y estructura
+### 1) Base tÈcnica y estructura
 - Backend en `backend/`:
   - Fastify + TypeScript (ESM).
   - Prisma + PostgreSQL.
-  - Organizaci√≥n por adaptadores: HTTP, DB, realtime; y l√≥gica de aplicaci√≥n en `src/application/*`.
+  - OrganizaciÛn por adaptadores: HTTP, DB, realtime; y lÛgica de aplicaciÛn en `src/application/*`.
 - Frontend en `frontend/`:
   - React + Vite + TS.
   - Tailwind v3.
   - TanStack Query para fetching y cache.
 
 ### 2) Multi-tenant
-- Todas las entidades operativas se dise√±aron para operar con `tenantId` (aislamiento l√≥gico por fila).
-- La autenticaci√≥n adjunta `request.auth` con `tenantId` + `userId` + `permissions`, y se aplica como base para guards.
+- Todas las entidades operativas se diseÒaron para operar con `tenantId` (aislamiento lÛgico por fila).
+- La autenticaciÛn adjunta `request.auth` con `tenantId` + `userId` + `permissions`, y se aplica como base para guards.
 
 ### 3) Seguridad: Auth + RBAC
 - Auth JWT (access token) + refresh token rotativo (refresh opaco hasheado en DB).
 - RBAC por permisos (ej.: `catalog:read`, `stock:move`, etc.).
-- Guard adicional por **m√≥dulo habilitado** para el tenant (ej.: `WAREHOUSE`, `SALES`) donde aplica.
+- Guard adicional por **mÛdulo habilitado** para el tenant (ej.: `WAREHOUSE`, `SALES`) donde aplica.
 
-### 4) Dominio MVP: Almac√©n + Ventas B2B
-- Cat√°logo y productos:
+### 4) Dominio MVP: AlmacÈn + Ventas B2B
+- Cat·logo y productos:
   - ABM de productos (create/list/get/update) y batches (create).
   - Optimistic locking por `version` en updates.
 - Stock:
   - Balances por `(tenantId, locationId, productId, batchId)`.
-  - Movimientos `IN/OUT/TRANSFER/ADJUSTMENT` con transacci√≥n y locks para evitar carreras.
-  - Emisi√≥n de eventos realtime (movement created, balance changed, low-stock simple).
+  - Movimientos `IN/OUT/TRANSFER/ADJUSTMENT` con transacciÛn y locks para evitar carreras.
+  - EmisiÛn de eventos realtime (movement created, balance changed, low-stock simple).
 - Warehouses/Locations:
   - Listado de warehouses.
   - Listado de locations por warehouse.
 - Customers:
   - ABM (create/list/get/update) con optimistic locking.
 - Sales Orders:
-  - Create draft con l√≠neas.
+  - Create draft con lÌneas.
   - Confirm.
-  - Fulfill (descuenta stock + genera movimientos OUT por l√≠nea y emite eventos).
+  - Fulfill (descuenta stock + genera movimientos OUT por lÌnea y emite eventos).
 
-### 5) Auditor√≠a GxP-friendly (append-only)
-- Tabla `AuditEvent` para registrar eventos relevantes (actor, acci√≥n, entidad, before/after/metadata).
-- Se incorpor√≥ endurecimiento para bloquear `UPDATE/DELETE` y mantener la auditor√≠a como **append-only**.
-- Se expuso un read-side de auditor√≠a con filtros y paginaci√≥n para navegaci√≥n operativa.
+### 5) AuditorÌa GxP-friendly (append-only)
+- Tabla `AuditEvent` para registrar eventos relevantes (actor, acciÛn, entidad, before/after/metadata).
+- Se incorporÛ endurecimiento para bloquear `UPDATE/DELETE` y mantener la auditorÌa como **append-only**.
+- Se expuso un read-side de auditorÌa con filtros y paginaciÛn para navegaciÛn operativa.
 
-### 6) Administraci√≥n (multirol)
+### 6) AdministraciÛn (multirol)
 - Endpoints protegidos para:
   - Listar permisos.
   - Listar/crear roles.
@@ -578,108 +661,108 @@ SaaS **multi-tenant** con **single DB** (row-level `tenantId`), backend Node.js/
   - OpenAPI JSON en `/api/v1/openapi.json`.
   - Bearer auth documentado en `components.securitySchemes`.
 
-### 8) Conectividad y ergonom√≠a local
-- Se incorpor√≥ `docker-compose.yml` para Postgres local.
-- Se ajust√≥ CORS para tolerar `localhost` y `127.0.0.1` (mitiga problemas t√≠picos IPv6/localhost en Windows).
-- El frontend se aline√≥ para usar `127.0.0.1` como default de API/WS en desarrollo.
+### 8) Conectividad y ergonomÌa local
+- Se incorporÛ `docker-compose.yml` para Postgres local.
+- Se ajustÛ CORS para tolerar `localhost` y `127.0.0.1` (mitiga problemas tÌpicos IPv6/localhost en Windows).
+- El frontend se alineÛ para usar `127.0.0.1` como default de API/WS en desarrollo.
 
 ## Estado actual del MVP
-- Backend: endpoints operativos para auth, cat√°logo/b√∫squeda, productos, batches, stock, warehouses/locations, customers, sales orders, admin, audit, y read-sides de reportes.
-- Frontend: UI operable para validaci√≥n (home/login, administraci√≥n, auditor√≠a, reportes), conexi√≥n realtime, y dashboard de vencimientos.
+- Backend: endpoints operativos para auth, cat·logo/b˙squeda, productos, batches, stock, warehouses/locations, customers, sales orders, admin, audit, y read-sides de reportes.
+- Frontend: UI operable para validaciÛn (home/login, administraciÛn, auditorÌa, reportes), conexiÛn realtime, y dashboard de vencimientos.
 
 ## Reportes (Phase 1)
-Se incorporaron endpoints read-only de reportes para acelerar dashboards y pantallas operativas sin exigir m√∫ltiples llamadas y joins en el frontend.
+Se incorporaron endpoints read-only de reportes para acelerar dashboards y pantallas operativas sin exigir m˙ltiples llamadas y joins en el frontend.
 - Ventas: resumen diario y top productos.
-- Stock: balances ‚Äúexpanded‚Äù (con joins a warehouse/location/product/batch) y movimientos ‚Äúexpanded‚Äù (con metadata de ubicaciones).
-- Vencimientos: read-side de alertas por lote con sem√°foro (EXPIRED/RED/YELLOW/GREEN) y soporte de FEFO.
+- Stock: balances ìexpandedî (con joins a warehouse/location/product/batch) y movimientos ìexpandedî (con metadata de ubicaciones).
+- Vencimientos: read-side de alertas por lote con sem·foro (EXPIRED/RED/YELLOW/GREEN) y soporte de FEFO.
 
-## Vencimientos (expiry) + FEFO (operaci√≥n segura)
-- Se incorpor√≥ control de vencimientos por lote (`Batch.expiresAt`) con sem√°foro de alertas (c√°lculo por inicio de d√≠a UTC).
+## Vencimientos (expiry) + FEFO (operaciÛn segura)
+- Se incorporÛ control de vencimientos por lote (`Batch.expiresAt`) con sem·foro de alertas (c·lculo por inicio de dÌa UTC).
 - Se agregaron endpoints:
-  - `GET /api/v1/stock/expiry/summary` (alertas + paginaci√≥n + filtros).
-  - `GET /api/v1/stock/fefo-suggestions` (sugerencias FEFO por ubicaci√≥n o warehouse).
+  - `GET /api/v1/stock/expiry/summary` (alertas + paginaciÛn + filtros).
+  - `GET /api/v1/stock/fefo-suggestions` (sugerencias FEFO por ubicaciÛn o warehouse).
 - Reglas de negocio (bloqueos):
-  - Se bloquean movimientos de stock que reduzcan cantidad (`OUT/TRANSFER/ADJUSTMENT negativo`) si el lote est√° vencido.
-  - Se bloquea fulfillment de ventas si el lote expl√≠cito est√° vencido.
-  - Se registra auditor√≠a `stock.expiry.blocked` cuando aplica.
+  - Se bloquean movimientos de stock que reduzcan cantidad (`OUT/TRANSFER/ADJUSTMENT negativo`) si el lote est· vencido.
+  - Se bloquea fulfillment de ventas si el lote explÌcito est· vencido.
+  - Se registra auditorÌa `stock.expiry.blocked` cuando aplica.
 - FEFO auto-pick en fulfillment:
-  - Si una l√≠nea viene con `batchId: null`, el backend intenta auto-seleccionar (FEFO) un lote no vencido con stock suficiente en `fromLocationId`.
+  - Si una lÌnea viene con `batchId: null`, el backend intenta auto-seleccionar (FEFO) un lote no vencido con stock suficiente en `fromLocationId`.
 
-## Branding ‚Äúpre-login‚Äù por dominio
-- Para dominios por tenant, se habilit√≥ cargar branding sin sesi√≥n (logo/colores/tema) en base al `Host`.
+## Branding ìpre-loginî por dominio
+- Para dominios por tenant, se habilitÛ cargar branding sin sesiÛn (logo/colores/tema) en base al `Host`.
   - Endpoint: `GET /api/v1/public/tenant/branding`.
   - El frontend lo usa para pintar la pantalla de login con el logo/nombre del tenant.
 
 ## Handoff para UI completa
-- Se dej√≥ `referencias_para_claude.md` con el mapa de pantallas + endpoints + consideraciones multi-tenant, para acelerar la construcci√≥n de interfaces visuales.
+- Se dejÛ `referencias_para_claude.md` con el mapa de pantallas + endpoints + consideraciones multi-tenant, para acelerar la construcciÛn de interfaces visuales.
 
 ## Tenant Branding (logos + colores + tema)
-- Se decidi√≥ usar **object storage S3-compatible** para logos (y futuros adjuntos/exportaciones), evitando acoplarse a AWS.
+- Se decidiÛ usar **object storage S3-compatible** para logos (y futuros adjuntos/exportaciones), evitando acoplarse a AWS.
 - Flujo: el backend genera **presigned URL** (PUT) y el frontend sube directo al storage; luego se guarda `logoUrl` en `Tenant`.
-- Los logos pueden ser **p√∫blicos** (URL directa) usando `S3_PUBLIC_BASE_URL`.
-- Para dev/local se a√±adi√≥ soporte de MinIO en `docker-compose.yml` (si Docker est√° disponible).
+- Los logos pueden ser **p˙blicos** (URL directa) usando `S3_PUBLIC_BASE_URL`.
+- Para dev/local se aÒadiÛ soporte de MinIO en `docker-compose.yml` (si Docker est· disponible).
 
 ## Branding por tenant + tema (Steps 3 y 4)
-- Se a√±adieron campos de branding al modelo `Tenant`:
+- Se aÒadieron campos de branding al modelo `Tenant`:
   - `logoUrl`, `brandPrimary`, `brandSecondary`, `brandTertiary`, `defaultTheme`.
-- Se implement√≥ soporte de upload de logo v√≠a S3-compatible usando URL presignada (flujo: `POST presign` ‚Üí `PUT uploadUrl` ‚Üí `PUT branding`).
+- Se implementÛ soporte de upload de logo vÌa S3-compatible usando URL presignada (flujo: `POST presign` ? `PUT uploadUrl` ? `PUT branding`).
 - El frontend carga branding del tenant y aplica variables CSS (`--pf-primary/secondary/tertiary`) para que el tema sea configurable.
-- Se habilit√≥ modo oscuro/claro con `darkMode: 'class'` y un toggle persistido en `localStorage`, con fallback al `defaultTheme` del tenant.
+- Se habilitÛ modo oscuro/claro con `darkMode: 'class'` y un toggle persistido en `localStorage`, con fallback al `defaultTheme` del tenant.
 
 ## Rutas reales (Step 5)
-- Se migr√≥ el panel de Administraci√≥n a rutas reales sin cambiar la UX base:
+- Se migrÛ el panel de AdministraciÛn a rutas reales sin cambiar la UX base:
   - Home: `/`
   - Admin: `/admin/:tab` (roles/users/permissions/audit/reports/branding)
 
-## Provisioning real (Platform ‚Üí Tenant)
-- Se incorpor√≥ un flujo para que un usuario ‚Äúplatform admin‚Äù cree tenants desde la plataforma:
-  - Crea `Tenant` + m√≥dulos default + rol `TENANT_ADMIN` + usuario admin inicial.
-  - Modela ‚Äúsucursales‚Äù iniciales como `Warehouse` (`BR-01..`) con `BIN-01`.
-- Se a√±adi√≥ `branchLimit` en `Tenant` como base de monetizaci√≥n por cantidad de sucursales.
+## Provisioning real (Platform ? Tenant)
+- Se incorporÛ un flujo para que un usuario ìplatform adminî cree tenants desde la plataforma:
+  - Crea `Tenant` + mÛdulos default + rol `TENANT_ADMIN` + usuario admin inicial.
+  - Modela ìsucursalesî iniciales como `Warehouse` (`BR-01..`) con `BIN-01`.
+- Se aÒadiÛ `branchLimit` en `Tenant` como base de monetizaciÛn por cantidad de sucursales.
 
 ## Dominios por tenant (futuro habilitado, seguro)
-- Se a√±adi√≥ el modelo `TenantDomain` para mapear `domain -> tenantId`.
+- Se aÒadiÛ el modelo `TenantDomain` para mapear `domain -> tenantId`.
 - Login por `Host`:
   - El backend puede inferir el tenant en `/auth/login` por `Host`/`X-Forwarded-Host`.
   - Para seguridad, solo se aceptan dominios **verificados**.
-  - Si un email existe en m√∫ltiples tenants y no hay dominio resoluble, el login responde conflicto (evita seleccionar tenant incorrecto).
+  - Si un email existe en m˙ltiples tenants y no hay dominio resoluble, el login responde conflicto (evita seleccionar tenant incorrecto).
 
-## Verificaci√≥n de dominio (base HTTP-file)
-- Para habilitar dominios de clientes de forma controlada, se prepar√≥ un mecanismo de verificaci√≥n por token:
+## VerificaciÛn de dominio (base HTTP-file)
+- Para habilitar dominios de clientes de forma controlada, se preparÛ un mecanismo de verificaciÛn por token:
   - La plataforma registra un dominio y genera token temporal.
-  - El backend expone el token por `/.well-known/pharmaflow-domain-verification` (seg√∫n `Host`).
-  - La plataforma puede verificar autom√°ticamente (server-side) y marcar `verifiedAt`.
+  - El backend expone el token por `/.well-known/pharmaflow-domain-verification` (seg˙n `Host`).
+  - La plataforma puede verificar autom·ticamente (server-side) y marcar `verifiedAt`.
 
-## Ergonom√≠a de entorno (dev)
-- Se ajust√≥ la validaci√≥n de variables de entorno para que S3 sea verdaderamente opcional:
-  - Valores vac√≠os se tratan como ‚Äúno configurado‚Äù (evita bloquear el arranque del backend).
-- En el frontend, se favoreci√≥ ‚Äúsame-origin‚Äù para facilitar pruebas con dominios via `hosts` usando el proxy de Vite.
+## ErgonomÌa de entorno (dev)
+- Se ajustÛ la validaciÛn de variables de entorno para que S3 sea verdaderamente opcional:
+  - Valores vacÌos se tratan como ìno configuradoî (evita bloquear el arranque del backend).
+- En el frontend, se favoreciÛ ìsame-originî para facilitar pruebas con dominios via `hosts` usando el proxy de Vite.
 
-## Pr√≥ximos pasos sugeridos (roadmap corto)
-- Completar contratos OpenAPI para todas las rutas (hoy Admin/Audit est√°n m√°s completos).
-- Agregar read-sides/reportes (agregaciones) t√≠picos: ventas por per√≠odo, kardex, stock por almac√©n/ubicaci√≥n, top productos/clientes, etc.
-- Exportaciones (CSV) y/o endpoints de descarga para auditor√≠a/reportes (si se necesita).
+## PrÛximos pasos sugeridos (roadmap corto)
+- Completar contratos OpenAPI para todas las rutas (hoy Admin/Audit est·n m·s completos).
+- Agregar read-sides/reportes (agregaciones) tÌpicos: ventas por perÌodo, kardex, stock por almacÈn/ubicaciÛn, top productos/clientes, etc.
+- Exportaciones (CSV) y/o endpoints de descarga para auditorÌa/reportes (si se necesita).
 
 ---
 
-## **[12 Mar 2026] Stock: Movimientos realizados por presentaci√≥n + Picking PDF (SOL + logo)**
+## **[12 Mar 2026] Stock: Movimientos realizados por presentaciÛn + Picking PDF (SOL + logo)**
 
-### Stock ‚Äî Movimientos realizados (`/stock/completed-movements`)
-- Se ajust√≥ la UI para mostrar **Cantidad** en base a **presentaci√≥n** (ej. cajas) en la tabla y en el modal de detalle.
-- Backend: el listado agrega `totalQuantityUnits` + `totalQuantityPresentations` para soportar el c√°lculo sin perder la unidad base.
+### Stock ó Movimientos realizados (`/stock/completed-movements`)
+- Se ajustÛ la UI para mostrar **Cantidad** en base a **presentaciÛn** (ej. cajas) en la tabla y en el modal de detalle.
+- Backend: el listado agrega `totalQuantityUnits` + `totalQuantityPresentations` para soportar el c·lculo sin perder la unidad base.
 
-### Stock ‚Äî Picking PDF (export)
-- El endpoint de picking ahora incluye `meta.requestCode` y cantidades por presentaci√≥n (`quantityPresentations`, `unitsPerPresentation`) en √≠tems solicitados y l√≠neas enviadas.
+### Stock ó Picking PDF (export)
+- El endpoint de picking ahora incluye `meta.requestCode` y cantidades por presentaciÛn (`quantityPresentations`, `unitsPerPresentation`) en Ìtems solicitados y lÌneas enviadas.
 - El PDF de picking muestra `Solicitud: SOL...` en el encabezado y renderiza el **logo del tenant** (best-effort en B/N) a la derecha.
 - Fix: el picking ya no falla si `requestedBy` no es UUID (en ese caso se usa el string directo como nombre).
 
-## **[05 Mar 2026] Stock: c√≥digos SOL en solicitudes + Notificaciones persistentes (campana)**
+## **[05 Mar 2026] Stock: cÛdigos SOL en solicitudes + Notificaciones persistentes (campana)**
 
-### Stock ‚Äî Solicitudes con c√≥digo `SOLYY####`
+### Stock ó Solicitudes con cÛdigo `SOLYY####`
 - Se agregaron campos `StockMovementRequest.code`, `codeYear`, `codeSeq`.
-- Se implement√≥ secuenciaci√≥n por `tenantId + a√±o` usando `TenantSequence` (clave `SOL`).
-- Migraci√≥n incluye backfill para solicitudes existentes y crea √≠ndices/unique (`tenantId + code`).
-- Frontend: se muestra `code` en pantallas de movimientos, recepciones y atenci√≥n masiva.
+- Se implementÛ secuenciaciÛn por `tenantId + aÒo` usando `TenantSequence` (clave `SOL`).
+- MigraciÛn incluye backfill para solicitudes existentes y crea Ìndices/unique (`tenantId + code`).
+- Frontend: se muestra `code` en pantallas de movimientos, recepciones y atenciÛn masiva.
 
 ### Notificaciones persistentes (campana)
 - Backend: nueva tabla `Notification` y `User.notificationsLastReadAt`.
@@ -687,216 +770,216 @@ Se incorporaron endpoints read-only de reportes para acelerar dashboards y panta
   - `GET /api/v1/notifications`
   - `POST /api/v1/notifications/mark-all-read`
   - `POST /api/v1/notifications/send-bulk-transfer` (utilitario)
-- Inserci√≥n de notificaciones ‚Äúbest-effort‚Äù (try/catch) para no romper flujos principales (stock/ventas).
-- Frontend: `NotificationsProvider` carga desde API y persiste ‚Äúmarcar todo le√≠do‚Äù; sockets quedan para toast/sonido + refresco.
+- InserciÛn de notificaciones ìbest-effortî (try/catch) para no romper flujos principales (stock/ventas).
+- Frontend: `NotificationsProvider` carga desde API y persiste ìmarcar todo leÌdoî; sockets quedan para toast/sonido + refresco.
 
-### Stock ‚Äî Buscador unificado (mismo campo)
-- Se unific√≥ el patr√≥n de b√∫squeda client-side en pantallas operativas de Stock para que el usuario pueda buscar por cualquier texto relevante (c√≥digo, producto, lote, origen/destino, solicitante, etc.) desde un √∫nico campo.
+### Stock ó Buscador unificado (mismo campo)
+- Se unificÛ el patrÛn de b˙squeda client-side en pantallas operativas de Stock para que el usuario pueda buscar por cualquier texto relevante (cÛdigo, producto, lote, origen/destino, solicitante, etc.) desde un ˙nico campo.
 - Cobertura en UI (Stock): Solicitudes, Atender masivo, Recepciones/Devoluciones, Movimientos y Movimientos realizados.
 
-### Stock ‚Äî Vista "Trazabilidad de solicitudes" (UI)
-- Nueva vista para revisar el estado de una solicitud de movimiento y su avance: **creada**, **atendida (parcial)**, **env√≠os** y **recepci√≥n**.
-- Incluye modal de detalle con m√©tricas por √≠tem (solicitado / enviado / pendiente) respetando **presentaci√≥n** (ej. caja vs unidad) y estado de env√≠os (pendiente de recepci√≥n / recibido / devuelto).
-- Se mejor√≥ la ergonom√≠a de modales con scroll vertical interno para soportar contenido largo sin cortar acciones/t√≠tulo.
+### Stock ó Vista "Trazabilidad de solicitudes" (UI)
+- Nueva vista para revisar el estado de una solicitud de movimiento y su avance: **creada**, **atendida (parcial)**, **envÌos** y **recepciÛn**.
+- Incluye modal de detalle con mÈtricas por Ìtem (solicitado / enviado / pendiente) respetando **presentaciÛn** (ej. caja vs unidad) y estado de envÌos (pendiente de recepciÛn / recibido / devuelto).
+- Se mejorÛ la ergonomÌa de modales con scroll vertical interno para soportar contenido largo sin cortar acciones/tÌtulo.
 
-### Operaci√≥n / despliegue
-- Requiere aplicar migraciones Prisma antes de ejecutar la nueva versi√≥n (en local y producci√≥n) para evitar errores por columnas faltantes.
+### OperaciÛn / despliegue
+- Requiere aplicar migraciones Prisma antes de ejecutar la nueva versiÛn (en local y producciÛn) para evitar errores por columnas faltantes.
 
 ## **[20 Feb 2026] Ventas: pagos parciales + Lotes: gobernanza + UX en detalle de producto**
 
 ### Ventas: Cuentas por cobrar (Pago TOTAL vs PARCIAL)
-- Se incorpor√≥ soporte de **pago total o parcial** en el flujo de cobros.
-- Persistencia: nuevo acumulador `SalesOrder.paidAmount` (migraci√≥n Prisma) para reflejar pagos parciales.
-- Regla de negocio: `paidAt` se setea **solo** cuando la orden queda totalmente pagada; el evento realtime `sales.order.paid` se emite √∫nicamente al completarse el total.
+- Se incorporÛ soporte de **pago total o parcial** en el flujo de cobros.
+- Persistencia: nuevo acumulador `SalesOrder.paidAmount` (migraciÛn Prisma) para reflejar pagos parciales.
+- Regla de negocio: `paidAt` se setea **solo** cuando la orden queda totalmente pagada; el evento realtime `sales.order.paid` se emite ˙nicamente al completarse el total.
 - Frontend:
   - Modal de pago pregunta **TOTAL/PARCIAL**; parcial requiere monto.
   - Tabla de cobros muestra **Pagado / Debe** e indicador de pago parcial.
 
 ### Lotes (Batches): reglas + permisos
-- Cat√°logo (no laboratorio): el `batchNumber` **ya no se autogenera**; el usuario debe ingresarlo al crear un lote.
-- Laboratorio: cuando se generan lotes desde producci√≥n, el `batchNumber` puede quedar vac√≠o y el backend lo autogenera (si aplica), manteni√©ndolo **editable**.
-- Se reforz√≥ unicidad: el c√≥digo de lote es √∫nico por producto (`tenantId + productId + batchNumber`).
+- Cat·logo (no laboratorio): el `batchNumber` **ya no se autogenera**; el usuario debe ingresarlo al crear un lote.
+- Laboratorio: cuando se generan lotes desde producciÛn, el `batchNumber` puede quedar vacÌo y el backend lo autogenera (si aplica), manteniÈndolo **editable**.
+- Se reforzÛ unicidad: el cÛdigo de lote es ˙nico por producto (`tenantId + productId + batchNumber`).
 - Seguridad: **solo el creador** del lote puede editar/eliminar metadata; el backend expone `canManage` para habilitar/deshabilitar acciones en UI.
 
-### Cat√°logo: detalle de producto (lotes)
-- La lista de lotes muestra tambi√©n la **presentaci√≥n** asociada.
-- La edici√≥n permite cambiar `presentationId` del lote y ajustar cantidad por ubicaci√≥n usando movimientos `ADJUSTMENT` (delta hacia el total deseado).
+### Cat·logo: detalle de producto (lotes)
+- La lista de lotes muestra tambiÈn la **presentaciÛn** asociada.
+- La ediciÛn permite cambiar `presentationId` del lote y ajustar cantidad por ubicaciÛn usando movimientos `ADJUSTMENT` (delta hacia el total deseado).
 
-### Operaci√≥n / despliegue
-- Se verific√≥ que el despliegue contemple aplicar migraciones Prisma (necesario para cambios como `paidAmount`).
+### OperaciÛn / despliegue
+- Se verificÛ que el despliegue contemple aplicar migraciones Prisma (necesario para cambios como `paidAmount`).
 
-## **[12 Feb 2026] Laboratorio: m√≥dulo completo + RBAC provisioning + fix roles de usuario**
+## **[12 Feb 2026] Laboratorio: mÛdulo completo + RBAC provisioning + fix roles de usuario**
 
-### M√≥dulo Laboratorio (UI completa)
-- Se integr√≥ el m√≥dulo completo de **Laboratorio** en el frontend (rutas `/laboratory/*` + navegaci√≥n).
+### MÛdulo Laboratorio (UI completa)
+- Se integrÛ el mÛdulo completo de **Laboratorio** en el frontend (rutas `/laboratory/*` + navegaciÛn).
 - Acceso controlado por permisos existentes: lectura por `stock:read` y acciones de escritura por `stock:manage`.
 
-### Backend: habilitaci√≥n por m√≥dulo + compatibilidad Prisma
-- Se habilit√≥ el m√≥dulo `LABORATORY` a nivel tenant (guard por m√≥dulo) y se incluy√≥ como m√≥dulo default al crear nuevos tenants.
+### Backend: habilitaciÛn por mÛdulo + compatibilidad Prisma
+- Se habilitÛ el mÛdulo `LABORATORY` a nivel tenant (guard por mÛdulo) y se incluyÛ como mÛdulo default al crear nuevos tenants.
 - Se corrigieron inconsistencias con el schema actual de Prisma en rutas de laboratorio:
   - Eliminado uso de `Location.isDefault` (no existe en el modelo).
-  - Movimientos de insumos usan `fromLocationId/toLocationId` (en vez de `locationId`) y se apoyan en el service transaccional para numeraci√≥n/balances.
+  - Movimientos de insumos usan `fromLocationId/toLocationId` (en vez de `locationId`) y se apoyan en el service transaccional para numeraciÛn/balances.
 
 ### RBAC: roles del sistema por tenant (incluye nuevos roles)
-- Se refactoriz√≥ el provisioning para soportar **provisi√≥n por tenant** y reutilizarlo durante la creaci√≥n de tenants (transacci√≥n segura).
-- Se aseguraron roles/m√≥dulos para tenants existentes y nuevos, incluyendo:
+- Se refactorizÛ el provisioning para soportar **provisiÛn por tenant** y reutilizarlo durante la creaciÛn de tenants (transacciÛn segura).
+- Se aseguraron roles/mÛdulos para tenants existentes y nuevos, incluyendo:
   - `BRANCH_ADMIN` y `BRANCH_SELLER` (sucursal)
   - `LABORATORIO` (laboratorio)
 
 ### Admin: reemplazo de roles de usuario
-- Fix del endpoint `PUT /api/v1/admin/users/:id/roles` que devolv√≠a `500` por desalineaci√≥n con el schema de respuesta.
+- Fix del endpoint `PUT /api/v1/admin/users/:id/roles` que devolvÌa `500` por desalineaciÛn con el schema de respuesta.
 - La respuesta ahora vuelve a un shape consistente para el listado de usuarios (incluye `roleIds` y `roles` en formato plano).
 
-## **[10 Feb 2026] Stock: Env√≠o y recepci√≥n de solicitudes (SENT ‚Üí FULFILLED)**
+## **[10 Feb 2026] Stock: EnvÌo y recepciÛn de solicitudes (SENT ? FULFILLED)**
 
 ### Estado intermedio `SENT`
-- Se agreg√≥ el estado `SENT` para representar solicitudes **enviadas** pero a√∫n **no recepcionadas** en destino.
+- Se agregÛ el estado `SENT` para representar solicitudes **enviadas** pero a˙n **no recepcionadas** en destino.
 
 ### Backend (rutas + trazabilidad)
-- `POST /api/v1/stock/movement-requests/bulk-fulfill` genera el **env√≠o** creando movimientos `OUT` asociados a la solicitud (`referenceType: MOVEMENT_REQUEST`, `referenceId = requestId`) y marca la solicitud como `SENT`.
-- `POST /api/v1/stock/movement-requests/:id/receive` confirma la **recepci√≥n**: crea movimientos `IN` hacia el `toLocationId` de los `OUT` enviados, marca la solicitud como `FULFILLED` y setea `confirmedAt/confirmedBy`.
-- `GET /api/v1/stock/movement-requests` se ampli√≥ para exponer:
-  - `originWarehouse` (derivado desde `OUT.fromLocationId ‚Üí Location ‚Üí Warehouse`, que representa el origen real del env√≠o)
+- `POST /api/v1/stock/movement-requests/bulk-fulfill` genera el **envÌo** creando movimientos `OUT` asociados a la solicitud (`referenceType: MOVEMENT_REQUEST`, `referenceId = requestId`) y marca la solicitud como `SENT`.
+- `POST /api/v1/stock/movement-requests/:id/receive` confirma la **recepciÛn**: crea movimientos `IN` hacia el `toLocationId` de los `OUT` enviados, marca la solicitud como `FULFILLED` y setea `confirmedAt/confirmedBy`.
+- `GET /api/v1/stock/movement-requests` se ampliÛ para exponer:
+  - `originWarehouse` (derivado desde `OUT.fromLocationId ? Location ? Warehouse`, que representa el origen real del envÌo)
   - `fulfilledByName` / `confirmedByName`
   - `movements[]` con detalle por producto/lote/vencimiento y `fromLocation`
-- Se agreg√≥ soporte de logs opcionales para depuraci√≥n: `DEBUG_STOCK_MOVEMENT_REQUESTS=1`.
-- Fix en ‚ÄúMovimientos realizados‚Äù (`/stock/completed-movements`): el almac√©n de origen se deriva del √∫ltimo movimiento `OUT` (el √∫ltimo movimiento global puede ser un `IN` de recepci√≥n con `fromLocationId=null`).
+- Se agregÛ soporte de logs opcionales para depuraciÛn: `DEBUG_STOCK_MOVEMENT_REQUESTS=1`.
+- Fix en ìMovimientos realizadosî (`/stock/completed-movements`): el almacÈn de origen se deriva del ˙ltimo movimiento `OUT` (el ˙ltimo movimiento global puede ser un `IN` de recepciÛn con `fromLocationId=null`).
 
 ### Frontend (Recepciones)
-- La pantalla `/stock/returns` ahora incluye pesta√±a **Recepciones** (solicitudes `SENT`) y muestra **origen real** + **persona que env√≠a**, adem√°s del detalle por lote/vencimiento.
-- Se ajust√≥ el ordenamiento para mostrar lo m√°s reciente primero en tablas relacionadas a solicitudes/recepciones.
+- La pantalla `/stock/returns` ahora incluye pestaÒa **Recepciones** (solicitudes `SENT`) y muestra **origen real** + **persona que envÌa**, adem·s del detalle por lote/vencimiento.
+- Se ajustÛ el ordenamiento para mostrar lo m·s reciente primero en tablas relacionadas a solicitudes/recepciones.
 
 ## **[02 Feb 2026] Stock: Atender solicitudes + Reportes OPS (flujos y trazabilidad)**
 
-### Operaci√≥n: Atender solicitudes (1 solicitud, m√∫ltiples √≠tems)
-- Se consolid√≥ el flujo para atender **una** solicitud de movimiento con m√∫ltiples √≠tems (con autopick FEFO y soporte de atenci√≥n parcial).
-- Se incorpor√≥ documentaci√≥n operativa (PDF):
+### OperaciÛn: Atender solicitudes (1 solicitud, m˙ltiples Ìtems)
+- Se consolidÛ el flujo para atender **una** solicitud de movimiento con m˙ltiples Ìtems (con autopick FEFO y soporte de atenciÛn parcial).
+- Se incorporÛ documentaciÛn operativa (PDF):
   - Picking PDF.
-  - R√≥tulo editable (PDF).
+  - RÛtulo editable (PDF).
 
 ### Reportes > Stock > OPS: flujos completados + tiempo promedio + trazabilidad
 - Se ampliaron los reportes de OPS para solicitudes de movimiento:
-  - **Flujos** (origen ‚Üí destino) de solicitudes atendidas y **tiempo promedio de atenci√≥n** (`fulfilledAt - createdAt`).
-  - **Listado** de solicitudes atendidas con m√©tricas (tiempo, √≠tems, cantidades, movimientos) y acceso a drill-down.
+  - **Flujos** (origen ? destino) de solicitudes atendidas y **tiempo promedio de atenciÛn** (`fulfilledAt - createdAt`).
+  - **Listado** de solicitudes atendidas con mÈtricas (tiempo, Ìtems, cantidades, movimientos) y acceso a drill-down.
   - **Trazabilidad** por solicitud: comparar **lo solicitado** vs **lo enviado** (movimientos/picking real).
 - UX menor:
   - Filtro client-side en la lista de atendidas.
-  - Bot√≥n "Exportar picking (PDF)" dentro del modal de trazabilidad.
+  - BotÛn "Exportar picking (PDF)" dentro del modal de trazabilidad.
 
 ### Endpoints (read-only)
 - `GET /api/v1/reports/stock/movement-requests/flows`
 - `GET /api/v1/reports/stock/movement-requests/fulfilled`
 - `GET /api/v1/reports/stock/movement-requests/:id/trace`
 
-## **[14 Ene 2026] M√≥dulo Entregas + cierre de venta por reservas**
+## **[14 Ene 2026] MÛdulo Entregas + cierre de venta por reservas**
 
 ### Entregas (UI)
-- Se agreg√≥ la pantalla **Entregas** en Ventas (`/sales/deliveries`) con lista de pendientes/entregadas.
-- Se muestra **fecha relativa** ("en X d√≠as" / "hoy" / "ayer" / "hace X d√≠as"), lugar de entrega y acceso a Maps.
+- Se agregÛ la pantalla **Entregas** en Ventas (`/sales/deliveries`) con lista de pendientes/entregadas.
+- Se muestra **fecha relativa** ("en X dÌas" / "hoy" / "ayer" / "hace X dÌas"), lugar de entrega y acceso a Maps.
 - Acciones:
   - **Ver OV** (navega al detalle de la orden).
   - **Marcar entregado**.
 
 ### Backend: listar entregas + marcar entregado
 - Nuevo read-side: `GET /api/v1/sales/deliveries` (pendientes = `DRAFT|CONFIRMED`, entregadas = `FULFILLED`).
-- Nueva acci√≥n: `POST /api/v1/sales/orders/:id/deliver`.
+- Nueva acciÛn: `POST /api/v1/sales/orders/:id/deliver`.
   - Si la orden tiene `SalesOrderReservation`, se consume stock desde los balances reservados: decrementa `quantity` y `reservedQuantity`, borra reservas y crea `StockMovement` `OUT`.
-  - Si no hay reservas, permite fallback al flujo cl√°sico (requiere `fromLocationId`, incluye FEFO + validaci√≥n de lote vencido).
-  - Emite eventos realtime (`sales.order.delivered`, `stock.movement.created`, `stock.balance.changed`) y registra auditor√≠a.
+  - Si no hay reservas, permite fallback al flujo cl·sico (requiere `fromLocationId`, incluye FEFO + validaciÛn de lote vencido).
+  - Emite eventos realtime (`sales.order.delivered`, `stock.movement.created`, `stock.balance.changed`) y registra auditorÌa.
 
-### Ajuste de flujo cotizaci√≥n ‚Üí orden
-- Al procesar una cotizaci√≥n, la orden resultante se crea en estado `CONFIRMED` para que quede lista como "pendiente de entrega".
+### Ajuste de flujo cotizaciÛn ? orden
+- Al procesar una cotizaciÛn, la orden resultante se crea en estado `CONFIRMED` para que quede lista como "pendiente de entrega".
 
 ### Docs
-- Se actualiz√≥ `API_REFERENCE.md` para incluir los endpoints de Entregas y la acci√≥n de entrega.
+- Se actualizÛ `API_REFERENCE.md` para incluir los endpoints de Entregas y la acciÛn de entrega.
 
 ---
 
-## **[14 Ene 2026] Productos: Presentaci√≥n estructurada + SKU autom√°tico**
+## **[14 Ene 2026] Productos: PresentaciÛn estructurada + SKU autom·tico**
 
-### Presentaci√≥n = envoltorio + cantidad + formato
-- Se agreg√≥ al modelo de producto una presentaci√≥n estructurada:
+### PresentaciÛn = envoltorio + cantidad + formato
+- Se agregÛ al modelo de producto una presentaciÛn estructurada:
   - `presentationWrapper` (ej. `caja`, `frasco`)
-  - `presentationQuantity` (cantidad num√©rica)
+  - `presentationQuantity` (cantidad numÈrica)
   - `presentationFormat` (ej. `comprimidos`, `vial`)
-- La UI de creaci√≥n/edici√≥n se ajust√≥ para capturar estos 3 valores y mostrar una vista previa tipo "Caja de 250 comprimidos".
+- La UI de creaciÛn/ediciÛn se ajustÛ para capturar estos 3 valores y mostrar una vista previa tipo "Caja de 250 comprimidos".
 
-### SKU autom√°tico (frontend)
-- Al crear producto, el SKU se genera autom√°ticamente combinando nombre + wrapper + cantidad + formato.
-- Si el usuario edita el SKU manualmente, se desactiva la autogeneraci√≥n para no pisar cambios.
+### SKU autom·tico (frontend)
+- Al crear producto, el SKU se genera autom·ticamente combinando nombre + wrapper + cantidad + formato.
+- Si el usuario edita el SKU manualmente, se desactiva la autogeneraciÛn para no pisar cambios.
 
 ### Seed actualizado
 - Seed principal: `backend/prisma/seed.ts` (se ejecuta con `npm --prefix backend run seed`).
-- Incluye ejemplos con presentaci√≥n (Atrovastatina, Valganciclovir, Omeprazol) y mantiene idempotencia via `upsert`.
+- Incluye ejemplos con presentaciÛn (Atrovastatina, Valganciclovir, Omeprazol) y mantiene idempotencia via `upsert`.
 
 ### Docker (backend)
 - El backend corre migrations con `prisma migrate deploy` al iniciar.
-- El seed se puede ejecutar al inicio seteando `RUN_SEED=1` (o dej√°ndolo apagado para producci√≥n).
+- El seed se puede ejecutar al inicio seteando `RUN_SEED=1` (o dej·ndolo apagado para producciÛn).
 
-## **[13 Ene 2026] Cotizaciones persistentes + lugar de entrega + √≥rdenes solo desde cotizaci√≥n**
+## **[13 Ene 2026] Cotizaciones persistentes + lugar de entrega + Ûrdenes solo desde cotizaciÛn**
 
 ### Cotizaciones (Quotes) como origen obligatorio
-- Se incorpor√≥ el flujo **cotizaci√≥n ‚Üí procesar ‚Üí orden** como regla de negocio.
+- Se incorporÛ el flujo **cotizaciÛn ? procesar ? orden** como regla de negocio.
 - Backend:
-  - Se agreg√≥ el modelo de **cotizaci√≥n** con correlativo `COT-YYYY####` generado en backend al guardar.
-  - Se agreg√≥ estado de cotizaci√≥n: `CREATED` / `PROCESSED`.
-  - Al procesar una cotizaci√≥n, se crea una orden y la cotizaci√≥n queda **read-only**.
-  - Se bloque√≥ la creaci√≥n directa de √≥rdenes (`POST /api/v1/sales/orders` responde 400) para forzar el origen en cotizaci√≥n.
+  - Se agregÛ el modelo de **cotizaciÛn** con correlativo `COT-YYYY####` generado en backend al guardar.
+  - Se agregÛ estado de cotizaciÛn: `CREATED` / `PROCESSED`.
+  - Al procesar una cotizaciÛn, se crea una orden y la cotizaciÛn queda **read-only**.
+  - Se bloqueÛ la creaciÛn directa de Ûrdenes (`POST /api/v1/sales/orders` responde 400) para forzar el origen en cotizaciÛn.
 
 ### Lugar de entrega (con mapa)
-- Se a√±adieron campos de entrega en cotizaci√≥n:
+- Se aÒadieron campos de entrega en cotizaciÛn:
   - `deliveryCity`, `deliveryZone`, `deliveryAddress`, `deliveryMapsUrl`.
 - UX:
-  - Por defecto toma la ubicaci√≥n del cliente final.
-  - Permite seleccionar otra ubicaci√≥n en el mapa (click) y se completa direcci√≥n v√≠a reverse geocoding.
+  - Por defecto toma la ubicaciÛn del cliente final.
+  - Permite seleccionar otra ubicaciÛn en el mapa (click) y se completa direcciÛn vÌa reverse geocoding.
 
-### Autor y auditor√≠a funcional
-- Se incorpor√≥ `quotedBy` (displayName del usuario creador) y se muestra:
+### Autor y auditorÌa funcional
+- Se incorporÛ `quotedBy` (displayName del usuario creador) y se muestra:
   - en la lista de cotizaciones,
   - en el detalle,
-  - y en el PDF (‚ÄúCotizado por‚Äù).
+  - y en el PDF (ìCotizado porî).
 
 ### PDF (robustez)
-- Se corrigieron caracteres extra√±os/corrupci√≥n en PDFs (jsPDF) sanitizando texto a ASCII al escribir.
+- Se corrigieron caracteres extraÒos/corrupciÛn en PDFs (jsPDF) sanitizando texto a ASCII al escribir.
 
 ### Frontend: UX y pantallas
-- Cat√°logo vendedor:
-  - Se mantiene el flujo de selecci√≥n de productos y edici√≥n en modal.
-  - Al guardar: se exporta PDF y se muestra feedback con `check.gif` / `dark_check.gif` seg√∫n tema.
-  - Luego se habilita el CTA verde **‚ÄúProcesar pedido‚Äù** que llama al endpoint de procesamiento de cotizaci√≥n.
+- Cat·logo vendedor:
+  - Se mantiene el flujo de selecciÛn de productos y ediciÛn en modal.
+  - Al guardar: se exporta PDF y se muestra feedback con `check.gif` / `dark_check.gif` seg˙n tema.
+  - Luego se habilita el CTA verde **ìProcesar pedidoî** que llama al endpoint de procesamiento de cotizaciÛn.
 - Ventas:
-  - Cotizaciones: lista con estado + autor; ‚ÄúEditar‚Äù deshabilitado si PROCESSED.
-  - Detalle de cotizaci√≥n: muestra estado/autor/lugar de entrega y bloquea edici√≥n si PROCESSED.
-  - √ìrdenes: se removi√≥ ‚ÄúCrear Orden‚Äù desde UI y se a√±adi√≥ **detalle de orden** para `/sales/orders/:id`.
+  - Cotizaciones: lista con estado + autor; ìEditarî deshabilitado si PROCESSED.
+  - Detalle de cotizaciÛn: muestra estado/autor/lugar de entrega y bloquea ediciÛn si PROCESSED.
+  - ”rdenes: se removiÛ ìCrear Ordenî desde UI y se aÒadiÛ **detalle de orden** para `/sales/orders/:id`.
 
 ---
 
-## **[05 Ene 2026] Operaci√≥n por existencias (stock por almac√©n) + mejoras UX**
+## **[05 Ene 2026] OperaciÛn por existencias (stock por almacÈn) + mejoras UX**
 
 ### Almacenes: ver stock y mover
-- Se ajust√≥ la UI de Almacenes para priorizar el stock real por producto/lote/ubicaci√≥n.
-- Se agreg√≥ acci√≥n **"Ver stock"** por almac√©n para listar existencias usando el reporte `GET /api/v1/reports/stock/balances-expanded?warehouseId=...`.
-- Desde cada registro de stock se habilit√≥ **"Mover"** (TRANSFER) solicitando solo cantidad y destino (almac√©n/ubicaci√≥n), tomando el origen desde la existencia seleccionada.
+- Se ajustÛ la UI de Almacenes para priorizar el stock real por producto/lote/ubicaciÛn.
+- Se agregÛ acciÛn **"Ver stock"** por almacÈn para listar existencias usando el reporte `GET /api/v1/reports/stock/balances-expanded?warehouseId=...`.
+- Desde cada registro de stock se habilitÛ **"Mover"** (TRANSFER) solicitando solo cantidad y destino (almacÈn/ubicaciÛn), tomando el origen desde la existencia seleccionada.
 
-### UX: selects con una sola opci√≥n
-- Se agreg√≥ auto-selecci√≥n cuando solo existe una opci√≥n disponible (ej. un √∫nico producto o un √∫nico almac√©n), evitando que la UI quede bloqueada esperando un `onChange` que nunca ocurrir√°.
+### UX: selects con una sola opciÛn
+- Se agregÛ auto-selecciÛn cuando solo existe una opciÛn disponible (ej. un ˙nico producto o un ˙nico almacÈn), evitando que la UI quede bloqueada esperando un `onChange` que nunca ocurrir·.
 
 ---
 
-## **[19 Dic 2025] Sistema de Administraci√≥n Multi-nivel + Gesti√≥n de Suscripciones**
+## **[19 Dic 2025] Sistema de AdministraciÛn Multi-nivel + GestiÛn de Suscripciones**
 
 ### **Contexto**
-Se implement√≥ un sistema completo de administraci√≥n de dos niveles con gesti√≥n de suscripciones para el modelo SaaS:
-- **Platform Admin (Supernovatel)**: Gestiona m√∫ltiples tenants desde un panel administrativo central
-- **Tenant Admin (Clientes)**: Gestiona su propio tenant con personalizaci√≥n completa
+Se implementÛ un sistema completo de administraciÛn de dos niveles con gestiÛn de suscripciones para el modelo SaaS:
+- **Platform Admin (Supernovatel)**: Gestiona m˙ltiples tenants desde un panel administrativo central
+- **Tenant Admin (Clientes)**: Gestiona su propio tenant con personalizaciÛn completa
 
 ### **Backend - Base de Datos y Permisos**
 
 #### Schema Prisma ([backend/prisma/schema.prisma](backend/prisma/schema.prisma))
-- A√±adidos campos de gesti√≥n de suscripciones en modelo `Tenant`:
+- AÒadidos campos de gestiÛn de suscripciones en modelo `Tenant`:
   - `contactName`, `contactEmail`, `contactPhone`: Datos de contacto para notificaciones
-  - `subscriptionExpiresAt`: Fecha de expiraci√≥n de suscripci√≥n (con √≠ndice)
-  - `branchLimit`: Cantidad de sucursales contratadas (ya exist√≠a)
+  - `subscriptionExpiresAt`: Fecha de expiraciÛn de suscripciÛn (con Ìndice)
+  - `branchLimit`: Cantidad de sucursales contratadas (ya existÌa)
 
 #### Seed Actualizado ([backend/prisma/seed.ts](backend/prisma/seed.ts))
 - **Platform Tenant (Supernovatel)**:
@@ -904,46 +987,46 @@ Se implement√≥ un sistema completo de administraci√≥n de dos niveles con gesti√≥
   - Rol: `PLATFORM_ADMIN` con TODOS los permisos (incluye `platform:tenants:manage`)
   - Usuarios: `admin@supernovatel.com`, `usuario1@supernovatel.com` / `Admin123!`
   - Dominio: `farmacia.supernovatel.com` (verificado)
-  - Sin fecha de expiraci√≥n (tenant especial)
+  - Sin fecha de expiraciÛn (tenant especial)
 
 - **Demo Tenant**:
   - ID: `00000000-0000-0000-0000-000000000002`
   - Rol: `TENANT_ADMIN` con todos los permisos EXCEPTO `platform:tenants:manage`
   - Usuario: `admin@demo.local` / `Admin123!`
   - Dominio: `demo.localhost`
-  - Suscripci√≥n: 5 sucursales, expira en 1 a√±o
+  - SuscripciÛn: 5 sucursales, expira en 1 aÒo
   - Contacto: Administrador Demo (+591 71111111, admin@demo.local)
 
 #### Endpoints Platform Admin ([backend/src/adapters/http/routes/platform.ts](backend/src/adapters/http/routes/platform.ts))
-- `GET /api/v1/platform/tenants`: Listar todos los tenants con informaci√≥n de suscripci√≥n
+- `GET /api/v1/platform/tenants`: Listar todos los tenants con informaciÛn de suscripciÛn
   - Retorna: name, branchLimit, contactName, contactEmail, contactPhone, subscriptionExpiresAt, domains
   - Solo accesible con permiso `platform:tenants:manage`
 
 - `POST /api/v1/platform/tenants`: Crear nuevo tenant
   - Campos requeridos: name, branchCount, adminEmail, adminPassword
   - Campos de contacto: contactName, contactEmail, contactPhone
-  - Suscripci√≥n: subscriptionMonths (calcula expirationDate autom√°ticamente)
+  - SuscripciÛn: subscriptionMonths (calcula expirationDate autom·ticamente)
   - Opcional: primaryDomain
-  - Crea autom√°ticamente: rol TENANT_ADMIN, usuario admin, warehouses por sucursal
+  - Crea autom·ticamente: rol TENANT_ADMIN, usuario admin, warehouses por sucursal
 
 #### Endpoints Tenant Subscription ([backend/src/adapters/http/routes/tenant.ts](backend/src/adapters/http/routes/tenant.ts))
-- `GET /api/v1/tenant/subscription`: Ver informaci√≥n de suscripci√≥n propia
+- `GET /api/v1/tenant/subscription`: Ver informaciÛn de suscripciÛn propia
   - Retorna: branchLimit, activeBranches, subscriptionExpiresAt, status, daysRemaining
-  - Status: 'active' (>90d), 'expiring_soon' (‚â§90d), 'expired' (<0d)
+  - Status: 'active' (>90d), 'expiring_soon' (=90d), 'expired' (<0d)
   - Accesible por cualquier usuario autenticado del tenant
 
-- `POST /api/v1/tenant/subscription/request-extension`: Solicitar extensi√≥n de suscripci√≥n
+- `POST /api/v1/tenant/subscription/request-extension`: Solicitar extensiÛn de suscripciÛn
   - Params: branchLimit (mantener/aumentar/reducir), subscriptionMonths
   - Genera mensaje para WhatsApp + Email al Platform Admin
-  - TODO: Integrar env√≠o real (actualmente retorna preview)
+  - TODO: Integrar envÌo real (actualmente retorna preview)
 
 #### Endpoint Auth Me ([backend/src/adapters/http/routes/auth.ts](backend/src/adapters/http/routes/auth.ts))
-- `GET /api/v1/auth/me`: Informaci√≥n completa del usuario autenticado
+- `GET /api/v1/auth/me`: InformaciÛn completa del usuario autenticado
   - Retorna: user, tenant, roles[], permissions[], permissionCodes[]
   - Flag: isPlatformAdmin (true si tiene `platform:tenants:manage`)
-  - Usado por frontend para filtrar navegaci√≥n y permisos
+  - Usado por frontend para filtrar navegaciÛn y permisos
 
-### **Frontend - Hooks y Navegaci√≥n**
+### **Frontend - Hooks y NavegaciÛn**
 
 #### Hook de Permisos ([frontend/src/hooks/usePermissions.ts](frontend/src/hooks/usePermissions.ts))
 - Hook `usePermissions()` que consulta `/api/v1/auth/me` con cache de 5 minutos
@@ -952,85 +1035,85 @@ Se implement√≥ un sistema completo de administraci√≥n de dos niveles con gesti√≥
   - Flags: `isPlatformAdmin`, `isTenantAdmin`
   - Helpers: `hasPermission(code)`, `hasAnyPermission(codes[])`, `hasAllPermissions(codes[])`
 
-#### Navegaci√≥n Filtrada ([frontend/src/hooks/useNavigation.ts](frontend/src/hooks/useNavigation.ts))
-- Navegaci√≥n din√°mica seg√∫n permisos del usuario:
+#### NavegaciÛn Filtrada ([frontend/src/hooks/useNavigation.ts](frontend/src/hooks/useNavigation.ts))
+- NavegaciÛn din·mica seg˙n permisos del usuario:
   - **Platform Admin**: Solo ve Dashboard + "Plataforma > Tenants"
-  - **Tenant Admin/Users**: Ven m√≥dulos seg√∫n permisos:
-    - Cat√°logo (si `catalog:read`)
-    - Almac√©n (si `stock:read`)
+  - **Tenant Admin/Users**: Ven mÛdulos seg˙n permisos:
+    - Cat·logo (si `catalog:read`)
+    - AlmacÈn (si `stock:read`)
     - Ventas (si `sales:order:read`)
     - Reportes (todos)
-    - Sistema: Auditor√≠a (si `audit:read`), Usuarios/Roles (si `admin:users:manage`), Branding (solo Tenant Admin)
+    - Sistema: AuditorÌa (si `audit:read`), Usuarios/Roles (si `admin:users:manage`), Branding (solo Tenant Admin)
 
-### **Frontend - P√°ginas UI**
+### **Frontend - P·ginas UI**
 
 #### Platform Tenants Page ([frontend/src/pages/platform/TenantsPage.tsx](frontend/src/pages/platform/TenantsPage.tsx))
 - Tabla completa de tenants con columnas:
   - Tenant (nombre + dominio)
-  - Contacto (nombre, email, tel√©fono)
+  - Contacto (nombre, email, telÈfono)
   - Sucursales (branchLimit)
-  - Suscripci√≥n (badge de estado + fecha expiraci√≥n + d√≠as restantes)
+  - SuscripciÛn (badge de estado + fecha expiraciÛn + dÌas restantes)
   - Estado (activo/inactivo)
 
 - Modal "Crear Tenant" con form completo:
-  - Informaci√≥n b√°sica: nombre del tenant
-  - Contacto: nombre, email, tel√©fono (WhatsApp)
-  - Admin inicial: email, contrase√±a
-  - Suscripci√≥n: cantidad sucursales (1-50), duraci√≥n (3/6/12/24/36 meses)
+  - InformaciÛn b·sica: nombre del tenant
+  - Contacto: nombre, email, telÈfono (WhatsApp)
+  - Admin inicial: email, contraseÒa
+  - SuscripciÛn: cantidad sucursales (1-50), duraciÛn (3/6/12/24/36 meses)
   - Opcional: dominio principal
 
-- Badges de estado suscripci√≥n:
-  - Verde (success): >90 d√≠as restantes
-  - Amarillo (warning): 30-90 d√≠as restantes
-  - Rojo (danger): <30 d√≠as o expirado
+- Badges de estado suscripciÛn:
+  - Verde (success): >90 dÌas restantes
+  - Amarillo (warning): 30-90 dÌas restantes
+  - Rojo (danger): <30 dÌas o expirado
 
 #### Dashboard Tenant ([frontend/src/pages/DashboardPage.tsx](frontend/src/pages/DashboardPage.tsx))
-- Widget de suscripci√≥n (solo visible para Tenant Admin/Users, NO Platform Admin):
+- Widget de suscripciÛn (solo visible para Tenant Admin/Users, NO Platform Admin):
   - Muestra sucursales usadas vs contratadas
   - Badge de estado (activo/por vencer/expirado)
-  - Fecha de expiraci√≥n + d√≠as restantes
-  - Informaci√≥n de contacto de soporte
-  - Bot√≥n "Solicitar Extensi√≥n" (solo Tenant Admin)
+  - Fecha de expiraciÛn + dÌas restantes
+  - InformaciÛn de contacto de soporte
+  - BotÛn "Solicitar ExtensiÛn" (solo Tenant Admin)
 
-- Modal "Solicitar Extensi√≥n":
+- Modal "Solicitar ExtensiÛn":
   - Selector: cantidad de sucursales (mantener/aumentar/reducir)
 
 ---
 
-## **[22 Dic 2025] Fundaciones V2: numeraci√≥n operativa + foto de producto + ingreso inicial de lote**
+## **[22 Dic 2025] Fundaciones V2: numeraciÛn operativa + foto de producto + ingreso inicial de lote**
 
-### **Numeraci√≥n operativa (StockMovement)**
-- Se a√±adi√≥ numeraci√≥n por tenant+a√±o para movimientos de stock:
+### **NumeraciÛn operativa (StockMovement)**
+- Se aÒadiÛ numeraciÛn por tenant+aÒo para movimientos de stock:
   - Formato: `MSYYYY-N` (ej. `MS2025-251`).
-  - Campos en `StockMovement`: `number`, `numberYear` (√∫nico por tenant).
-- Se incorpor√≥ `TenantSequence` como contador at√≥mico por `{ tenantId, year, key }`.
-- Se refactoriz√≥ la creaci√≥n de movimientos a un servicio transaccional para centralizar reglas y evitar duplicaci√≥n.
+  - Campos en `StockMovement`: `number`, `numberYear` (˙nico por tenant).
+- Se incorporÛ `TenantSequence` como contador atÛmico por `{ tenantId, year, key }`.
+- Se refactorizÛ la creaciÛn de movimientos a un servicio transaccional para centralizar reglas y evitar duplicaciÛn.
 
-### **Cat√°logo/Productos**
-- Se agreg√≥ soporte de foto de producto (`photoUrl`, `photoKey`) en `Product`.
-- Se implement√≥ presign S3-compatible para subir foto de producto (PUT directo al storage) y persistir la URL en `Product`.
-- Se desacopl√≥ Cat√°logo (search/productos/lotes) del ‚Äúm√≥dulo `WAREHOUSE`‚Äù para evitar bloqueos por suscripci√≥n:
-  - Cat√°logo se controla por permisos `catalog:*`.
+### **Cat·logo/Productos**
+- Se agregÛ soporte de foto de producto (`photoUrl`, `photoKey`) en `Product`.
+- Se implementÛ presign S3-compatible para subir foto de producto (PUT directo al storage) y persistir la URL en `Product`.
+- Se desacoplÛ Cat·logo (search/productos/lotes) del ìmÛdulo `WAREHOUSE`î para evitar bloqueos por suscripciÛn:
+  - Cat·logo se controla por permisos `catalog:*`.
   - `WAREHOUSE` queda para stock/warehouses/locations.
 
 ### **Lotes (Batch) con ingreso inicial**
 - `POST /api/v1/products/:id/batches` soporta `initialStock` opcional.
-- Si se env√≠a, el backend crea un movimiento `IN` numerado y actualiza balances dentro de la misma transacci√≥n.
+- Si se envÌa, el backend crea un movimiento `IN` numerado y actualiza balances dentro de la misma transacciÛn.
 
 ### **Frontend**
-- Se a√±adi√≥ UI m√≠nima para:
+- Se aÒadiÛ UI mÌnima para:
   - Subir/quitar foto de producto.
   - Crear lote con ingreso inicial (seleccionando warehouse + location).
-  - Selector: tiempo de extensi√≥n (3/6/12/24/36 meses)
+  - Selector: tiempo de extensiÛn (3/6/12/24/36 meses)
   - Preview del mensaje generado para Platform Admin
-  - Env√≠o de solicitud con confirmaci√≥n visual
+  - EnvÌo de solicitud con confirmaciÛn visual
 
 ### **Infraestructura**
 
 #### Axios Client ([frontend/src/lib/api.ts](frontend/src/lib/api.ts))
 - Instancia de axios configurada con:
-  - BaseURL autom√°tico (same-origin o VITE_API_BASE_URL)
-  - Interceptor que inyecta token JWT autom√°ticamente desde localStorage
+  - BaseURL autom·tico (same-origin o VITE_API_BASE_URL)
+  - Interceptor que inyecta token JWT autom·ticamente desde localStorage
   - Headers Content-Type application/json por defecto
 
 ### **Credenciales de Prueba**
@@ -1054,30 +1137,30 @@ Contact: Administrador Demo (+591 71111111)
 #### Como Platform Admin:
 1. Login en `farmacia.supernovatel.com:6001` o `localhost:6001`
 2. Acceso a Dashboard + "Plataforma > Tenants"
-3. Listar todos los tenants con estado de suscripci√≥n
-4. Crear nuevo tenant con informaci√≥n completa (contacto + suscripci√≥n)
-5. Ver notificaciones de solicitudes de extensi√≥n (futuro: integrar WhatsApp/Email)
+3. Listar todos los tenants con estado de suscripciÛn
+4. Crear nuevo tenant con informaciÛn completa (contacto + suscripciÛn)
+5. Ver notificaciones de solicitudes de extensiÛn (futuro: integrar WhatsApp/Email)
 
 #### Como Tenant Admin:
 1. Login en `demo.localhost:6001` o dominio propio
-2. Dashboard muestra widget destacado con estado de suscripci√≥n
-3. Alerta visual si faltan <90 d√≠as para vencer (badge amarillo/rojo)
-4. Acceso a todos los m√≥dulos operativos (cat√°logo, stock, ventas, reportes)
-5. Bot√≥n "Solicitar Extensi√≥n" para renovar o modificar suscripci√≥n
-6. Gesti√≥n de usuarios, roles y branding de su tenant
+2. Dashboard muestra widget destacado con estado de suscripciÛn
+3. Alerta visual si faltan <90 dÌas para vencer (badge amarillo/rojo)
+4. Acceso a todos los mÛdulos operativos (cat·logo, stock, ventas, reportes)
+5. BotÛn "Solicitar ExtensiÛn" para renovar o modificar suscripciÛn
+6. GestiÛn de usuarios, roles y branding de su tenant
 
 ### **Pendientes Identificados**
-- ‚úÖ Backend seed con Platform Admin + Demo Tenant
-- ‚úÖ Endpoints CRUD de tenants con suscripci√≥n
-- ‚úÖ Endpoints consulta y solicitud extensi√≥n
-- ‚úÖ Hook usePermissions con flags isPlatformAdmin/isTenantAdmin
-- ‚úÖ Navegaci√≥n filtrada por permisos
-- ‚úÖ UI Platform Tenants con CRUD completo
-- ‚úÖ Widget Dashboard suscripci√≥n con modal extensi√≥n
+- ? Backend seed con Platform Admin + Demo Tenant
+- ? Endpoints CRUD de tenants con suscripciÛn
+- ? Endpoints consulta y solicitud extensiÛn
+- ? Hook usePermissions con flags isPlatformAdmin/isTenantAdmin
+- ? NavegaciÛn filtrada por permisos
+- ? UI Platform Tenants con CRUD completo
+- ? Widget Dashboard suscripciÛn con modal extensiÛn
 
 ---
 
-## **[23 Dic 2025] Recetario de elaboraci√≥n por producto (V2)**
+## **[23 Dic 2025] Recetario de elaboraciÛn por producto (V2)**
 
 ### **Backend (Prisma + API)**
 - Se incorporaron modelos:
@@ -1087,359 +1170,360 @@ Contact: Administrador Demo (+591 71111111)
   - `GET /api/v1/products/:id/recipe`
   - `PUT /api/v1/products/:id/recipe` (create/update con optimistic locking por `version`)
   - `DELETE /api/v1/products/:id/recipe`
-- Se a√±adieron eventos de auditor√≠a: `recipe.create`, `recipe.update`, `recipe.delete`.
+- Se aÒadieron eventos de auditorÌa: `recipe.create`, `recipe.update`, `recipe.delete`.
 
 ### **Frontend**
-- En el detalle de producto se a√±adi√≥ secci√≥n "Recetario de elaboraci√≥n":
+- En el detalle de producto se aÒadiÛ secciÛn "Recetario de elaboraciÛn":
   - Generar/editar recetario.
   - Listado simple de insumos (nombre, cantidad, unidad, nota) con agregar/quitar.
-- üî≤ Integraci√≥n real de env√≠o WhatsApp/Email (actualmente solo preview)
-- üî≤ Cron job para notificaciones autom√°ticas (3 meses y 1 mes antes de vencer)
-- üî≤ P√°gina Branding funcional con upload S3 y color pickers
-- üî≤ Personalizaci√≥n de vistas/columnas por rol (feature complejo, Fase 4)
+- ?? IntegraciÛn real de envÌo WhatsApp/Email (actualmente solo preview)
+- ?? Cron job para notificaciones autom·ticas (3 meses y 1 mes antes de vencer)
+- ?? P·gina Branding funcional con upload S3 y color pickers
+- ?? PersonalizaciÛn de vistas/columnas por rol (feature complejo, Fase 4)
 
 ### **Arquitectura de Permisos**
 
 ```
 Platform Admin (Supernovatel)
-‚îú‚îÄ‚îÄ platform:tenants:manage ‚úì
-‚îú‚îÄ‚îÄ catalog:read/write ‚úì
-‚îú‚îÄ‚îÄ stock:read/move ‚úì
-‚îú‚îÄ‚îÄ sales:order:read/write ‚úì
-‚îú‚îÄ‚îÄ admin:users:manage ‚úì
-‚îî‚îÄ‚îÄ audit:read ‚úì
++-- platform:tenants:manage ?
++-- catalog:read/write ?
++-- stock:read/move ?
++-- sales:order:read/write ?
++-- admin:users:manage ?
++-- audit:read ?
 
 Tenant Admin (Clientes)
-‚îú‚îÄ‚îÄ platform:tenants:manage ‚úó
-‚îú‚îÄ‚îÄ catalog:read/write ‚úì
-‚îú‚îÄ‚îÄ stock:read/move ‚úì
-‚îú‚îÄ‚îÄ sales:order:read/write ‚úì
-‚îú‚îÄ‚îÄ admin:users:manage ‚úì
-‚îî‚îÄ‚îÄ audit:read ‚úì
++-- platform:tenants:manage ?
++-- catalog:read/write ?
++-- stock:read/move ?
++-- sales:order:read/write ?
++-- admin:users:manage ?
++-- audit:read ?
 ```
 
-### **Monetizaci√≥n**
-- Modelo: **Sucursales √ó Tiempo**
+### **MonetizaciÛn**
+- Modelo: **Sucursales ◊ Tiempo**
   - Cada sucursal = 1 warehouse con ubicaciones
   - Cliente contrata N sucursales por M meses
-  - Notificaciones autom√°ticas 3 meses y 1 mes antes de vencer
-  - Cliente puede solicitar extensi√≥n (aumentar/reducir sucursales + renovar tiempo)
+  - Notificaciones autom·ticas 3 meses y 1 mes antes de vencer
+  - Cliente puede solicitar extensiÛn (aumentar/reducir sucursales + renovar tiempo)
   - Platform Admin aprueba/procesa solicitudes
 
-### **Notas T√©cnicas**
+### **Notas TÈcnicas**
 - TenantId `00000000-0000-0000-0000-000000000001` reservado para Platform (Supernovatel)
 - Dominios verificados requeridos para login por host
 - Permisos cacheados en frontend (5 min) para performance
-- Navegaci√≥n renderizada din√°micamente seg√∫n permisos
-- Badges de estado calculados en tiempo real (d√≠as restantes)
+- NavegaciÛn renderizada din·micamente seg˙n permisos
+- Badges de estado calculados en tiempo real (dÌas restantes)
 - Modal extension genera preview antes de enviar (UX transparente)
 
-### **[14 Ene 2026]** ‚Äî Mejoras UX en Entregas
-- **Bot√≥n "Lugar" estilizado**: borde s√≥lido azul, radius alto, background transl√∫cido azul para destacar como bot√≥n interactivo.
-- **Modal de direcci√≥n**: al presionar "Lugar", modal con direcci√≥n completa + bot√≥n "Ver en Maps" (abre Google Maps).
-- **Filtro por ciudad**: chips de selecci√≥n m√∫ltiple por ciudad de entrega, similar a Clientes.
-- **Bot√≥n "Ver todas"**: reemplaza "Ir a √ìrdenes", muestra todas las entregas (pendientes + entregadas) combinando `DRAFT` + `CONFIRMED` + `FULFILLED`.
+### **[14 Ene 2026]** ó Mejoras UX en Entregas
+- **BotÛn "Lugar" estilizado**: borde sÛlido azul, radius alto, background transl˙cido azul para destacar como botÛn interactivo.
+- **Modal de direcciÛn**: al presionar "Lugar", modal con direcciÛn completa + botÛn "Ver en Maps" (abre Google Maps).
+- **Filtro por ciudad**: chips de selecciÛn m˙ltiple por ciudad de entrega, similar a Clientes.
+- **BotÛn "Ver todas"**: reemplaza "Ir a ”rdenes", muestra todas las entregas (pendientes + entregadas) combinando `DRAFT` + `CONFIRMED` + `FULFILLED`.
 - **Backend**: endpoint `GET /api/v1/sales/deliveries` ahora soporta `status=ALL` y `cities` query param para filtrar.
-- **Documentaci√≥n**: actualizada API_REFERENCE.md con nuevos params `status=ALL` y `cities`.
+- **DocumentaciÛn**: actualizada API_REFERENCE.md con nuevos params `status=ALL` y `cities`.
 
-### **[16 Ene 2026]** ‚Äî Reportes renovados + Exportaci√≥n PDF profesional + build prod estable
-- **Reportes (Ventas/Stock)**: redise√±o de UI con secciones, KPIs y gr√°ficos (Recharts) con mejor legibilidad y estilo consistente.
-- **Exportaci√≥n PDF (carta vertical)**: header/footer con branding, captura con ancho fijo, paginaci√≥n por ‚Äúslicing‚Äù para respetar m√°rgenes en p√°ginas 2+ y evitar duplicado de contenido.
-- **Fix NaN en tablas**: el componente de tabla gen√©rico ahora pasa `rowIndex` al `accessor(item, index)` (evita `NaN` por √≠ndices indefinidos).
-- **Fix build TypeScript en Docker/producci√≥n**: ajustes de tipos en reportes (`tenant.branding.tenantName`, `logoUrl` nullable, `percent` optional) y limpieza de imports/par√°metros no usados.
+### **[16 Ene 2026]** ó Reportes renovados + ExportaciÛn PDF profesional + build prod estable
+- **Reportes (Ventas/Stock)**: rediseÒo de UI con secciones, KPIs y gr·ficos (Recharts) con mejor legibilidad y estilo consistente.
+- **ExportaciÛn PDF (carta vertical)**: header/footer con branding, captura con ancho fijo, paginaciÛn por ìslicingî para respetar m·rgenes en p·ginas 2+ y evitar duplicado de contenido.
+- **Fix NaN en tablas**: el componente de tabla genÈrico ahora pasa `rowIndex` al `accessor(item, index)` (evita `NaN` por Ìndices indefinidos).
+- **Fix build TypeScript en Docker/producciÛn**: ajustes de tipos en reportes (`tenant.branding.tenantName`, `logoUrl` nullable, `percent` optional) y limpieza de imports/par·metros no usados.
 
-### **[20 Ene 2026]** ‚Äî Mejoras en UI: men√∫ lateral y botones del cat√°logo comercial
-- **Men√∫ lateral**: agregado scroll autom√°tico al elemento activo seleccionado para mantener la visibilidad al navegar (especialmente en opciones inferiores como "Branding"). Ajuste de estilos para temas claro/oscuro: elemento activo en tema claro usa `bg-slate-100 text-slate-900`, en tema oscuro mantiene `bg-[var(--pf-primary)] text-white`.
-- **Cat√°logo comercial**: actualizaci√≥n de botones en cada item del cat√°logo. Bot√≥n "Ver" cambiado a `variant="outline"` con √≠cono `EyeIcon` (removido emoji). Bot√≥n "Agregar" cambiado a `variant="success"` con √≠cono `ShoppingCartIcon` (removido emoji). Simplificaci√≥n de clases CSS personalizadas para usar variants consistentes del sistema de dise√±o.
-- **Compilaci√≥n**: frontend y backend compilan exitosamente tras los cambios.
+### **[20 Ene 2026]** ó Mejoras en UI: men˙ lateral y botones del cat·logo comercial
+- **Men˙ lateral**: agregado scroll autom·tico al elemento activo seleccionado para mantener la visibilidad al navegar (especialmente en opciones inferiores como "Branding"). Ajuste de estilos para temas claro/oscuro: elemento activo en tema claro usa `bg-slate-100 text-slate-900`, en tema oscuro mantiene `bg-[var(--pf-primary)] text-white`.
+- **Cat·logo comercial**: actualizaciÛn de botones en cada item del cat·logo. BotÛn "Ver" cambiado a `variant="outline"` con Ìcono `EyeIcon` (removido emoji). BotÛn "Agregar" cambiado a `variant="success"` con Ìcono `ShoppingCartIcon` (removido emoji). SimplificaciÛn de clases CSS personalizadas para usar variants consistentes del sistema de diseÒo.
+- **CompilaciÛn**: frontend y backend compilan exitosamente tras los cambios.
 
-### **[20 Ene 2026]** ‚Äî Alineaci√≥n de botones en p√°gina de entregas
-- **Bot√≥n "Marcar como entregado"**: cambiado a `variant="ghost"` con √≠cono `CheckCircleIcon` para mantener consistencia con otros botones de acci√≥n en tablas (como "Ver").
+### **[20 Ene 2026]** ó AlineaciÛn de botones en p·gina de entregas
+- **BotÛn "Marcar como entregado"**: cambiado a `variant="ghost"` con Ìcono `CheckCircleIcon` para mantener consistencia con otros botones de acciÛn en tablas (como "Ver").
 
-### **[20 Ene 2026]** ‚Äî Optimizaci√≥n de logos en navbar seg√∫n dimensiones
-- **Detecci√≥n autom√°tica de dimensiones**: agregado c√≥digo para detectar si el logo del tenant es cuadrado (aspect ratio entre 0.9 y 1.1) y aplicar clases CSS apropiadas.
-- **Logos cuadrados**: usan `h-10 w-10 object-contain` para mantener proporciones sin distorsi√≥n.
+### **[20 Ene 2026]** ó OptimizaciÛn de logos en navbar seg˙n dimensiones
+- **DetecciÛn autom·tica de dimensiones**: agregado cÛdigo para detectar si el logo del tenant es cuadrado (aspect ratio entre 0.9 y 1.1) y aplicar clases CSS apropiadas.
+- **Logos cuadrados**: usan `h-10 w-10 object-contain` para mantener proporciones sin distorsiÛn.
 - **Logos rectangulares**: mantienen `h-10 w-auto` como antes.
 - **Logos por defecto**: sin cambios (Supernovatel logos son rectangulares).
 
-### **[20 Ene 2026]** ‚Äî Mejora de logos en navbar y cotizaciones PDF
-- **Navbar logos cuadrados**: aumentado tama√±o de `h-10 w-10` a `h-12 w-12` para mejor visibilidad.
-- **Cotizaciones PDF**: agregado logo del tenant en la exportaci√≥n PDF cuando existe. Logo posicionado arriba del nombre de la empresa con altura m√°xima de 30mm manteniendo proporciones.
+### **[20 Ene 2026]** ó Mejora de logos en navbar y cotizaciones PDF
+- **Navbar logos cuadrados**: aumentado tamaÒo de `h-10 w-10` a `h-12 w-12` para mejor visibilidad.
+- **Cotizaciones PDF**: agregado logo del tenant en la exportaciÛn PDF cuando existe. Logo posicionado arriba del nombre de la empresa con altura m·xima de 30mm manteniendo proporciones.
 
-### **[20 Ene 2026]** ‚Äî Mejoras en logos navbar y cotizaciones PDF
-- **Navbar logos**: ampliado rango de detecci√≥n de logos cuadrados (0.8-1.2 aspect ratio) y aumentado tama√±o base a h-12 para mejor visibilidad.
-- **Cotizaciones PDF**: logo reposicionado a la derecha en la fila del t√≠tulo "COTIZACI√ìN". Agregada marca de agua diagonal con n√∫mero de cotizaci√≥n usando color primario del branding (transparente 10%).
+### **[20 Ene 2026]** ó Mejoras en logos navbar y cotizaciones PDF
+- **Navbar logos**: ampliado rango de detecciÛn de logos cuadrados (0.8-1.2 aspect ratio) y aumentado tamaÒo base a h-12 para mejor visibilidad.
+- **Cotizaciones PDF**: logo reposicionado a la derecha en la fila del tÌtulo "COTIZACI”N". Agregada marca de agua diagonal con n˙mero de cotizaciÛn usando color primario del branding (transparente 10%).
 
-### **[20 Ene 2026]** ‚Äî Ajustes finales en cotizaciones PDF
-- **Logo en PDF**: reposicionado a la izquierda del header, aumentado tama√±o a 40mm de altura (doble del anterior).
+### **[20 Ene 2026]** ó Ajustes finales en cotizaciones PDF
+- **Logo en PDF**: reposicionado a la izquierda del header, aumentado tamaÒo a 40mm de altura (doble del anterior).
 - **Marca de agua**: cambiada a color celeste (sky blue) con mayor transparencia (3%) para mejor legibilidad del contenido.
 
-### **[20 Ene 2026]** ‚Äî Reorganizaci√≥n completa del PDF de cotizaciones
-- **Layout profesional**: T√≠tulo "COTIZACI√ìN" centrado arriba, seguido de dos columnas en la secci√≥n de detalles.
-- **Columna izquierda**: Nombre de la empresa y detalles (n√∫mero cotizaci√≥n, fecha, cliente, cotizado por, validez).
-- **Columna derecha**: Logo de la empresa (35mm altura) alineado a la derecha en la misma secci√≥n.
+### **[20 Ene 2026]** ó ReorganizaciÛn completa del PDF de cotizaciones
+- **Layout profesional**: TÌtulo "COTIZACI”N" centrado arriba, seguido de dos columnas en la secciÛn de detalles.
+- **Columna izquierda**: Nombre de la empresa y detalles (n˙mero cotizaciÛn, fecha, cliente, cotizado por, validez).
+- **Columna derecha**: Logo de la empresa (35mm altura) alineado a la derecha en la misma secciÛn.
 - **Tabla de productos**: Ubicada en el body con columnas optimizadas.
 - **Footer**: Forma de pago, tiempo de entrega y lugar de entrega debajo de los totales.
-- **Marca de agua**: N√∫mero de cotizaci√≥n en diagonal de fondo con color celeste transl√∫cido (5% transparencia).
+- **Marca de agua**: N˙mero de cotizaciÛn en diagonal de fondo con color celeste transl˙cido (5% transparencia).
 
-### **[20 Ene 2026]** ‚Äî Ajustes de espaciado y marca de agua en PDF cotizaciones
+### **[20 Ene 2026]** ó Ajustes de espaciado y marca de agua en PDF cotizaciones
 - **Espaciado**: Aumentado espacio entre header y tabla de productos de 10mm a 18mm para mejor legibilidad.
 - **Marca de agua**: Ajustada transparencia a 8%, movida hacia abajo (+20mm), y corregido color celeste (RGB: 135, 206, 235).
 
-### **[20 Ene 2026]** ‚Äî Correcci√≥n de error PDF y actualizaci√≥n de botones en cotizaciones
-- **Error PDF**: Corregido error `setGState` usando color m√°s claro (RGB: 200, 220, 235) para marca de agua en lugar de transparencia compleja.
+### **[20 Ene 2026]** ó CorrecciÛn de error PDF y actualizaciÛn de botones en cotizaciones
+- **Error PDF**: Corregido error `setGState` usando color m·s claro (RGB: 200, 220, 235) para marca de agua en lugar de transparencia compleja.
 - **Botones actualizados**:
   - "Volver": Cambiado a variant `outline`
   - "Exportar PDF": Cambiado a variant `primary` con estado de carga ("Exportando..." mientras genera)
   - "WhatsApp PDF": Cambiado a variant `success`, ahora exporta el PDF en lugar de enviar link
-- **Manejo de errores**: Agregado try/catch en exportaci√≥n PDF con mensajes de error claros.
+- **Manejo de errores**: Agregado try/catch en exportaciÛn PDF con mensajes de error claros.
 
-### **[20 Ene 2026]** ‚Äî Optimizaciones para vista m√≥vil
-- **Cat√°logo Comercial**: Bot√≥n "Agregar" muestra solo icono en m√≥vil (oculta texto con `hidden sm:inline`)
+### **[20 Ene 2026]** ó Optimizaciones para vista mÛvil
+- **Cat·logo Comercial**: BotÛn "Agregar" muestra solo icono en mÛvil (oculta texto con `hidden sm:inline`)
 - **Inventario**: 
   - Botones de filtro movidos a segunda fila (fuera de PageContainer actions)
-  - Texto reducido en m√≥vil con clase `text-xs sm:text-sm`
+  - Texto reducido en mÛvil con clase `text-xs sm:text-sm`
   - Mantiene funcionalidad completa: Por Producto, Por Sucursal, Actualizar, Exportar Excel
-- **Sucursales**: Botones "Editar" y "Ubicaciones" muestran solo iconos en m√≥vil
+- **Sucursales**: Botones "Editar" y "Ubicaciones" muestran solo iconos en mÛvil
 - **Pagos**: Botones de filtro (Por cobrar, Cobradas, Ver todas) movidos a segunda fila
 - **Entregas**: Botones de filtro (Pendientes, Entregadas, Ver todas) movidos a segunda fila
 - **Movimientos - Transferencias**: 
-  - Corregido bug cr√≠tico: bot√≥n "Realizar Transferencia" no ten√≠a funcionalidad
-  - Agregada funci√≥n `createTransferMovement` y mutation `transferMutation`
+  - Corregido bug crÌtico: botÛn "Realizar Transferencia" no tenÌa funcionalidad
+  - Agregada funciÛn `createTransferMovement` y mutation `transferMutation`
   - Ahora valida stock disponible y ejecuta transferencias correctamente entre ubicaciones
-  - Agregado estado de carga y mensajes de √©xito/error
+  - Agregado estado de carga y mensajes de Èxito/error
 
-### **[22 Feb 2025]** ‚Äî Correcci√≥n y documentaci√≥n del Database Seed
+### **[22 Feb 2025]** ó CorrecciÛn y documentaciÛn del Database Seed
 - **Problemas corregidos en seed.ts**:
-  - Cambiado `SalesOrderStatus.COMPLETED` por `FULFILLED` (valor v√°lido del enum)
+  - Cambiado `SalesOrderStatus.COMPLETED` por `FULFILLED` (valor v·lido del enum)
   - Agregados campos requeridos `number` y `numberYear` a `StockMovement`
-  - Corregida l√≥gica de ubicaciones: `fromLocationId` para ventas (OUT), `toLocationId` para compras (IN)
-  - Cambiado tipos de movimiento: `SALE`/`PURCHASE` por `OUT`/`IN` (valores v√°lidos del enum `StockMovementType`)
+  - Corregida lÛgica de ubicaciones: `fromLocationId` para ventas (OUT), `toLocationId` para compras (IN)
+  - Cambiado tipos de movimiento: `SALE`/`PURCHASE` por `OUT`/`IN` (valores v·lidos del enum `StockMovementType`)
   - Corregido campo `reason` por `note` en `StockMovement`
-  - Cambiado tipos de datos: `quantity` de string a n√∫mero/Decimal
+  - Cambiado tipos de datos: `quantity` de string a n˙mero/Decimal
   - Agregada limpieza de `Quote` y `QuoteLine` antes de eliminar productos (evita errores de foreign key)
-  - Removida creaci√≥n de `SalesOrderPayment` (modelo inexistente, pagos integrados en `SalesOrder`)
+  - Removida creaciÛn de `SalesOrderPayment` (modelo inexistente, pagos integrados en `SalesOrder`)
 - **Datos generados por seed funcional**:
-  - 43 productos con precios, costos y m√°rgenes
-  - 315 √≥rdenes de venta hist√≥ricas (Bs 169,169 total)
+  - 43 productos con precios, costos y m·rgenes
+  - 315 Ûrdenes de venta histÛricas (Bs 169,169 total)
   - Movimientos de stock completos (ventas OUT y reposiciones IN)
-  - 3 clientes, 3 almacenes, productos con stock bajo y pr√≥ximos a vencer
-- **Documentaci√≥n actualizada**:
-  - Agregada secci√≥n "Database Seeding" en `API_REFERENCE.md` con comandos e instrucciones Docker
-  - Actualizada bit√°cora con detalles de correcciones realizadas
+  - 3 clientes, 3 almacenes, productos con stock bajo y prÛximos a vencer
+- **DocumentaciÛn actualizada**:
+  - Agregada secciÛn "Database Seeding" en `API_REFERENCE.md` con comandos e instrucciones Docker
+  - Actualizada bit·cora con detalles de correcciones realizadas
 
 ### 6) Presentaciones de Productos
 - **Nueva tabla `ProductPresentation`**:
-  - Permite definir m√∫ltiples presentaciones por producto (ej. "Caja de 200 unidades", "Frasco de 100 ml").
+  - Permite definir m˙ltiples presentaciones por producto (ej. "Caja de 200 unidades", "Frasco de 100 ml").
   - Campos: `name`, `unitsPerPresentation`, `priceOverride`, `isDefault`, `sortOrder`.
-  - Relaci√≥n con `Product` por `productId` y `tenantId`.
-- **Migraci√≥n de campos**:
+  - RelaciÛn con `Product` por `productId` y `tenantId`.
+- **MigraciÛn de campos**:
   - Movidos `presentationWrapper`, `presentationQuantity`, `presentationFormat` de `Product` a la nueva tabla.
   - Agregados `presentationId` y `presentationQuantity` a `QuoteLine`, `SalesOrderLine`, `StockMovement`.
 - **Actualizaciones en backend**:
-  - Endpoint `/api/v1/sales/orders/:id/reservations` incluye datos de presentaci√≥n desde l√≠neas de orden.
-  - Validaciones actualizadas para permitir m√∫ltiples presentaciones del mismo producto en cotizaciones y √≥rdenes.
+  - Endpoint `/api/v1/sales/orders/:id/reservations` incluye datos de presentaciÛn desde lÌneas de orden.
+  - Validaciones actualizadas para permitir m˙ltiples presentaciones del mismo producto en cotizaciones y Ûrdenes.
 - **Mejoras en frontend**:
   - PDF de nota de entrega muestra cantidades y presentaciones correctas (ej. "1 caja de 200u", "30 Unidades").
   - Tabla de entregas optimizada para presentaciones.
-- **Migraci√≥n de base de datos**:
-  - Ejecutada migraci√≥n `20260127140000_product_presentations` para crear tabla y agregar campos.
-  - Compatibilidad hacia atr√°s mantenida para datos existentes.
+- **MigraciÛn de base de datos**:
+  - Ejecutada migraciÛn `20260127140000_product_presentations` para crear tabla y agregar campos.
+  - Compatibilidad hacia atr·s mantenida para datos existentes.
 
 ## Mejoras de UI/UX (Enero 2026)
-- **Cat√°logo de productos**:
-  - Ajustado ancho m√≠nimo de tarjetas de productos de 140px a 180px para mejor legibilidad y consistencia visual.
-- **Gesti√≥n de warehouses**:
-  - Enforced validaci√≥n de c√≥digos en may√∫sculas con prefijo "SUC-".
-  - Agregado √≠cono de ojo al bot√≥n de stock para mejor UX.
-  - Validaci√≥n backend actualizada para asegurar formato consistente.
-- **Creaci√≥n de productos**:
-  - Corregido bot√≥n de regreso faltante en p√°gina de detalle de productos.
-- **Creaci√≥n de lotes**:
-  - Deshabilitada selecci√≥n autom√°tica de sucursal, ahora requiere selecci√≥n manual con placeholder "Elegir sucursal".
+- **Cat·logo de productos**:
+  - Ajustado ancho mÌnimo de tarjetas de productos de 140px a 180px para mejor legibilidad y consistencia visual.
+- **GestiÛn de warehouses**:
+  - Enforced validaciÛn de cÛdigos en may˙sculas con prefijo "SUC-".
+  - Agregado Ìcono de ojo al botÛn de stock para mejor UX.
+  - ValidaciÛn backend actualizada para asegurar formato consistente.
+- **CreaciÛn de productos**:
+  - Corregido botÛn de regreso faltante en p·gina de detalle de productos.
+- **CreaciÛn de lotes**:
+  - Deshabilitada selecciÛn autom·tica de sucursal, ahora requiere selecciÛn manual con placeholder "Elegir sucursal".
 
 ---
 
-### **[29 Ene 2026]** ‚Äî Transferencias (solicitudes + masivo), devoluciones con evidencia y reportes OPS
+### **[29 Ene 2026]** ó Transferencias (solicitudes + masivo), devoluciones con evidencia y reportes OPS
 
-- **Solicitudes de movimiento con confirmaci√≥n (Sucursal destino)**:
-  - Flujo `PENDING/ACCEPTED/REJECTED` para que la sucursal destino confirme recepci√≥n.
-  - Se incorpor√≥ resumen operativo por sucursal/ciudad (totales/abiertas/atendidas/canceladas y estado de confirmaci√≥n).
+- **Solicitudes de movimiento con confirmaciÛn (Sucursal destino)**:
+  - Flujo `PENDING/ACCEPTED/REJECTED` para que la sucursal destino confirme recepciÛn.
+  - Se incorporÛ resumen operativo por sucursal/ciudad (totales/abiertas/atendidas/canceladas y estado de confirmaciÛn).
 
 - **Traspasos masivos (dos variantes)**:
-  - A) **Movimiento masivo multi-l√≠nea** (`bulk transfer`) para crear m√∫ltiples `TRANSFER` en un solo env√≠o.
-  - B) **Atender m√∫ltiples solicitudes seleccionadas** (`bulk fulfill`) asignando cantidades a requests espec√≠ficos, evitando doble auto-aplicaci√≥n.
+  - A) **Movimiento masivo multi-lÌnea** (`bulk transfer`) para crear m˙ltiples `TRANSFER` en un solo envÌo.
+  - B) **Atender m˙ltiples solicitudes seleccionadas** (`bulk fulfill`) asignando cantidades a requests especÌficos, evitando doble auto-aplicaciÛn.
 
 - **Devoluciones con evidencia (motivo + foto)**:
-  - Modelo `StockReturn/StockReturnItem` + endpoints para presign de foto y creaci√≥n/listado/detalle.
-  - Al crear una devoluci√≥n se generan movimientos `IN` por √≠tem con `referenceType='RETURN'`.
+  - Modelo `StockReturn/StockReturnItem` + endpoints para presign de foto y creaciÛn/listado/detalle.
+  - Al crear una devoluciÛn se generan movimientos `IN` por Ìtem con `referenceType='RETURN'`.
 
 - **Reportes OPS (StockReportsPage)**:
-  - Nueva pesta√±a OPS con KPIs y tablas: solicitudes por ciudad y devoluciones por sucursal.
+  - Nueva pestaÒa OPS con KPIs y tablas: solicitudes por ciudad y devoluciones por sucursal.
 
 - **Infra Docker/Prisma (fix build)**:
-  - Se corrigi√≥ validaci√≥n Prisma agregando los campos inversos de relaciones para `StockReturn*`.
+  - Se corrigiÛ validaciÛn Prisma agregando los campos inversos de relaciones para `StockReturn*`.
   - Con eso `docker compose -f docker-compose.local.yml build` y `up -d` vuelven a quedar OK.
 
-### **[29 Ene 2026]** ‚Äî Estabilizaci√≥n de vistas + Hub de Movimientos + RBAC por sucursal (sin afectar Tenant Admin)
+### **[29 Ene 2026]** ó EstabilizaciÛn de vistas + Hub de Movimientos + RBAC por sucursal (sin afectar Tenant Admin)
 
 - **Fix de errores masivos en UI**:
   - Se mitigaron `409 Conflict` por usuarios con `scope:branch` sin sucursal seleccionada.
-  - En frontend se fuerza selecci√≥n de sucursal **solo** para branch-scoped que no sean `TENANT_ADMIN`/platform admin.
-  - En backend se agreg√≥ `isTenantAdmin` al contexto auth para que el guard por ciudad (scope branch) no se aplique a tenant admins.
+  - En frontend se fuerza selecciÛn de sucursal **solo** para branch-scoped que no sean `TENANT_ADMIN`/platform admin.
+  - En backend se agregÛ `isTenantAdmin` al contexto auth para que el guard por ciudad (scope branch) no se aplique a tenant admins.
 
 - **UX: Movimientos como hub**:
-  - Men√∫ tipo grilla de accesos r√°pidos (Movimientos, Transferencia masiva, Atender solicitudes, Devoluciones).
-  - La lista de **Solicitudes de movimiento** se muestra inmediatamente debajo del men√∫.
-  - Se removieron accesos redundantes del men√∫ lateral para simplificar navegaci√≥n.
+  - Men˙ tipo grilla de accesos r·pidos (Movimientos, Transferencia masiva, Atender solicitudes, Devoluciones).
+  - La lista de **Solicitudes de movimiento** se muestra inmediatamente debajo del men˙.
+  - Se removieron accesos redundantes del men˙ lateral para simplificar navegaciÛn.
 
-- **Fix validaci√≥n de productos**:
-  - Se aline√≥ el l√≠mite de `take` en `GET /api/v1/products` para soportar selects/listados del frontend y evitar `400`.
+- **Fix validaciÛn de productos**:
+  - Se alineÛ el lÌmite de `take` en `GET /api/v1/products` para soportar selects/listados del frontend y evitar `400`.
 
 - **Docker build**:
-  - Se corrigi√≥ un error de build del backend en Docker por un `select` inv√°lido sobre `UserRole` (tabla con clave compuesta).
+  - Se corrigiÛ un error de build del backend en Docker por un `select` inv·lido sobre `UserRole` (tabla con clave compuesta).
 
-### **[02 Feb 2026]** ‚Äî Mejora de flujo "Atender solicitudes" + Reportes OPS enriquecidos + UX en creaci√≥n de solicitudes
+### **[02 Feb 2026]** ó Mejora de flujo "Atender solicitudes" + Reportes OPS enriquecidos + UX en creaciÛn de solicitudes
 
-- **Redise√±o de "Atender solicitudes"**:
-  - Se cambi√≥ de bulk a atender **una solicitud multi-√≠tem** con selecci√≥n previa.
-  - **Autopick FEFO**: prioriza lotes abiertos, asigna autom√°ticamente cantidades/or√≠genes a √≠tems pendientes.
-  - **Atenci√≥n parcial**: permite enviar menos de lo solicitado, actualizando `remainingQuantity` en `StockMovementRequestItem`.
-  - **Documentos**: generaci√≥n de PDF picking (lista de l√≠neas con ubicaci√≥n/lote/vence) y r√≥tulo editable (100x150mm con campos como bultos/responsable/observaciones).
-  - **UX sugeridos**: badges ‚≠ê en stock y resumen por √≠tem para destacar asignaciones autom√°ticas.
-  - **Validaciones visuales**: colores y "Falta (u)" para √≠tems no cubiertos; filtros por "solo productos requeridos".
+- **RediseÒo de "Atender solicitudes"**:
+  - Se cambiÛ de bulk a atender **una solicitud multi-Ìtem** con selecciÛn previa.
+  - **Autopick FEFO**: prioriza lotes abiertos, asigna autom·ticamente cantidades/orÌgenes a Ìtems pendientes.
+  - **AtenciÛn parcial**: permite enviar menos de lo solicitado, actualizando `remainingQuantity` en `StockMovementRequestItem`.
+  - **Documentos**: generaciÛn de PDF picking (lista de lÌneas con ubicaciÛn/lote/vence) y rÛtulo editable (100x150mm con campos como bultos/responsable/observaciones).
+  - **UX sugeridos**: badges ? en stock y resumen por Ìtem para destacar asignaciones autom·ticas.
+  - **Validaciones visuales**: colores y "Falta (u)" para Ìtems no cubiertos; filtros por "solo productos requeridos".
 
 - **Enriquecimiento de Reportes > Stock > OPS**:
-  - **Flujos completados**: tabla con rutas (origen ‚Üí destino) de solicitudes FULFILLED + promedio minutos de atenci√≥n (fulfilledAt - createdAt).
-  - **Trazabilidad**: lista de solicitudes atendidas con m√©tricas (tiempo, cantidades, rutas agregadas); modal con comparaci√≥n solicitado vs enviado (picking real) + bot√≥n "Exportar picking PDF".
+  - **Flujos completados**: tabla con rutas (origen ? destino) de solicitudes FULFILLED + promedio minutos de atenciÛn (fulfilledAt - createdAt).
+  - **Trazabilidad**: lista de solicitudes atendidas con mÈtricas (tiempo, cantidades, rutas agregadas); modal con comparaciÛn solicitado vs enviado (picking real) + botÛn "Exportar picking PDF".
   - **Backend**: nuevos endpoints `/api/v1/reports/stock/movement-requests/flows`, `/fulfilled`, `/:id/trace` con queries SQL para deducir rutas desde movimientos TRANSFER.
 
 - **UX en "Crear solicitud" (MovementsPage)**:
-  - Se ajust√≥ la condici√≥n del bot√≥n "Crear solicitud" para habilitarse una vez que hay √≠tems agregados, sin requerir llenar el formulario de producto individual (evita confusi√≥n en usuarios que agregan √≠tems pero no entienden por qu√© no se habilita).
-  - Campo "Producto" deja de mostrar * (requerido) cuando ya hay √≠tems agregados.
-  - Campo "Producto" deja de ser `required` en HTML cuando hay √≠tems agregados, evitando mensaje "rellena este campo" al enviar el formulario.
+  - Se ajustÛ la condiciÛn del botÛn "Crear solicitud" para habilitarse una vez que hay Ìtems agregados, sin requerir llenar el formulario de producto individual (evita confusiÛn en usuarios que agregan Ìtems pero no entienden por quÈ no se habilita).
+  - Campo "Producto" deja de mostrar * (requerido) cuando ya hay Ìtems agregados.
+  - Campo "Producto" deja de ser `required` en HTML cuando hay Ìtems agregados, evitando mensaje "rellena este campo" al enviar el formulario.
 
 - **Docs actualizadas**:
-  - API_REFERENCE.md: documentaci√≥n de nuevos endpoints de reportes OPS.
-  - bitacora.md: log de cambios en esta sesi√≥n.
+  - API_REFERENCE.md: documentaciÛn de nuevos endpoints de reportes OPS.
+  - bitacora.md: log de cambios en esta sesiÛn.
 
 - **Mejoras en vista "Atender solicitudes"**:
-  - Agregada columna "Presentaci√≥n" en tabla de stock origen para mostrar la presentaci√≥n del lote.
-  - Modificada columna "Lote" para mostrar fecha de vencimiento debajo en formato pill (rect√°ngulo curvo con background s√≥lido, letra peque√±a).
+  - Agregada columna "PresentaciÛn" en tabla de stock origen para mostrar la presentaciÛn del lote.
+  - Modificada columna "Lote" para mostrar fecha de vencimiento debajo en formato pill (rect·ngulo curvo con background sÛlido, letra pequeÒa).
 
-### **[12 Feb 2026]** ‚Äî UI Admin Users + Backdated OUT Movements + RBAC Origin Selection
+### **[12 Feb 2026]** ó UI Admin Users + Backdated OUT Movements + RBAC Origin Selection
 
 - **UI Admin Users**:
-  - Se reemplaz√≥ la columna "Creado" por "Rol" en `/admin/users` para mostrar el rol actual del usuario (primero de la lista o "Asignado" si tiene roles asignados).
+  - Se reemplazÛ la columna "Creado" por "Rol" en `/admin/users` para mostrar el rol actual del usuario (primero de la lista o "Asignado" si tiene roles asignados).
 
 - **Backdated OUT Movements (Tenant Admin only)**:
   - Tenant admins pueden registrar movimientos de salida (ventas/desechos) con fecha pasada en `/stock/movements`.
   - Campo "Fecha del movimiento" (date picker nativo) solo visible para tenant admin.
   - Backend valida que solo tenant admin puede setear `createdAt`, y que no sea futuro.
-  - Afecta c√°lculo de expiraci√≥n (relativo a fecha backdated), secuencia de numeraci√≥n (a√±o de fecha backdated), y timestamps de movimiento/batch.
+  - Afecta c·lculo de expiraciÛn (relativo a fecha backdated), secuencia de numeraciÛn (aÒo de fecha backdated), y timestamps de movimiento/batch.
 
 - **RBAC Origin Selection in Bulk Flows**:
-  - Branch admins (con `scope:branch`) no pueden elegir warehouse/location de origen en transferencias masivas y atenci√≥n de solicitudes.
+  - Branch admins (con `scope:branch`) no pueden elegir warehouse/location de origen en transferencias masivas y atenciÛn de solicitudes.
   - Tenant admin mantiene control total sobre origen (no restringido por scope branch).
   - Aplicado en `BulkTransferPage` y `BulkFulfillRequestsPageSimple`.
 
 - **Fix Client Dropdown in OUT Movements**:
-  - Corregido endpoint de API: `/api/v1/clients` ‚Üí `/api/v1/customers`.
-  - Ajustado par√°metro `take=100` ‚Üí `take=50` (l√≠mite backend).
+  - Corregido endpoint de API: `/api/v1/clients` ? `/api/v1/customers`.
+  - Ajustado par·metro `take=100` ? `take=50` (lÌmite backend).
   - Actualizado tipo `ClientListItem` para usar `name` en lugar de `commercialName/fiscalName`.
 
-### **[18 Feb 2026]** ‚Äî Fix Branch Admin Access to Inventory Reports
+### **[18 Feb 2026]** ó Fix Branch Admin Access to Inventory Reports
 
 - **Stock Reports Access**:
   - Branch admins ahora pueden acceder a `/stock/inventory` (balances-expanded endpoint).
   - Agregado guard personalizado `requireStockReportAccess()` que permite acceso con `ReportStockRead` O (`ScopeBranch` + `StockRead`).
   - Agregado filtrado por sucursal: usuarios con scope branch solo ven inventario de warehouses de su ciudad.
 
-### **[18 Feb 2026]** ‚Äî Branch Admin Access Control: Stock Reports vs LABORATORY Module
+### **[18 Feb 2026]** ó Branch Admin Access Control: Stock Reports vs LABORATORY Module
 
 - **Stock Reports Access for Branch Admins**:
   - Branch admins ahora pueden acceder a reportes de stock (`/reports/stock`) manteniendo el filtrado por sucursal.
   - Backend: Guard personalizado `requireStockReportOrBranchAccess()` permite acceso con `ReportStockRead` O (`ScopeBranch` + `StockRead`).
-  - Frontend: Actualizada navegaci√≥n para mostrar "üì¶ Stock" en reportes cuando branch admin tiene `stock:read`.
+  - Frontend: Actualizada navegaciÛn para mostrar "?? Stock" en reportes cuando branch admin tiene `stock:read`.
   - Frontend: Modificada ruta `/reports/stock` para permitir acceso con `report:stock:read` O `stock:read`.
 
 - **LABORATORY Module Restriction for Branch Admins**:
-  - Branch admins completamente excluidos del m√≥dulo LABORATORY.
+  - Branch admins completamente excluidos del mÛdulo LABORATORY.
   - Backend: Nuevo guard `requireNotBranchAdmin()` bloquea acceso a todas las rutas de laboratory para usuarios con rol BRANCH_ADMIN.
-  - Frontend: Ocultado m√≥dulo "üß™ Laboratorio" del men√∫ lateral para branch admins.
+  - Frontend: Ocultado mÛdulo "?? Laboratorio" del men˙ lateral para branch admins.
   - Mantiene acceso para usuarios con roles superiores (TENANT_ADMIN, etc.).
 
 - **Navigation & Permissions Alignment**:
-  - Sincronizada l√≥gica de permisos entre backend guards, frontend navigation, y frontend routing.
-  - Branch admins ven reportes de stock pero no el m√≥dulo laboratory completo.
+  - Sincronizada lÛgica de permisos entre backend guards, frontend navigation, y frontend routing.
+  - Branch admins ven reportes de stock pero no el mÛdulo laboratory completo.
 
-### **[18 Feb 2026]** ‚Äî Branch Seller Access Control: LABORATORY Module & Inventory Actions
+### **[18 Feb 2026]** ó Branch Seller Access Control: LABORATORY Module & Inventory Actions
 
 - **LABORATORY Module Restriction for Branch Sellers**:
-  - Branch sellers (BRANCH_SELLER) completamente excluidos del m√≥dulo LABORATORY.
-  - Actualizada navegaci√≥n para ocultar "üß™ Laboratorio" tanto para BRANCH_ADMIN como BRANCH_SELLER.
+  - Branch sellers (BRANCH_SELLER) completamente excluidos del mÛdulo LABORATORY.
+  - Actualizada navegaciÛn para ocultar "?? Laboratorio" tanto para BRANCH_ADMIN como BRANCH_SELLER.
   - Backend guards ya protegen correctamente (BRANCH_SELLER no tiene StockMove).
 
 - **Inventory Move Button Restriction**:
-  - Bot√≥n "Mover" en inventario condicionado por permiso `stock:move`.
-   - BRANCH_SELLER no ve el bot√≥n "Mover" (no tiene `stock:move`).
-   - BRANCH_ADMIN mantiene acceso al bot√≥n "Mover" (tiene `stock:move`).
+  - BotÛn "Mover" en inventario condicionado por permiso `stock:move`.
+   - BRANCH_SELLER no ve el botÛn "Mover" (no tiene `stock:move`).
+   - BRANCH_ADMIN mantiene acceso al botÛn "Mover" (tiene `stock:move`).
    - Tenant admin mantiene control total.
 
 ---
 
-### **[07 Ago 2026] Diagn√≥stico de desajuste en kardex del lote 30-26264 en SUC-CBB**
+### **[07 Ago 2026] DiagnÛstico de desajuste en kardex del lote 30-26264 en SUC-CBB**
 
 #### Contexto
 - `InventoryBalance` muestra **32400** unidades para el lote "30-26264" en la sucursal Cochabamba (Institucional).
 - El kardex filtrado por `affectsWarehouse=true` no concuerda con este balance.
 
-#### Causas ra√≠z
+#### Causas raÌz
 
-1. **Bug de c√≥digo en el kardex** (`backend/src/adapters/http/routes/products.ts`):
+1. **Bug de cÛdigo en el kardex** (`backend/src/adapters/http/routes/products.ts`):
    - Los movimientos tipo `OUT` con `referenceType: MOVEMENT_REQUEST` que tienen `toLocationId` en la sucursal filtrada (transferencias inter-sucurals) **no se marcaban como `affectsWarehouse=true`**.
-   - El c√≥digo solo verificaba `fromLocationId` para movimientos `OUT`, ignorando que `toLocationId` podr√≠a estar en la sucursal destino.
-   - **Movimientos afectados**: MSMS2026-668 (OUT 600, LPZ‚ÜíCBB) y MSMS2026-669 (OUT 300, LPZ‚ÜíCBB).
+   - El cÛdigo solo verificaba `fromLocationId` para movimientos `OUT`, ignorando que `toLocationId` podrÌa estar en la sucursal destino.
+   - **Movimientos afectados**: MSMS2026-668 (OUT 600, LPZ?CBB) y MSMS2026-669 (OUT 300, LPZ?CBB).
    - **Fix aplicado**: Se trata `OUT` con `MOVEMENT_REQUEST` y `toLocationId` como `TRANSFER`, calculando `netDelta` basado en ambos `fromLocationId` y `toLocationId`.
 
-2. **C√≥digo duplicado elimado**:
-   - El bloque `else if (locationId)` estaba duplicado (l√≠neas 1687-1710), causando dead code. Se elimin√≥ la segunda instancia.
+2. **CÛdigo duplicado elimado**:
+   - El bloque `else if (locationId)` estaba duplicado (lÌneas 1687-1710), causando dead code. Se eliminÛ la segunda instancia.
 
-3. **Problema de datos (requiere intervenci√≥n manual)**:
-   - Movimientos **MS2026-955** (IN 18000, LPZ‚ÜíCBB) y **MS2026-957** (IN 18000, LPZ‚ÜíCBB) fueron creados el 25/06/25 y registrados en `AuditEvent` e `InventoryBalance`, pero **fueron eliminados** de la tabla `StockMovement`.
-   - Esto dej√≥ el `InventoryBalance` con 36000 unidades extra que no aparecen en el kardex.
-   - Reconciliaci√≥n: `32400 (InventoryBalance) - 36000 (fantasmas) = -3600` (kardex sin fix) o `-2700` (kardex con fix).
-    - **Decisi√≥n pendiente**: Restaurar los movimientos eliminados o ajustar el `InventoryBalance`. El `InventoryBalance` actual de 32400 se mantiene como source of truth para stock f√≠sico.
+3. **Problema de datos (requiere intervenciÛn manual)**:
+   - Movimientos **MS2026-955** (IN 18000, LPZ?CBB) y **MS2026-957** (IN 18000, LPZ?CBB) fueron creados el 25/06/25 y registrados en `AuditEvent` e `InventoryBalance`, pero **fueron eliminados** de la tabla `StockMovement`.
+   - Esto dejÛ el `InventoryBalance` con 36000 unidades extra que no aparecen en el kardex.
+   - ReconciliaciÛn: `32400 (InventoryBalance) - 36000 (fantasmas) = -3600` (kardex sin fix) o `-2700` (kardex con fix).
+    - **DecisiÛn pendiente**: Restaurar los movimientos eliminados o ajustar el `InventoryBalance`. El `InventoryBalance` actual de 32400 se mantiene como source of truth para stock fÌsico.
 
 ---
 
-### **[08 Ago 2026] Solicitud de movimiento: sub-almac√©n destino + ajuste de atender solicitudes**
+### **[08 Ago 2026] Solicitud de movimiento: sub-almacÈn destino + ajuste de atender solicitudes**
 
 #### Contexto
-- Los usuarios deben poder crear solicitudes de movimiento especificando el sub-almac√©n (location) de destino.
-- En la p√°gina "Atender solicitudes" (`/stock/fulfill-requests`), el input de "ubicaci√≥n destino" fue eliminado del formulario principal. Ahora basta con elegir: almac√©n origen, ubicaci√≥n origen y almac√©n destino. La ubicaci√≥n destino se resuelve de la solicitud (`toLocationId`) si est√° disponible, o se elige en el modal "Atender solicitud".
+- Los usuarios deben poder crear solicitudes de movimiento especificando el sub-almacÈn (location) de destino.
+- En la p·gina "Atender solicitudes" (`/stock/fulfill-requests`), el input de "ubicaciÛn destino" fue eliminado del formulario principal. Ahora basta con elegir: almacÈn origen, ubicaciÛn origen y almacÈn destino. La ubicaciÛn destino se resuelve de la solicitud (`toLocationId`) si est· disponible, o se elige en el modal "Atender solicitud".
 
 #### Backend (`backend/src/adapters/http/routes/stock.ts`)
 - `POST /api/v1/stock/movement-requests/bulk-fulfill`: `toLocationId` ahora es **opcional** en el schema.
-- Si `toLocationId` no se env√≠a, se resuelve **por solicitud** usando `req.toLocationId`.
+- Si `toLocationId` no se envÌa, se resuelve **por solicitud** usando `req.toLocationId`.
 - Si la solicitud no tiene `toLocationId` y no se proporciona uno global, retorna error 400.
-- Se agreg√≥ `toLocationId` al `select` del query de solicitudes en el handler de `bulk-fulfill`.
+- Se agregÛ `toLocationId` al `select` del query de solicitudes en el handler de `bulk-fulfill`.
 
 #### Frontend (`frontend/src/pages/stock/BulkFulfillRequestsPageSimple.tsx`)
-- **Eliminado** el input "Ubicaci√≥n destino" del formulario principal.
-- **Agregado** dropdown de "Ubicaci√≥n destino" en el modal "Atender solicitud".
-- **Agregado** display de la ubicaci√≥n destino en la lista de solicitudes.
+- **Eliminado** el input "UbicaciÛn destino" del formulario principal.
+- **Agregado** dropdown de "UbicaciÛn destino" en el modal "Atender solicitud".
+- **Agregado** display de la ubicaciÛn destino en la lista de solicitudes.
 - El search ahora incluye `toLocation.code`.
 
-#### **[08 Ago 2026] Atender solicitudes: ubicaci√≥n destino por solicitud**
-- **Eliminado** el input global "Ubicaci√≥n destino" del modal de atender.
+#### **[08 Ago 2026] Atender solicitudes: ubicaciÛn destino por solicitud**
+- **Eliminado** el input global "UbicaciÛn destino" del modal de atender.
 - **"Lo solicitado" ahora se divide por solicitud**, mostrando:
-  - Dropdown de "Ubicaci√≥n destino" por solicitud (poblado con locations del almac√©n destino).
-  - Si la solicitud tiene `toLocationId`, se muestra preseleccionado con ‚≠ê.
-  - Si se selecciona otra ubicaci√≥n, muestra ‚ö†Ô∏è con advertencia.
-  - Si la solicitud no tiene `toLocationId`, muestra ‚ö†Ô∏è pidiendo selecci√≥n.
-- **Backend**: `POST /api/v1/stock/movement-requests/bulk-fulfill` acepta `toLocationId` opcional **por fulfillment**, resolviendo: fulfillment.toLocationId ‚Üí global ‚Üí req.toLocationId.
-- **`performFulfillment`** env√≠a `toLocationId` por fulfillment desde `requestLocations[req.id]` o `req.toLocationId`.
+  - Dropdown de "UbicaciÛn destino" por solicitud (poblado con locations del almacÈn destino).
+  - Si la solicitud tiene `toLocationId`, se muestra preseleccionado con ?.
+  - Si se selecciona otra ubicaciÛn, muestra ?? con advertencia.
+  - Si la solicitud no tiene `toLocationId`, muestra ?? pidiendo selecciÛn.
+- **Backend**: `POST /api/v1/stock/movement-requests/bulk-fulfill` acepta `toLocationId` opcional **por fulfillment**, resolviendo: fulfillment.toLocationId ? global ? req.toLocationId.
+- **`performFulfillment`** envÌa `toLocationId` por fulfillment desde `requestLocations[req.id]` o `req.toLocationId`.
 - **`getProductFulfillmentStatus`** ahora hace match por `productId`+`presentationId` (no por referencia) para soportar el listado dividido por solicitud.
 - `toLocationsQuery` se mantiene para poblar el dropdown (locations del warehouse destino).
+
 

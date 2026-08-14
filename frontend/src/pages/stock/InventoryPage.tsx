@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useMemo, useState, useEffect, type ReactElement, type ReactNode } from 'react'
+import { useMemo, useState, useEffect, useRef, type ReactElement, type ReactNode } from 'react'
 import { apiFetch } from '../../lib/api'
 import { formatDateOnlyUtc } from '../../lib/date'
 import { exportToXlsx, type ExportSheet } from '../../lib/exportXlsx'
@@ -642,6 +642,7 @@ const KardexModalContent = ({ productId, warehouseId, onClose }: { productId: st
           LOTE: m.batchNumber ?? '',
           Presentación: m.presentationLabel,
           'Tipo Movimiento': movementTypeLabel(m.movementType, m.referenceType),
+          'Movimiento': m.movementNumber ?? '',
           Detalle: m.detail,
           'Cantidad (u)': m.quantity,
           'Saldo Lote (u)': typeof saldoLote[idx] === 'number' ? saldoLote[idx] as number : '',
@@ -700,6 +701,7 @@ const KardexModalContent = ({ productId, warehouseId, onClose }: { productId: st
                   <th className="border px-2 py-1.5 text-left font-medium text-slate-800 dark:text-slate-200">Lote</th>
                   <th className="border px-2 py-1.5 text-left font-medium text-slate-800 dark:text-slate-200">Presentación</th>
                   <th className="border px-2 py-1.5 text-center font-medium text-slate-800 dark:text-slate-200">Tipo</th>
+                  <th className="border px-2 py-1.5 text-left font-medium text-slate-800 dark:text-slate-200">Movimiento</th>
                   <th className="border px-2 py-1.5 text-left font-medium text-slate-800 dark:text-slate-200">Origen</th>
                   <th className="border px-2 py-1.5 text-left font-medium text-slate-800 dark:text-slate-200">Destino</th>
                    <th className="border px-2 py-1.5 text-right font-medium text-slate-800 dark:text-slate-200">Cantidad</th>
@@ -716,8 +718,9 @@ const KardexModalContent = ({ productId, warehouseId, onClose }: { productId: st
                     <td className="border px-2 py-1">{new Date(m.date).toLocaleString()}</td>
                     <td className="border px-2 py-1 bg-white/80 dark:bg-slate-900/80">{m.batchNumber ?? '—'}</td>
                     <td className="border px-2 py-1 bg-white/80 dark:bg-slate-900/80">{m.presentationLabel}</td>
-                    <td className="border px-2 py-1 bg-white/80 dark:bg-slate-900/80 font-medium">{movementTypeLabel(m.movementType, m.referenceType)}</td>
-                    <td className="border px-2 py-1 bg-white/80 dark:bg-slate-900/80">{locLabel(m, 'from')}</td>
+                     <td className="border px-2 py-1 bg-white/80 dark:bg-slate-900/80 font-medium">{movementTypeLabel(m.movementType, m.referenceType)}</td>
+                     <td className="border px-2 py-1 bg-white/80 dark:bg-slate-900/80">{m.movementNumber ?? '—'}</td>
+                     <td className="border px-2 py-1 bg-white/80 dark:bg-slate-900/80">{locLabel(m, 'from')}</td>
                     <td className="border px-2 py-1 bg-white/80 dark:bg-slate-900/80">{locLabel(m, 'to')}</td>
                     <td className="border px-2 py-1 text-right bg-white/80 dark:bg-slate-900/80">{formatQty(m.quantity)}</td>
                     <td className="border px-2 py-1 text-right bg-white/80 dark:bg-slate-900/80">{typeof saldoLote[idx] === 'number' ? formatQty(saldoLote[idx] as number) : '—'}</td>
@@ -808,6 +811,11 @@ export function InventoryPage() {
     !isBranchScoped || !userWarehouseId || warehouseId === userWarehouseId
 
   const [groupBy, setGroupBy] = useState<'product' | 'warehouse'>('product')
+  const [showZeroStock, setShowZeroStock] = useState(false)
+  const showZeroStockRef = useRef(showZeroStock)
+  useEffect(() => {
+    showZeroStockRef.current = showZeroStock
+  }, [showZeroStock])
   const [expandedProduct, setExpandedProduct] = useState<string | null>(null)
   const [expandedWarehouse, setExpandedWarehouse] = useState<string | null>(null)
   const [movingItem, setMovingItem] = useState<{
@@ -1197,8 +1205,8 @@ export function InventoryPage() {
     const map = new Map<string, ProductGroup>()
 
     for (const item of balancesQuery.data.items) {
-      const qty = Number(item.quantity)
-      if (!Number.isFinite(qty) || qty <= 0) continue
+       const qty = Number(item.quantity)
+      if (!Number.isFinite(qty) || (qty <= 0 && !showZeroStock)) continue
 
       const reserved = Math.max(0, Number(item.reservedQuantity ?? '0'))
       const available = Math.max(0, qty - reserved)
@@ -1263,8 +1271,8 @@ export function InventoryPage() {
       })
     }
 
-    return sortProductsByDisplayName(Array.from(map.values()))
-  }, [balancesQuery.data])
+     return sortProductsByDisplayName(Array.from(map.values()))
+  }, [balancesQuery.data, showZeroStock])
 
   const warehouseGroups = useMemo<WarehouseGroup[]>(() => {
     if (!balancesQuery.data?.items) return []
@@ -1272,8 +1280,8 @@ export function InventoryPage() {
     const map = new Map<string, WarehouseGroup>()
 
     for (const item of balancesQuery.data.items) {
-      const qty = Number(item.quantity)
-      if (!Number.isFinite(qty) || qty <= 0) continue
+       const qty = Number(item.quantity)
+      if (!Number.isFinite(qty) || (qty <= 0 && !showZeroStock)) continue
 
       const reserved = Math.max(0, Number(item.reservedQuantity ?? '0'))
       const available = Math.max(0, qty - reserved)
@@ -1348,7 +1356,7 @@ export function InventoryPage() {
         numeric: true,
       }),
     )
-  }, [balancesQuery.data])
+   }, [balancesQuery.data, showZeroStock])
 
   const activeWarehouses = useMemo(
     () => (warehousesQuery.data?.items ?? []).filter((w) => w.isActive),
@@ -1358,7 +1366,12 @@ export function InventoryPage() {
   const exportMutation = useMutation({
     mutationFn: async () => fetchBalancesForExport(auth.accessToken!),
     onSuccess: (data) => {
-      const rows = (data.items ?? []).map((item) => {
+      const rows = (data.items ?? [])
+        .filter((item) => {
+          const qty = Number(item.quantity || '0')
+          return Number.isFinite(qty) && (qty > 0 || showZeroStockRef.current)
+        })
+        .map((item) => {
         const total = Number(item.quantity || '0')
         const reserved = Number(item.reservedQuantity ?? '0')
         const available = Math.max(0, total - reserved)
@@ -1450,6 +1463,15 @@ export function InventoryPage() {
           >
             Exportar Excel
           </Button>
+          <label className="flex cursor-pointer items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300">
+            <input
+              type="checkbox"
+              checked={showZeroStock}
+              onChange={(e) => setShowZeroStock(e.target.checked)}
+              className="h-3.5 w-3.5 cursor-pointer rounded border-slate-400 text-blue-600 focus:ring-blue-500"
+            />
+            Mostrar lotes sin stock
+          </label>
         </div>
         <div className="space-y-4">
           {balancesQuery.isLoading && <Loading />}
@@ -1729,6 +1751,7 @@ export function InventoryPage() {
         }}
         title="Mover Existencias"
         maxWidth="lg"
+        closeOnBackdropClick={false}
       >
         {movingItem && (
           <div className="space-y-4">
@@ -1821,6 +1844,7 @@ export function InventoryPage() {
         onClose={() => setFlowItem(null)}
         title={flowItem ? `Ver flujo — Lote ${flowItem.batchNumber}` : 'Ver flujo'}
         maxWidth="lg"
+        closeOnBackdropClick={false}
       >
         {!canSeeBatchFlow ? (
           <p className="text-sm text-slate-600 dark:text-slate-400">No tenés permisos para ver el flujo del lote.</p>
@@ -1890,6 +1914,7 @@ export function InventoryPage() {
           setNewStatus('RELEASED')
         }}
         title="Cambiar Estado del Lote"
+        closeOnBackdropClick={false}
       >
         {statusChangeItem && (
           <div className="space-y-4">
@@ -1951,6 +1976,7 @@ export function InventoryPage() {
           isOpen={reservationsModalOpen}
           onClose={() => setReservationsModalOpen(false)}
           title="Reservas de Stock"
+          closeOnBackdropClick={false}
         >
           <div className="space-y-4">
             {selectedReservations.length === 0 ? (
@@ -1988,7 +2014,8 @@ export function InventoryPage() {
           isOpen={kardexModalOpen}
           onClose={() => { setKardexModalOpen(false); setKardexProductId(null); setKardexWarehouseId(null) }}
           title="Kardex de Inventario"
-          maxWidth="5xl"
+          maxWidth="6xl"
+          closeOnBackdropClick={false}
         >
           {kardexProductId ? <KardexModalContent productId={kardexProductId} warehouseId={kardexWarehouseId ?? undefined} onClose={() => { setKardexModalOpen(false); setKardexProductId(null); setKardexWarehouseId(null) }} /> : null}
         </Modal>

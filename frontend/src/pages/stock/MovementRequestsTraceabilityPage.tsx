@@ -11,6 +11,8 @@ import { exportTraceabilityToPDF } from '../../lib/traceabilityPdf'
 
 type TraceMovement = {
   id: string
+  number?: string | null
+  numberYear?: number | null
   type: 'OUT' | 'IN'
   createdAt: string
   createdByName?: string | null
@@ -112,6 +114,8 @@ async function listMovementRequests(token: string): Promise<{ items: MovementReq
         ? r.movements.map((m: any) => ({
             ...m,
             id: String(m.id),
+            number: m.number ?? null,
+            numberYear: m.numberYear ?? null,
             quantity: Number(m.quantity ?? 0),
             presentationQuantity:
               m.presentationQuantity === null || m.presentationQuantity === undefined ? null : Number(m.presentationQuantity),
@@ -364,6 +368,7 @@ export function MovementRequestsTraceabilityPage() {
         .map((m) => ({
           productLabel: m.productName ?? m.productSku ?? m.genericName ?? 'Producto',
           batchNumber: m.batchNumber ?? null,
+          movementNumber: m.number ?? null,
           createdAt: new Date(m.createdAt).toLocaleString(),
           createdByName: m.createdByName ?? null,
           sentQuantity:
@@ -502,6 +507,7 @@ export function MovementRequestsTraceabilityPage() {
         onClose={() => setSelectedRequest(null)}
         title={`🧭 Detalle de solicitud${selectedRequest?.code ? ` — ${selectedRequest.code}` : ''}`}
         maxWidth="3xl"
+        closeOnBackdropClick={false}
         actions={
           <Button variant="secondary" size="sm" onClick={handleExportPdf} loading={exportingPdf}>
             Exportar PDF
@@ -645,7 +651,7 @@ export function MovementRequestsTraceabilityPage() {
                       const toWarehouseCode = cleanCode(selectedRequest.warehouse?.code) ?? cleanCode(selectedRequest.requestedCity)
                       const toLocCode = locLabel(selectedRequest.toLocation?.code)
                       const toCode = `${toWarehouseCode}:${toLocCode}`
-                      return (
+return (
                         <div key={m.id} className="rounded border border-slate-200 px-3 py-2 dark:border-slate-700">
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <div className="font-medium text-slate-900 dark:text-slate-100">
@@ -656,13 +662,18 @@ export function MovementRequestsTraceabilityPage() {
                           <div className="mt-1 text-xs text-slate-600 dark:text-slate-400">
                             Enviado por: {m.createdByName ?? '—'}
                           </div>
+                          {m.number ? (
+                            <div className="mt-1 text-xs text-slate-600 dark:text-slate-400">
+                              Movimiento: <span className="font-mono">{m.number}</span>
+                            </div>
+                          ) : null}
                           {m.batchNumber ? (
                             <div className="mt-1 text-xs text-slate-600 dark:text-slate-400">
                               Lote: <span className="font-mono">{m.batchNumber}</span>
                             </div>
                           ) : null}
                           <div className="mt-1 text-xs text-slate-600 dark:text-slate-400 font-mono">
-                            {fromCode} -&gt; {toCode}
+                            {fromCode} \u2192 {toCode}
                           </div>
                           <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm">
                             <div>

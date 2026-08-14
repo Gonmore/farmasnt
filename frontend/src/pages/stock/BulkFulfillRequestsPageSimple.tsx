@@ -834,6 +834,7 @@ export function BulkFulfillRequestsPage() {
           setRequestLocations({})
         }}
         title={`Transferencia de ${activeWarehouses.find(w => w.id === fromWarehouseId)?.name || 'Origen'} a ${activeWarehouses.find(w => w.id === toWarehouseId)?.name || 'Destino'}`}
+        closeOnBackdropClick={false}
           maxWidth="6xl"
        >
         <div className="flex flex-col gap-4 md:flex-row md:items-start">

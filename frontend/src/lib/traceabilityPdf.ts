@@ -10,6 +10,7 @@ export type TraceabilityPdfItem = {
 export type TraceabilityPdfShipment = {
   productLabel: string
   batchNumber?: string | null
+  movementNumber?: string | null
   createdAt: string
   createdByName?: string | null
   sentQuantity: string
@@ -242,12 +243,13 @@ export async function exportTraceabilityToPDF(data: TraceabilityPdfData): Promis
   y += 6
 
   const shipColumns: TableColumn[] = [
-    { header: 'Producto', width: tableWidth * 0.28 },
-    { header: 'Lote', width: tableWidth * 0.14 },
-    { header: 'Enviado', width: tableWidth * 0.16, align: 'right' },
-    { header: 'Estado', width: tableWidth * 0.16 },
-    { header: 'Fecha', width: tableWidth * 0.14 },
-    { header: 'Por', width: tableWidth * 0.12 },
+    { header: 'Producto', width: tableWidth * 0.24 },
+    { header: 'Lote', width: tableWidth * 0.12 },
+    { header: 'Movimiento', width: tableWidth * 0.16 },
+    { header: 'Enviado', width: tableWidth * 0.14, align: 'right' },
+    { header: 'Estado', width: tableWidth * 0.14 },
+    { header: 'Fecha', width: tableWidth * 0.1 },
+    { header: 'Por', width: tableWidth * 0.1 },
   ]
   drawTableHeader(pdf, shipColumns, margin, y)
   y += 6
@@ -263,6 +265,7 @@ export async function exportTraceabilityToPDF(data: TraceabilityPdfData): Promis
     const row = prepareRow(pdf, shipColumns, [
       s.productLabel,
       s.batchNumber ?? '—',
+      s.movementNumber ?? '—',
       s.sentQuantity,
       s.stateLabel,
       s.createdAt,

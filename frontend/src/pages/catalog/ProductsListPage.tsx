@@ -126,7 +126,7 @@ export function ProductsListPage() {
   const [cursorHistory, setCursorHistory] = useState<string[]>([])
   const [searchResults, setSearchResults] = useState<any[] | null>(null)
   const [currentPage, setCurrentPage] = useState(1)
-  const take = 20
+  const take = 50
 
   // Modal states
   const [stockModal, setStockModal] = useState<{ isOpen: boolean; product: ProductListItem | null }>({ isOpen: false, product: null })

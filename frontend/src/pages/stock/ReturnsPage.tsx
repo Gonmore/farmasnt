@@ -119,6 +119,17 @@ async function confirmReceptionUnified(token: string, requestId: string, input: 
   })
 }
 
+type TransferReceiveItem = { movementId: string; returnedQuantity: number; returnReason?: string | null }
+type TransferReceiveInput = { note?: string | null; photoUrl?: string | null; items?: TransferReceiveItem[] }
+
+async function receiveTransfer(token: string, transferId: string, input: TransferReceiveInput): Promise<any> {
+  return apiFetch(`/api/v1/stock/transfers/${encodeURIComponent(transferId)}/receive`, {
+    token,
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+}
+
 function formatQty(value: number): string {
   if (!Number.isFinite(value)) return '0'
   const rounded = Math.round(value)
@@ -184,6 +195,111 @@ export function ReturnsPage() {
     queryFn: () => listSentMovementRequests(auth.accessToken!, permissions.hasPermission('scope:branch') && !permissions.isTenantAdmin ? permissions.user?.warehouseId ?? undefined : undefined),
     enabled: !!auth.accessToken,
     refetchInterval: 15_000,
+  })
+
+  // Transferencias (simples y masivas) pendientes de recepción en la sucursal del usuario.
+  // Las atenciones de solicitud (FULFILL_REQUEST) pendientes de recepción se gestionan en la pestaña Recepción/Devolución.
+  const pendingTransfersQuery = useQuery({
+    queryKey: ['pendingTransferReceipts', permissions.user?.warehouseId],
+    queryFn: () => apiFetch('/api/v1/stock/completed-movements?take=100&receiptStatus=PENDING', { token: auth.accessToken! }) as Promise<{ items: any[] }>,
+    enabled: !!auth.accessToken,
+    refetchInterval: 15_000,
+    select: (data) =>
+      (data.items ?? []).filter(
+        (m: any) =>
+          m.receiptStatus === 'PENDING' &&
+          m.type !== 'FULFILL_REQUEST' &&
+          m.fromWarehouseCode !== m.toWarehouseCode
+      ),
+  })
+
+  // Modal de recepción de transferencias (con posibilidad de devolución parcial por ítem).
+  const [transferTarget, setTransferTarget] = useState<any>(null)
+  const [transferLines, setTransferLines] = useState<any[]>([])
+  const [transferItems, setTransferItems] = useState<Record<string, ReceptionItemState>>({})
+  const [transferNote, setTransferNote] = useState('')
+  const [transferPhotoFile, setTransferPhotoFile] = useState<File | null>(null)
+  const [transferPhotoError, setTransferPhotoError] = useState<string | null>(null)
+  const [transferLoading, setTransferLoading] = useState(false)
+  const [transferError, setTransferError] = useState<string | null>(null)
+
+  const openTransferReceptionModal = async (m: any) => {
+    setTransferTarget(m)
+    setTransferLines([])
+    setTransferItems({})
+    setTransferNote('')
+    setTransferPhotoFile(null)
+    setTransferPhotoError(null)
+    setTransferError(null)
+    setTransferLoading(true)
+    try {
+      const data = await apiFetch<any>(
+        `/api/v1/stock/completed-movements/${encodeURIComponent(m.id)}/picking?type=${encodeURIComponent(m.type)}`,
+        { token: auth.accessToken! },
+      )
+      const lines = (data.sentLines ?? []).map((l: any) => ({
+        movementId: l.movementId,
+        productLabel: l.productLabel,
+        batchNumber: l.batchNumber,
+        quantityUnits: l.quantityUnits,
+      }))
+      const initial: Record<string, ReceptionItemState> = {}
+      for (const l of lines) initial[String(l.movementId)] = { fullReception: true, returnQuantity: 0, returnReason: '' }
+      setTransferLines(lines)
+      setTransferItems(initial)
+    } catch (e: any) {
+      setTransferError(e?.message ?? 'No se pudo cargar el detalle de la transferencia')
+    } finally {
+      setTransferLoading(false)
+    }
+  }
+
+  const closeTransferReception = () => {
+    setTransferTarget(null)
+    setTransferLines([])
+    setTransferItems({})
+    setTransferNote('')
+    setTransferPhotoFile(null)
+    setTransferPhotoError(null)
+    setTransferError(null)
+  }
+
+  const transferReceptionMutation = useMutation({
+    mutationFn: async () => {
+      const lines = transferLines
+      const items: TransferReceiveItem[] = []
+      for (const line of lines) {
+        const mid = String(line.movementId)
+        const st = transferItems[mid] ?? { fullReception: true, returnQuantity: 0, returnReason: '' }
+        const qty = Number(line.quantityUnits ?? 0)
+        let returned = 0
+        if (!st.fullReception) returned = Math.min(Number(st.returnQuantity || 0), qty)
+        if (returned > 1e-9 && !st.returnReason?.trim()) {
+          throw new Error('El motivo de devolución es obligatorio para los ítems devueltos')
+        }
+        items.push({ movementId: mid, returnedQuantity: returned, returnReason: returned > 1e-9 ? st.returnReason.trim() : null })
+      }
+      let photoUrl: string | null = null
+      if (transferPhotoFile) {
+        const presign = await presignReturnPhoto(auth.accessToken!, transferPhotoFile.name, transferPhotoFile.type || 'image/jpeg')
+        await uploadToPresignedUrl(presign.uploadUrl, transferPhotoFile, transferPhotoFile.type || 'image/jpeg')
+        photoUrl = presign.publicUrl
+      }
+      if (!transferTarget) throw new Error('No hay transferencia seleccionada')
+      return receiveTransfer(auth.accessToken!, transferTarget.id, {
+        note: transferNote.trim() || null,
+        photoUrl,
+        items,
+      })
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['pendingTransferReceipts'] })
+      notifications.notify({ kind: 'success', title: 'Transferencia recepcionada', body: 'Se registró la recepción (y devoluciones, si las hubo).' })
+      closeTransferReception()
+    },
+    onError: (e: any) => {
+      notifications.notify({ kind: 'error', title: 'No se pudo recepcionar', body: e?.message ?? 'Error desconocido' })
+    },
   })
 
   const [activeTab, setActiveTab] = useState<'returns' | 'receptions'>('receptions')
@@ -410,6 +526,7 @@ export function ReturnsPage() {
         setSelectedRequest(null)
       }}
       title={`📦 Recepción/Devolución${selectedRequest.code ? ` — ${selectedRequest.code}` : ''}`}
+      closeOnBackdropClick={false}
       maxWidth="6xl"
     >
       <div className="space-y-4">
@@ -610,6 +727,107 @@ export function ReturnsPage() {
     </Modal>
   ) : null
 
+  const transferReceptionModal = transferTarget ? (
+    <Modal
+      isOpen={!!transferTarget}
+      onClose={() => {
+        if (transferReceptionMutation.isPending) return
+        closeTransferReception()
+      }}
+      title="Recepcionar transferencia"
+      maxWidth="4xl"
+      closeOnBackdropClick={false}
+    >
+      <div className="space-y-4">
+        {transferLoading ? (
+          <Loading />
+        ) : transferError ? (
+          <ErrorState message={transferError} retry={transferTarget ? () => openTransferReceptionModal(transferTarget) : undefined} />
+        ) : (
+          <>
+            <div className="text-sm text-slate-600 dark:text-slate-400">
+              Marque la recepción completa de cada ítem o indique la cantidad a devolver y el motivo. Opcionalmente adjunte una foto y una nota.
+            </div>
+
+            <div className="space-y-3">
+              {transferLines.map((line) => {
+                const mid = String(line.movementId)
+                const state = transferItems[mid] ?? { fullReception: true, returnQuantity: 0, returnReason: '' }
+                const qty = Number(line.quantityUnits ?? 0)
+                return (
+                  <div key={mid} className="grid grid-cols-1 gap-3 rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+                    <div className="text-sm font-medium text-slate-900 dark:text-slate-100">
+                      {line.productLabel} — Lote {line.batchNumber ?? '-'}
+                    </div>
+                    <div className="text-xs text-slate-500">Cantidad enviada: {formatQty(qty)}</div>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={state.fullReception}
+                        onChange={(e) =>
+                          setTransferItems((prev) => ({ ...prev, [mid]: { ...(prev[mid] ?? { returnQuantity: 0, returnReason: '' }), fullReception: e.target.checked } }))
+                        }
+                      />
+                      Recepción completa
+                    </label>
+                    {!state.fullReception && (
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        <Input
+                          label="Cantidad a devolver"
+                          type="number"
+                          min={0}
+                          value={state.returnQuantity}
+                          onChange={(e) =>
+                            setTransferItems((prev) => ({ ...prev, [mid]: { ...(prev[mid] ?? { fullReception: false, returnReason: '' }), returnQuantity: Number(e.target.value) } }))
+                          }
+                        />
+                        <Input
+                          label="Motivo de devolución"
+                          value={state.returnReason}
+                          onChange={(e) =>
+                            setTransferItems((prev) => ({ ...prev, [mid]: { ...(prev[mid] ?? { fullReception: false, returnQuantity: 0 }), returnReason: e.target.value } }))
+                          }
+                        />
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-200">Evidencia (foto, opcional)</label>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => {
+                  const f = e.target.files?.[0] ?? null
+                  setTransferPhotoFile(f)
+                  setTransferPhotoError(null)
+                  if (f && f.size > 5 * 1024 * 1024) setTransferPhotoError('La foto no debe superar 5 MB')
+                }}
+                className="block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 file:mr-4 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-2 file:text-sm file:font-semibold dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+              />
+              {transferPhotoFile && <div className="mt-1 text-xs text-slate-500">{transferPhotoFile.name}</div>}
+              {transferPhotoError && <div className="mt-1 text-xs text-red-600">{transferPhotoError}</div>}
+            </div>
+
+            <Input label="Nota general (opcional)" value={transferNote} onChange={(e) => setTransferNote(e.target.value)} />
+
+            <div className="flex justify-end gap-2 pt-4 border-t">
+              <Button variant="outline" onClick={closeTransferReception} disabled={transferReceptionMutation.isPending}>
+                Cancelar
+              </Button>
+              <Button onClick={() => transferReceptionMutation.mutate()} disabled={transferReceptionMutation.isPending}>
+                {transferReceptionMutation.isPending ? 'Procesando…' : 'Confirmar recepción'}
+              </Button>
+            </div>
+          </>
+        )}
+      </div>
+    </Modal>
+  ) : null
+
   return (
     <MainLayout navGroups={navGroups}>
       <PageContainer title="↩️ Recepción/Devolución">
@@ -741,10 +959,78 @@ export function ReturnsPage() {
                 keyExtractor={(r) => r.id}
               />
             )}
+
+            {!sentRequestsQuery.isLoading && !sentRequestsQuery.isError && (
+              <>
+                {pendingTransfersQuery.isLoading && <Loading />}
+                {pendingTransfersQuery.data && pendingTransfersQuery.data.length > 0 && (
+                  <div className="mt-6">
+                    <div className="mb-2 text-sm font-semibold text-slate-700 dark:text-slate-200">Transferencias pendientes de recepción</div>
+                    <div className="rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
+                      <div className="overflow-x-auto">
+                        <Table
+                          columns={[
+                            {
+                              header: 'Fecha envío',
+                              width: '140px',
+                              accessor: (m: any) => {
+                                const d = new Date(m.completedAt || m.createdAt)
+                                return (
+                                  <div>
+                                    <div>{d.toLocaleDateString()}</div>
+                                    <div className="text-xs text-slate-500 dark:text-slate-400">{d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                                  </div>
+                                )
+                              },
+                            },
+                            {
+                              header: 'Tipo',
+                              width: '170px',
+                              accessor: (m: any) => (
+                                <div className="leading-tight">
+                                  <div>{m.typeLabel}</div>
+                                  {m.number ? <div className="text-xs text-slate-500 dark:text-slate-400">{m.number}</div> : null}
+                                </div>
+                              ),
+                            },
+                            {
+                              header: 'ORG → DEST',
+                              accessor: (m: any) => {
+                                const fromLabel = whLocLabel(cleanCode(m.fromWarehouseCode), m.fromLocationCode)
+                                const toLabel = whLocLabel(cleanCode(m.toWarehouseCode), m.toLocationCode)
+                                return `${fromLabel} → ${toLabel}`
+                              },
+                            },
+                            { header: 'Realizó', accessor: (m: any) => m.fulfilledByName ?? m.requestedByName ?? '-' },
+                            { header: 'Ítems', width: '80px', accessor: (m: any) => m.totalItems },
+                            {
+                              header: 'Acciones',
+                              width: '140px',
+                              accessor: (m: any) => (
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => openTransferReceptionModal(m)}
+                                >
+                                  Recepcionar
+                                </Button>
+                              ),
+                            },
+                          ]}
+                          data={pendingTransfersQuery.data}
+                          keyExtractor={(m) => m.id}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
           </>
         )}
 
         {receptionModal}
+        {transferReceptionModal}
       </PageContainer>
     </MainLayout>
   )

@@ -294,6 +294,7 @@ function DeliveryModal({
       onClose={onClose}
       title="Marcar orden como entregada"
       maxWidth="3xl"
+      closeOnBackdropClick={false}
     >
       <div className="space-y-4">
         {orderQuery.isLoading && <Loading />}
@@ -733,6 +734,7 @@ export function DeliveriesPage() {
             setDeliverLocationId('')
           }}
           title={deliverTarget ? `Seleccionar ubicación para OV ${deliverTarget.number}` : 'Seleccionar ubicación'}
+          closeOnBackdropClick={false}
         >
           <div className="space-y-4">
             <p className="text-sm text-slate-700 dark:text-slate-300">
@@ -823,6 +825,7 @@ export function DeliveriesPage() {
           isOpen={locationModalOpen}
           onClose={() => setLocationModalOpen(false)}
           title="Dirección de entrega"
+          closeOnBackdropClick={false}
         >
           <div className="space-y-4">
             <p className="text-sm text-slate-700 dark:text-slate-300">

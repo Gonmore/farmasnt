@@ -387,12 +387,22 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
   }
 
   // Fuerza el warehouseId efectivo para reportes de stock:
-  // - Si el usuario es de sucursal, SIEMPRE usa su propio almacén (ignora/valida input).
+  // - Si el usuario es de sucursal, SIEMPRE usa su almacén propio (ignora/valida input).
   // - Si es admin (sin scope:branch), respeta el warehouseId recibido (o null = todas).
-  function resolveBranchWarehouseId(request: any, requestedWarehouseId: string | undefined): string | null {
+  function resolveBranchWarehouseId(
+    request: any,
+    requestedWarehouseId: string | undefined,
+    opts?: { allowProviderAll?: boolean },
+  ): string | null {
     const ownId = branchOwnWarehouseIdOf(request)
     if (!ownId) return requestedWarehouseId ?? null
     if (ownId === '__MISSING__') return '__MISSING__'
+    // BRANCH_PROVIDER (warehouse type PROVIDER) puede ver TODOS los warehouses en vistas
+    // operativas como inventario (balances-expanded); la edición en almacenes ajenos está
+    // restringida en el frontend (canEditWarehouse) y reforzada en el backend (403 en
+    // ADJUSTMENT/IN/TRANSFER hacia almacenes ajenos). Otros scope:branch (SALES) se
+    // restringen a su propio almacén.
+    if (opts?.allowProviderAll && request.auth?.warehouseType === 'PROVIDER') return requestedWarehouseId ?? null
     return ownId
   }
 
@@ -1510,8 +1520,10 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
       const tenantId = request.auth!.tenantId
       const { locationId, productId, take } = parsed.data
 
-      // Autonomía de sucursal: usuarios con scope:branch solo ven SU almacén propio.
-      const resolvedWarehouseId = resolveBranchWarehouseId(request, parsed.data.warehouseId)
+      // Autonomía de sucursal: usuarios con scope:branch (SALES) solo ven SU almacén propio.
+      // BRANCH_PROVIDER (warehouseType PROVIDER) ve TODOS los warehouses en inventario (allowProviderAll);
+      // la edición restringida se refuerza en frontend (canEditWarehouse) y backend (403 en ADJUSTMENT/IN/TRANSFER).
+      const resolvedWarehouseId = resolveBranchWarehouseId(request, parsed.data.warehouseId, { allowProviderAll: true })
       if (resolvedWarehouseId === '__MISSING__') {
         return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
       }

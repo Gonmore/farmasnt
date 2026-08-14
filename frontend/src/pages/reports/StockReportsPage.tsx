@@ -2738,6 +2738,7 @@ export function StockReportsPage() {
             onClose={() => setTraceRequestId(null)}
             title={traceRequestId ? `Trazabilidad · ${traceRequestId}` : 'Trazabilidad'}
             maxWidth="6xl"
+            closeOnBackdropClick={false}
           >
             {movementRequestTraceQuery.isLoading && <Loading />}
             {movementRequestTraceQuery.isError && (
@@ -2750,7 +2751,7 @@ export function StockReportsPage() {
               const minutes = fulfilledAt ? (fulfilledAt.getTime() - createdAt.getTime()) / 60000 : null
 
               const canExportPicking = (d.sentLines ?? []).length > 0
-              const onExportPicking = () => {
+                const onExportPicking = async () => {
                 const sent = d.sentLines ?? []
                 if (sent.length === 0) return
 
@@ -2779,7 +2780,7 @@ export function StockReportsPage() {
                   presentationLabel: formatPresentationLabel(l.presentation),
                 }))
 
-                exportPickingToPdf(
+                await exportPickingToPdf(
                   {
                     requestId: d.request.id,
                     generatedAtIso: new Date().toISOString(),
@@ -2791,6 +2792,7 @@ export function StockReportsPage() {
                   },
                   requestedItems,
                   sentLines,
+                  { logoUrl: tenant?.branding?.logoUrl ?? null },
                 )
               }
 

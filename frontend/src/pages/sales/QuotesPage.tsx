@@ -310,6 +310,7 @@ export function QuotesPage() {
             processMutation.reset()
           }}
           title="Existencias insuficientes"
+          closeOnBackdropClick={false}
           maxWidth="lg"
         >
           <div className="space-y-4">
@@ -362,6 +363,7 @@ export function QuotesPage() {
           onClose={closeProcessModal}
           title="Procesar cotización a Orden de Venta"
           maxWidth="xl"
+          closeOnBackdropClick={false}
         >
           <div className="space-y-4">
             {quoteDetailQuery.isLoading && <Loading />}

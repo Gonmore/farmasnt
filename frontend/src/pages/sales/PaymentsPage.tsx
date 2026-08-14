@@ -310,6 +310,7 @@ export function PaymentsPage() {
           }}
           title={payTarget ? `Confirmar pago de ${payTarget.number}` : 'Confirmar pago'}
           maxWidth="lg"
+          closeOnBackdropClick={false}
         >
           <div className="space-y-4">
             {payTarget && (

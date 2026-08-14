@@ -1028,6 +1028,7 @@ export function MovementsPage() {
       }}
       title={`📨 Detalle de solicitud ${selectedRequest.code || ''}`.trim()}
       maxWidth="3xl"
+      closeOnBackdropClick={false}
     >
       {(() => {
         const outMovements = (selectedRequest.movements ?? []).filter((m) => m.type === 'OUT')
@@ -2486,6 +2487,7 @@ export function MovementsPage() {
         }}
          title={editingRequestId ? 'Editar solicitud de movimiento' : 'Crear solicitud de movimiento'}
         maxWidth="3xl"
+        closeOnBackdropClick={false}
       >
         <form
           onSubmit={(e) => {

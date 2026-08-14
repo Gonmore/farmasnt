@@ -41,6 +41,11 @@ enum StockMovementType {
   ADJUSTMENT
 }
 
+enum StockMovementReceiptStatus {
+  RECEIVED // default: already in destination (legacy + confirmed receipts)
+  PENDING  // sent, awaiting confirmation by destination branch
+}
+
 enum StockMovementRequestStatus {
   OPEN
   SENT // New status for sent but not received requests
@@ -631,6 +636,9 @@ model StockMovement {
   referenceId    String?
   note           String?
   version        Int      @default(1)
+  receiptStatus  StockMovementReceiptStatus @default(RECEIVED)
+  receivedAt     DateTime?
+  receivedBy     String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
   createdBy      String?
@@ -645,6 +653,8 @@ model StockMovement {
   @@index([productId])
   @@index([batchId])
   @@index([createdAt])
+  @@index([tenantId, receiptStatus])
+  @@index([tenantId, referenceId, receiptStatus])
 }
 
 model StockMovementRequest {

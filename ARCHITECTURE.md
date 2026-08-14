@@ -1,7 +1,7 @@
 ﻿# Architecture — PharmaFlow Bolivia (farmaSNT)
 
 > Fuente de verdad para la estructura del proyecto y el mapeo frontend ↔ backend.  
-> Última actualización: 07 Ago 2026
+> Última actualización: 14 Ago 2026
 
 ---
 
@@ -169,8 +169,8 @@ frontend/src/
 | `pages/stock/InventoryPage.tsx` (kardex — vista "Por Sucursal") | `GET /api/v1/products/:id/kardex` | `routes/products.ts:1391` | Filtra movimientos por `warehouseId`; muestra origen/destino como `WAREHOUSE:Location`; incluye `fromWarehouseCode`/`toWarehouseCode`; para ventas (`OUT+SALES_ORDER`) el destino muestra `NRO_ORDEN: NombreCliente`; saldo acumulado filtrado por `affectsWarehouse`. |
 | `pages/stock/InventoryPage.tsx` (ediciones — vista "Por Sucursal") | `PATCH /api/v1/products/:productId/batches/:batchId/status`, `POST /api/v1/stock/movements` | `routes/products.ts:1758`, `routes/stock.ts:2506` | Ambas vistas ("Por Producto" y "Por Sucursal") aplican `canEditWarehouse(warehouseId)`: solo edita ubicación (TRANSFER) y estado de lote en el almacén propio del usuario con scope de sucursal (`scope:branch`); los demás almacenes quedan en solo lectura. |
 | `pages/stock/InventoryPage.tsx` (kardex export) | `GET /api/v1/products/:id/kardex` | `routes/products.ts:1391` (datos para exportToXlsx) | Exporta origen/destino con formato `WAREHOUSE:Location`, filtrando solo movimientos `affectsWarehouse`. |
-| `pages/stock/CompletedMovementsPage.tsx` (historial) | `GET /api/v1/stock/completed-movements` | `routes/stock.ts:3665` | Columna "Origen → Destino" muestra `WAREHOUSE:Location` (sin prefijo `SUC-`). |
-| `components/MovementHistoryTab.tsx` (historial) | `GET /api/v1/stock/completed-movements` | `routes/stock.ts:3665` | Columna "Origen → Destino" muestra `WAREHOUSE:Location` con `SUC-` removido. |
+| `pages/stock/CompletedMovementsPage.tsx` (historial) | `GET /api/v1/stock/completed-movements` | `routes/stock.ts:4232` | Columna "Origen → Destino" muestra `WAREHOUSE:Location` (sin prefijo `SUC-`). El `receiptStatus` se recalcula verificando que `fromLocation.warehouseId !== toLocation.warehouseId`; transferencias entre ubicaciones del mismo warehouse se marcan `RECEIVED` (no `PENDING`). Orden descendente por `completedAt`. |
+| `components/MovementHistoryTab.tsx` (historial) | `GET /api/v1/stock/completed-movements` | `routes/stock.ts:4232` | Columna "Origen → Destino" muestra `WAREHOUSE:Location` con `SUC-` removido. Orden descendente por `completedAt`. |
 | `pages/stock/MovementsPage.tsx` | `POST /api/v1/stock/movements` | `routes/stock.ts:2506` | | Lista de solicitudes y modal "Detalle de solicitud" muestran destino como `Warehouse:Location` (sin `SUC-`)
 | | `GET /api/v1/warehouses/:id/locations` | `routes/warehouses.ts:200` |
 | `pages/stock/MovementRequestsPage.tsx` | `GET /api/v1/stock/movement-requests` | `routes/stock.ts:792` |
@@ -183,16 +183,18 @@ frontend/src/
 | | `POST /api/v1/stock/movement-requests/:id/cancel` | `routes/stock.ts:1490` |
 | `pages/stock/BulkFulfillPage.tsx` | `POST /api/v1/stock/movement-requests/bulk-fulfill` | `routes/stock.ts:3047` |
 | `pages/stock/ReturnsPage.tsx` | `GET /api/v1/stock/returns` | `routes/stock.ts:517` | Receptions tab: unified "Recepción/Devolución" modal (11 Ago 2026) |
-| | | `POST /api/v1/stock/returns` | `routes/stock.ts:670` |
-| | | `GET /api/v1/stock/returns/:id` | `routes/stock.ts:615` |
-| | | `POST /api/v1/stock/returns/photo-upload` | `routes/stock.ts:471` |
-| | | `GET /api/v1/stock/movement-requests?status=SENT` | `routes/stock.ts:792` | Receptions tab data source |
-| | | `POST /api/v1/stock/movement-requests/:id/reception` | `routes/stock.ts:3737` | Unified reception + return endpoint |
+| | | | `POST /api/v1/stock/returns` | `routes/stock.ts:670` |
+| | | | `GET /api/v1/stock/returns/:id` | `routes/stock.ts:615` |
+| | | | `POST /api/v1/stock/returns/photo-upload` | `routes/stock.ts:471` |
+| | | | `GET /api/v1/stock/movement-requests?status=SENT` | `routes/stock.ts:792` | Receptions tab data source |
+| | | | `GET /api/v1/stock/completed-movements?take=100&receiptStatus=PENDING` | `routes/stock.ts:4232` | Transferencias pendientes de recepción en la sucursal del usuario (13 Ago 2026). Frontend filtra `type !== FULFILL_REQUEST` y `fromWarehouseCode !== toWarehouseCode`; el backend recalcula `receiptStatus` para excluir inter-ubicación del mismo warehouse. |
+| | | | `POST /api/v1/stock/transfers/:id/receive` | `routes/stock.ts:4073` | Confirma recepción de TRANSFER/BULK_TRANSFER pendiente (solo sucursal destino) |
+| | | | `POST /api/v1/stock/movement-requests/:id/reception` | `routes/stock.ts:3737` | Unified reception + return endpoint |
 | | `POST /api/v1/stock/movement-requests/:id/reception` | `routes/stock.ts:3737` | Unified reception + return endpoint (created 11 Ago 2026) |
 | `pages/stock/MovementRequestsTraceabilityPage.tsx` | `GET /api/v1/stock/movement-requests` | `routes/stock.ts:792` | Traceability: Warehouse:Location route (origin `fromWarehouse:fromLocation` on attended/received), batch per shipment, PDF export with signature names (11 Ago 2026) |
-| `pages/stock/MovementsPage.tsx` (historial) | `GET /api/v1/stock/completed-movements` | `routes/stock.ts:3665` |
-| | `GET /api/v1/stock/completed-movements/:id/picking` | `routes/stock.ts:4133` |
-| | `GET /api/v1/stock/completed-movements/:id/label` | `routes/stock.ts:4350` |
+| `pages/stock/MovementsPage.tsx` (historial) | `GET /api/v1/stock/completed-movements` | `routes/stock.ts:4232` |
+| | `GET /api/v1/stock/completed-movements/:id/picking` | `routes/stock.ts:4792` | Picking enriquecido: `meta` trae `requestCode`, `movementCode`, `requestedByName`, `sentByName`; cada `sentLine` trae `movementNumber` (13 Ago 2026) |
+| | `GET /api/v1/stock/completed-movements/:id/label` | `routes/stock.ts:5044` |
 | | `POST /api/v1/stock/bulk-transfers` | `routes/stock.ts:2760` |
 | | `POST /api/v1/stock/repack` | `routes/stock.ts:2872` |
 | `pages/stock/ExpiryPage.tsx` | `GET /api/v1/stock/expiry/summary` | `routes/stock.ts:2200` |

@@ -16,6 +16,7 @@ export type StockMovementCreateInput = {
   referenceId?: string | null
   note?: string | null
   createdAt?: Date
+  receiptStatus?: 'RECEIVED' | 'PENDING'
 }
 
 type LockedBalanceRow = {
@@ -94,6 +95,28 @@ export async function createStockMovementTx(
 
   const fromLocationId = input.fromLocationId ?? null
   const toLocationId = input.toLocationId ?? null
+
+  // Determine receipt status for inter-warehouse transfers.
+  // Only transfers between DIFFERENT warehouses require transit + reception;
+  // transfers within the same warehouse (different locations) do not.
+  // For OUT movements: only MOVEMENT_REQUEST / REQUEST_FULFILL (shipment of a request) go pending;
+  // manual sales/discard/sample are not pending receipts.
+  const outRequiresReceipt =
+    input.type === 'OUT' && (input.referenceType === 'MOVEMENT_REQUEST' || input.referenceType === 'REQUEST_FULFILL')
+  const isInterWarehouseTransferType = input.type === 'TRANSFER' || outRequiresReceipt
+  let isInterWarehouseTransfer = false
+  if (isInterWarehouseTransferType && !!input.toLocationId && input.toLocationId !== input.fromLocationId) {
+    const [fromLoc, toLoc] = await Promise.all([
+      fromLocationId
+        ? tx.location.findFirst({ where: { id: fromLocationId, tenantId }, select: { warehouseId: true } })
+        : Promise.resolve(null as null),
+      tx.location.findFirst({ where: { id: input.toLocationId as string, tenantId }, select: { warehouseId: true } }),
+    ])
+    isInterWarehouseTransfer = !!fromLoc?.warehouseId && !!toLoc?.warehouseId && fromLoc.warehouseId !== toLoc.warehouseId
+  }
+
+  // Effective receipt status: PENDING for inter-warehouse transfers, unless explicitly overridden.
+  const effectiveReceiptStatus = input.receiptStatus ?? (isInterWarehouseTransfer ? 'PENDING' : 'RECEIVED')
 
   const ensureLocation = async (locationId: string, opts?: { mustBeActive?: boolean }) => {
     const mustBeActive = opts?.mustBeActive ?? true
@@ -206,6 +229,7 @@ export async function createStockMovementTx(
       referenceType: input.referenceType ?? null,
       referenceId: input.referenceId ?? null,
       note: input.note ?? null,
+       receiptStatus: effectiveReceiptStatus,
       createdAt: effectiveCreatedAt,
       createdBy: userId,
     },

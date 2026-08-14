@@ -674,6 +674,9 @@ export function ProductDetailPage() {
     return Number.isFinite(available) ? Math.max(0, available) : null
   }
 
+  const locHasStock = (l: { quantity: string; reservedQuantity?: string }) =>
+    Number(l.quantity ?? '0') > 0
+
   // Check SKU uniqueness for new products
   const skuCheckQuery = useQuery({
     queryKey: ['product-sku-check', sku, params.id],
@@ -1982,7 +1985,7 @@ export function ProductDetailPage() {
                         </p>
                       )}
 
-                      {productBatchesQuery.data.items.map((b) => (
+                      {productBatchesQuery.data.items.filter((b) => Number(b.totalQuantity ?? '0') > 0).map((b) => (
                         <div key={b.id} className="rounded-md border border-slate-200 p-3 dark:border-slate-700">
                               <div className="flex items-start gap-3">
                                 <button
@@ -2065,9 +2068,9 @@ export function ProductDetailPage() {
                                 </div>
                               </div>
 
-                          {b.locations.length > 0 && (
-                            <div className="mt-2 space-y-1">
-                              {b.locations.map((l) => (
+                          {b.locations.filter((l) => locHasStock(l)).length > 0 && (
+                             <div className="mt-2 space-y-1">
+                               {b.locations.filter((l) => locHasStock(l)).map((l) => (
                                 <div key={l.locationId} className="flex justify-between text-xs text-slate-700 dark:text-slate-300">
                                   <span>
                                     {l.warehouseCode} · {l.locationCode}
@@ -2253,7 +2256,7 @@ export function ProductDetailPage() {
                                               setRepackLocationId(e.target.value)
                                               setRepackApplyError('')
                                             }}
-                                            options={b.locations.map((l) => {
+                                            options={b.locations.filter(locHasStock).map((l) => {
                                               const avail = l.availableQuantity ?? String(Math.max(0, Number(l.quantity || '0') - Number(l.reservedQuantity ?? '0')))
                                               return {
                                                 value: l.locationId,
