@@ -482,6 +482,9 @@ export function ProductDetailPage() {
 
   const [selectedBatchId, setSelectedBatchId] = useState<string>('')
 
+  const canViewZeroStock = perms.isTenantAdmin || perms.isBranchProvider
+  const [showZeroStockBatches, setShowZeroStockBatches] = useState(false)
+
   // Batch edit/delete (creator only)
   const [editingBatchId, setEditingBatchId] = useState<string | null>(null)
   const [editingBatchVersion, setEditingBatchVersion] = useState<number>(1)
@@ -1985,7 +1988,19 @@ export function ProductDetailPage() {
                         </p>
                       )}
 
-                      {productBatchesQuery.data.items.filter((b) => Number(b.totalQuantity ?? '0') > 0).map((b) => (
+                      {canViewZeroStock && (
+                        <label className="flex cursor-pointer items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                          <input
+                            type="checkbox"
+                            checked={showZeroStockBatches}
+                            onChange={(e) => setShowZeroStockBatches(e.target.checked)}
+                            className="h-3.5 w-3.5 cursor-pointer rounded border-slate-400 text-blue-600 focus:ring-blue-500"
+                          />
+                          Mostrar lotes sin stock
+                        </label>
+                      )}
+
+                      {productBatchesQuery.data.items.filter((b) => (showZeroStockBatches ? true : Number(b.totalQuantity ?? '0') > 0)).map((b) => (
                         <div key={b.id} className="rounded-md border border-slate-200 p-3 dark:border-slate-700">
                               <div className="flex items-start gap-3">
                                 <button
