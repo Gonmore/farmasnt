@@ -1,7 +1,7 @@
 ﻿# Architecture — PharmaFlow Bolivia (farmaSNT)
 
 > Fuente de verdad para la estructura del proyecto y el mapeo frontend ↔ backend.  
-> Última actualización: 14 Ago 2026
+> Última actualización: 19 Ago 2026
 
 ---
 
@@ -91,7 +91,8 @@ frontend/src/
 │   ├── exportXlsx.ts          # Exportaciones Excel
 │   ├── numberFormat.ts        # Formateo numérico con thousandSeparator
 │   ├── productName.ts         # Formateo presentaciones/cantidades
-│   └── productSorting.ts      # Orden alfabético por nombre
+│   ├── productSorting.ts      # Orden alfabético por nombre
+│   └── catalogPdf.tsx         # Exportación PDF del catálogo comercial (brochure resumido/extendido, jsPDF)
 ├── hooks/
 │   ├── usePermissions.ts      # usePermissions() → /api/v1/auth/me
 │   ├── useNavigation.ts       # Navegación filtrada por permisos
@@ -155,6 +156,8 @@ frontend/src/
 | | `DELETE /api/v1/products/:id/recipe` | `routes/products.ts:977` |
 | `pages/catalog/ProductDetailPage.tsx` (lotes) | `GET /api/v1/products/:id/batches` | `routes/products.ts:1149` |
 | | `POST /api/v1/products/:id/batches` | `routes/products.ts:1589` |
+| `pages/catalog/CommercialCatalogPage.tsx` (exportar PDF) | `GET /api/v1/products` (todos los activos, `includePresentations=true`) + `GET /api/v1/products/:id` (descripción, solo extendido) | `lib/catalogPdf.tsx:exportCommercialCatalogPdf` | Brochure PDF con jsPDF (sin html2canvas): resumido (3 col, foto+presentaciones+precio) y extendido (2 col, + descripción). Fondo gris, marco decorativo, logo sin redondear, sin "Powered by". Nombre centrado 11pt; descripción hasta 5 líneas con `...`; presentaciones con precio al lado; sin línea "P. unitario". |
+| `hooks/useNavigation.ts` | — | — | `🛒 Comercial` visible para **todos** los roles con `catalog:read` (antes solo `isTenantAdmin`/`catalog:write`). |
 | `pages/stock/MovementsPage.tsx` (lotes) | `GET /api/v1/products/:productId/batches/:batchId/movements` | `routes/products.ts:1305` |
 | | `PATCH /api/v1/products/:productId/batches/:batchId/status` | `routes/products.ts:1758` |
 | | `PATCH /api/v1/products/:productId/batches/:batchId` | `routes/products.ts:1807` |

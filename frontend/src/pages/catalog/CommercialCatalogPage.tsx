@@ -8,7 +8,8 @@ import { sortProductsByDisplayName } from '../../lib/productSorting'
 import { useAuth, useCart, useTenant } from '../../providers'
 import { MainLayout, PageContainer, Button, Loading, ErrorState, EmptyState, CatalogSearch, ProductPhoto, PaginationCursor, Select, Input } from '../../components'
 import { useNavigation } from '../../hooks'
-import { EyeIcon, ShoppingCartIcon } from '@heroicons/react/24/outline'
+import { exportCommercialCatalogPdf } from '../../lib/catalogPdf'
+import { EyeIcon, ShoppingCartIcon, DocumentTextIcon, DocumentArrowDownIcon } from '@heroicons/react/24/outline'
 
 type Product = {
   id: string
@@ -132,6 +133,7 @@ export function CommercialCatalogPage() {
     isOpen: false,
     productId: null
   })
+  const [exporting, setExporting] = useState<null | 'resumido' | 'extendido'>(null)
   const take = 20
 
   const updateProductQuantity = (key: string, quantity: number) => {
@@ -216,6 +218,23 @@ export function CommercialCatalogPage() {
     setDetailModal({ isOpen: false, productId: null })
   }
 
+  const handleExportCatalog = async (extended: boolean) => {
+    try {
+      setExporting(extended ? 'extendido' : 'resumido')
+      await exportCommercialCatalogPdf({
+        token: auth.accessToken!,
+        currency,
+        companyName: tenant.branding?.tenantName ?? 'Empresa',
+        logoUrl: tenant.branding?.logoUrl ?? null,
+        extended,
+      })
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'No se pudo exportar el catálogo')
+    } finally {
+      setExporting(null)
+    }
+  }
+
   // Determine which products to display
   const displayProducts = sortProductsByDisplayName(searchResults || productsQuery.data?.items.filter(p => p.isActive) || [])
 
@@ -223,6 +242,31 @@ export function CommercialCatalogPage() {
     <MainLayout navGroups={navGroups}>
       <PageContainer title="🛒 Catálogo Comercial">
         <CatalogSearch className="mb-6" onSearchResults={setSearchResults} />
+        <div className="flex flex-wrap items-center gap-3 mb-6">
+          <Button
+            variant="primary"
+            icon={<DocumentArrowDownIcon className="w-4 h-4" />}
+            loading={exporting === 'resumido'}
+            disabled={!!exporting}
+            onClick={() => handleExportCatalog(false)}
+          >
+            Exportar catálogo resumido
+          </Button>
+          <Button
+            variant="secondary"
+            icon={<DocumentTextIcon className="w-4 h-4" />}
+            loading={exporting === 'extendido'}
+            disabled={!!exporting}
+            onClick={() => handleExportCatalog(true)}
+          >
+            Exportar catálogo extendido
+          </Button>
+          {exporting && (
+            <span className="text-sm text-slate-500 dark:text-slate-400">
+              Generando PDF, por favor espera…
+            </span>
+          )}
+        </div>
         <div className="rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-gradient-to-br from-slate-50 to-blue-50/30 dark:from-slate-900 dark:to-slate-800/50 p-6 shadow-lg">
           {productsQuery.isLoading && !searchResults && <Loading />}
           {productsQuery.error && !searchResults && (

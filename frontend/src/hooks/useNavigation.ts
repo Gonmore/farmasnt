@@ -44,11 +44,13 @@ export function useNavigation(): NavGroup[] {
   if (hasPermission('catalog:read')) {
     const catalogItems = [] as Array<{ to: string; label: string }>
 
-    // Productos + Comercial: solo admin (evitar que Ventas vea estos menús)
+    // Productos: solo admin (evitar que Ventas vea estos menús)
     if (isTenantAdmin || hasPermission('catalog:write')) {
       catalogItems.push({ to: '/catalog/products', label: '🏷️ Productos' })
-      catalogItems.push({ to: '/catalog/commercial', label: '🛒 Comercial' })
     }
+
+    // Comercial: visible para todos los roles con catálogo (brochure de ventas)
+    catalogItems.push({ to: '/catalog/commercial', label: '🛒 Comercial' })
 
     // Vendedor: usuarios de ventas (requiere write de órdenes)
     if (hasPermission('sales:order:write')) {

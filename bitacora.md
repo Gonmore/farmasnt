@@ -1,10 +1,35 @@
 # Bitácora de desarrollo — PharmaFlow Bolivia (farmaSNT)
 
-> Última actualización: 14 Ago 2026
+> Última actualización: 19 Ago 2026
 
 Este documento suma (a alto nivel) decisiones, hitos y cambios relevantes que se fueron incorporando al repositorio para llegar al estado actual del MVP.
 
-## **[14 Ago 2026] Kardex: corrección de doble conteo en transferencias + columna Movimiento + modal ancho**
+## **[19 Ago 2026] Catálogo Comercial: exportación a PDF (brochure resumido / extendido)**
+
+### Objetivo alcanzado
+- `/catalog/commercial` ahora es **visible para todos los roles** con `catalog:read` (antes solo `isTenantAdmin` / `catalog:write`).
+- Se agregaron dos botones de exportación PDF en la página: **"Exportar catálogo resumido"** y **"Exportar catálogo extendido"**, que generan un brochure distribuible para clientes.
+
+### Frontend
+- **Nuevo archivo `frontend/src/lib/catalogPdf.tsx`** con `exportCommercialCatalogPdf(opts)`:
+  - Obtiene **todos** los productos activos (`GET /api/v1/products?includePresentations=true&take=200` con paginación por cursor).
+  - La **descripción** no viene en el listado; para el catálogo extendido se hace `GET /api/v1/products/:id` por producto (concurrencia 10) para poblarla.
+  - Precarga fotos y logo a **data URL**; las fotos se recortan a un **rectángulo con esquinas redondeadas** (`buildRoundedCanvas` usa `ctx.clip()` + `roundRectPath`), sin círculos blancos en las esquinas. El **logo NO se redondea** (se dibuja tal cual).
+  - El PDF se dibuja **directamente con jsPDF** (sin html2canvas), lo que evita problemas de CORS/taint y da control total de layout y contraste.
+  - **Resumido**: 3 columnas, foto + presentaciones con su precio al lado; **Extendido**: 2 columnas, además de la descripción del producto.
+  - Estética: fondo gris claro (no página blanca), marco decorativo tipo brochure, encabezado con logo + nombre de empresa, **sin "Powered by"** en el pie.
+  - Nombre del producto **centrado** y 1pt más grande (11pt).
+  - Descripción: hasta **5 líneas**, agregando `...` si se trunca.
+  - Cada presentación muestra su nombre (izq.) y precio (der.); **se eliminó la línea "P. unitario"** repetida. Para productos sin presentaciones se muestra `Unidad` + precio base.
+- **`pages/catalog/CommercialCatalogPage.tsx`**: se agregan los dos botones (con estado de carga) que invocan `exportCommercialCatalogPdf` usando token, moneda, nombre y logo del tenant.
+- **`hooks/useNavigation.ts`**: el enlace `?? Comercial` se mueve fuera del bloque admin/write y se muestra siempre que haya `catalog:read`.
+
+### Operación
+- TypeScript check OK en frontend (`npx tsc --noEmit`).
+- Sin cambios de backend ni migraciones Prisma nuevas.
+- Documentado en `ARCHITECTURE.md` (sección 2.2 lib + mapeo en 3.2 Catálogo & Productos).
+
+---
 
 ### Objetivo alcanzado
 - Corregido doble conteo de saldo en el kardex para transferencias inter-sucursales.
