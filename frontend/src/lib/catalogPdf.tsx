@@ -117,6 +117,11 @@ function imageFormat(dataUrl: string): 'PNG' | 'JPEG' {
   return 'PNG'
 }
 
+function formatGeneratedDate(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`
+}
+
 type LoadedImage = { canvas: HTMLCanvasElement; w: number; h: number }
 type LoadedLogo = { dataUrl: string; w: number; h: number }
 
@@ -280,7 +285,7 @@ function drawCard(
     pdf.setFontSize(8)
     pdf.text('Sin imagen', x + w / 2, cy + photoH / 2 + 2, { align: 'center' })
   }
-  cy += photoH + 3
+  cy += photoH + 5
 
   // Name (centrado, 11pt)
   pdf.setTextColor(TEXT_DARK[0], TEXT_DARK[1], TEXT_DARK[2])
@@ -350,6 +355,8 @@ export type ExportCatalogOptions = {
   companyName: string
   logoUrl?: string | null
   extended: boolean
+  generatedByName?: string
+  generatedByEmail?: string
 }
 
 export async function exportCommercialCatalogPdf(opts: ExportCatalogOptions): Promise<void> {
@@ -359,6 +366,7 @@ export async function exportCommercialCatalogPdf(opts: ExportCatalogOptions): Pr
   if (opts.extended) await fetchProductDetails(products, opts.token)
   const photoMap = await preloadPhotos(products)
   const logoImage = opts.logoUrl ? await loadLogo(opts.logoUrl) : null
+  const generatedAt = formatGeneratedDate(new Date())
 
   const pdf = new jsPDF('p', 'mm', 'letter')
   const pageW = pdf.internal.pageSize.getWidth()
@@ -373,10 +381,9 @@ export async function exportCommercialCatalogPdf(opts: ExportCatalogOptions): Pr
 
   const headerHFirst = 26
   const headerHOther = 18
-  const footerY = pageH - 10
-  const contentBottom = pageH - 12
-
-  let pageIndex = 0
+  const footerTop = pageH - 15
+  const footerY = pageH - 9
+  const contentBottom = footerTop - 1
 
   const drawPageBg = () => {
     // Fondo claro para que las tarjetas blancas resalten (evita página totalmente blanca).
@@ -403,21 +410,28 @@ export async function exportCommercialCatalogPdf(opts: ExportCatalogOptions): Pr
     pdf.setTextColor(255, 255, 255)
     pdf.setFont('helvetica', 'bold')
     pdf.setFontSize(14)
-    const title = opts.extended ? 'Catálogo Comercial Extendido' : 'Catálogo Comercial Resumido'
-    pdf.text(title, textX, isFirst ? 12 : 10)
+    pdf.text('Catálogo Comercial', textX, isFirst ? 12 : 10)
     pdf.setFont('helvetica', 'normal')
     pdf.setFontSize(9)
     const sub = opts.extended
       ? 'Ficha completa de productos con descripción'
       : 'Brochure de productos y precios'
-    pdf.text(`${sub}  ·  ${opts.companyName}`, textX, isFirst ? 18.5 : 15.5)
-  }
-
-  const drawFooter = () => {
+    pdf.text(sub, textX, isFirst ? 18.5 : 15.5)
+    // Fecha de generación (derecha del header)
     pdf.setFont('helvetica', 'normal')
     pdf.setFontSize(8)
-    pdf.setTextColor(120, 120, 120)
-    pdf.text(`Página ${pageIndex + 1}`, pageW - margin, footerY, { align: 'right' })
+    pdf.text(generatedAt, pageW - margin, isFirst ? 12 : 10, { align: 'right' })
+  }
+
+  const drawFooter = (pageNum: number, totalPages: number) => {
+    pdf.setFont('helvetica', 'normal')
+    pdf.setFontSize(7)
+    pdf.setTextColor(HEADER_COLOR[0], HEADER_COLOR[1], HEADER_COLOR[2])
+    const baseY = footerY
+    pdf.text(opts.companyName || 'Empresa', margin, baseY - 6)
+    pdf.text(opts.generatedByName || '—', margin, baseY - 3)
+    pdf.text(opts.generatedByEmail || '—', margin, baseY)
+    pdf.text(`Página ${pageNum} de ${totalPages}`, pageW - margin, baseY, { align: 'right' })
   }
 
   drawPageBg()
@@ -427,9 +441,7 @@ export async function exportCommercialCatalogPdf(opts: ExportCatalogOptions): Pr
 
   for (const product of products) {
     if (col === 0 && y + cardH > contentBottom) {
-      drawFooter()
       pdf.addPage()
-      pageIndex++
       drawPageBg()
       drawHeader(false)
       y = headerHOther + 6
@@ -444,7 +456,12 @@ export async function exportCommercialCatalogPdf(opts: ExportCatalogOptions): Pr
     }
   }
 
-  drawFooter()
+  // Pie de página en dos pasadas: ahora conocemos el total de páginas.
+  const totalPages = pdf.internal.getNumberOfPages()
+  for (let p = 1; p <= totalPages; p++) {
+    pdf.setPage(p)
+    drawFooter(p, totalPages)
+  }
 
   const filename = opts.extended ? 'catalogo-comercial-extendido.pdf' : 'catalogo-comercial-resumido.pdf'
   pdf.save(filename)

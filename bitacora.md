@@ -1,8 +1,16 @@
 # Bitácora de desarrollo — PharmaFlow Bolivia (farmaSNT)
 
-> Última actualización: 19 Ago 2026
+> Última actualización: 20 Ago 2026
 
 Este documento suma (a alto nivel) decisiones, hitos y cambios relevantes que se fueron incorporando al repositorio para llegar al estado actual del MVP.
+
+## **[20 Ago 2026] Ajustes de cabecera/pie en el catálogo comercial PDF**
+
+- Título único **"Catálogo Comercial"** en ambos modos; subtítulo diferenciado: *"Ficha completa de productos con descripción"* (extendido) y *"Brochure de productos y precios"* (resumido).
+- Cabecera (derecha): se re-agregó la **fecha de generación** del documento.
+- Pie (izquierda): **nombre de empresa**, **nombre** y **correo** de la persona que genera el documento (vía `usePermissions`).
+- Pie (derecha): numeración en formato **"Página X de Y"** (calculado en dos pasadas para conocer el total).
+- Espacio ligeramente mayor entre la foto del producto y su nombre (ambos catálogos).
 
 ## **[19 Ago 2026] Catálogo Comercial: exportación a PDF (brochure resumido / extendido)**
 

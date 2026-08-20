@@ -6,6 +6,7 @@ import { getProductDisplayName } from '../../lib/productName'
 import { formatPresentationLabel } from '../../lib/productPresentation'
 import { sortProductsByDisplayName } from '../../lib/productSorting'
 import { useAuth, useCart, useTenant } from '../../providers'
+import { usePermissions } from '../../hooks'
 import { MainLayout, PageContainer, Button, Loading, ErrorState, EmptyState, CatalogSearch, ProductPhoto, PaginationCursor, Select, Input } from '../../components'
 import { useNavigation } from '../../hooks'
 import { exportCommercialCatalogPdf } from '../../lib/catalogPdf'
@@ -119,6 +120,7 @@ async function fetchProductDetail(token: string, productId: string): Promise<Pro
 
 export function CommercialCatalogPage() {
   const auth = useAuth()
+  const perms = usePermissions()
   const navGroups = useNavigation()
   const cart = useCart()
   const tenant = useTenant()
@@ -227,6 +229,8 @@ export function CommercialCatalogPage() {
         companyName: tenant.branding?.tenantName ?? 'Empresa',
         logoUrl: tenant.branding?.logoUrl ?? null,
         extended,
+        generatedByName: perms.user?.fullName ?? '',
+        generatedByEmail: perms.user?.email ?? '',
       })
     } catch (err) {
       window.alert(err instanceof Error ? err.message : 'No se pudo exportar el catálogo')
