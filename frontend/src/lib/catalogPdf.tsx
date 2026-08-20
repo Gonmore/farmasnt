@@ -35,14 +35,6 @@ function toNumberOrNull(v: unknown): number | null {
   return Number.isFinite(n) ? n : null
 }
 
-function unitPriceFor(product: CatalogProduct, presentation?: CatalogPresentation | null): number | null {
-  const unitsPer = toNumberOrNull(presentation?.unitsPerPresentation) ?? 1
-  const override = toNumberOrNull(presentation?.priceOverride)
-  if (override !== null && unitsPer > 0) return override / unitsPer
-  const base = toNumberOrNull(product.price)
-  return base
-}
-
 function presentationPriceFor(product: CatalogProduct, presentation?: CatalogPresentation | null): number | null {
   const unitsPer = toNumberOrNull(presentation?.unitsPerPresentation) ?? 1
   const override = toNumberOrNull(presentation?.priceOverride)
@@ -51,13 +43,6 @@ function presentationPriceFor(product: CatalogProduct, presentation?: CatalogPre
   if (unit === null) return null
   if (unitsPer <= 0) return unit
   return unit * unitsPer
-}
-
-function pickDefaultPresentation(p: CatalogProduct): CatalogPresentation | null {
-  const list = Array.isArray(p.presentations) ? p.presentations : []
-  if (list.length === 0) return null
-  const def = list.find((x) => x.isDefault)
-  return def ?? list[0] ?? null
 }
 
 async function fetchAllProducts(token: string): Promise<CatalogProduct[]> {
@@ -259,7 +244,6 @@ function drawCard(
   extended: boolean,
 ) {
   const name = getProductDisplayName(product)
-  const unit = product.baseUnitAbbreviation ?? 'u'
   const presList = (product.presentations ?? [])
     .slice()
     .sort((a, b) => a.sortOrder - b.sortOrder)
@@ -438,10 +422,12 @@ export async function exportCommercialCatalogPdf(opts: ExportCatalogOptions): Pr
   drawHeader(true)
   let y = headerHFirst + 6
   let col = 0
+  let totalPages = 1
 
   for (const product of products) {
     if (col === 0 && y + cardH > contentBottom) {
       pdf.addPage()
+      totalPages++
       drawPageBg()
       drawHeader(false)
       y = headerHOther + 6
@@ -456,8 +442,7 @@ export async function exportCommercialCatalogPdf(opts: ExportCatalogOptions): Pr
     }
   }
 
-  // Pie de página en dos pasadas: ahora conocemos el total de páginas.
-  const totalPages = pdf.internal.getNumberOfPages()
+  // Pie de página en dos pasadas: ya conocemos el total de páginas.
   for (let p = 1; p <= totalPages; p++) {
     pdf.setPage(p)
     drawFooter(p, totalPages)

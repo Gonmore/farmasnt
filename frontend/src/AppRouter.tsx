@@ -97,7 +97,7 @@ export function AppRouter() {
         <Route
           path="/catalog/commercial"
           element={
-            <ProtectedRoute requiredPermissions={['catalog:write']}>
+            <ProtectedRoute requiredPermissions={['catalog:read']}>
               <CommercialCatalogPage />
             </ProtectedRoute>
           }
