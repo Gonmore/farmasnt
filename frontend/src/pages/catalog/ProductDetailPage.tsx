@@ -7,7 +7,7 @@ import { formatDateOnlyUtc } from '../../lib/date'
 import { getProductDisplayName } from '../../lib/productName'
 import { formatPresentationSummaryLabel, normalizeBaseUnitAbbreviation } from '../../lib/productPresentation'
 import { useAuth } from '../../providers/AuthProvider'
-import { MainLayout, PageContainer, Button, Input, Select, Loading, ErrorState, ImageUpload, Table, Modal } from '../../components'
+import { MainLayout, PageContainer, Button, Input, Select, Loading, ErrorState, ImageUpload, Modal } from '../../components'
 import { useNavigation, usePermissions } from '../../hooks'
 import { PlusIcon, CheckIcon, ArrowLeftIcon, TrashIcon, PowerIcon, PencilSquareIcon } from '@heroicons/react/24/outline'
 
