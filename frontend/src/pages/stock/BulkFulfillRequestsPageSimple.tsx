@@ -693,7 +693,7 @@ export function BulkFulfillRequestsPage() {
                   />
                 </div>
 
-                <div className="max-h-60 overflow-y-auto border border-slate-200 rounded-md dark:border-slate-700">
+                <div className="max-h-60 overflow-auto border border-slate-200 rounded-md dark:border-slate-700">
                   {visibleRequests.length === 0 ? (
                     <div className="p-3 text-sm text-slate-600 dark:text-slate-400">No hay resultados.</div>
                   ) : null}
@@ -736,8 +736,8 @@ export function BulkFulfillRequestsPage() {
                           )}
                         </div>
 
-                        {/* Items solicitados: grilla de hasta 3 filas, scroll horizontal si hay más de 3 */}
-                        <div className="mt-2 w-full overflow-x-auto pb-1">
+                        {/* Items solicitados: grilla de hasta 3 filas; el scroll horizontal lo maneja el bloque padre (max-h-60) */}
+                        <div className="mt-2">
                           <div className={`grid w-max grid-flow-col gap-2 ${request.items.length <= 1 ? 'grid-rows-1' : request.items.length === 2 ? 'grid-rows-2' : 'grid-rows-3'}`}>
                             {request.items.map((item: MovementRequestItem, index: number) => {
                               const remainingPresentationQuantity = item.unitsPerPresentation && item.unitsPerPresentation > 0
