@@ -1,7 +1,7 @@
 ﻿# Architecture — PharmaFlow Bolivia (farmaSNT)
 
 > Fuente de verdad para la estructura del proyecto y el mapeo frontend ↔ backend.  
-> Última actualización: 19 Ago 2026
+> Última actualización: 21 Ago 2026
 
 ---
 
@@ -185,6 +185,7 @@ frontend/src/
 | | `POST /api/v1/stock/movement-requests/:id/confirm` | `routes/stock.ts:2076` |
 | | `POST /api/v1/stock/movement-requests/:id/cancel` | `routes/stock.ts:1490` |
 | `pages/stock/BulkFulfillPage.tsx` | `POST /api/v1/stock/movement-requests/bulk-fulfill` | `routes/stock.ts:3047` |
+| `pages/stock/BulkFulfillRequestsPageSimple.tsx` | `GET /api/v1/stock/movement-requests` (listado filtrado) | `routes/stock.ts:792` | Tarjetas de solicitud responsivas: en móvil, columna izquierda compacta + grilla de ítems (`grid grid-flow-col`, ≤3 filas) con scroll horizontal confinado al bloque `max-h-60` (`overflow-auto`), no a nivel de página. |
 | `pages/stock/ReturnsPage.tsx` | `GET /api/v1/stock/returns` | `routes/stock.ts:517` | Receptions tab: unified "Recepción/Devolución" modal (11 Ago 2026) |
 | | | | `POST /api/v1/stock/returns` | `routes/stock.ts:670` |
 | | | | `GET /api/v1/stock/returns/:id` | `routes/stock.ts:615` |

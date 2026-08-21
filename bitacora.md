@@ -4,6 +4,22 @@
 
 Este documento suma (a alto nivel) decisiones, hitos y cambios relevantes que se fueron incorporando al repositorio para llegar al estado actual del MVP.
 
+## **[21 Ago 2026] Optimización móvil de /stock/fulfill-requests (tarjetas de solicitud)**
+
+### Objetivo alcanzado
+- Mejorar la legibilidad de `/stock/fulfill-requests` desde el navegador móvil: tras elegir almacén/ubicación origen y almacén destino, el listado filtrado de solicitudes a atender se muestra en tarjetas compactas.
+
+### `BulkFulfillRequestsPageSimple.tsx`
+- **Tarjeta de solicitud**: la columna izquierda (solicitante, # de solicitud, nota, fecha y ubicación destino) se apila en fuente pequeña y negrita; abajo se indica la cantidad de ítems (`N productos solicitados`).
+- **Ítems solicitados**: se muestran como recuadros en una grilla de hasta **3 filas** (`grid grid-flow-col` con filas adaptadas a la cantidad: 1?`grid-rows-1`, 2?`grid-rows-2`, ?3?`grid-rows-3`), de modo que con ?3 productos no hay espacios vacíos.
+- **Scroll horizontal confinado**: el scroll horizontal de los ítems vive en el **mismo bloque que ya tiene el scroll vertical** (la lista `max-h-60`, `overflow-auto`), no por tarjeta ni a nivel de página. Esto evita que el `<main>` (que ya es `overflow-auto`) ensanche todo el contenido en móvil — antes solo nav/footer conservaban el ancho.
+
+### Operación
+- TypeScript check OK en frontend (`npx tsc --noEmit`).
+- Sin cambios de backend ni migraciones Prisma nuevas.
+
+---
+
 ## **[21 Ago 2026] Optimización móvil de /catalog/products (listado y edición)**
 
 ### Objetivo alcanzado
