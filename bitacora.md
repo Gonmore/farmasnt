@@ -1,8 +1,28 @@
 # Bitácora de desarrollo — PharmaFlow Bolivia (farmaSNT)
 
-> Última actualización: 20 Ago 2026
+> Última actualización: 21 Ago 2026
 
 Este documento suma (a alto nivel) decisiones, hitos y cambios relevantes que se fueron incorporando al repositorio para llegar al estado actual del MVP.
+
+## **[21 Ago 2026] Optimización móvil de /catalog/products (listado y edición)**
+
+### Objetivo alcanzado
+- Los usuarios reportan uso frecuente de `/catalog/products` desde el navegador del teléfono móvil, donde la vista de escritorio no se leía bien. Se introducen ajustes de responsividad (Tailwind, breakpoint `md`) sin cambiar lógica ni endpoints.
+
+### `ProductsListPage.tsx`
+- El listado inicial ahora tiene una **vista móvil compacta** (`block md:hidden`): una sola fila por producto con `Nombre comercial · stock (fuente pequeña) · botón "Ver"`. La tabla completa de escritorio queda solo en `md+`. La paginación (`PaginationCursor`) se mantiene debajo de ambas vistas cuando aplica.
+
+### `ProductDetailPage.tsx`
+- **Formulario "Editar producto"**: Nombre comercial, Nombre genérico y Descripción conservan fila completa; SKU, Costo, Precio unitario, Unidad base, Formato y Estado pasan a un grid compacto (`grid-cols-2` en móvil / `md:grid-cols-4`), dejando de ocupar una fila cada uno.
+- **Botones Guardar Cambios / Eliminar (Reactivar)**: ya no son gigantes en móvil — se apilan (`flex-col` ? `md:flex-row`) y reducen a `py-2.5 text-base` (`md:py-3 md:text-lg`), `w-full md:w-auto`.
+- **Presentaciones** (producto existente): se elimina la descripción explicativa; cada presentación se muestra como tarjeta de 2 filas (`nombre` / `unidades + acción`). El alta de presentación ahora abre un **`Modal`** mediante el botón "Agregar presentación" en la cabecera (antes era un bloque inline siempre visible).
+- **Lotes**: los botones de acción (`Adicionar` / `Editar` / `Eliminar`) muestran **solo el emoji en móvil** (`hidden md:inline` en el texto), liberando espacio para ver el número de lote cuando hay varias acciones.
+
+### Operación
+- TypeScript check OK en frontend (`npx tsc --noEmit`).
+- Sin cambios de backend ni migraciones Prisma nuevas.
+
+---
 
 ## **[20 Ago 2026] Ajustes de cabecera/pie en el catálogo comercial PDF**
 

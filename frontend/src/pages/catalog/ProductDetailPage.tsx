@@ -569,6 +569,8 @@ export function ProductDetailPage() {
   const [newPresentationDiscountPct, setNewPresentationDiscountPct] = useState('')
   const [newPresentationIsDefault, setNewPresentationIsDefault] = useState(false)
 
+  const [showNewPresentationModal, setShowNewPresentationModal] = useState(false)
+
   // Presentations draft state (product creation)
   const [draftPresentations, setDraftPresentations] = useState<PresentationDraft[]>(() => {
     if (!isNew) return []
@@ -1409,27 +1411,7 @@ export function ProductDetailPage() {
                   className="transition-all duration-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 />
               </div>
-              
-              <div className="group">
-                <Input
-                  label="SKU"
-                  value={sku}
-                  onChange={(e) => {
-                    setSku(e.target.value)
-                    setSkuAuto(false)
-                  }}
-                  placeholder="Se genera automáticamente"
-                  disabled={createMutation.isPending || updateMutation.isPending}
-                  className={`transition-all duration-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${skuExists ? 'border-red-500 focus:ring-red-500' : ''}`}
-                  required
-                />
-                {skuExists && (
-                  <p className="mt-1 text-sm text-red-600 dark:text-red-400">
-                    ⚠️ Este SKU ya existe. Por favor usa uno diferente.
-                  </p>
-                )}
-              </div>
-              
+
               <div className="group">
                 <Input
                   label="Descripción"
@@ -1439,8 +1421,27 @@ export function ProductDetailPage() {
                   className="transition-all duration-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 />
               </div>
-              
-              <div className="grid gap-4 md:grid-cols-4 items-start">
+
+              <div className="grid grid-cols-2 gap-4 md:grid-cols-4 items-start">
+                <div className="group">
+                  <Input
+                    label="SKU"
+                    value={sku}
+                    onChange={(e) => {
+                      setSku(e.target.value)
+                      setSkuAuto(false)
+                    }}
+                    placeholder="Se genera automáticamente"
+                    disabled={createMutation.isPending || updateMutation.isPending}
+                    className={`transition-all duration-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${skuExists ? 'border-red-500 focus:ring-red-500' : ''}`}
+                    required
+                  />
+                  {skuExists && (
+                    <p className="mt-1 text-sm text-red-600 dark:text-red-400">
+                      ⚠️ Este SKU ya existe. Por favor usa uno diferente.
+                    </p>
+                  )}
+                </div>
                 <div className="group">
                   <Input
                     label="Costo (opcional)"
@@ -1486,23 +1487,22 @@ export function ProductDetailPage() {
                     className="transition-all duration-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   />
                 </div>
+                {!isNew && (
+                  <div className="group">
+                    <Select
+                      label="Estado"
+                      value={isActive ? 'true' : 'false'}
+                      onChange={(e) => setIsActive(e.target.value === 'true')}
+                      options={[
+                        { value: 'true', label: 'Activo' },
+                        { value: 'false', label: 'Inactivo' },
+                      ]}
+                      disabled={updateMutation.isPending}
+                      className="transition-all duration-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                  </div>
+                )}
               </div>
-              
-              {!isNew && (
-                <div className="group">
-                  <Select
-                    label="Estado"
-                    value={isActive ? 'true' : 'false'}
-                    onChange={(e) => setIsActive(e.target.value === 'true')}
-                    options={[
-                      { value: 'true', label: 'Activo' },
-                      { value: 'false', label: 'Inactivo' },
-                    ]}
-                    disabled={updateMutation.isPending}
-                    className="transition-all duration-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  />
-                </div>
-              )}
 
               <div>
                 <div className="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100">📸 Foto del Producto</div>
@@ -1538,14 +1538,14 @@ export function ProductDetailPage() {
                 )}
               </div>
 
-              <div className="flex gap-2">
+              <div className="flex flex-col gap-2 md:flex-row">
                 <Button
                   type="submit"
                   variant="primary"
                   icon={isNew ? <PlusIcon /> : <CheckIcon />}
                   loading={createMutation.isPending || updateMutation.isPending}
                   disabled={createMutation.isPending || updateMutation.isPending || skuExists}
-                  className="w-full bg-gradient-to-r from-blue-500 to-purple-600 py-3 text-lg font-semibold shadow-lg hover:from-blue-600 hover:to-purple-700 hover:shadow-xl"
+                  className="w-full bg-gradient-to-r from-blue-500 to-purple-600 py-2.5 text-base font-semibold shadow-lg hover:from-blue-600 hover:to-purple-700 hover:shadow-xl md:w-auto md:py-3 md:text-lg"
                 >
                   {isNew ? 'Crear Producto' : 'Guardar Cambios'}
                 </Button>
@@ -1557,7 +1557,7 @@ export function ProductDetailPage() {
                     icon={productQuery.data.isActive ? <TrashIcon /> : <PowerIcon />}
                     disabled={updateMutation.isPending}
                     loading={toggleActiveMutation.isPending}
-                    className="whitespace-nowrap"
+                    className="w-full whitespace-nowrap md:w-auto"
                     onClick={() => {
                       if (!productQuery.data) return
                       if (productQuery.data.isActive) {
@@ -1722,13 +1722,10 @@ export function ProductDetailPage() {
               <div className="rounded-lg border border-slate-200 bg-white p-6 dark:border-slate-700 dark:bg-slate-900">
                 <div className="mb-4 flex items-center justify-between">
                   <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Presentaciones</h3>
+                  <Button size="sm" variant="primary" icon={<PlusIcon />} onClick={() => setShowNewPresentationModal(true)}>
+                    Agregar presentación
+                  </Button>
                 </div>
-
-                <p className="mb-4 text-sm text-slate-600 dark:text-slate-400">
-                  Define cómo se vende el producto (p.ej. <span className="font-medium">Caja</span> = 100 unidades).
-                  La <span className="font-medium">Unidad</span> es la base (stock y totales), pero su abreviatura visible puede ser
-                  <span className="font-medium"> {normalizeBaseUnitAbbreviation(baseUnitAbbreviation)}</span>.
-                </p>
 
                 {presentationsQuery.isLoading && <p className="text-sm text-slate-600 dark:text-slate-400">Cargando…</p>}
                 {presentationsQuery.error && (
@@ -1740,215 +1737,201 @@ export function ProductDetailPage() {
                 )}
 
                 {presentationsQuery.data && (
-                  <div className="space-y-4">
-                    <Table
-                      columns={[
-                        { header: 'Nombre', accessor: (p: ProductPresentation) => p.name },
-                        {
-                          header: 'Unidades',
-                          accessor: (p: ProductPresentation) => p.unitsPerPresentation,
-                          className: 'w-28',
-                        },
-                        {
-                          header: 'Precio pres.',
-                          accessor: (p: ProductPresentation) => (p.priceOverride ? String(p.priceOverride) : '-'),
-                          className: 'w-28',
-                        },
-                        {
-                          header: 'Default',
-                          accessor: (p: ProductPresentation) => (p.isDefault ? 'Sí' : 'No'),
-                          className: 'w-20',
-                        },
-                        {
-                          header: 'Actualizado',
-                          accessor: (p: ProductPresentation) => new Date(p.updatedAt).toLocaleString(),
-                          className: 'w-44',
-                        },
-                        {
-                          header: 'Acciones',
-                          className: 'text-center w-44',
-                          accessor: (p: ProductPresentation) => (
-                            <div className="flex items-center justify-center gap-1">
-                              {!p.isDefault && (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  disabled={updatePresentationMutation.isPending}
-                                  onClick={() =>
-                                    updatePresentationMutation.mutate({
-                                      presentationId: p.id,
-                                      data: { version: p.version, isDefault: true },
-                                    })
-                                  }
-                                >
-                                  Hacer default
-                                </Button>
-                              )}
+                  <div className="space-y-2">
+                    {(presentationsQuery.data.items ?? []).map((p) => (
+                      <div key={p.id} className="rounded-md border border-slate-200 p-3 dark:border-slate-700">
+                        <div className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">{p.name}</div>
+                        <div className="mt-1 flex items-center justify-between gap-2">
+                          <span className="text-xs text-slate-600 dark:text-slate-400">
+                            {p.unitsPerPresentation} u
+                            {p.priceOverride ? ` · ${p.priceOverride}` : ''}
+                            {p.isDefault ? ' · Default' : ''}
+                          </span>
+                          <div className="flex shrink-0 items-center gap-1">
+                            {!p.isDefault && (
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                disabled={deactivatePresentationMutation.isPending || p.isDefault}
-                                onClick={() => {
-                                  if (p.isDefault) return
-                                  const ok = confirm(`¿Desactivar presentación "${p.name}"?`)
-                                  if (!ok) return
-                                  deactivatePresentationMutation.mutate(p.id)
-                                }}
+                                disabled={updatePresentationMutation.isPending}
+                                onClick={() =>
+                                  updatePresentationMutation.mutate({
+                                    presentationId: p.id,
+                                    data: { version: p.version, isDefault: true },
+                                  })
+                                }
                               >
-                                Desactivar
+                                Hacer default
                               </Button>
-                            </div>
-                          ),
-                        },
-                      ]}
-                      data={presentationsQuery.data.items}
-                      keyExtractor={(p: ProductPresentation) => p.id}
-                    />
+                            )}
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              disabled={deactivatePresentationMutation.isPending || p.isDefault}
+                              onClick={() => {
+                                if (p.isDefault) return
+                                const ok = confirm(`¿Desactivar presentación "${p.name}"?`)
+                                if (!ok) return
+                                deactivatePresentationMutation.mutate(p.id)
+                              }}
+                            >
+                              Desactivar
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
 
-                    <div className="rounded-md border border-slate-200 p-3 dark:border-slate-700">
-                      <div className="grid gap-3 md:grid-cols-3">
-                        <div>
-                          <Select
-                            label="Formato"
-                            value={knownPresentationFormats.has(newPresentationName.trim()) ? newPresentationName.trim() : 'Otro'}
-                            onChange={(e) => {
-                              const v = e.target.value
-                              if (v === 'Otro') {
-                                setNewPresentationName(knownPresentationFormats.has(newPresentationName.trim()) ? '' : newPresentationName)
-                              } else {
-                                setNewPresentationName(v)
-                              }
-                            }}
-                            options={presentationFormatOptions}
-                            disabled={createPresentationMutation.isPending}
-                          />
-                          {!knownPresentationFormats.has(newPresentationName.trim()) && (
-                            <Input
-                              label="Otro formato"
-                              value={newPresentationName}
-                              onChange={(e) => setNewPresentationName(e.target.value)}
-                              placeholder="Ej: Sachet"
+                    <Modal
+                      isOpen={showNewPresentationModal}
+                      onClose={() => setShowNewPresentationModal(false)}
+                      title="Agregar presentación"
+                      maxWidth="md"
+                    >
+                      <div className="space-y-3">
+                        <div className="grid gap-3 md:grid-cols-3">
+                          <div>
+                            <Select
+                              label="Formato"
+                              value={knownPresentationFormats.has(newPresentationName.trim()) ? newPresentationName.trim() : 'Otro'}
+                              onChange={(e) => {
+                                const v = e.target.value
+                                if (v === 'Otro') {
+                                  setNewPresentationName(knownPresentationFormats.has(newPresentationName.trim()) ? '' : newPresentationName)
+                                } else {
+                                  setNewPresentationName(v)
+                                }
+                              }}
+                              options={presentationFormatOptions}
                               disabled={createPresentationMutation.isPending}
                             />
+                            {!knownPresentationFormats.has(newPresentationName.trim()) && (
+                              <Input
+                                label="Otro formato"
+                                value={newPresentationName}
+                                onChange={(e) => setNewPresentationName(e.target.value)}
+                                placeholder="Ej: Sachet"
+                                disabled={createPresentationMutation.isPending}
+                              />
+                            )}
+                          </div>
+                          <Input
+                            label="Unidades por presentación"
+                            type="number"
+                            value={newPresentationUnits}
+                            onChange={(e) => setNewPresentationUnits(e.target.value)}
+                            placeholder="Ej: 100"
+                            disabled={createPresentationMutation.isPending}
+                          />
+                          <Input
+                            label="Descuento % (opcional)"
+                            type="number"
+                            value={newPresentationDiscountPct}
+                            onChange={(e) => setNewPresentationDiscountPct(e.target.value)}
+                            placeholder="Ej: 5"
+                            disabled={createPresentationMutation.isPending}
+                          />
+                        </div>
+                        <div className="mt-3 grid gap-3 md:grid-cols-3">
+                          <Input
+                            label="Precio pres."
+                            type="number"
+                            step="0.01"
+                            value={(() => {
+                              const units = toNumberOrNull(newPresentationUnits)
+                              const disc = toNumberOrNull(newPresentationDiscountPct)
+                              const val = computePresentationPrice({
+                                unitsPerPresentation: units !== null ? Math.trunc(units) : null,
+                                discountPct: disc,
+                              })
+                              return val !== null ? String(val.toFixed(2)) : ''
+                            })()}
+                            placeholder={(() => {
+                              const units = toNumberOrNull(newPresentationUnits)
+                              if (baseUnitPrice === null || units === null || units <= 0) return '—'
+                              const derived = baseUnitPrice * Math.trunc(units)
+                              return `Sin descuento: ${derived.toFixed(2)}`
+                            })()}
+                            disabled
+                          />
+                          <Select
+                            label="¿Default?"
+                            value={newPresentationIsDefault ? 'true' : 'false'}
+                            onChange={(e) => setNewPresentationIsDefault(e.target.value === 'true')}
+                            options={[
+                              { value: 'false', label: 'No' },
+                              { value: 'true', label: 'Sí' },
+                            ]}
+                            disabled={createPresentationMutation.isPending}
+                          />
+                          <div className="md:col-span-2 text-xs text-slate-500 dark:text-slate-400">
+                            El precio por presentación se calcula desde el precio unitario + unidades + descuento.
+                          </div>
+                        </div>
+                        <div className="mt-3 flex items-center gap-2">
+                          <Button
+                            size="sm"
+                            loading={createPresentationMutation.isPending}
+                            onClick={() => {
+                              const name = newPresentationName.trim()
+                              const units = Number(newPresentationUnits)
+                              if (!name) {
+                                alert('Nombre requerido')
+                                return
+                              }
+                              if (!Number.isFinite(units) || units <= 0) {
+                                alert('Unidades por presentación debe ser > 0')
+                                return
+                              }
+
+                              const normalizedUnits = Math.trunc(units)
+                              const duplicateExists = (presentationsQuery.data?.items ?? []).some(
+                                (p) => buildPresentationDuplicateKey(p.name, Number(p.unitsPerPresentation)) === buildPresentationDuplicateKey(name, normalizedUnits),
+                              )
+                              if (duplicateExists) {
+                                alert(`Ya existe una presentación ${name} con ${normalizedUnits} unidades`)
+                                return
+                              }
+                              const discNum = toNumberOrNull(newPresentationDiscountPct)
+                              const computed = computePresentationPrice({
+                                unitsPerPresentation: normalizedUnits,
+                                discountPct: discNum,
+                              })
+                              const shouldSendOverride = discNum !== null && discNum > 0
+                              if (shouldSendOverride && computed === null) {
+                                alert('Para calcular descuento necesitás definir el precio unitario del producto.')
+                                return
+                              }
+                              createPresentationMutation.mutate({
+                                name,
+                                unitsPerPresentation: normalizedUnits,
+                                isDefault: newPresentationIsDefault,
+                                priceOverride: shouldSendOverride ? computed : null,
+                              })
+                            }}
+                          >
+                            Agregar
+                          </Button>
+
+                          {createPresentationMutation.error && (
+                            <span className="text-sm text-red-600">
+                              {createPresentationMutation.error instanceof Error
+                                ? createPresentationMutation.error.message
+                                : 'Error creando presentación'}
+                            </span>
                           )}
                         </div>
-                        <Input
-                          label="Unidades por presentación"
-                          type="number"
-                          value={newPresentationUnits}
-                          onChange={(e) => setNewPresentationUnits(e.target.value)}
-                          placeholder="Ej: 100"
-                          disabled={createPresentationMutation.isPending}
-                        />
-                        <Input
-                          label="Descuento % (opcional)"
-                          type="number"
-                          value={newPresentationDiscountPct}
-                          onChange={(e) => setNewPresentationDiscountPct(e.target.value)}
-                          placeholder="Ej: 5"
-                          disabled={createPresentationMutation.isPending}
-                        />
-                      </div>
-                      <div className="mt-3 grid gap-3 md:grid-cols-3">
-                        <Input
-                          label="Precio pres."
-                          type="number"
-                          step="0.01"
-                          value={(() => {
-                            const units = toNumberOrNull(newPresentationUnits)
-                            const disc = toNumberOrNull(newPresentationDiscountPct)
-                            const val = computePresentationPrice({
-                              unitsPerPresentation: units !== null ? Math.trunc(units) : null,
-                              discountPct: disc,
-                            })
-                            return val !== null ? String(val.toFixed(2)) : ''
-                          })()}
-                          placeholder={(() => {
-                            const units = toNumberOrNull(newPresentationUnits)
-                            if (baseUnitPrice === null || units === null || units <= 0) return '—'
-                            const derived = baseUnitPrice * Math.trunc(units)
-                            return `Sin descuento: ${derived.toFixed(2)}`
-                          })()}
-                          disabled
-                        />
-                        <Select
-                          label="¿Default?"
-                          value={newPresentationIsDefault ? 'true' : 'false'}
-                          onChange={(e) => setNewPresentationIsDefault(e.target.value === 'true')}
-                          options={[
-                            { value: 'false', label: 'No' },
-                            { value: 'true', label: 'Sí' },
-                          ]}
-                          disabled={createPresentationMutation.isPending}
-                        />
-                        <div className="md:col-span-2 text-xs text-slate-500 dark:text-slate-400">
-                          El precio por presentación se calcula desde el precio unitario + unidades + descuento.
-                        </div>
-                      </div>
-                      <div className="mt-3 flex items-center gap-2">
-                        <Button
-                          size="sm"
-                          loading={createPresentationMutation.isPending}
-                          onClick={() => {
-                            const name = newPresentationName.trim()
-                            const units = Number(newPresentationUnits)
-                            if (!name) {
-                              alert('Nombre requerido')
-                              return
-                            }
-                            if (!Number.isFinite(units) || units <= 0) {
-                              alert('Unidades por presentación debe ser > 0')
-                              return
-                            }
 
-                            const normalizedUnits = Math.trunc(units)
-                            const duplicateExists = (presentationsQuery.data?.items ?? []).some(
-                              (p) => buildPresentationDuplicateKey(p.name, Number(p.unitsPerPresentation)) === buildPresentationDuplicateKey(name, normalizedUnits),
-                            )
-                            if (duplicateExists) {
-                              alert(`Ya existe una presentación ${name} con ${normalizedUnits} unidades`)
-                              return
-                            }
-                            const discNum = toNumberOrNull(newPresentationDiscountPct)
-                            const computed = computePresentationPrice({
-                              unitsPerPresentation: normalizedUnits,
-                              discountPct: discNum,
-                            })
-                            const shouldSendOverride = discNum !== null && discNum > 0
-                            if (shouldSendOverride && computed === null) {
-                              alert('Para calcular descuento necesitás definir el precio unitario del producto.')
-                              return
-                            }
-                            createPresentationMutation.mutate({
-                              name,
-                              unitsPerPresentation: normalizedUnits,
-                              isDefault: newPresentationIsDefault,
-                              priceOverride: shouldSendOverride ? computed : null,
-                            })
-                          }}
-                        >
-                          Agregar
-                        </Button>
-
-                        {createPresentationMutation.error && (
-                          <span className="text-sm text-red-600">
-                            {createPresentationMutation.error instanceof Error
-                              ? createPresentationMutation.error.message
-                              : 'Error creando presentación'}
-                          </span>
+                        {(updatePresentationMutation.error || deactivatePresentationMutation.error) && (
+                          <p className="text-sm text-red-600">
+                            {updatePresentationMutation.error instanceof Error
+                              ? updatePresentationMutation.error.message
+                              : deactivatePresentationMutation.error instanceof Error
+                                ? deactivatePresentationMutation.error.message
+                                : 'Error'}
+                          </p>
                         )}
                       </div>
-                    </div>
-
-                    {(updatePresentationMutation.error || deactivatePresentationMutation.error) && (
-                      <p className="text-sm text-red-600">
-                        {updatePresentationMutation.error instanceof Error
-                          ? updatePresentationMutation.error.message
-                          : deactivatePresentationMutation.error instanceof Error
-                            ? deactivatePresentationMutation.error.message
-                            : 'Error'}
-                      </p>
-                    )}
+                    </Modal>
                   </div>
                 )}
               </div>
@@ -2032,15 +2015,15 @@ export function ProductDetailPage() {
                                 <div className="shrink-0 text-right">
                                   <div className="mb-2 flex flex-wrap items-center justify-end gap-2">
                                     {productBatchesQuery.data?.hasStockRead && canStockMove ? (
-                                      <Button
-                                        size="sm"
-                                        variant="secondary"
-                                        icon={<PlusIcon className="h-4 w-4" />}
-                                        onClick={() => openAddStockToBatch(b)}
-                                        disabled={addStockToBatchMutation.isPending}
-                                      >
-                                        Adicionar
-                                      </Button>
+                                        <Button
+                                          size="sm"
+                                          variant="secondary"
+                                          icon={<PlusIcon className="h-4 w-4" />}
+                                          onClick={() => openAddStockToBatch(b)}
+                                          disabled={addStockToBatchMutation.isPending}
+                                        >
+                                          <span className="hidden md:inline">Adicionar</span>
+                                        </Button>
                                     ) : null}
 
                                     {b.canManage ? (
@@ -2052,7 +2035,7 @@ export function ProductDetailPage() {
                                           onClick={() => openEditBatch(b)}
                                           disabled={deleteBatchMutation.isPending || updateBatchMutation.isPending}
                                         >
-                                          Editar
+                                          <span className="hidden md:inline">Editar</span>
                                         </Button>
                                         <Button
                                           size="sm"
@@ -2065,7 +2048,7 @@ export function ProductDetailPage() {
                                           }}
                                           disabled={deleteBatchMutation.isPending || updateBatchMutation.isPending}
                                         >
-                                          Eliminar
+                                          <span className="hidden md:inline">Eliminar</span>
                                         </Button>
                                       </>
                                     ) : null}

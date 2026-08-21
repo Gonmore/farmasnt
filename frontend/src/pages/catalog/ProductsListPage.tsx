@@ -382,48 +382,78 @@ export function ProductsListPage() {
           )}
           {((combinedSearchData && combinedSearchData.length > 0) || (combinedData && combinedData.items.length > 0 && !searchResults)) && (
             <>
-              <Table
-                columns={[
-                  { header: 'SKU', accessor: (p) => p.sku },
-                  { header: 'Nombre', accessor: (p) => getProductDisplayName(p) },
-                  {
-                    header: 'STOCK(unidades)',
-                    accessor: (p) => {
-                      // Determinar si usar datos de búsqueda o datos normales
-                      const isSearchResult = !!searchResults
-                      const productData = isSearchResult ? combinedSearchData?.find(sp => sp.id === p.id) : p
-                      
-                      if (!productData) return '-'
-                      
-                      const totalUnits = productData.batches.reduce((total: number, batch: any) => total + parseInt(batch.totalAvailableQuantity || batch.totalQuantity), 0)
-                      
-                      return (
-                        <div className="cursor-pointer">
-                          <div
-                            className="text-2xl hover:scale-110 transition-transform font-bold text-green-600"
-                            onClick={() => productData.batches.length > 0 && setStockModal({ isOpen: true, product: productData })}
-                            title={productData.batches.length > 0 ? "Ver stock completo" : "Sin stock"}
-                          >
-                            {productData.batches.length > 0 ? totalUnits : '➖'}
-                          </div>
-                        </div>
-                      )
-                    },
-                  },
-                  {
-                    header: 'Acciones',
-                    className: 'text-center w-auto',
-                    accessor: (p) => (
-                      <div className="flex items-center justify-center gap-1">
-                        <Button variant="ghost" size="sm" icon={<EyeIcon className="w-4 h-4" />} onClick={() => navigate(`/catalog/products/${p.id}`)}>Ver</Button>
+              {/* Mobile: listado compacto (Nombre - Stock - Ver) */}
+              <div className="block md:hidden divide-y divide-slate-200 dark:divide-slate-700">
+                {(combinedSearchData || combinedData?.items || []).map((p) => {
+                  const totalUnits = (p.batches ?? []).reduce(
+                    (total: number, batch: any) => total + parseInt(batch.totalAvailableQuantity || batch.totalQuantity || '0', 10),
+                    0,
+                  )
+                  return (
+                    <div key={p.id} className="flex items-center gap-3 px-1 py-3">
+                      <div className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-900 dark:text-slate-100">
+                        {getProductDisplayName(p)}
                       </div>
-                    ),
-                  },
-                ]}
-                data={combinedSearchData || combinedData?.items || []}
-                keyExtractor={(p) => p.id}
-                rowClassName={(p) => searchResults ? '' : (p.isActive ? '' : 'bg-red-50')}
-              />
+                      <div className="shrink-0 text-sm font-bold text-green-600 tabular-nums">
+                        {totalUnits}
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => navigate(`/catalog/products/${p.id}`)}
+                      >
+                        Ver
+                      </Button>
+                    </div>
+                  )
+                })}
+              </div>
+
+              {/* Desktop: tabla completa */}
+              <div className="hidden md:block">
+                <Table
+                  columns={[
+                    { header: 'SKU', accessor: (p) => p.sku },
+                    { header: 'Nombre', accessor: (p) => getProductDisplayName(p) },
+                    {
+                      header: 'STOCK(unidades)',
+                      accessor: (p) => {
+                        // Determinar si usar datos de búsqueda o datos normales
+                        const isSearchResult = !!searchResults
+                        const productData = isSearchResult ? combinedSearchData?.find(sp => sp.id === p.id) : p
+
+                        if (!productData) return '-'
+
+                        const totalUnits = productData.batches.reduce((total: number, batch: any) => total + parseInt(batch.totalAvailableQuantity || batch.totalQuantity), 0)
+
+                        return (
+                          <div className="cursor-pointer">
+                            <div
+                              className="text-2xl hover:scale-110 transition-transform font-bold text-green-600"
+                              onClick={() => productData.batches.length > 0 && setStockModal({ isOpen: true, product: productData })}
+                              title={productData.batches.length > 0 ? "Ver stock completo" : "Sin stock"}
+                            >
+                              {productData.batches.length > 0 ? totalUnits : '➖'}
+                            </div>
+                          </div>
+                        )
+                      },
+                    },
+                    {
+                      header: 'Acciones',
+                      className: 'text-center w-auto',
+                      accessor: (p) => (
+                        <div className="flex items-center justify-center gap-1">
+                          <Button variant="ghost" size="sm" icon={<EyeIcon className="w-4 h-4" />} onClick={() => navigate(`/catalog/products/${p.id}`)}>Ver</Button>
+                        </div>
+                      ),
+                    },
+                  ]}
+                  data={combinedSearchData || combinedData?.items || []}
+                  keyExtractor={(p) => p.id}
+                  rowClassName={(p) => searchResults ? '' : (p.isActive ? '' : 'bg-red-50')}
+                />
+              </div>
               {!searchResults && combinedData && (
                 <PaginationCursor
                   hasMore={!!combinedData.nextCursor}
