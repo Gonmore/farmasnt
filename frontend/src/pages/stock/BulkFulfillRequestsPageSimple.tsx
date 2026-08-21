@@ -737,8 +737,8 @@ export function BulkFulfillRequestsPage() {
                         </div>
 
                         {/* Items solicitados: grilla de hasta 3 filas, scroll horizontal si hay más de 3 */}
-                        <div className="mt-2 overflow-x-auto pb-1">
-                          <div className={`grid grid-flow-col gap-2 ${request.items.length <= 1 ? 'grid-rows-1' : request.items.length === 2 ? 'grid-rows-2' : 'grid-rows-3'}`}>
+                        <div className="mt-2 w-full overflow-x-auto pb-1">
+                          <div className={`grid w-max grid-flow-col gap-2 ${request.items.length <= 1 ? 'grid-rows-1' : request.items.length === 2 ? 'grid-rows-2' : 'grid-rows-3'}`}>
                             {request.items.map((item: MovementRequestItem, index: number) => {
                               const remainingPresentationQuantity = item.unitsPerPresentation && item.unitsPerPresentation > 0
                                 ? Math.ceil(item.remainingQuantity / item.unitsPerPresentation)
