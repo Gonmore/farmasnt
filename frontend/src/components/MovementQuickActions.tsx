@@ -3,7 +3,7 @@ import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { apiFetch } from '../lib/api'
 import { useAuth } from '../providers/AuthProvider'
-import { usePermissions } from '../hooks'
+import { usePermissions, useMediaQuery } from '../hooks'
 
 export type QuickActionBadgeDetail = {
   label: string
@@ -82,7 +82,41 @@ function badgeToneClasses(tone: QuickActionBadgeInfo['tone']): string {
   }
 }
 
-function QuickActionCard(props: { to: string; title: string; subtitle: string; icon: string; isActive?: boolean; badge?: QuickActionBadgeInfo }) {
+function QuickActionCard(props: { to: string; title: string; subtitle: string; icon: string; isActive?: boolean; badge?: QuickActionBadgeInfo; compact?: boolean }) {
+  if (props.compact) {
+    return (
+      <Link
+        to={props.to}
+        className={`group relative flex flex-col items-center justify-center rounded-lg border px-2 py-3 text-center transition ${
+          props.isActive
+            ? 'border-blue-500 bg-blue-50 dark:border-blue-400 dark:bg-blue-900/20'
+            : 'border-slate-200 bg-white hover:border-blue-300 hover:bg-blue-50 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-blue-600 dark:hover:bg-slate-800'
+        }`}
+      >
+        <div className="text-xl leading-none">{props.icon}</div>
+        <div className={`mt-1 text-xs font-semibold leading-tight ${
+          props.isActive
+            ? 'text-blue-900 dark:text-blue-200'
+            : 'text-slate-900 dark:text-slate-100'
+        }`}>
+          {props.title}
+        </div>
+
+        {props.badge && props.badge.count > 0 && (
+          <div className="absolute -right-1 -top-1 z-10">
+            <div
+              className={`flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[10px] font-extrabold shadow-sm ring-2 ${badgeToneClasses(props.badge.tone)}`}
+              aria-label={props.badge.ariaLabel ?? `${props.badge.count} pendientes`}
+              title={props.badge.ariaLabel ?? `${props.badge.count} pendientes`}
+            >
+              {formatBadgeCount(props.badge.count)}
+            </div>
+          </div>
+        )}
+      </Link>
+    )
+  }
+
   return (
     <Link
       to={props.to}
@@ -192,10 +226,12 @@ export function MovementQuickActions({ currentPath, badges }: { currentPath: str
     [badges, internalBadges],
   )
 
+  const isMobile = useMediaQuery('(max-width: 767px)')
+
   return (
     <div className="mb-6">
       <div className="mb-2 text-sm font-medium text-slate-700 dark:text-slate-300">Accesos rápidos</div>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="grid grid-cols-3 gap-2 sm:grid-cols-2 sm:gap-3 lg:grid-cols-5">
         <QuickActionCard
           to="/stock/movements"
           icon="🚚"
@@ -203,6 +239,7 @@ export function MovementQuickActions({ currentPath, badges }: { currentPath: str
           subtitle="Entradas, transferencias, bajas, ajustes"
           isActive={currentPath === '/stock/movements'}
           badge={resolvedBadges['/stock/movements']}
+          compact={isMobile}
         />
         <QuickActionCard
           to="/stock/bulk-transfer"
@@ -211,6 +248,7 @@ export function MovementQuickActions({ currentPath, badges }: { currentPath: str
           subtitle="Mover múltiples líneas en una operación"
           isActive={currentPath === '/stock/bulk-transfer'}
           badge={resolvedBadges['/stock/bulk-transfer']}
+          compact={isMobile}
         />
         <QuickActionCard
           to="/stock/fulfill-requests"
@@ -219,6 +257,7 @@ export function MovementQuickActions({ currentPath, badges }: { currentPath: str
           subtitle="Enviar stock a solicitudes OPEN"
           isActive={currentPath === '/stock/fulfill-requests'}
           badge={resolvedBadges['/stock/fulfill-requests']}
+          compact={isMobile}
         />
         <QuickActionCard
           to="/stock/completed-movements"
@@ -227,6 +266,7 @@ export function MovementQuickActions({ currentPath, badges }: { currentPath: str
           subtitle="Historial con PDFs de picking y rótulos"
           isActive={currentPath === '/stock/completed-movements'}
           badge={resolvedBadges['/stock/completed-movements']}
+          compact={isMobile}
         />
         <QuickActionCard
           to="/stock/returns"
@@ -235,6 +275,7 @@ export function MovementQuickActions({ currentPath, badges }: { currentPath: str
           subtitle="Recepción de envíos y devoluciones con evidencia"
           isActive={currentPath === '/stock/returns'}
           badge={resolvedBadges['/stock/returns']}
+          compact={isMobile}
         />
       </div>
     </div>

@@ -4,6 +4,23 @@
 
 Este documento suma (a alto nivel) decisiones, hitos y cambios relevantes que se fueron incorporando al repositorio para llegar al estado actual del MVP.
 
+## **[21 Ago 2026] Accesos rápidos móviles: menú compacto de "Accesos rápidos" (emoji + título, 2 filas)**
+
+### Objetivo alcanzado
+- En `MovementQuickActions`, el menú "Accesos rápidos" se muestra en formato **compacto solo en móvil** (`useMediaQuery('(max-width: 767px)')`): cada tarjeta muestra **emoji (más pequeño, `text-xl`) + título**, sin descripción, en una grilla de **3 columnas** (5 ítems ? 2 filas). El indicador tipo botón (badge de pendientes) se conserva pero más pequeño (`h-5 min-w-5 text-[10px]`, arriba-derecha).
+- En escritorio (`sm:`+) se mantiene el diseño original de tarjeta completa (icono `text-2xl` + título + subtítulo, grilla `sm:grid-cols-2 lg:grid-cols-5`).
+
+### `MovementQuickActions.tsx`
+- `QuickActionCard` ahora acepta `compact?: boolean`; en modo compacto renderiza la variante centrada (emoji + título, badge reducido en esquina).
+- Contenedor: `grid grid-cols-3 gap-2 sm:grid-cols-2 sm:gap-3 lg:grid-cols-5`.
+- `MovementQuickActions` calcula `isMobile` y lo pasa como `compact` a cada tarjeta.
+
+### Operación
+- TypeScript check OK en frontend (`npx tsc --noEmit`).
+- Sin cambios de backend ni migraciones Prisma nuevas.
+
+---
+
 ## **[21 Ago 2026] Optimización móvil de /stock/fulfill-requests: responsive (solo móvil) + eliminación de input "Nota"**
 
 ### Objetivo alcanzado
