@@ -698,8 +698,10 @@ export function BulkFulfillRequestsPage() {
                     <div className="p-3 text-sm text-slate-600 dark:text-slate-400">No hay resultados.</div>
                   ) : null}
 
-                  {visibleRequests.map((request: MovementRequest) => (
-                    <div key={request.id} className="flex items-center p-3 border-b border-slate-100 last:border-b-0 dark:border-slate-700">
+                  {visibleRequests.map((request: MovementRequest) => {
+                    const reqItemCount = (request.items ?? []).length
+                    return (
+                    <div key={request.id} className="flex items-start gap-3 p-3 border-b border-slate-100 last:border-b-0 dark:border-slate-700">
                       <input
                         type="checkbox"
                         id={`request-${request.id}`}
@@ -711,59 +713,53 @@ export function BulkFulfillRequestsPage() {
                             setSelectedRequestIds(prev => prev.filter(id => id !== request.id))
                           }
                         }}
-                        className="mr-3 h-4 w-4 text-blue-600 focus:ring-blue-500 border-slate-300 rounded"
+                        className="mt-1 h-4 w-4 text-blue-600 focus:ring-blue-500 border-slate-300 rounded"
                       />
-                      <label htmlFor={`request-${request.id}`} className="flex-1 cursor-pointer">
-                        <div className="flex items-center gap-2">
-                          <div className="flex flex-col">
-                            <div className="flex items-center gap-1">
-                              <span className="text-sm font-medium text-slate-900 dark:text-slate-100">
-                                {request.requestedByName || 'Usuario desconocido'}
-                              </span>
-                              {request.code ? (
-                                <span className="text-xs text-slate-500 dark:text-slate-400">({request.code})</span>
-                              ) : null}
-                             {request.note && (
-                                 <span
-                                   className="text-xs cursor-help"
-                                   title={request.note}
-                                 >
-                                   📝
-                                 </span>
-                               )}
-                             </div>
-                             <span className="text-xs text-slate-500 dark:text-slate-400">
-                               {new Date(request.createdAt).toLocaleString('es-ES')}
-                             </span>
-                             {request.toLocation ? (
-                               <span className="text-xs text-slate-600 dark:text-slate-400">
-                                 🏷️ {request.toLocation.code}
-                               </span>
-                             ) : (
-                               <span className="text-xs text-amber-600 dark:text-amber-400">
-                                 Sin ubicación destino
-                               </span>
-                             )}
-                          </div>
-                          <div className="flex-1 text-xs text-slate-600 dark:text-slate-400 ml-4">
-                            {request.items.map((item: MovementRequestItem, index: number) => {
-                              const remainingPresentationQuantity = item.unitsPerPresentation && item.unitsPerPresentation > 0 
-                                ? Math.ceil(item.remainingQuantity / item.unitsPerPresentation)
-                                : item.presentationQuantity || item.remainingQuantity;
-                              
-                              const presentationText = item.presentationName || 'Sin presentación';
-                              
-                              return (
-                                <div key={index} className={`text-xs ${item.remainingQuantity === 0 ? 'line-through text-slate-400 dark:text-slate-500' : ''}`}>
-                                  {remainingPresentationQuantity} {presentationText}{item.unitsPerPresentation ? ` (${item.unitsPerPresentation}u)` : ''} - {item.productName || 'Producto desconocido'}
-                                </div>
-                              );
-                            })}
-                          </div>
+                      <label htmlFor={`request-${request.id}`} className="min-w-0 flex-1 cursor-pointer">
+                        <div className="text-sm font-bold leading-tight text-slate-900 dark:text-slate-100 truncate">
+                          {request.requestedByName || 'Usuario desconocido'}
+                        </div>
+                        <div className="mt-0.5 flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400">
+                          {request.code ? <span>{request.code}</span> : null}
+                          {request.note && (
+                            <span className="cursor-help" title={request.note}>📝</span>
+                          )}
+                        </div>
+                        <div className="text-xs text-slate-500 dark:text-slate-400">
+                          {new Date(request.createdAt).toLocaleString('es-ES')}
+                        </div>
+                        <div className="text-xs text-slate-600 dark:text-slate-400">
+                          {request.toLocation ? (
+                            <span>🏷️ {request.toLocation.code}</span>
+                          ) : (
+                            <span className="text-amber-600 dark:text-amber-400">Sin ubicación destino</span>
+                          )}
+                        </div>
+
+                        {/* Items solicitados: scroll horizontal, una línea por item */}
+                        <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
+                          {request.items.map((item: MovementRequestItem, index: number) => {
+                            const remainingPresentationQuantity = item.unitsPerPresentation && item.unitsPerPresentation > 0
+                              ? Math.ceil(item.remainingQuantity / item.unitsPerPresentation)
+                              : item.presentationQuantity || item.remainingQuantity
+
+                            const presentationText = item.presentationName || 'Sin presentación'
+
+                            return (
+                              <div key={index} className={`shrink-0 whitespace-nowrap rounded-md border border-slate-200 px-2 py-1 text-xs dark:border-slate-700 ${item.remainingQuantity === 0 ? 'line-through text-slate-400 dark:text-slate-500' : 'text-slate-700 dark:text-slate-300'}`}>
+                                {remainingPresentationQuantity} {presentationText}{item.unitsPerPresentation ? ` (${item.unitsPerPresentation}u)` : ''} · {item.productName || 'Producto desconocido'}
+                              </div>
+                            )
+                          })}
+                        </div>
+
+                        <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                          {reqItemCount} producto{reqItemCount !== 1 ? 's' : ''} solicitado{reqItemCount !== 1 ? 's' : ''}
                         </div>
                       </label>
                     </div>
-                  ))}
+                    )
+                  })}
                 </div>
                 {selectedRequestIds.length > 0 && (
                   <div className="mt-2 text-xs text-slate-600 dark:text-slate-400">
