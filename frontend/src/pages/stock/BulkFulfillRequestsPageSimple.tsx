@@ -2,7 +2,7 @@ import React, { useEffect, useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { MainLayout, PageContainer, Select, Input, Button, Modal } from '../../components'
 import { MovementQuickActions } from '../../components/MovementQuickActions'
-import { useNavigation } from '../../hooks'
+import { useNavigation, useMediaQuery } from '../../hooks'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../providers/AuthProvider'
 import { usePermissions } from '../../hooks/usePermissions'
@@ -146,11 +146,11 @@ export function BulkFulfillRequestsPage() {
   const permissions = usePermissions()
   const navGroups = useNavigation()
   const navigate = useNavigate()
+  const isMobile = useMediaQuery('(max-width: 767px)')
 
   const [fromWarehouseId, setFromWarehouseId] = useState('')
   const [fromLocationId, setFromLocationId] = useState('')
-   const [toWarehouseId, setToWarehouseId] = useState('')
-   const [note, setNote] = useState('')
+  const [toWarehouseId, setToWarehouseId] = useState('')
   const [selectedRequestIds, setSelectedRequestIds] = useState<string[]>([])
   const [isFulfillModalOpen, setIsFulfillModalOpen] = useState(false)
   const [requestLocations, setRequestLocations] = useState<Record<string, string>>({})
@@ -476,6 +476,46 @@ export function BulkFulfillRequestsPage() {
     [fulfillmentItemStatuses, batchSelections],
   )
 
+  const renderRequestItems = (items: MovementRequestItem[], variant: 'mobile' | 'desktop') => {
+    const mapItem = (item: MovementRequestItem, index: number) => {
+      const remainingPresentationQuantity =
+        item.unitsPerPresentation && item.unitsPerPresentation > 0
+          ? Math.ceil(item.remainingQuantity / item.unitsPerPresentation)
+          : item.presentationQuantity || item.remainingQuantity
+      const presentationText = item.presentationName || 'Sin presentación'
+
+      if (variant === 'mobile') {
+        return (
+          <div key={index} className={`w-44 shrink-0 rounded-md border border-slate-200 px-2 py-1 text-xs leading-tight dark:border-slate-700 ${item.remainingQuantity === 0 ? 'line-through text-slate-400 dark:text-slate-500' : 'text-slate-700 dark:text-slate-300'}`}>
+            {remainingPresentationQuantity} {presentationText}{item.unitsPerPresentation ? ` (${item.unitsPerPresentation}u)` : ''} · {item.productName || 'Producto desconocido'}
+          </div>
+        )
+      }
+
+      return (
+        <div key={index} className={`text-xs ${item.remainingQuantity === 0 ? 'line-through text-slate-400 dark:text-slate-500' : ''}`}>
+          {remainingPresentationQuantity} {presentationText}{item.unitsPerPresentation ? ` (${item.unitsPerPresentation}u)` : ''} - {item.productName || 'Producto desconocido'}
+        </div>
+      )
+    }
+
+    if (variant === 'mobile') {
+      return (
+        <div className="mt-2 overflow-x-auto">
+          <div className={`grid w-max grid-flow-col gap-2 ${items.length <= 1 ? 'grid-rows-1' : items.length === 2 ? 'grid-rows-2' : 'grid-rows-3'}`}>
+            {items.map(mapItem)}
+          </div>
+        </div>
+      )
+    }
+
+    return (
+      <div className="flex-1 text-xs text-slate-600 dark:text-slate-400 ml-4">
+        {items.map(mapItem)}
+      </div>
+    )
+  }
+
   const queryClient = useQueryClient()
 
   const bulkFulfillMutation = useMutation({
@@ -515,7 +555,6 @@ export function BulkFulfillRequestsPage() {
       setSelectedRequestIds([])
        setBatchSelections({})
        setRequestLocations({})
-       setNote('')
       setIsFulfillModalOpen(false)
       
       // Navegar automáticamente a "Realizados" y resaltar el registro
@@ -587,9 +626,8 @@ export function BulkFulfillRequestsPage() {
       }
     }
 
-     const payload: { fulfillments: Array<{ requestId: string; toLocationId?: string; items: Array<{ requestItemId: string; productId: string; batchId: string; quantity: number; fromLocationId: string }> }>
-        fromLocationId?: string
-        note?: string } = { fulfillments, note: note.trim() || undefined }
+      const payload: { fulfillments: Array<{ requestId: string; toLocationId?: string; items: Array<{ requestItemId: string; productId: string; batchId: string; quantity: number; fromLocationId: string }> }>
+        fromLocationId?: string } = { fulfillments }
 
       // Validate that every selected request has a destination location
       for (const req of selectedRequests) {
@@ -668,15 +706,6 @@ export function BulkFulfillRequestsPage() {
 
              </div>
 
-            <div className="mt-3">
-              <Input
-                label="Nota (opcional)"
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                placeholder="Ej: Atención de pedidos SCZ"
-              />
-            </div>
-
             {/* Multiselect de solicitudes abiertas */}
             {filteredRequests.length > 0 && (
               <div className="mt-4">
@@ -693,7 +722,7 @@ export function BulkFulfillRequestsPage() {
                   />
                 </div>
 
-                <div className="max-h-60 overflow-auto border border-slate-200 rounded-md dark:border-slate-700">
+                <div className={`${isMobile ? '' : 'max-h-60 overflow-y-auto'} border border-slate-200 rounded-md dark:border-slate-700`}>
                   {visibleRequests.length === 0 ? (
                     <div className="p-3 text-sm text-slate-600 dark:text-slate-400">No hay resultados.</div>
                   ) : null}
@@ -701,7 +730,7 @@ export function BulkFulfillRequestsPage() {
                   {visibleRequests.map((request: MovementRequest) => {
                     const reqItemCount = (request.items ?? []).length
                     return (
-                    <div key={request.id} className="flex items-start gap-3 p-3 border-b border-slate-100 last:border-b-0 dark:border-slate-700">
+                    <div key={request.id} className={isMobile ? 'flex items-start gap-3 p-3 border-b border-slate-100 last:border-b-0 dark:border-slate-700' : 'flex items-center p-3 border-b border-slate-100 last:border-b-0 dark:border-slate-700'}>
                       <input
                         type="checkbox"
                         id={`request-${request.id}`}
@@ -713,52 +742,69 @@ export function BulkFulfillRequestsPage() {
                             setSelectedRequestIds(prev => prev.filter(id => id !== request.id))
                           }
                         }}
-                        className="mt-1 h-4 w-4 text-blue-600 focus:ring-blue-500 border-slate-300 rounded"
+                        className={isMobile ? 'mt-1 h-4 w-4 text-blue-600 focus:ring-blue-500 border-slate-300 rounded' : 'mr-3 h-4 w-4 text-blue-600 focus:ring-blue-500 border-slate-300 rounded'}
                       />
-                      <label htmlFor={`request-${request.id}`} className="min-w-0 flex-1 cursor-pointer">
-                        <div className="text-sm font-bold leading-tight text-slate-900 dark:text-slate-100 truncate">
-                          {request.requestedByName || 'Usuario desconocido'}
-                        </div>
-                        <div className="mt-0.5 flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400">
-                          {request.code ? <span>{request.code}</span> : null}
-                          {request.note && (
-                            <span className="cursor-help" title={request.note}>📝</span>
-                          )}
-                        </div>
-                        <div className="text-xs text-slate-500 dark:text-slate-400">
-                          {new Date(request.createdAt).toLocaleString('es-ES')}
-                        </div>
-                        <div className="text-xs text-slate-600 dark:text-slate-400">
-                          {request.toLocation ? (
-                            <span>🏷️ {request.toLocation.code}</span>
-                          ) : (
-                            <span className="text-amber-600 dark:text-amber-400">Sin ubicación destino</span>
-                          )}
-                        </div>
-
-                        {/* Items solicitados: grilla de hasta 3 filas; el scroll horizontal lo maneja el bloque padre (max-h-60) */}
-                        <div className="mt-2">
-                          <div className={`grid w-max grid-flow-col gap-2 ${request.items.length <= 1 ? 'grid-rows-1' : request.items.length === 2 ? 'grid-rows-2' : 'grid-rows-3'}`}>
-                            {request.items.map((item: MovementRequestItem, index: number) => {
-                              const remainingPresentationQuantity = item.unitsPerPresentation && item.unitsPerPresentation > 0
-                                ? Math.ceil(item.remainingQuantity / item.unitsPerPresentation)
-                                : item.presentationQuantity || item.remainingQuantity
-
-                              const presentationText = item.presentationName || 'Sin presentación'
-
-                              return (
-                                <div key={index} className={`w-44 shrink-0 rounded-md border border-slate-200 px-2 py-1 text-xs leading-tight dark:border-slate-700 ${item.remainingQuantity === 0 ? 'line-through text-slate-400 dark:text-slate-500' : 'text-slate-700 dark:text-slate-300'}`}>
-                                  {remainingPresentationQuantity} {presentationText}{item.unitsPerPresentation ? ` (${item.unitsPerPresentation}u)` : ''} · {item.productName || 'Producto desconocido'}
-                                </div>
-                              )
-                            })}
+                      {isMobile ? (
+                        <label htmlFor={`request-${request.id}`} className="min-w-0 flex-1 cursor-pointer">
+                          <div className="text-sm font-bold leading-tight text-slate-900 dark:text-slate-100 truncate">
+                            {request.requestedByName || 'Usuario desconocido'}
                           </div>
-                        </div>
+                          <div className="mt-0.5 flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400">
+                            {request.code ? <span>{request.code}</span> : null}
+                            {request.note && (
+                              <span className="cursor-help" title={request.note}>📝</span>
+                            )}
+                          </div>
+                          <div className="text-xs text-slate-500 dark:text-slate-400">
+                            {new Date(request.createdAt).toLocaleString('es-ES')}
+                          </div>
+                          <div className="text-xs text-slate-600 dark:text-slate-400">
+                            {request.toLocation ? (
+                              <span>🏷️ {request.toLocation.code}</span>
+                            ) : (
+                              <span className="text-amber-600 dark:text-amber-400">Sin ubicación destino</span>
+                            )}
+                          </div>
 
-                        <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                          {reqItemCount} producto{reqItemCount !== 1 ? 's' : ''} solicitado{reqItemCount !== 1 ? 's' : ''}
-                        </div>
-                      </label>
+                          {renderRequestItems(request.items, 'mobile')}
+
+                          <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                            {reqItemCount} producto{reqItemCount !== 1 ? 's' : ''} solicitado{reqItemCount !== 1 ? 's' : ''}
+                          </div>
+                        </label>
+                      ) : (
+                        <label htmlFor={`request-${request.id}`} className="flex-1 cursor-pointer">
+                          <div className="flex items-center gap-2">
+                            <div className="flex flex-col">
+                              <div className="flex items-center gap-1">
+                                <span className="text-sm font-medium text-slate-900 dark:text-slate-100">
+                                  {request.requestedByName || 'Usuario desconocido'}
+                                </span>
+                                {request.code ? (
+                                  <span className="text-xs text-slate-500 dark:text-slate-400">({request.code})</span>
+                                ) : null}
+                                {request.note && (
+                                  <span className="text-xs cursor-help" title={request.note}>📝</span>
+                                )}
+                              </div>
+                              <span className="text-xs text-slate-500 dark:text-slate-400">
+                                {new Date(request.createdAt).toLocaleString('es-ES')}
+                              </span>
+                              {request.toLocation ? (
+                                <span className="text-xs text-slate-600 dark:text-slate-400">
+                                  🏷️ {request.toLocation.code}
+                                </span>
+                              ) : (
+                                <span className="text-xs text-amber-600 dark:text-amber-400">
+                                  Sin ubicación destino
+                                </span>
+                              )}
+                            </div>
+
+                            {renderRequestItems(request.items, 'desktop')}
+                          </div>
+                        </label>
+                      )}
                     </div>
                     )
                   })}
@@ -796,7 +842,6 @@ export function BulkFulfillRequestsPage() {
                   setFromLocationId('')
                  setToWarehouseId('')
                  setRequestLocations({})
-                 setNote('')
                  setSelectedRequestIds([])
                 }}
               >

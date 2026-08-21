@@ -4,15 +4,20 @@
 
 Este documento suma (a alto nivel) decisiones, hitos y cambios relevantes que se fueron incorporando al repositorio para llegar al estado actual del MVP.
 
-## **[21 Ago 2026] Optimización móvil de /stock/fulfill-requests (tarjetas de solicitud)**
+## **[21 Ago 2026] Optimización móvil de /stock/fulfill-requests: responsive (solo móvil) + eliminación de input "Nota"**
 
 ### Objetivo alcanzado
-- Mejorar la legibilidad de `/stock/fulfill-requests` desde el navegador móvil: tras elegir almacén/ubicación origen y almacén destino, el listado filtrado de solicitudes a atender se muestra en tarjetas compactas.
+- Las mejoras de legibilidad de `/stock/fulfill-requests` (tarjetas compactas, grilla de ítems de 3 filas con scroll horizontal, y que los botones "Atender"/"Limpiar" queden al final con un solo scroll de página) **solo se aplican en vista móvil** (`useMediaQuery('(max-width: 767px)')`). En escritorio se conserva el diseño previo (tarjeta horizontal con ítems apilados a la derecha y la lista con scroll interno `max-h-60`).
+- Se eliminó el input "Nota (opcional)" del formulario principal para **todas las vistas** (estado `note`, su `Input` y su envío en el payload de `bulk-fulfill`). La nota de la *solicitud* (`request.note`) sigue mostrándose como ?? en cada tarjeta.
 
 ### `BulkFulfillRequestsPageSimple.tsx`
-- **Tarjeta de solicitud**: la columna izquierda (solicitante, # de solicitud, nota, fecha y ubicación destino) se apila en fuente pequeña y negrita; abajo se indica la cantidad de ítems (`N productos solicitados`).
-- **Ítems solicitados**: se muestran como recuadros en una grilla de hasta **3 filas** (`grid grid-flow-col` con filas adaptadas a la cantidad: 1?`grid-rows-1`, 2?`grid-rows-2`, ?3?`grid-rows-3`), de modo que con ?3 productos no hay espacios vacíos.
-- **Scroll horizontal confinado**: el scroll horizontal de los ítems vive en el **mismo bloque que ya tiene el scroll vertical** (la lista `max-h-60`, `overflow-auto`), no por tarjeta ni a nivel de página. Esto evita que el `<main>` (que ya es `overflow-auto`) ensanche todo el contenido en móvil — antes solo nav/footer conservaban el ancho.
+- **Detección de vista**: `const isMobile = useMediaQuery('(max-width: 767px)')`.
+- **Lista de solicitudes**: en móvil el contenedor crece sin `max-h` (un único scroll de página, botones al pie); en escritorio mantiene `max-h-60 overflow-y-auto`.
+- **Tarjeta de solicitud (móvil)**: columna izquierda (solicitante, # de solicitud, nota, fecha y ubicación destino) apilada en fuente pequeña y negrita; abajo la cantidad de ítems (`N productos solicitados`).
+- **Tarjeta de solicitud (escritorio)**: diseño horizontal original — info en columna a la izquierda e ítems apilados verticalmente a la derecha (`flex-1 text-xs ml-4`).
+- **Ítems solicitados (móvil)**: recuadros en grilla de hasta **3 filas** (`grid grid-flow-col` con filas adaptadas: 1?`grid-rows-1`, 2?`grid-rows-2`, ?3?`grid-rows-3`) con scroll horizontal confinado al bloque de ítems (`overflow-x-auto`), evitando que el `<main>` ensanche la página.
+- **Ítems solicitados (escritorio)**: lista vertical simple (un ítem por línea), sin grilla ni scroll horizontal.
+- Helper `renderRequestItems(items, variant)` centraliza el render de ítems para ambas variantes.
 
 ### Operación
 - TypeScript check OK en frontend (`npx tsc --noEmit`).
