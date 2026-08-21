@@ -4,6 +4,22 @@
 
 Este documento suma (a alto nivel) decisiones, hitos y cambios relevantes que se fueron incorporando al repositorio para llegar al estado actual del MVP.
 
+## **[21 Ago 2026] Ajustes finales de /stock/fulfill-requests (ítems móviles en 1 línea + cantidad en "Lo Solicitado")**
+
+### Objetivo alcanzado
+- En la vista móvil de "Solicitudes a atender", cada ítem solicitado se muestra en **una sola línea** dentro de su recuadro (se quitó el ancho fijo `w-44` y se agregó `whitespace-nowrap`; el scroll horizontal ya existente absorbe el desborde). Se mantiene la grilla de hasta 3 productos por columna.
+- En el modal "Lo Solicitado", debajo del nombre de cada producto ahora se muestra **`cantidad x presentación`**. Antes mostraba solo "x presentación" porque usaba `product.remaining` (inexistente); se corrigió a `product.remainingQuantity`.
+
+### `BulkFulfillRequestsPageSimple.tsx`
+- `renderRequestItems` (variante `mobile`): recuadro de ítem con `shrink-0 whitespace-nowrap` (sin `w-44`).
+- Modal "Lo Solicitado": `{product.remainingQuantity}x` en lugar de `{product.remaining}x`.
+
+### Operación
+- TypeScript check OK en frontend (`npx tsc --noEmit`).
+- Sin cambios de backend ni migraciones Prisma nuevas.
+
+---
+
 ## **[21 Ago 2026] Accesos rápidos móviles: menú compacto de "Accesos rápidos" (emoji + título, 2 filas)**
 
 ### Objetivo alcanzado

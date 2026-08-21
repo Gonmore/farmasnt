@@ -486,7 +486,7 @@ export function BulkFulfillRequestsPage() {
 
       if (variant === 'mobile') {
         return (
-          <div key={index} className={`w-44 shrink-0 rounded-md border border-slate-200 px-2 py-1 text-xs leading-tight dark:border-slate-700 ${item.remainingQuantity === 0 ? 'line-through text-slate-400 dark:text-slate-500' : 'text-slate-700 dark:text-slate-300'}`}>
+          <div key={index} className={`shrink-0 whitespace-nowrap rounded-md border border-slate-200 px-2 py-1 text-xs leading-tight dark:border-slate-700 ${item.remainingQuantity === 0 ? 'line-through text-slate-400 dark:text-slate-500' : 'text-slate-700 dark:text-slate-300'}`}>
             {remainingPresentationQuantity} {presentationText}{item.unitsPerPresentation ? ` (${item.unitsPerPresentation}u)` : ''} · {item.productName || 'Producto desconocido'}
           </div>
         )
@@ -950,9 +950,9 @@ export function BulkFulfillRequestsPage() {
                                </div>
                                <div className="mt-0.5 flex items-center justify-between gap-2 leading-tight">
                                  <div className="min-w-0">
-                                   <span className="font-bold text-xs text-slate-900 dark:text-slate-100">
-                                     {product.remaining}x
-                                   </span>{' '}
+                                    <span className="font-bold text-xs text-slate-900 dark:text-slate-100">
+                                      {product.remainingQuantity}x
+                                    </span>{' '}
                                    <span className="text-[11px] text-slate-600 dark:text-slate-400">{presentationText}</span>
                                  </div>
                                  <div
