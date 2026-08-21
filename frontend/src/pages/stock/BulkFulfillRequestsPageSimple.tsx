@@ -736,21 +736,23 @@ export function BulkFulfillRequestsPage() {
                           )}
                         </div>
 
-                        {/* Items solicitados: scroll horizontal, una línea por item */}
-                        <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
-                          {request.items.map((item: MovementRequestItem, index: number) => {
-                            const remainingPresentationQuantity = item.unitsPerPresentation && item.unitsPerPresentation > 0
-                              ? Math.ceil(item.remainingQuantity / item.unitsPerPresentation)
-                              : item.presentationQuantity || item.remainingQuantity
+                        {/* Items solicitados: grilla de 3 filas, scroll horizontal si hay más de 3 */}
+                        <div className="mt-2 overflow-x-auto pb-1">
+                          <div className="grid grid-flow-col grid-rows-3 gap-2">
+                            {request.items.map((item: MovementRequestItem, index: number) => {
+                              const remainingPresentationQuantity = item.unitsPerPresentation && item.unitsPerPresentation > 0
+                                ? Math.ceil(item.remainingQuantity / item.unitsPerPresentation)
+                                : item.presentationQuantity || item.remainingQuantity
 
-                            const presentationText = item.presentationName || 'Sin presentación'
+                              const presentationText = item.presentationName || 'Sin presentación'
 
-                            return (
-                              <div key={index} className={`shrink-0 whitespace-nowrap rounded-md border border-slate-200 px-2 py-1 text-xs dark:border-slate-700 ${item.remainingQuantity === 0 ? 'line-through text-slate-400 dark:text-slate-500' : 'text-slate-700 dark:text-slate-300'}`}>
-                                {remainingPresentationQuantity} {presentationText}{item.unitsPerPresentation ? ` (${item.unitsPerPresentation}u)` : ''} · {item.productName || 'Producto desconocido'}
-                              </div>
-                            )
-                          })}
+                              return (
+                                <div key={index} className={`w-44 shrink-0 rounded-md border border-slate-200 px-2 py-1 text-xs leading-tight dark:border-slate-700 ${item.remainingQuantity === 0 ? 'line-through text-slate-400 dark:text-slate-500' : 'text-slate-700 dark:text-slate-300'}`}>
+                                  {remainingPresentationQuantity} {presentationText}{item.unitsPerPresentation ? ` (${item.unitsPerPresentation}u)` : ''} · {item.productName || 'Producto desconocido'}
+                                </div>
+                              )
+                            })}
+                          </div>
                         </div>
 
                         <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
