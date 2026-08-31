@@ -1,6 +1,6 @@
 # Bitácora de desarrollo — PharmaFlow Bolivia (farmaSNT)
 
-> Última actualización: 21 Ago 2026
+> Última actualización: 31 Ago 2026
 
 Este documento suma (a alto nivel) decisiones, hitos y cambios relevantes que se fueron incorporando al repositorio para llegar al estado actual del MVP.
 
@@ -1631,6 +1631,30 @@ Tenant Admin (Clientes)
 - **Backend**: `POST /api/v1/stock/movement-requests/bulk-fulfill` acepta `toLocationId` opcional **por fulfillment**, resolviendo: fulfillment.toLocationId ? global ? req.toLocationId.
 - **`performFulfillment`** envía `toLocationId` por fulfillment desde `requestLocations[req.id]` o `req.toLocationId`.
 - **`getProductFulfillmentStatus`** ahora hace match por `productId`+`presentationId` (no por referencia) para soportar el listado dividido por solicitud.
-- `toLocationsQuery` se mantiene para poblar el dropdown (locations del warehouse destino).
+  - `toLocationsQuery` se mantiene para poblar el dropdown (locations del warehouse destino).
+
+---
+
+## **[31 Ago 2026] Fix: caracteres ñ y acentos en PDFs (fuente DejaVu Sans)**
+
+### Objetivo alcanzado
+- En todos los PDFs generados con jsPDF (cotización, nota de entrega, trazabilidad, picking/etiquetas, catálogo comercial, exportaciones genéricas) los caracteres `ñ`, `á`, `é`, `í`, `ó`, `ú`, `ü` y otros no ASCII se mostraban borrados o como cuadros vacíos.
+- La fuente por defecto `helvetica` de jsPDF carece de glifos Unicode. Además, `sanitizePdfText` en `quotePdf.ts` y `traceabilityPdf.ts` eliminaba explícitamente todos los caracteres no-ASCII (`/[^\x20-\x7E]/g`).
+
+### Frontend
+- **Nuevo utilitario `frontend/src/lib/pdfFonts.ts`**: exporta `PDF_FONT_FAMILY = 'DejaVuSans'` y `registerPdfFonts(pdf)` que carga los TTF de DejaVu Sans (normal y negrita) desde `public/fonts/`, los registra en el VFS de jsPDF y los asocia a la familia font.
+- **Fuente embebida**: copiados `DejaVuSans.ttf` y `DejaVuSans-Bold.ttf` a `frontend/public/fonts/`, importados del paquete `dejavu-fonts-ttf`.
+- **5 archivos PDF actualizados** para `await registerPdfFonts(pdf)` tras crear el jsPDF e importar `PDF_FONT_FAMILY`:
+  - `lib/exportPdf.ts` — reemplazado `'helvetica'` por `PDF_FONT_FAMILY` en header y footer.
+  - `lib/catalogPdf.tsx` — reemplazado `'helvetica'` por `PDF_FONT_FAMILY` en todos los `setFont`.
+  - `lib/quotePdf.ts` — `sanitizePdfText` ahora solo elimina caracteres de control (`\u0000-\u001f\u007f-\u009f`), preservando ñ y acentos; reemplazado `'helvetica'`.
+  - `lib/traceabilityPdf.ts` — mismo arreglo de `sanitizePdfText` y reemplazo de fuente.
+  - `lib/movementRequestDocsPdf.ts` — reemplazado `'helvetica'` por `PDF_FONT_FAMILY` en `exportPickingToPdf` y `exportLabelToPdf`; `exportLabelToPdf` cambió a `async` y sus 3 llamadores (`BulkTransferPage.tsx`, `BulkFulfillRequestsPage.tsx`, `StockReportsPage.tsx`) ahora usan `await`.
+
+### Operación
+- TypeScript check OK en frontend (`npx tsc --noEmit`).
+- `npm run build` OK en frontend.
+- Sin cambios de backend ni migraciones Prisma.
+
 
 

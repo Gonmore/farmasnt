@@ -149,7 +149,7 @@ export function BulkFulfillRequestsPage() {
                                 ? 'border-blue-300 bg-blue-50 dark:border-blue-700 dark:bg-blue-900/20'
                                 : 'border-slate-200 bg-white hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:hover:bg-slate-800/50'
                             }`}
-                            onClick={() => {
+                onClick={async () => {
                               setSelectedRequestId(r.id)
                               setSubmitError('')
                               setSubmitSuccess(null)
@@ -304,10 +304,10 @@ export function BulkFulfillRequestsPage() {
 
             <div className="flex flex-wrap gap-2">
               <Button
-                onClick={() => {
+                onClick={async () => {
                   if (!selectedRequest) return
 
-                  exportLabelToPdf({
+                  await exportLabelToPdf({
                     requestId: selectedRequest.id,
                     generatedAtIso: new Date().toISOString(),
                     fromWarehouseLabel: '—',

@@ -247,7 +247,7 @@ export function BulkTransferPage() {
 
       // Generate label PDF
       const country = tenant.branding?.country ?? 'BOLIVIA'
-      exportLabelToPdf({
+      await exportLabelToPdf({
         requestId: data.referenceId,
         generatedAtIso: new Date().toISOString(),
         fromWarehouseLabel: fromWarehouse?.city ? `${fromWarehouse.city}, ${country}` : country,

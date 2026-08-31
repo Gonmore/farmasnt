@@ -1,6 +1,7 @@
 import jsPDF from 'jspdf'
 import { formatMoney } from './numberFormat'
 import { formatPresentationLabel } from './productPresentation'
+import { registerPdfFonts, PDF_FONT_FAMILY } from './pdfFonts'
 
 export type QuotePdfItem = {
   sku: string
@@ -62,7 +63,7 @@ function money(n: number): string {
 }
 
 function sanitizePdfText(value: string): string {
-  return (value ?? '').replace(/[^\x20-\x7E]/g, '').trim()
+  return (value ?? '').replace(/[\u0000-\u001f\u007f-\u009f]/g, '').trim()
 }
 
 type TableAlign = 'left' | 'right' | 'center'
@@ -96,7 +97,7 @@ function prepareTableRow(pdf: jsPDF, columns: TableColumn[], values: string[]): 
 
 function drawTableHeader(pdf: jsPDF, columns: TableColumn[], startX: number, y: number) {
   let x = startX
-  pdf.setFont('helvetica', 'bold')
+  pdf.setFont(PDF_FONT_FAMILY, 'bold')
   pdf.setFontSize(9)
   columns.forEach((column) => {
     const textX = column.align === 'right' ? x + column.width - 1.5 : x + 1.5
@@ -108,7 +109,7 @@ function drawTableHeader(pdf: jsPDF, columns: TableColumn[], startX: number, y: 
 
 function drawPreparedRow(pdf: jsPDF, columns: TableColumn[], row: PreparedTableRow, startX: number, y: number) {
   let x = startX
-  pdf.setFont('helvetica', 'normal')
+  pdf.setFont(PDF_FONT_FAMILY, 'normal')
   pdf.setFontSize(9)
 
   columns.forEach((column, columnIndex) => {
@@ -131,6 +132,7 @@ function drawPreparedRow(pdf: jsPDF, columns: TableColumn[], row: PreparedTableR
 
 export async function exportQuoteToPDF(quoteData: QuotePdfData): Promise<void> {
   const pdf = new jsPDF('p', 'mm', 'letter')
+  await registerPdfFonts(pdf)
   const pageWidth = pdf.internal.pageSize.getWidth()
   const pageHeight = pdf.internal.pageSize.getHeight()
   const margin = 20
@@ -139,19 +141,19 @@ export async function exportQuoteToPDF(quoteData: QuotePdfData): Promise<void> {
   // Add watermark first (background)
   pdf.saveGraphicsState()
   pdf.setFontSize(70)
-  pdf.setFont('helvetica', 'bold')
+  pdf.setFont(PDF_FONT_FAMILY, 'bold')
   const centerX = pageWidth / 2 + 15 // Move to the right to respect margins
   const centerY = pageHeight / 2 + 20 // Move down a bit
   pdf.setTextColor(200, 220, 235) // Very light sky blue for watermark
   pdf.text(quoteData.quoteNumber, centerX, centerY, { 
     angle: 45,
-    align: 'center'
+    align: 'center',
   })
   pdf.restoreGraphicsState()
 
   // Title
   pdf.setFontSize(18)
-  pdf.setFont('helvetica', 'bold')
+  pdf.setFont(PDF_FONT_FAMILY, 'bold')
   pdf.text('COTIZACIÓN', pageWidth / 2, yPosition, { align: 'center' })
   yPosition += 15
 
@@ -160,12 +162,12 @@ export async function exportQuoteToPDF(quoteData: QuotePdfData): Promise<void> {
 
   // Left column: Company name and details
   pdf.setFontSize(12)
-  pdf.setFont('helvetica', 'bold')
+  pdf.setFont(PDF_FONT_FAMILY, 'bold')
   pdf.text(sanitizePdfText(quoteData.tenant.branding?.tenantName ?? 'Empresa'), margin, yPosition)
   yPosition += 8
 
   pdf.setFontSize(10)
-  pdf.setFont('helvetica', 'normal')
+  pdf.setFont(PDF_FONT_FAMILY, 'normal')
   pdf.text(`Cotización: ${sanitizePdfText(quoteData.quoteNumber)}`, margin, yPosition)
   yPosition += 6
   pdf.text(`Fecha: ${new Date().toLocaleDateString()}`, margin, yPosition)
@@ -208,7 +210,7 @@ export async function exportQuoteToPDF(quoteData: QuotePdfData): Promise<void> {
       console.warn('Failed to load logo for PDF:', error)
       // Fallback: draw a text placeholder for the logo
       pdf.setFontSize(12)
-      pdf.setFont('helvetica', 'bold')
+      pdf.setFont(PDF_FONT_FAMILY, 'bold')
       pdf.setTextColor(150, 150, 150) // Gray color
       const logoX = pageWidth - margin - 40 // Approximate space for logo
       pdf.text('[LOGO]', logoX, detailsStartY + 10)
@@ -259,7 +261,7 @@ export async function exportQuoteToPDF(quoteData: QuotePdfData): Promise<void> {
     yPosition = margin
   }
 
-  pdf.setFont('helvetica', 'bold')
+  pdf.setFont(PDF_FONT_FAMILY, 'bold')
   pdf.text(`Subtotal: ${money(quoteData.subtotal)} ${sanitizePdfText(quoteData.currency)}`, pageWidth - margin, yPosition, { align: 'right' })
   yPosition += 6
 
@@ -278,7 +280,7 @@ export async function exportQuoteToPDF(quoteData: QuotePdfData): Promise<void> {
   yPosition += 10
 
   pdf.setFontSize(9)
-  pdf.setFont('helvetica', 'normal')
+  pdf.setFont(PDF_FONT_FAMILY, 'normal')
   pdf.text(`Forma de pago: ${sanitizePdfText(quoteData.paymentMode)}`, margin, yPosition)
   yPosition += 5
   pdf.text(`Tiempo de entrega: ${sanitizePdfText(quoteData.deliveryDays)} día(s)`, margin, yPosition)
@@ -302,20 +304,21 @@ export async function exportQuoteToPDF(quoteData: QuotePdfData): Promise<void> {
 }
 
 export async function exportDeliveryNoteToPDF(deliveryData: DeliveryNotePdfData): Promise<void> {
-  const pdf = new jsPDF('p', 'mm', 'letter')
-  const pageWidth = pdf.internal.pageSize.getWidth()
-  const pageHeight = pdf.internal.pageSize.getHeight()
-  const margin = 20
-  let yPosition = margin
+   const pdf = new jsPDF('p', 'mm', 'letter')
+   await registerPdfFonts(pdf)
+   const pageWidth = pdf.internal.pageSize.getWidth()
+   const pageHeight = pdf.internal.pageSize.getHeight()
+   const margin = 20
+   let yPosition = margin
 
-  // Add watermark first (background)
-  pdf.saveGraphicsState()
-  pdf.setFontSize(70)
-  pdf.setFont('helvetica', 'bold')
-  const centerX = pageWidth / 2 + 15 // Move to the right to respect margins
-  const centerY = pageHeight / 2 + 20 // Move down a bit
-  pdf.setTextColor(200, 220, 235) // Very light sky blue for watermark
-  pdf.text(deliveryData.orderNumber, centerX, centerY, { 
+   // Add watermark first (background)
+   pdf.saveGraphicsState()
+   pdf.setFontSize(70)
+   pdf.setFont(PDF_FONT_FAMILY, 'bold')
+   const centerX = pageWidth / 2 + 15 // Move to the right to respect margins
+   const centerY = pageHeight / 2 + 20 // Move down a bit
+   pdf.setTextColor(200, 220, 235) // Very light sky blue for watermark
+   pdf.text(deliveryData.orderNumber, centerX, centerY, {
     angle: 45,
     align: 'center'
   })
@@ -323,7 +326,7 @@ export async function exportDeliveryNoteToPDF(deliveryData: DeliveryNotePdfData)
 
   // Title
   pdf.setFontSize(18)
-  pdf.setFont('helvetica', 'bold')
+  pdf.setFont(PDF_FONT_FAMILY, 'bold')
   pdf.text('NOTA DE ENTREGA', pageWidth / 2, yPosition, { align: 'center' })
   yPosition += 15
 
@@ -332,12 +335,12 @@ export async function exportDeliveryNoteToPDF(deliveryData: DeliveryNotePdfData)
 
   // Left column: Company name and details
   pdf.setFontSize(12)
-  pdf.setFont('helvetica', 'bold')
+  pdf.setFont(PDF_FONT_FAMILY, 'bold')
   pdf.text(sanitizePdfText(deliveryData.tenant.branding?.tenantName ?? 'Empresa'), margin, yPosition)
   yPosition += 8
 
   pdf.setFontSize(10)
-  pdf.setFont('helvetica', 'normal')
+  pdf.setFont(PDF_FONT_FAMILY, 'normal')
   pdf.text(`Orden: ${sanitizePdfText(deliveryData.orderNumber)}`, margin, yPosition)
   yPosition += 6
   pdf.text(`Fecha de entrega: ${sanitizePdfText(deliveryData.deliveryDate)}`, margin, yPosition)
@@ -374,7 +377,7 @@ export async function exportDeliveryNoteToPDF(deliveryData: DeliveryNotePdfData)
       console.warn('Failed to load logo for PDF:', error)
       // Fallback: draw a text placeholder for the logo
       pdf.setFontSize(12)
-      pdf.setFont('helvetica', 'bold')
+      pdf.setFont(PDF_FONT_FAMILY, 'bold')
       pdf.setTextColor(150, 150, 150) // Gray color
       const logoX = pageWidth - margin - 40 // Approximate space for logo
       pdf.text('[LOGO]', logoX, detailsStartY + 10)
@@ -433,7 +436,7 @@ export async function exportDeliveryNoteToPDF(deliveryData: DeliveryNotePdfData)
     .filter(Boolean)
   if (deliveryParts.length > 0) {
     pdf.setFontSize(9)
-    pdf.setFont('helvetica', 'normal')
+    pdf.setFont(PDF_FONT_FAMILY, 'normal')
     pdf.text(`Lugar de entrega: ${sanitizePdfText(deliveryParts.join(', '))}`, margin, yPosition)
     yPosition += 15
   }
@@ -450,13 +453,13 @@ export async function exportDeliveryNoteToPDF(deliveryData: DeliveryNotePdfData)
   // Signature line in left column
   pdf.line(margin + 5, yPosition + 15, margin + col1Width - 5, yPosition + 15)
   pdf.setFontSize(8)
-  pdf.setFont('helvetica', 'normal')
+  pdf.setFont(PDF_FONT_FAMILY, 'normal')
   pdf.text('Recibido por:', margin + 5, yPosition + 20)
   pdf.text('Fecha:', margin + 5, yPosition + 25)
 
   // Company seal in right column
   pdf.setFontSize(9)
-  pdf.setFont('helvetica', 'bold')
+  pdf.setFont(PDF_FONT_FAMILY, 'bold')
   const rightColumnCenter = margin + col1Width + (col2Width / 2)
   pdf.text('Sello de la empresa', rightColumnCenter, yPosition + 15, { align: 'center' })
 

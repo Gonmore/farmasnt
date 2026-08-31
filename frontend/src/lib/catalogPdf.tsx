@@ -4,6 +4,7 @@ import { formatMoney } from './numberFormat'
 import { formatPresentationLabel } from './productPresentation'
 import { getProductDisplayName } from './productName'
 import { sortProductsByDisplayName } from './productSorting'
+import { registerPdfFonts, PDF_FONT_FAMILY } from './pdfFonts'
 
 type CatalogPresentation = {
   id: string
@@ -265,7 +266,7 @@ function drawCard(
     pdf.setFillColor(PLACEHOLDER_BG[0], PLACEHOLDER_BG[1], PLACEHOLDER_BG[2])
     pdf.roundedRect(x + pad, cy, w - pad * 2, photoH, 2, 2, 'F')
     pdf.setTextColor(PLACEHOLDER_TEXT[0], PLACEHOLDER_TEXT[1], PLACEHOLDER_TEXT[2])
-    pdf.setFont('helvetica', 'normal')
+    pdf.setFont(PDF_FONT_FAMILY, 'normal')
     pdf.setFontSize(8)
     pdf.text('Sin imagen', x + w / 2, cy + photoH / 2 + 2, { align: 'center' })
   }
@@ -273,7 +274,7 @@ function drawCard(
 
   // Name (centrado, 11pt)
   pdf.setTextColor(TEXT_DARK[0], TEXT_DARK[1], TEXT_DARK[2])
-  pdf.setFont('helvetica', 'bold')
+  pdf.setFont(PDF_FONT_FAMILY, 'bold')
   pdf.setFontSize(11)
   const nameLines = pdf.splitTextToSize(name, w - pad * 2).slice(0, 2)
   pdf.text(nameLines, x + w / 2, cy, { align: 'center' })
@@ -282,7 +283,7 @@ function drawCard(
   // Description (extended only): hasta 5 líneas, con "..." si se corta.
   if (extended && product.description) {
     pdf.setTextColor(TEXT_MUTED[0], TEXT_MUTED[1], TEXT_MUTED[2])
-    pdf.setFont('helvetica', 'normal')
+    pdf.setFont(PDF_FONT_FAMILY, 'normal')
     pdf.setFontSize(8)
     const maxDesc = 5
     const allDescLines = pdf.splitTextToSize(product.description, w - pad * 2)
@@ -300,12 +301,12 @@ function drawCard(
   if (presList.length === 0) {
     // Sin presentaciones: se muestra el precio de la unidad base.
     pdf.setTextColor(TEXT_MUTED[0], TEXT_MUTED[1], TEXT_MUTED[2])
-    pdf.setFont('helvetica', 'bold')
+    pdf.setFont(PDF_FONT_FAMILY, 'bold')
     pdf.setFontSize(8)
     pdf.text('Unidad', x + pad, cy)
     const basePrice = toNumberOrNull(product.price)
     pdf.setTextColor(PRICE_GREEN[0], PRICE_GREEN[1], PRICE_GREEN[2])
-    pdf.setFont('helvetica', 'normal')
+    pdf.setFont(PDF_FONT_FAMILY, 'normal')
     const priceStr = basePrice !== null ? `${formatMoney(basePrice)} ${currency}` : '—'
     pdf.text(priceStr, x + w - pad, cy, { align: 'right' })
     cy += 4.2
@@ -320,12 +321,12 @@ function drawCard(
       const labelText = pdf.splitTextToSize(label, labelW)[0]
 
       pdf.setTextColor(TEXT_MUTED[0], TEXT_MUTED[1], TEXT_MUTED[2])
-      pdf.setFont('helvetica', 'bold')
+      pdf.setFont(PDF_FONT_FAMILY, 'bold')
       pdf.setFontSize(8)
       pdf.text(labelText, x + pad, cy)
 
       pdf.setTextColor(PRICE_GREEN[0], PRICE_GREEN[1], PRICE_GREEN[2])
-      pdf.setFont('helvetica', 'normal')
+      pdf.setFont(PDF_FONT_FAMILY, 'normal')
       const priceStr = presPrice !== null ? `${formatMoney(presPrice)} ${currency}` : '—'
       pdf.text(priceStr, x + w - pad, cy, { align: 'right' })
       cy += 4.2
@@ -353,6 +354,7 @@ export async function exportCommercialCatalogPdf(opts: ExportCatalogOptions): Pr
   const generatedAt = formatGeneratedDate(new Date())
 
   const pdf = new jsPDF('p', 'mm', 'letter')
+  await registerPdfFonts(pdf)
   const pageW = pdf.internal.pageSize.getWidth()
   const pageH = pdf.internal.pageSize.getHeight()
   const margin = 16
@@ -392,23 +394,23 @@ export async function exportCommercialCatalogPdf(opts: ExportCatalogOptions): Pr
     }
     const textX = logoImage ? logoX + logoSize + 4 : logoX
     pdf.setTextColor(255, 255, 255)
-    pdf.setFont('helvetica', 'bold')
+    pdf.setFont(PDF_FONT_FAMILY, 'bold')
     pdf.setFontSize(14)
     pdf.text('Catálogo Comercial', textX, isFirst ? 12 : 10)
-    pdf.setFont('helvetica', 'normal')
+    pdf.setFont(PDF_FONT_FAMILY, 'normal')
     pdf.setFontSize(9)
     const sub = opts.extended
       ? 'Ficha completa de productos con descripción'
       : 'Brochure de productos y precios'
     pdf.text(sub, textX, isFirst ? 18.5 : 15.5)
     // Fecha de generación (derecha del header)
-    pdf.setFont('helvetica', 'normal')
+    pdf.setFont(PDF_FONT_FAMILY, 'normal')
     pdf.setFontSize(8)
     pdf.text(generatedAt, pageW - margin, isFirst ? 12 : 10, { align: 'right' })
   }
 
   const drawFooter = (pageNum: number, totalPages: number) => {
-    pdf.setFont('helvetica', 'normal')
+    pdf.setFont(PDF_FONT_FAMILY, 'normal')
     pdf.setFontSize(7)
     pdf.setTextColor(HEADER_COLOR[0], HEADER_COLOR[1], HEADER_COLOR[2])
     const baseY = footerY

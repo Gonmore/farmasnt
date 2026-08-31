@@ -1,7 +1,7 @@
 ﻿# Architecture — PharmaFlow Bolivia (farmaSNT)
 
 > Fuente de verdad para la estructura del proyecto y el mapeo frontend ↔ backend.  
-> Última actualización: 21 Ago 2026
+> Última actualización: 31 Ago 2026
 
 ---
 
@@ -89,6 +89,8 @@ frontend/src/
 │   ├── socket.ts              # Conexión Socket.io
 │   ├── exportPdf.ts           # Exportaciones PDF (jsPDF + html2canvas)
 │   ├── exportXlsx.ts          # Exportaciones Excel
+│   ├── pdfFonts.ts            # Font registration (DejaVu Sans) para jsPDF
+│   │                            # — `PDF_FONT_FAMILY`, `registerPdfFonts(pdf)`
 │   ├── numberFormat.ts        # Formateo numérico con thousandSeparator
 │   ├── productName.ts         # Formateo presentaciones/cantidades
 │   ├── productSorting.ts      # Orden alfabético por nombre

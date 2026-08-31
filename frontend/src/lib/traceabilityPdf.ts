@@ -1,4 +1,5 @@
 import jsPDF from 'jspdf'
+import { registerPdfFonts, PDF_FONT_FAMILY } from './pdfFonts'
 
 export type TraceabilityPdfItem = {
   productLabel: string
@@ -36,7 +37,7 @@ export type TraceabilityPdfData = {
 }
 
 function sanitizePdfText(value: string): string {
-  return (value ?? '').replace(/[^\x20-\x7E]/g, '').trim()
+  return (value ?? '').replace(/[\u0000-\u001f\u007f-\u009f]/g, '').trim()
 }
 
 function loadLogoImage(logoUrl?: string | null): Promise<string | null> {
@@ -85,7 +86,7 @@ function prepareRow(pdf: jsPDF, columns: TableColumn[], values: string[]): Prepa
 
 function drawTableHeader(pdf: jsPDF, columns: TableColumn[], startX: number, y: number) {
   let x = startX
-  pdf.setFont('helvetica', 'bold')
+  pdf.setFont(PDF_FONT_FAMILY, 'bold')
   pdf.setFontSize(9)
   columns.forEach((col) => {
     const textX = col.align === 'right' ? x + col.width - 1.5 : x + 1.5
@@ -97,7 +98,7 @@ function drawTableHeader(pdf: jsPDF, columns: TableColumn[], startX: number, y: 
 
 function drawPreparedRow(pdf: jsPDF, columns: TableColumn[], row: PreparedRow, startX: number, y: number) {
   let x = startX
-  pdf.setFont('helvetica', 'normal')
+  pdf.setFont(PDF_FONT_FAMILY, 'normal')
   pdf.setFontSize(9)
   columns.forEach((col, ci) => {
     const lines = row.linesByColumn[ci] ?? ['—']
@@ -112,6 +113,7 @@ function drawPreparedRow(pdf: jsPDF, columns: TableColumn[], row: PreparedRow, s
 
 export async function exportTraceabilityToPDF(data: TraceabilityPdfData): Promise<void> {
   const pdf = new jsPDF('p', 'mm', 'letter')
+  await registerPdfFonts(pdf)
   const pageWidth = pdf.internal.pageSize.getWidth()
   const pageHeight = pdf.internal.pageSize.getHeight()
   const margin = 20
@@ -120,7 +122,7 @@ export async function exportTraceabilityToPDF(data: TraceabilityPdfData): Promis
   // Watermark with request code
   pdf.saveGraphicsState()
   pdf.setFontSize(70)
-  pdf.setFont('helvetica', 'bold')
+  pdf.setFont(PDF_FONT_FAMILY, 'bold')
   pdf.setTextColor(200, 220, 235)
   pdf.text(sanitizePdfText(data.code), pageWidth / 2 + 15, pageHeight / 2 + 20, { angle: 45, align: 'center' })
   pdf.restoreGraphicsState()
@@ -140,16 +142,16 @@ export async function exportTraceabilityToPDF(data: TraceabilityPdfData): Promis
 
   // Title (centered, next to logo row)
   pdf.setFontSize(16)
-  pdf.setFont('helvetica', 'bold')
+  pdf.setFont(PDF_FONT_FAMILY, 'bold')
   pdf.text('TRAZABILIDAD DE SOLICITUD', pageWidth / 2, y + 8, { align: 'center' })
   y += logoData ? 30 : 16
 
   // Header info block
   pdf.setFontSize(10)
-  pdf.setFont('helvetica', 'bold')
+  pdf.setFont(PDF_FONT_FAMILY, 'bold')
   pdf.text(sanitizePdfText(data.tenantName), margin, y)
   y += 6
-  pdf.setFont('helvetica', 'normal')
+  pdf.setFont(PDF_FONT_FAMILY, 'normal')
   pdf.text(`Código: ${sanitizePdfText(data.code)}`, margin, y)
   y += 5
   pdf.text(`Ruta: ${sanitizePdfText(data.route)}`, margin, y)
@@ -176,7 +178,7 @@ export async function exportTraceabilityToPDF(data: TraceabilityPdfData): Promis
   y += 4
 
   // Items table
-  pdf.setFont('helvetica', 'bold')
+  pdf.setFont(PDF_FONT_FAMILY, 'bold')
   pdf.setFontSize(11)
   pdf.text('Ítems solicitados', margin, y)
   y += 6
@@ -192,7 +194,7 @@ export async function exportTraceabilityToPDF(data: TraceabilityPdfData): Promis
   y += 6
 
   if (data.items.length === 0) {
-    pdf.setFont('helvetica', 'normal')
+    pdf.setFont(PDF_FONT_FAMILY, 'normal')
     pdf.setFontSize(9)
     pdf.text('Sin ítems.', margin, y)
     y += 6
@@ -218,11 +220,11 @@ export async function exportTraceabilityToPDF(data: TraceabilityPdfData): Promis
   y += 6
 
   // Timeline
-  pdf.setFont('helvetica', 'bold')
+  pdf.setFont(PDF_FONT_FAMILY, 'bold')
   pdf.setFontSize(11)
   pdf.text('Timeline', margin, y)
   y += 6
-  pdf.setFont('helvetica', 'normal')
+  pdf.setFont(PDF_FONT_FAMILY, 'normal')
   pdf.setFontSize(9)
   data.timeline.forEach((step) => {
     const row = prepareRow(pdf, [{ header: '', width: tableWidth }], [step])
@@ -237,7 +239,7 @@ export async function exportTraceabilityToPDF(data: TraceabilityPdfData): Promis
   y += 4
 
   // Shipments
-  pdf.setFont('helvetica', 'bold')
+  pdf.setFont(PDF_FONT_FAMILY, 'bold')
   pdf.setFontSize(11)
   pdf.text('Envíos', margin, y)
   y += 6
@@ -255,7 +257,7 @@ export async function exportTraceabilityToPDF(data: TraceabilityPdfData): Promis
   y += 6
 
   if (data.shipments.length === 0) {
-    pdf.setFont('helvetica', 'normal')
+    pdf.setFont(PDF_FONT_FAMILY, 'normal')
     pdf.setFontSize(9)
     pdf.text('Sin envíos.', margin, y)
     y += 6
@@ -297,7 +299,7 @@ export async function exportTraceabilityToPDF(data: TraceabilityPdfData): Promis
   pdf.line(margin + 5, y + 16, margin + sigWidth - 5, y + 16)
   pdf.line(margin + sigWidth + 5, y + 16, margin + sigWidth + sigWidth - 5, y + 16)
 
-  pdf.setFont('helvetica', 'normal')
+  pdf.setFont(PDF_FONT_FAMILY, 'normal')
   pdf.setFontSize(8)
   const requesterName = sanitizePdfText(data.requestedByName ?? '')
   const attenderName = sanitizePdfText(data.fulfilledByName ?? '')

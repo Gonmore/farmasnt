@@ -2823,7 +2823,7 @@ export function StockReportsPage() {
                       <Button size="sm" variant="outline" disabled={!canExportPicking} onClick={onExportPicking}>
                         Exportar picking (PDF)
                       </Button>
-                      <Button size="sm" variant="outline" onClick={() => {
+                      <Button size="sm" variant="outline" onClick={async () => {
                         const country = tenant.branding?.country ?? 'BOLIVIA'
                         const destinationCity = (d.request.warehouse?.city ?? d.request.requestedCity ?? '').trim()
                         const destination = destinationCity ? `${destinationCity}, ${country}` : country
@@ -2832,7 +2832,7 @@ export function StockReportsPage() {
                         const fromCity = (sentLines.find((l) => (l.fromLocation?.warehouse?.city ?? '').trim())?.fromLocation?.warehouse?.city ?? '').trim()
                         const origin = fromCity ? `${fromCity}, ${country}` : country
                         
-                        exportLabelToPdf({
+                         await exportLabelToPdf({
                           requestId: d.request.id,
                           generatedAtIso: new Date().toISOString(),
                           fromWarehouseLabel: origin,
@@ -3418,7 +3418,7 @@ export function StockReportsPage() {
                             icon={'🗑️'}
                             variant="danger"
                             loading={deleteScheduleMutation.isPending}
-                            onClick={() => {
+                       onClick={async () => {
                               if (window.confirm('¿Eliminar este envío programado?')) deleteScheduleMutation.mutate(r.id)
                             }}
                           />

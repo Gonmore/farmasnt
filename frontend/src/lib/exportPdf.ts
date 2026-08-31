@@ -2,6 +2,7 @@ import html2canvas from 'html2canvas'
 import jsPDF from 'jspdf'
 import type { ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
+import { registerPdfFonts, PDF_FONT_FAMILY } from './pdfFonts'
 
 type PdfOptions = {
   title?: string
@@ -113,8 +114,9 @@ export async function pdfBlobFromElement(el: HTMLElement, opts?: PdfOptions): Pr
   if (wasDark) htmlEl.classList.add('dark')
   styleTag.remove()
 
-  // Usar tamaño carta (Letter: 215.9mm x 279.4mm)
-  const pdf = new jsPDF('p', 'mm', 'letter')
+   // Usar tamaño carta (Letter: 215.9mm x 279.4mm)
+   const pdf = new jsPDF('p', 'mm', 'letter')
+   await registerPdfFonts(pdf)
 
   const pageWidth = pdf.internal.pageSize.getWidth()
   const pageHeight = pdf.internal.pageSize.getHeight()
@@ -146,20 +148,20 @@ export async function pdfBlobFromElement(el: HTMLElement, opts?: PdfOptions): Pr
 
   // Título del reporte
   pdf.setTextColor(255, 255, 255)
-  pdf.setFont('helvetica', 'bold')
+  pdf.setFont(PDF_FONT_FAMILY, 'bold')
   pdf.setFontSize(17)
   const title = opts?.title ?? 'Reporte'
   pdf.text(title, margin + logoWidth, 15)
 
   // Subtítulo
   if (opts?.subtitle) {
-    pdf.setFont('helvetica', 'normal')
+    pdf.setFont(PDF_FONT_FAMILY, 'normal')
     pdf.setFontSize(11)
     pdf.text(opts.subtitle, margin + logoWidth, 22)
   }
 
   // Información de la empresa y fecha
-  pdf.setFont('helvetica', 'normal')
+  pdf.setFont(PDF_FONT_FAMILY, 'normal')
   pdf.setFontSize(9)
   const companyName = opts?.companyName ?? ''
   const generatedDate = opts?.generatedDate ?? new Date().toLocaleDateString('es-ES', {
@@ -219,11 +221,11 @@ export async function pdfBlobFromElement(el: HTMLElement, opts?: PdfOptions): Pr
     pdf.rect(0, 0, pageWidth, miniHeaderHeight, 'F')
 
     pdf.setTextColor(255, 255, 255)
-    pdf.setFont('helvetica', 'bold')
+    pdf.setFont(PDF_FONT_FAMILY, 'bold')
     pdf.setFontSize(14)
     pdf.text(title, margin, 12)
 
-    pdf.setFont('helvetica', 'normal')
+    pdf.setFont(PDF_FONT_FAMILY, 'normal')
     pdf.setFontSize(9)
     pdf.text(`Pág. ${pageNumber}`, pageWidth - margin - 20, 12)
 
@@ -276,7 +278,7 @@ async function addFooter(pdf: jsPDF, pageNumber: number, pageWidth: number, page
   const footerY = pageHeight - 15  // Más arriba para respetar margen
   
   // Texto "Powered by"
-  pdf.setFont('helvetica', 'normal')
+  pdf.setFont(PDF_FONT_FAMILY, 'normal')
   pdf.setFontSize(8)
   pdf.setTextColor(100, 100, 100)
   

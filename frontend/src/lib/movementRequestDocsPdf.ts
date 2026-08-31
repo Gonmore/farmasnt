@@ -1,6 +1,7 @@
 import jsPDF from 'jspdf'
 import { formatDateOnlyUtc } from './date'
 import { formatInteger, formatNumber } from './numberFormat'
+import { registerPdfFonts, PDF_FONT_FAMILY } from './pdfFonts'
 
 export type PickingPdfRequestedLine = {
   productLabel: string
@@ -101,6 +102,7 @@ export async function exportPickingToPdf(
   options?: PickingPdfOptions,
 ): Promise<void> {
   const pdf = new jsPDF('p', 'mm', 'letter')
+  await registerPdfFonts(pdf)
   const pageWidth = pdf.internal.pageSize.getWidth()
   const pageHeight = pdf.internal.pageSize.getHeight()
 
@@ -139,13 +141,13 @@ export async function exportPickingToPdf(
     }
 
   const header = () => {
-    pdf.setFont('helvetica', 'bold')
+    pdf.setFont(PDF_FONT_FAMILY, 'bold')
     pdf.setFontSize(18)
     pdf.text(title, pageWidth / 2, margin, { align: 'center' })
 
     tryDrawLogo()
 
-    pdf.setFont('helvetica', 'normal')
+    pdf.setFont(PDF_FONT_FAMILY, 'normal')
     pdf.setFontSize(10)
 
     const dateStr = new Date(meta.generatedAtIso).toLocaleString()
@@ -176,10 +178,10 @@ export async function exportPickingToPdf(
   }
 
   const drawSectionTitle = (label: string, y: number) => {
-    pdf.setFont('helvetica', 'bold')
+    pdf.setFont(PDF_FONT_FAMILY, 'bold')
     pdf.setFontSize(11)
     pdf.text(label, margin, y)
-    pdf.setFont('helvetica', 'normal')
+    pdf.setFont(PDF_FONT_FAMILY, 'normal')
     return y + 6
   }
 
@@ -192,7 +194,7 @@ export async function exportPickingToPdf(
     const labelY = signatureLineY + 5
     const nameY = labelY + 7
 
-    pdf.setFont('helvetica', 'normal')
+    pdf.setFont(PDF_FONT_FAMILY, 'normal')
     pdf.setFontSize(9)
 
     labels.forEach((label, index) => {
@@ -218,7 +220,7 @@ export async function exportPickingToPdf(
     const colW = [90, 25, pageWidth - margin * 2 - 90 - 25]
     const headers = ['Producto', 'Cant', 'Presentación']
 
-    pdf.setFont('helvetica', 'bold')
+    pdf.setFont(PDF_FONT_FAMILY, 'bold')
     pdf.setFontSize(tableFontSize)
     headers.forEach((h, i) => {
       const x = margin + (i === 0 ? 0 : colW.slice(0, i).reduce((a, b) => a + b, 0))
@@ -227,7 +229,7 @@ export async function exportPickingToPdf(
     y += 5
     pdf.line(margin, y, pageWidth - margin, y)
     y += 4
-    pdf.setFont('helvetica', 'normal')
+    pdf.setFont(PDF_FONT_FAMILY, 'normal')
     pdf.setFontSize(tableFontSize)
 
     for (const it of requested) {
@@ -281,7 +283,7 @@ export async function exportPickingToPdf(
   })
 
   const drawSentTableHeader = (yy: number) => {
-    pdf.setFont('helvetica', 'bold')
+    pdf.setFont(PDF_FONT_FAMILY, 'bold')
     pdf.setFontSize(tableFontSize)
     pdf.text('Producto', x.prod, yy)
     pdf.text('Mov', x.mov, yy)
@@ -295,7 +297,7 @@ export async function exportPickingToPdf(
   }
 
   y = drawSentTableHeader(y)
-  pdf.setFont('helvetica', 'normal')
+  pdf.setFont(PDF_FONT_FAMILY, 'normal')
   pdf.setFontSize(tableFontSize)
 
   for (const line of sorted) {
@@ -328,9 +330,10 @@ export async function exportPickingToPdf(
   savePdf(pdf, `picking-${sanitizePdfText(meta.requestId)}.pdf`)
 }
 
-export function exportLabelToPdf(data: LabelPdfData): void {
+export async function exportLabelToPdf(data: LabelPdfData): Promise<void> {
   // Hoja carta horizontal
   const pdf = new jsPDF('l', 'mm', 'letter')
+  await registerPdfFonts(pdf)
   const w = pdf.internal.pageSize.getWidth()
   const h = pdf.internal.pageSize.getHeight()
   const frameMargin = 20 // Más pequeño
@@ -354,7 +357,7 @@ export function exportLabelToPdf(data: LabelPdfData): void {
 
   // DESTINO (arriba izquierda, fuente más grande)
   let y = frameY + 16
-  pdf.setFont('helvetica', 'bold')
+  pdf.setFont(PDF_FONT_FAMILY, 'bold')
   pdf.setFontSize(16)
   pdf.text('Para:', leftX, y)
 
@@ -362,7 +365,7 @@ export function exportLabelToPdf(data: LabelPdfData): void {
   const paraW = frameX + frameW - innerPad - paraX
   pdf.line(paraX, y + 2, paraX + paraW, y + 2)
   if (recipient) {
-    pdf.setFont('helvetica', 'bold')
+    pdf.setFont(PDF_FONT_FAMILY, 'bold')
     pdf.setFontSize(18)
     const recipientText = sanitizePdfText(recipient)
     const recipientLines = pdf.splitTextToSize(recipientText, paraW - 4)
@@ -370,14 +373,14 @@ export function exportLabelToPdf(data: LabelPdfData): void {
   }
 
   y += 20
-  pdf.setFont('helvetica', 'bold')
+  pdf.setFont(PDF_FONT_FAMILY, 'bold')
   pdf.setFontSize(16)
   pdf.text('C.I.:', leftX, y)
   const ciX = leftX + 22
   pdf.line(ciX, y + 2, ciX + 90, y + 2)
 
   y += 20
-  pdf.setFont('helvetica', 'bold')
+  pdf.setFont(PDF_FONT_FAMILY, 'bold')
   pdf.setFontSize(16)
   pdf.text('Destino:', leftX, y)
   pdf.setFontSize(18)
@@ -391,20 +394,20 @@ export function exportLabelToPdf(data: LabelPdfData): void {
   const originX = Math.max(leftX, rightX - originBlockW)
   let oy = frameY + frameH - 48
 
-  pdf.setFont('helvetica', 'bold')
+  pdf.setFont(PDF_FONT_FAMILY, 'bold')
   pdf.setFontSize(12)
   pdf.text('De:', originX, oy)
   const deX = originX + 12
   pdf.line(deX, oy + 1.6, originX + originBlockW, oy + 1.6)
   if (sender) {
-    pdf.setFont('helvetica', 'bold')
+    pdf.setFont(PDF_FONT_FAMILY, 'bold')
     const senderText = sanitizePdfText(sender)
     const senderLines = pdf.splitTextToSize(senderText, originBlockW - 14)
     pdf.text(senderLines, deX + 2, oy)
   }
 
   oy += 10
-  pdf.setFont('helvetica', 'bold')
+  pdf.setFont(PDF_FONT_FAMILY, 'bold')
   pdf.text(origen || '—', originX + 12, oy)
 
   savePdf(pdf, `rotulo-${sanitizePdfText(data.requestId)}.pdf`)
