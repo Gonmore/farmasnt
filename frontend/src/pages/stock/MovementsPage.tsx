@@ -495,7 +495,11 @@ export function MovementsPage() {
     enabled: !!auth.accessToken && !!requestWarehouseId,
   })
 
-  // Preseleccionar sucursal para administradores de sucursal
+   const activeRequestLocations = useMemo(() => {
+     return (requestLocationsQuery.data?.items ?? []).filter((l) => l.isActive)
+   }, [requestLocationsQuery.data?.items])
+
+   // Preseleccionar sucursal para administradores de sucursal
   useEffect(() => {
     if (!showCreateRequestModal || editingRequestId) return
     const isBranchScoped = permissions.hasPermission('scope:branch') && !permissions.isTenantAdmin
@@ -2514,20 +2518,25 @@ export function MovementsPage() {
           />
 
           {requestWarehouseId && (
-            <Select
-              label="Sub-almacén destino"
-              value={requestLocationId}
-              onChange={(e) => setRequestLocationId(e.target.value)}
-              options={[
-                { value: '', label: 'Selecciona un sub-almacén' },
-                ...(requestLocationsQuery.data?.items ?? [])
-                  .filter((l) => l.isActive)
-                  .map((l) => ({ value: l.id, label: l.code })),
-              ]}
-              disabled={requestLocationsQuery.isLoading}
-              error={requestLocationsQuery.isError ? 'Error cargando sub-almacenes' : undefined}
-            />
-          )}
+             <Select
+               label="Sub-almacén destino"
+               value={requestLocationId}
+               onChange={(e) => setRequestLocationId(e.target.value)}
+               options={[
+                 { value: '', label: 'Selecciona un sub-almacén' },
+                 ...activeRequestLocations.map((l) => ({ value: l.id, label: l.code })),
+               ]}
+               disabled={requestLocationsQuery.isLoading}
+               required={activeRequestLocations.length > 0}
+               error={
+                 requestLocationsQuery.isError
+                   ? 'Error cargando sub-almacenes'
+                   : activeRequestLocations.length > 0 && !requestLocationId
+                     ? 'Seleccioná un sub-almacén destino'
+                     : undefined
+               }
+             />
+           )}
 
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
@@ -2762,7 +2771,11 @@ export function MovementsPage() {
               type="submit"
               variant="primary"
               loading={createRequestMutation.isPending}
-              disabled={!requestWarehouseId || requestItems.length === 0}
+               disabled={
+                 !requestWarehouseId ||
+                 requestItems.length === 0 ||
+                 (activeRequestLocations.length > 0 && !requestLocationId)
+               }
             >
               {editingRequestId ? 'Guardar cambios' : 'Crear solicitud'}
             </Button>

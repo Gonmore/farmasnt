@@ -453,10 +453,16 @@ export function BulkFulfillRequestsPage() {
         // Restamos lo asignado para que la siguiente presentación (si la hay) use lo restante
         productPool.set(product.productId, pool - allocated)
 
-        const status: 'complete' | 'partial' | 'unattended' =
-          allocated >= required ? 'complete' : allocated > 0 ? 'partial' : 'unattended'
+        const status: 'complete' | 'partial' | 'unattended' | 'over' =
+          pool > required
+            ? 'over'
+            : allocated >= required
+              ? 'complete'
+              : allocated > 0
+                ? 'partial'
+                : 'unattended'
 
-        return { product, selectedUnits: allocated, required, status }
+        return { product, selectedUnits: allocated, selectedPool: pool, required, status }
       })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requestedProducts, batchSelections, availableBatches])
@@ -466,7 +472,7 @@ export function BulkFulfillRequestsPage() {
       s.product.productId === product.productId && 
       s.product.presentationId === product.presentationId
     )
-    return statusItem?.status === 'complete'
+    return statusItem?.status === 'complete' || statusItem?.status === 'over'
   }
 
   const isPartialFulfillment = useMemo(
@@ -644,7 +650,6 @@ export function BulkFulfillRequestsPage() {
     <MainLayout navGroups={navGroups}>
       <PageContainer title="✅ Enviar solicitudes">
         <MovementQuickActions currentPath="/stock/fulfill-requests" />
-        <div className="mb-4 text-sm text-slate-700 dark:text-slate-300">Envía stock a solicitudes OPEN desde un almacén origen a un almacén destino.</div>
 
         <div className="grid gap-4">
           <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
@@ -1213,22 +1218,23 @@ export function BulkFulfillRequestsPage() {
       <Modal
         isOpen={showPartialWarning}
         onClose={() => setShowPartialWarning(false)}
-        title="⚠️ Atención parcial detectada"
+        title="⚠️ Atención parcial o exceso detectado"
         maxWidth="md"
       >
         <div className="space-y-4">
           <p className="text-sm text-slate-600 dark:text-slate-400">
-            Algunos ítems no se cubrirán completamente. Revisá el detalle antes de confirmar:
+            Revisá el detalle antes de confirmar. Algunos ítems pueden estar incompletos o con exceso:
           </p>
 
           <ul className="space-y-2">
-            {fulfillmentItemStatuses.map(({ product, selectedUnits, required, status }) => {
+            {fulfillmentItemStatuses.map(({ product, selectedUnits, selectedPool, required, status }) => {
               const unitsPer =
                 product.unitsPerPresentation && product.unitsPerPresentation > 0
                   ? product.unitsPerPresentation
                   : 1
+              const displayUnits = status === 'over' ? selectedPool : selectedUnits
               const selectedCount =
-                unitsPer > 1 ? Math.floor(selectedUnits / unitsPer) : selectedUnits
+                unitsPer > 1 ? Math.floor(displayUnits / unitsPer) : displayUnits
               const requiredCount =
                 unitsPer > 1 ? Math.ceil(required / unitsPer) : required
               const presentationLabel =
@@ -1243,7 +1249,7 @@ export function BulkFulfillRequestsPage() {
                   className={`flex items-start gap-3 rounded-md border px-3 py-2.5 ${
                     status === 'complete'
                       ? 'border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-900/20'
-                      : status === 'partial'
+                      : status === 'partial' || status === 'over'
                         ? 'border-yellow-200 bg-yellow-50 dark:border-yellow-800 dark:bg-yellow-900/20'
                         : 'border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-900/20'
                   }`}
@@ -1252,12 +1258,12 @@ export function BulkFulfillRequestsPage() {
                     className={`mt-0.5 text-base font-bold ${
                       status === 'complete'
                         ? 'text-green-600 dark:text-green-400'
-                        : status === 'partial'
-                          ? 'text-yellow-600 dark:text-yellow-400'
-                          : 'text-red-600 dark:text-red-400'
+                      : status === 'partial' || status === 'over'
+                        ? 'text-yellow-600 dark:text-yellow-400'
+                      : 'text-red-600 dark:text-red-400'
                     }`}
                   >
-                    {status === 'complete' ? '✓' : status === 'partial' ? '⚠' : '✗'}
+                    {status === 'complete' ? '✓' : status === 'partial' || status === 'over' ? '⚠' : '✗'}
                   </span>
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-medium text-slate-900 dark:text-slate-100">
@@ -1267,13 +1273,15 @@ export function BulkFulfillRequestsPage() {
                       className={`text-xs ${
                         status === 'complete'
                           ? 'text-green-700 dark:text-green-400'
-                          : status === 'partial'
-                            ? 'text-yellow-700 dark:text-yellow-400'
-                            : 'text-red-700 dark:text-red-400'
+                        : status === 'partial' || status === 'over'
+                          ? 'text-yellow-700 dark:text-yellow-400'
+                        : 'text-red-700 dark:text-red-400'
                       }`}
                     >
                       {status === 'complete'
                         ? `Completo — ${selectedCount}/${requiredCount} ${presentationLabel}`
+                        : status === 'over'
+                          ? `Exceso — seleccionaste ${selectedCount}/${requiredCount} ${presentationLabel}`
                         : status === 'partial'
                           ? `Parcial — ${selectedCount}/${requiredCount} ${presentationLabel}`
                           : `No atendido — 0/${requiredCount} ${presentationLabel}`}
