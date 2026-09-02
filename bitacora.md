@@ -1,6 +1,6 @@
 # Bitácora de desarrollo — PharmaFlow Bolivia (farmaSNT)
 
-> Última actualización: 31 Ago 2026
+> Última actualización: 02 Sep 2026
 
 Este documento suma (a alto nivel) decisiones, hitos y cambios relevantes que se fueron incorporando al repositorio para llegar al estado actual del MVP.
 
@@ -1656,5 +1656,44 @@ Tenant Admin (Clientes)
 - `npm run build` OK en frontend.
 - Sin cambios de backend ni migraciones Prisma.
 
+
+---
+
+## **[02 Sep 2026] Fix: bulk-fulfill permite enviar más de lo solicitado (desajuste de balances)**
+
+### Objetivo alcanzado
+- En `POST /api/v1/stock/movement-requests/bulk-fulfill`, el endpoint permitía enviar una `item.quantity` mayor a `requestItem.remainingQuantity` (solo verificaba `remainingQuantity > 0`). Esto creaba un MOVIMIENTO `OUT` con cantidad excesiva cuya diferencia nunca era recibida en destino, produciendo un desajuste en los balances.
+- El endpoint individual `POST /api/v1/stock/movement-requests/:id/fulfill` ya tenía la validación (`baseQty > remaining + 1e-9`), pero `bulk-fulfill` no.
+
+### Backend (`backend/src/adapters/http/routes/stock.ts:3325`)
+- Agregada validación: si `item.quantity > requestItem.remainingQuantity + 1e-9`, retorna `400` con mensaje indicando que la cantidad a enviar excede lo solicitado.
+- La validación se coloca justo después del chequeo de `remainingQuantity > 0`, antes de crear el movimiento `OUT`.
+
+### Operación
+- TypeScript check OK en backend (`npx tsc --noEmit`).
+- Sin migraciones Prisma nuevas.
+
+---
+
+## **[02 Sep 2026] Fix: cross-city batch selection en procesamiento de cotización**
+
+### Objetivo alcanzado
+- **Bug grave**: Al procesar una cotización (`POST /api/v1/sales/quotes/:id/process`) para un cliente de una sucursal (ej. Tarija), se podía seleccionar y reservar stock de un lote perteneciente a otra sucursal (ej. La Paz). Esto causaba desajustes en balances: el stock salía del almacén origen (La Paz) pero la reserva/recepción se calculaba para la sucursal del cliente (Tarija).
+- La causa era que el `locationId` de la cotización (o el enviado por el cliente) se usaba directamente como filtro de ubicación (`scopeLoc`) sin validar que perteneciera a la misma ciudad que el cliente. El endpoint `available-batches` tenía el mismo problema.
+
+### Backend (`backend/src/adapters/http/routes/salesQuotes.ts`)
+
+**`POST /api/v1/sales/quotes/:id/process`** (línea ~1020):
+- Se calcula `custCity` (ciudad del cliente en uppercase) antes de validar el `chosenLocationId`.
+- Al buscar el `chosenLocation`, ahora también se selecciona `warehouse.city`.
+- Si `locCity !== custCity` (la ubicación pertenece a otra ciudad), retorna `400` rechazando el procesamiento.
+- El chequeo de `branchCity` (sucursal del usuario vs ciudad del cliente) ahora reutiliza `custCity` ya calculado.
+
+**`GET /api/v1/sales/quotes/:id/available-batches`** (línea ~500):
+- Si la cotización tiene `locationId`, se verifica que la ubicación pertenezca a la ciudad del cliente. Si no coincide (o la ubicación no existe), se ignora y se usa el filtrado por ciudad del cliente como respaldo.
+
+### Operación
+- TypeScript check OK en backend (`npx tsc --noEmit`).
+- Sin migraciones Prisma nuevas.
 
 

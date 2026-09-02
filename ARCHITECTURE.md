@@ -1,7 +1,7 @@
 ﻿# Architecture — PharmaFlow Bolivia (farmaSNT)
 
 > Fuente de verdad para la estructura del proyecto y el mapeo frontend ↔ backend.  
-> Última actualización: 31 Ago 2026
+> Última actualización: 02 Sep 2026
 
 ---
 
@@ -353,6 +353,7 @@ frontend/src/
 5. **Presentaciones**: las cantidades en UI se expresan en presentación (cajas); el backend convierte a unidades base usando `unitsPerPresentation`.
 6. **S3 opcional**: si no se configuran las env vars S3, el sistema funciona excepto uploads de fotos/logos.
 7. **Estado `SENT`**: las solicitudes de movimiento pasan por `SENT` (enviado) antes de `FULFILLED` (recibido).
+8. **Cross-city stock enforcement**: al procesar una cotización (`POST /api/v1/sales/quotes/:id/process`), el backend valida que la ubicación/lote seleccionado pertenezca a la misma ciudad que el cliente. El endpoint `available-batches` también filtra lotes por la ciudad del cliente y rechaza (fallback a filtrado por ciudad) ubicaciones de otro municipio.
 
 ---
 

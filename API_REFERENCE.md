@@ -1,12 +1,16 @@
 ﻿# API Reference — PharmaFlow Bolivia (MVP)
 
+## Versión 2.2.3
+
+Esta versión corrige dos bugs críticos: (1) `bulk-fulfill` permitía enviar una cantidad mayor a la solicitada, causando desajustes en balances; (2) al procesar una cotización se podía seleccionar un lote de una ciudad distinta a la del cliente.
+
 ## Versión 2.2.2
 
 Esta versión corrige un doble conteo de saldo en el kardex para transferencias inter-sucursales y agrega la columna "Movimiento" al modal.
 
 ## Versión 2.2.1
 
-Esta referencia contempla los cambios de las versiones **2.0** (multi-marca/multi-empresa), **2.0.1** (orden alfabético), **2.1.0** (branding numérico + existencias + salida de muestra), **2.1.1** (badges operativos + restricción de edición de lotes), **2.1.2** (historial de movimientos), **2.1.3** (advertencia de atención parcial), **2.1.4** (reportes de ventas: estado por defecto "Todos" y `take` elevado a 1000), **2.2.0** (kardex unificado AuditEvent-based, modal de entrega con devoluciones, sub-almacén en solicitudes, upload PDF de comprobantes) y **2.2.1** (rol `BRANCH_PROVIDER`, visibilidad total de transferencias para proveedor, y edición de inventario solo en almacén propio en ambas vistas).
+Esta referencia contempla los cambios de las versiones **2.0** (multi-marca/multi-empresa), **2.0.1** (orden alfabético), **2.1.0** (branding numérico + existencias + salida de muestra), **2.1.1** (badges operativos + restricción de edición de lotes), **2.1.2** (historial de movimientos), **2.1.3** (advertencia de atención parcial), **2.1.4** (reportes de ventas: estado por defecto "Todos" y `take` elevado a 1000), **2.2.0** (kardex unificado AuditEvent-based, modal de entrega con devoluciones, sub-almacén en solicitudes, upload PDF de comprobantes), **2.2.1** (rol `BRANCH_PROVIDER`, visibilidad total de transferencias para proveedor, y edición de inventario solo en almacén propio en ambas vistas), **2.2.2** (corrección de doble conteo en kardex inter-sucursal + columna "Movimiento") y **2.2.3** (fix: bulk-fulfill excesivo + validación cross-city de lotes en cotizaciones).
 
 ## Cambios recientes (07 Ago 2026) — Kardex formato WAREHOUSE:Location + ventas con cliente
 
@@ -1890,8 +1894,9 @@ Body
 ```
 
 Notas
-- Solo permite atender solicitudes `OPEN` de la ciudad de la sucursal destino.
+- Solo permite atender solicitudes `OPEN` (o históricas `SENT`/`FULFILLED` sin movimientos `OUT` previos) de la ciudad de la sucursal destino.
 - Crea movimientos `OUT` con `referenceType: "MOVEMENT_REQUEST"` y `referenceId = <requestId>` (envío/embarque hacia la sucursal destino).
+- **Validación (2.2.3)**: `item.quantity` no puede excedir `remainingQuantity` de la línea de solicitud correspondiente. Si la cantidad a enviar es mayor a lo solicitado, retorna `400`.
 - Cuando una solicitud queda con `remainingQuantity` total = 0, se marca `SENT` (pendiente de recepción en destino).
 - La recepción se confirma vía `POST /api/v1/stock/movement-requests/:id/receive` (crea `IN` y marca `FULFILLED`).
 
@@ -2248,7 +2253,37 @@ Notas
 - Si `unitPrice` no se envía, el backend lo resuelve:
   - Si la presentación tiene `priceOverride`: `unitPrice = priceOverride / unitsPerPresentation`.
   - Si no: `unitPrice = Product.price`.
-- El frontend (`QuoteDetailPage`) replica esta lógica para previsualizar el precio en tiempo real al seleccionar un producto o cambiar de presentación.
+  - El frontend (`QuoteDetailPage`) replica esta lógica para previsualizar el precio en tiempo real al seleccionar un producto o cambiar de presentación.
+
+### GET /api/v1/sales/quotes/:id/available-batches
+Requiere permiso: `sales:order:read`.
+
+Lista los lotes disponibles para cada línea de la cotización, **filtrados por la ciudad del cliente**.
+
+Notas de seguridad (2.2.3)
+- Si la cotización tiene `locationId`, se valida que la ubicación pertenezca a la ciudad del cliente; si no coincide, se ignora y se usa filtrado por ciudad.
+- Solo retorna lotes con stock disponible (`quantity > 0` y `availableQuantity > 0`) en ubicaciones de la ciudad del cliente.
+- Ordena por vencimiento ascendente (FEFO).
+
+Response 200
+```json
+{
+  "items": [
+    {
+      "quoteLineId": "...",
+      "productId": "...",
+      "availableBatches": [
+        {
+          "batchId": "...",
+          "batchNumber": "LOT-2026-0001",
+          "expiresAt": "2026-06-01T00:00:00.000Z",
+          "availableQuantity": 50
+        }
+      ]
+    }
+  ]
+}
+```
 
 ### POST /api/v1/sales/quotes/:id/process
 Requiere permiso: `sales:order:write`.
@@ -2256,10 +2291,21 @@ Requiere permiso: `sales:order:write`.
 Acción
 - Crea una Orden de Venta desde la cotización.
 - Marca la cotización como `PROCESSED` (read-only).
+- Reserva stock en la ciudad del cliente usando FEFO (o lote seleccionado si se envía `lineBatches`).
 
-Errores
-- `404` si no existe.
-- `409` si ya estaba procesada.
+Body (opcional)
+```json
+{
+  "locationId": "<uuid>",
+  "sellerId": "<uuid>",
+  "lineBatches": [{ "quoteLineId": "<uuid>", "batchId": "<uuid>" }]
+}
+```
+
+Notas de seguridad (2.2.3)
+- El `locationId` (si se envía o viene de la cotización) **debe pertenecer a la ciudad del cliente**. Si el almacén de la ubicación no coincide con la ciudad del cliente, retorna `400`.
+- Los `lineBatches[].batchId` seleccionados deben tener stock en la ciudad del cliente; el backend valida esto en `reserveForOrderInCityOrFail` filtrando por `warehouse.city`. Si el lote no tiene stock en esa ciudad, retorna `409` (stock insuficiente).
+- Solo los admins con `scope:branch` (sucursal) o `TenantAdmin` pueden procesar cotizaciones; para usuarios con scope de sucursal, la ciudad del cliente debe coincidir con la ciudad de su sucursal (`403` si no coincide).
 
 Response 201
 ```json

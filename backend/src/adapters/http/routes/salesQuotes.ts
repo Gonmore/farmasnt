@@ -500,15 +500,30 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
       if (!quote) return reply.status(404).send({ message: 'Cotización no encontrada' })
 
       const city = (quote.customer?.city ?? '').trim()
-      const scopeLoc = quote.locationId
-        ? { id: quote.locationId, isActive: true }
-        : {
+      // Security: if the quote has a locationId, verify it belongs to the customer's city.
+      // A location from a different city (e.g. La Paz for a Tarija customer) would expose
+      // batches from the wrong warehouse. If mismatch, fall back to city-based filtering.
+      let scopeLoc: any = null
+      if (quote.locationId && city) {
+        const loc = await db.location.findFirst({
+          where: { id: quote.locationId, tenantId, isActive: true },
+          select: { id: true, warehouse: { select: { city: true, isActive: true } } },
+        })
+        const locCity = String(loc?.warehouse?.city ?? '').trim().toUpperCase()
+        const custCity = city.toUpperCase()
+        if (loc && loc.warehouse?.isActive && locCity === custCity) {
+          scopeLoc = { id: quote.locationId, isActive: true }
+        }
+      }
+      if (!scopeLoc) {
+        scopeLoc = {
+          isActive: true,
+          warehouse: {
             isActive: true,
-            warehouse: {
-              isActive: true,
-              ...(city ? { city: { equals: city, mode: 'insensitive' as const } } : {}),
-            },
-          }
+            ...(city ? { city: { equals: city, mode: 'insensitive' as const } } : {}),
+          },
+        }
+      }
 
       const todayUtc = startOfTodayUtc()
       const productIds = Array.from(new Set(quote.lines.map((l: any) => l.productId)))
@@ -1019,21 +1034,30 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
 
           // Usar el sub almacén seleccionado al crear la cotización
           const chosenLocationId = bodyParsed.data?.locationId ?? quote.locationId ?? null
+          const custCity = String(quote.customer.city ?? '').trim().toUpperCase()
 
           if (chosenLocationId) {
             const chosenLocation = await tx.location.findFirst({
               where: { id: chosenLocationId, tenantId, isActive: true },
-              select: { id: true, warehouse: { select: { isActive: true } } },
+              select: { id: true, warehouse: { select: { isActive: true, city: true } } },
             })
             if (!chosenLocation || !chosenLocation.warehouse.isActive) {
               const err = new Error('Ubicación (sub almacén) no encontrada') as Error & { statusCode?: number }
               err.statusCode = 404
               throw err
             }
+            // Security: the chosen location must belong to the customer's city.
+            // A location from a different city (e.g. La Paz for a Tarija customer) would allow
+            // reserving stock from the wrong warehouse.
+            const locCity = String(chosenLocation.warehouse?.city ?? '').trim().toUpperCase()
+            if (custCity && locCity && locCity !== custCity) {
+              const err = new Error(`La ubicación seleccionada pertenece a ${locCity}, no a ${custCity} (ciudad del cliente)`) as Error & { statusCode?: number }
+              err.statusCode = 400
+              throw err
+            }
           }
 
           if (branchCity) {
-            const custCity = String(quote.customer.city ?? '').trim().toUpperCase()
             if (!custCity || custCity !== branchCity) {
               const err = new Error('Solo puede procesar cotizaciones de su sucursal') as Error & { statusCode?: number }
               err.statusCode = 403
