@@ -369,25 +369,30 @@ export function BulkFulfillRequestsPage() {
     return Number.isFinite(v) && v > 0 ? v : 1
   }
 
-  const getBatchMaxSelectable = (batch: StockBatch) => {
+  const getBatchMaxSelectable = (batch: StockBatch, maxUnits?: number) => {
     // El usuario selecciona en "unidades del lote":
     // - Unidad => 1 selección = 1 unidad
     // - Caja(10u) => 1 selección = 10 unidades
     const unitsPer = getBatchUnitsPerPresentation(batch)
-    return Math.floor(Number(batch.quantity ?? 0) / unitsPer)
+    const stockLimit = Math.floor(Number(batch.quantity ?? 0) / unitsPer)
+    if (maxUnits !== undefined && Number.isFinite(maxUnits) && maxUnits > 0) {
+      return Math.min(stockLimit, Math.floor(maxUnits / unitsPer))
+    }
+    return stockLimit
   }
 
   const calculateAutoSelectQuantity = (product: typeof requestedProducts[0], batch: StockBatch) => {
     const unitsPer = getBatchUnitsPerPresentation(batch)
     const remainingUnits = Number(product.remainingQuantity ?? 0)
     const desiredCount = Math.ceil(remainingUnits / unitsPer)
-    return Math.min(desiredCount, getBatchMaxSelectable(batch))
+    return Math.min(desiredCount, getBatchMaxSelectable(batch, remainingUnits))
   }
 
   const getQuantityStatus = (product: typeof requestedProducts[0], batch: StockBatch) => {
     const unitsPer = getBatchUnitsPerPresentation(batch)
-    const requiredCount = Math.ceil(Number(product.remainingQuantity ?? 0) / unitsPer)
-    return getBatchMaxSelectable(batch) < requiredCount ? 'insufficient' : 'sufficient'
+    const remainingUnits = Number(product.remainingQuantity ?? 0)
+    const requiredCount = Math.ceil(remainingUnits / unitsPer)
+    return getBatchMaxSelectable(batch, remainingUnits) < requiredCount ? 'insufficient' : 'sufficient'
   }
 
   const isExactPresentationMatch = (product: any, batch: any) => {
@@ -605,14 +610,10 @@ export function BulkFulfillRequestsPage() {
       const items: Array<{ requestItemId: string; productId: string; batchId: string; quantity: number; fromLocationId: string }> = []
 
       for (const it of req.items) {
-        let needUnits = Number(it.remainingQuantity ?? 0)
-        if (!Number.isFinite(needUnits) || needUnits <= 0) continue
-
         const batchPool = selectionsByProduct.get(it.productId) ?? []
         for (const b of batchPool) {
-          if (needUnits <= 0) break
           if (b.remainingUnits <= 0) continue
-          const take = Math.min(needUnits, b.remainingUnits)
+          const take = b.remainingUnits
           if (take <= 0) continue
 
           items.push({
@@ -623,7 +624,6 @@ export function BulkFulfillRequestsPage() {
             fromLocationId: b.fromLocationId,
           })
           b.remainingUnits -= take
-          needUnits -= take
         }
       }
 
@@ -1044,33 +1044,33 @@ export function BulkFulfillRequestsPage() {
                                 </div>
                               </td>
                               <td className="py-3 px-3">
-                                <div className="text-xs text-slate-700 dark:text-slate-300">
-                                  {productBatches[0].unitsPerPresentation === 1 
-                                    ? 'Unidad' 
-                                    : (productBatches[0].presentationName || 'Sin presentación') + (productBatches[0].unitsPerPresentation && productBatches[0].unitsPerPresentation > 1 ? ` (${productBatches[0].unitsPerPresentation}u)` : '')}
-                                  {isExactPresentationMatch(product, productBatches[0]) && (
-                                    <span className="ml-1 text-yellow-500">⭐</span>
-                                  )}
-                                  {getQuantityStatus(product, productBatches[0]) === 'insufficient' && (
-                                    <span className="ml-1 text-red-500 text-xs" title="Cantidad insuficiente">⚠️</span>
-                                  )}
-                                </div>
-                              </td>
-                              <td className="py-3 px-3 text-slate-600 dark:text-slate-400">
-                                {getBatchMaxSelectable(productBatches[0])}
-                              </td>
-                              <td className="py-3 px-3 min-w-[9rem]">
-                                <div className="flex items-center gap-2">
-                                  <input
-                                    type="checkbox"
-                                    checked={!!batchSelections[productBatches[0].id]}
-                                    onChange={(e) => {
-                                      if (e.target.checked) {
-                                        setBatchSelections(prev => ({
-                                          ...prev,
-                                          [productBatches[0].id]: calculateAutoSelectQuantity(product, productBatches[0])
-                                        }))
-                                      } else {
+                                 <div className="text-xs text-slate-700 dark:text-slate-300">
+                                   {productBatches[0].unitsPerPresentation === 1 
+                                     ? 'Unidad' 
+                                     : (productBatches[0].presentationName || 'Sin presentación') + (productBatches[0].unitsPerPresentation && productBatches[0].unitsPerPresentation > 1 ? ` (${productBatches[0].unitsPerPresentation}u)` : '')}
+                                   {isExactPresentationMatch(product, productBatches[0]) && (
+                                     <span className="ml-1 text-yellow-500">⭐</span>
+                                   )}
+                                   {getQuantityStatus(product, productBatches[0]) === 'insufficient' && (
+                                     <span className="ml-1 text-red-500 text-xs" title="Cantidad insuficiente">⚠️</span>
+                                   )}
+                                 </div>
+                               </td>
+                               <td className="py-3 px-3 text-slate-600 dark:text-slate-400">
+                                 {getBatchMaxSelectable(productBatches[0])}
+                               </td>
+                               <td className="py-3 px-3 min-w-[9rem]">
+                                 <div className="flex items-center gap-2">
+                                   <input
+                                     type="checkbox"
+                                     checked={!!batchSelections[productBatches[0].id]}
+                                     onChange={(e) => {
+                                       if (e.target.checked) {
+                                         setBatchSelections(prev => ({
+                                           ...prev,
+                                           [productBatches[0].id]: calculateAutoSelectQuantity(product, productBatches[0])
+                                         }))
+                                       } else {
                                         setBatchSelections(prev => {
                                           const newSelections = { ...prev }
                                           delete newSelections[productBatches[0].id]
@@ -1081,21 +1081,21 @@ export function BulkFulfillRequestsPage() {
                                     className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-slate-300 rounded"
                                   />
                                   <div className="w-24">
-                                    <Input
-                                      type="number"
-                                      value={batchSelections[productBatches[0].id] || ''}
-                                      onChange={(e) => {
-                                        const value = parseInt(e.target.value) || 0
-                                        setBatchSelections(prev => ({
-                                          ...prev,
-                                          [productBatches[0].id]: Math.min(value, getBatchMaxSelectable(productBatches[0]))
-                                        }))
-                                      }}
-                                      disabled={!batchSelections[productBatches[0].id]}
-                                      min="0"
-                                      max={getBatchMaxSelectable(productBatches[0])}
-                                      placeholder="0"
-                                    />
+                                     <Input
+                                       type="number"
+                                       value={batchSelections[productBatches[0].id] || ''}
+                                       onChange={(e) => {
+                                         const value = parseInt(e.target.value) || 0
+                                         setBatchSelections(prev => ({
+                                           ...prev,
+                                           [productBatches[0].id]: Math.min(value, getBatchMaxSelectable(productBatches[0]))
+                                         }))
+                                       }}
+                                       disabled={!batchSelections[productBatches[0].id]}
+                                       min="0"
+                                       max={getBatchMaxSelectable(productBatches[0])}
+                                       placeholder="0"
+                                     />
                                   </div>
                                 </div>
                               </td>
@@ -1129,48 +1129,48 @@ export function BulkFulfillRequestsPage() {
                                 )}
                               </div>
                             </td>
-                            <td className="py-3 px-3 text-slate-600 dark:text-slate-400">
-                              {getBatchMaxSelectable(batch)}
-                            </td>
-                            <td className="py-3 px-3 min-w-[9rem]">
-                              <div className="flex items-center gap-2">
-                                <input
-                                  type="checkbox"
-                                  checked={!!batchSelections[batch.id]}
-                                  onChange={(e) => {
-                                    if (e.target.checked) {
-                                      setBatchSelections(prev => ({
-                                        ...prev,
-                                        [batch.id]: calculateAutoSelectQuantity(product, batch)
-                                      }))
-                                    } else {
-                                      setBatchSelections(prev => {
-                                        const newSelections = { ...prev }
-                                        delete newSelections[batch.id]
-                                        return newSelections
-                                      })
-                                    }
-                                  }}
-                                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-slate-300 rounded"
-                                />
-                                <div className="w-24">
-                                  <Input
-                                    type="number"
-                                    value={batchSelections[batch.id] || ''}
-                                    onChange={(e) => {
-                                      const value = parseInt(e.target.value) || 0
-                                      setBatchSelections(prev => ({
-                                        ...prev,
-                                        [batch.id]: Math.min(value, getBatchMaxSelectable(batch))
-                                      }))
-                                    }}
-                                    disabled={!batchSelections[batch.id]}
-                                    min="0"
-                                    max={getBatchMaxSelectable(batch)}
-                                    placeholder="0"
-                                  />
-                                </div>
-                              </div>
+                             <td className="py-3 px-3 text-slate-600 dark:text-slate-400">
+                               {getBatchMaxSelectable(batch)}
+                             </td>
+                             <td className="py-3 px-3 min-w-[9rem]">
+                               <div className="flex items-center gap-2">
+                                 <input
+                                   type="checkbox"
+                                   checked={!!batchSelections[batch.id]}
+                                   onChange={(e) => {
+                                     if (e.target.checked) {
+                                       setBatchSelections(prev => ({
+                                         ...prev,
+                                         [batch.id]: calculateAutoSelectQuantity(product, batch)
+                                       }))
+                                     } else {
+                                       setBatchSelections(prev => {
+                                         const newSelections = { ...prev }
+                                         delete newSelections[batch.id]
+                                         return newSelections
+                                       })
+                                     }
+                                   }}
+                                   className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-slate-300 rounded"
+                                 />
+                                 <div className="w-24">
+                                   <Input
+                                     type="number"
+                                     value={batchSelections[batch.id] || ''}
+                                     onChange={(e) => {
+                                       const value = parseInt(e.target.value) || 0
+                                       setBatchSelections(prev => ({
+                                         ...prev,
+                                         [batch.id]: Math.min(value, getBatchMaxSelectable(batch))
+                                       }))
+                                     }}
+                                     disabled={!batchSelections[batch.id]}
+                                     min="0"
+                                     max={getBatchMaxSelectable(batch)}
+                                     placeholder="0"
+                                   />
+                                 </div>
+                               </div>
                             </td>
                           </tr>
                         ))}

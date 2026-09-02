@@ -3322,12 +3322,7 @@ movements: (movementsByRequest.get(r.id) || []).map((m) => ({
                 throw Object.assign(new Error(`Product ${item.productId} in request ${requestId} has no remaining quantity`), { statusCode: 409 })
               }
 
-              {
-                const requestRemainingQty = Number(requestItem.remainingQuantity ?? 0)
-                if (item.quantity > requestRemainingQty + 1e-9) {
-                  throw Object.assign(new Error(`La cantidad a enviar (${item.quantity}) excede lo solicitado (${requestRemainingQty}) para el producto ${item.productId} en la solicitud ${requestId}`), { statusCode: 400 })
-                }
-              }
+              // Note: over-fulfillment is intentionally allowed (item.quantity may exceed requestRemainingQty)
 
               // Per-item origin location (falls back to the global fromLocationId).
               const itemFromLocationId = item.fromLocationId ?? input.fromLocationId

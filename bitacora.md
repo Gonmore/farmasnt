@@ -4,6 +4,55 @@
 
 Este documento suma (a alto nivel) decisiones, hitos y cambios relevantes que se fueron incorporando al repositorio para llegar al estado actual del MVP.
 
+---
+
+## **[02 Sep 2026] Permitir atención de solicitudes con cantidad mayor a la solicitada (over-fulfillment)**
+
+### Objetivo alcanzado
+- Ahora se puede atender una solicitud de movimiento con una **cantidad mayor a la solicitada** (over-fulfillment). Antes el backend rechazaba con `400` si `item.quantity > requestRemainingQty`. El límite ahora es solo el stock disponible en el almacén origen.
+
+### Backend (`backend/src/adapters/http/routes/stock.ts`)
+- Se eliminó la validación en `bulk-fulfill` que bloqueaba cantidades mayores a lo solicitado (líneas 3326-3329). Ahora el comentario indica que el over-fulfillment es intencional.
+- El `remainingQuantity` del ítem de solicitud puede quedar negativo (el request se marca `SENT` igual, ya que `sumRemaining <= 1e-9`).
+
+### Frontend (`frontend/src/pages/stock/BulkFulfillRequestsPageSimple.tsx`)
+- El lógica de `performFulfillment` ya no limita `take` a `needUnits` (cantidad solicitada): ahora toma `b.remainingUnits` completo del pool de lotes seleccionados.
+- Los campos de entrada (`Input type="number"`) ya usan `getBatchMaxSelectable(batch)` (sin `remainingQuantity`), permitiendo seleccionar hasta el límite de stock.
+
+### Operación
+- TypeScript check OK en backend y frontend.
+- Build OK en backend y frontend.
+- Sin migraciones Prisma nuevas.
+
+---
+
+## **[02 Sep 2026] Fix: caracteres ñ/acentos en exportaciones PDF**
+
+### Objetivo alcanzado
+- Los PDFs generados por el sistema (cotizaciones, trazabilidad, documentos de movimiento, catálogo) ahora renderizan correctamente caracteres especiales como **ñ, á, é, í, ó, ú, ü**.
+
+### Causa raíz
+- jsPDF usa la fuente `helvetica` por defecto, que no incluye glifos para caracteres no-ASCII.
+- Las funciones `sanitizePdfText()` en `quotePdf.ts` y `traceabilityPdf.ts` eliminaban **todo** el texto no-ASCII (regex `/[^\x20-\x7E]/g`).
+
+### Solución
+- **Nueva dependencia**: `dejavu-fonts-ttf` (fuente DejaVu Sans con soporte Unicode completo).
+- **Archivos TTF** copiados a `frontend/public/fonts/`: `DejaVuSans.ttf` y `DejaVuSans-Bold.ttf`.
+- **Nuevo módulo** `frontend/src/lib/pdfFonts.ts`: exporta `PDF_FONT_FAMILY = 'DejaVuSans'` y `registerPdfFonts(pdf)` para registrar la fuente en jsPDF.
+- **5 archivos PDF actualizados** para usar `await registerPdfFonts(pdf)` y reemplazar `'helvetica'` con `PDF_FONT_FAMILY`:
+  - `frontend/src/lib/exportPdf.ts`
+  - `frontend/src/lib/quotePdf.ts`
+  - `frontend/src/lib/traceabilityPdf.ts`
+  - `frontend/src/lib/movementRequestDocsPdf.ts`
+  - `frontend/src/lib/catalogPdf.tsx`
+- **`sanitizePdfText()` corregida** en `quotePdf.ts` y `traceabilityPdf.ts`: ahora solo elimina caracteres de control (no-ASCII imprimibles se conservan).
+- **`exportLabelToPdf` hecha async** en `movementRequestDocsPdf.ts`: sus llamadores en `BulkTransferPage.tsx`, `BulkFulfillRequestsPage.tsx` y `StockReportsPage.tsx` ahora usan `await`.
+
+### Operación
+- TypeScript check OK en frontend.
+- Build OK en frontend.
+- Sin cambios de backend ni migraciones Prisma.
+
 ## **[21 Ago 2026] Ajustes finales de /stock/fulfill-requests (ítems móviles en 1 línea + cantidad en "Lo Solicitado")**
 
 ### Objetivo alcanzado

@@ -187,7 +187,7 @@ frontend/src/
 | | `POST /api/v1/stock/movement-requests/:id/confirm` | `routes/stock.ts:2076` |
 | | `POST /api/v1/stock/movement-requests/:id/cancel` | `routes/stock.ts:1490` |
 | `pages/stock/BulkFulfillPage.tsx` | `POST /api/v1/stock/movement-requests/bulk-fulfill` | `routes/stock.ts:3047` |
-| `pages/stock/BulkFulfillRequestsPageSimple.tsx` | `GET /api/v1/stock/movement-requests` (listado filtrado) | `routes/stock.ts:792` | Tarjetas de solicitud responsivas: en móvil, columna izquierda compacta + grilla de ítems (`grid grid-flow-col`, ≤3 filas) con scroll horizontal confinado al bloque `max-h-60` (`overflow-auto`), no a nivel de página. |
+| `pages/stock/BulkFulfillRequestsPageSimple.tsx` | `GET /api/v1/stock/movement-requests` (listado filtrado) | `routes/stock.ts:792` | Tarjetas de solicitud responsivas: en móvil, columna izquierda compacta + grilla de ítems (`grid grid-flow-col`, ≤3 filas) con scroll horizontal confinado al bloque `max-h-60` (`overflow-auto`), no a nivel de página. Soporta **over-fulfillment**: el usuario puede seleccionar cantidades mayores a las solicitadas (hasta el stock disponible). |
 | `pages/stock/ReturnsPage.tsx` | `GET /api/v1/stock/returns` | `routes/stock.ts:517` | Receptions tab: unified "Recepción/Devolución" modal (11 Ago 2026) |
 | | | | `POST /api/v1/stock/returns` | `routes/stock.ts:670` |
 | | | | `GET /api/v1/stock/returns/:id` | `routes/stock.ts:615` |
@@ -354,6 +354,7 @@ frontend/src/
 6. **S3 opcional**: si no se configuran las env vars S3, el sistema funciona excepto uploads de fotos/logos.
 7. **Estado `SENT`**: las solicitudes de movimiento pasan por `SENT` (enviado) antes de `FULFILLED` (recibido).
 8. **Cross-city stock enforcement**: al procesar una cotización (`POST /api/v1/sales/quotes/:id/process`), el backend valida que la ubicación/lote seleccionado pertenezca a la misma ciudad que el cliente. El endpoint `available-batches` también filtra lotes por la ciudad del cliente y rechaza (fallback a filtrado por ciudad) ubicaciones de otro municipio.
+9. **Over-fulfillment permitido**: al atender una solicitud de movimiento (`POST /api/v1/stock/movement-requests/bulk-fulfill`), el backend **permite** enviar una cantidad mayor a la solicitada. El único límite es el stock disponible en el almacén origen. El `remainingQuantity` del ítem puede quedar negativo y la solicitud se marca `SENT` normalmente.
 
 ---
 

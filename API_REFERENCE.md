@@ -1,5 +1,9 @@
 ﻿# API Reference — PharmaFlow Bolivia (MVP)
 
+## Versión 2.2.4
+
+Esta versión **habilita intencionalmente el over-fulfill** (atender solicitudes con cantidad mayor a la solicitada, hasta el stock disponible) y corrige la renderización de caracteres ñ/acentos en exportaciones PDF mediante la fuente DejaVu Sans.
+
 ## Versión 2.2.3
 
 Esta versión corrige dos bugs críticos: (1) `bulk-fulfill` permitía enviar una cantidad mayor a la solicitada, causando desajustes en balances; (2) al procesar una cotización se podía seleccionar un lote de una ciudad distinta a la del cliente.
@@ -37,6 +41,11 @@ Esta referencia contempla los cambios de las versiones **2.0** (multi-marca/mult
 - `AuthContext`/`request.auth` ahora incluye `warehouseType` (`PROVIDER` | `SALES` | null), derivado de `user.warehouse.type`.
 - Frontend `/stock/inventory`: tanto la vista "Por Producto" como "Por Sucursal" aplican `canEditWarehouse(warehouseId)` — solo se habilitan el editor de ubicación (`TRANSFER` vía `POST /api/v1/stock/movements`) y el cambio de estado de lote (`PATCH /api/v1/products/:productId/batches/:batchId/status`) en el almacén propio del usuario con scope de sucursal; los demás almacenes quedan en solo lectura. El backend refuerza esto con `403` en ADJUSTMENT/IN hacia almacenes ajenos.
 - **Reportes de stock (autonomía de sucursal)**: usuarios con `scope:branch` (BRANCH_ADMIN, BRANCH_PROVIDER) ven **solo su propia sucursal** en `/api/v1/reports/stock/*` (`balances-expanded`, `existencias`, `low-stock`, `expiry-alerts`, `rotation`, `transfers-between-warehouses`, `returns/summary`, `returns/by-warehouse`, `movements-expanded`). El backend fuerza el `warehouseId` al almacén propio del usuario (`resolveBranchWarehouseId`); un admin sin scope de sucursal conserva el selector "Sucursal" (valor vacío = todas las sucursales). Ya no se aplica el filtro "PROVIDER ve todas las ciudades" en reportes.
+
+### Cambios recientes (02 Sep 2026) — Over-fulfill permitido + fix ñ/acentos en PDFs
+
+- **`POST /api/v1/stock/movement-requests/bulk-fulfill`**: se eliminó la validación que bloqueaba cantidades mayores a lo solicitado. Ahora el `item.quantity` puede exceder el `remainingQuantity` de la línea de solicitud. El único límite es el stock disponible en el almacén origen. El `remainingQuantity` puede quedar negativo y la solicitud se marca `SENT` normalmente.
+- **Fix ñ/acentos en PDFs**: los archivos PDF generados por el frontend (cotizaciones, trazabilidad, documentos de movimiento, catálogo) ahora renderizan correctamente caracteres especiales (ñ, á, é, í, ó, ú, ü) mediante la fuente **DejaVu Sans** registrada en jsPDF. Se agregó `frontend/src/lib/pdfFonts.ts` con `PDF_FONT_FAMILY` y `registerPdfFonts(pdf)`. Se actualizaron 5 archivos PDF para usar la nueva fuente.
 
 ## Cambios recientes (10 Ago 2026) — Carga automática de precios en cotizaciones
 - `GET /api/v1/sales/quotes/:id` y `POST/PUT /api/v1/sales/quotes/:id`: el `unitPrice` de cada línea se expresa en unidades base. Al crear o editar una cotización, si `unitPrice` no se envía, el backend resuelve el precio usando `priceOverride / unitsPerPresentation` de la presentación (si existe) o el `Product.price` como fallback. El frontend (`QuoteDetailPage`) replica esta lógica para previsualizar el precio al momento de seleccionar un producto o cambiar de presentación.
@@ -1896,8 +1905,8 @@ Body
 Notas
 - Solo permite atender solicitudes `OPEN` (o históricas `SENT`/`FULFILLED` sin movimientos `OUT` previos) de la ciudad de la sucursal destino.
 - Crea movimientos `OUT` con `referenceType: "MOVEMENT_REQUEST"` y `referenceId = <requestId>` (envío/embarque hacia la sucursal destino).
-- **Validación (2.2.3)**: `item.quantity` no puede excedir `remainingQuantity` de la línea de solicitud correspondiente. Si la cantidad a enviar es mayor a lo solicitado, retorna `400`.
-- Cuando una solicitud queda con `remainingQuantity` total = 0, se marca `SENT` (pendiente de recepción en destino).
+- **Over-fulfill permitido (2.2.4)**: `item.quantity` **puede exceder** `remainingQuantity` de la línea de solicitud. El único límite es el stock disponible en el almacén origen. El `remainingQuantity` del ítem puede quedar negativo y la solicitud se marca `SENT` normalmente.
+- Cuando una solicitud queda con `remainingQuantity` total ≤ 0, se marca `SENT` (pendiente de recepción en destino).
 - La recepción se confirma vía `POST /api/v1/stock/movement-requests/:id/receive` (crea `IN` y marca `FULFILLED`).
 
 Response 201
