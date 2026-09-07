@@ -1,5 +1,14 @@
 ﻿# API Reference — PharmaFlow Bolivia (MVP)
 
+## Versión 2.3.0
+
+Esta versión **discrimina por `warehouseId` (no por ciudad)** en todos los endpoints operativos para soportar múltiples sucursales en la misma ciudad (Febsa: `SUC-LPZ` SALES y `SUC-NACIONAL` PROVIDER, ambas en LA PAZ). Cambios principales:
+
+- `StockMovementRequest.warehouseId` (ya existía) es ahora la fuente de verdad para el filtrado por scope:branch. Las queries que filtraban por `requestedCity` pasan a filtrar por `warehouseId`.
+- `Notification.warehouseId` (nuevo) — el filtrado de la campana prioriza `warehouseId` y mantiene `city` como fallback de compatibilidad.
+- `GET /api/v1/warehouses` acepta nuevos query params: `city`, `isActive`, `type` (`PROVIDER` | `SALES`).
+- `GET /api/v1/warehouses/sub-locations` acepta `warehouseId` además de `city`.
+
 ## Versión 2.2.4
 
 Esta versión **habilita intencionalmente el over-fulfill** (atender solicitudes con cantidad mayor a la solicitada, hasta el stock disponible) y corrige la renderización de caracteres ñ/acentos en exportaciones PDF mediante la fuente DejaVu Sans.
@@ -231,7 +240,7 @@ Notificaciones persistentes (server-side) con marca de lectura por usuario.
 
 Notas
 - Requiere JWT.
-- Para usuarios con scope de sucursal (`ScopeBranch`), el backend filtra por la ciudad de la sucursal autenticada.
+- Para usuarios con scope de sucursal (`ScopeBranch`), el backend filtra priorizando `warehouseId` de la sucursal autenticada y cae a `city` solo para notificaciones legacy sin `warehouseId` poblado. Esto evita que dos sucursales en la misma ciudad vean notifications mezcladas.
 - Si el usuario está scopeado por sucursal pero no tiene sucursal seleccionada, puede responder `409`.
 
 ### GET /api/v1/notifications
@@ -1175,11 +1184,14 @@ Requiere: módulo `WAREHOUSE` + permiso `stock:read`.
 Query
 - `take` (1..100, default 50)
 - `cursor` (uuid, opcional)
+- `city` (string, opcional) — filtra por ciudad del warehouse (case-insensitive).
+- `isActive` (bool, opcional) — filtra por `Warehouse.isActive`.
+- `type` (`PROVIDER` | `SALES`, opcional) — filtra por `WarehouseType`.
 
 Response 200
 ```json
 {
-  "items": [{ "id": "...", "code": "SUC-01", "name": "Almacén", "city": "LA PAZ", "isActive": true, "version": 1, "updatedAt": "...", "totalQuantity": "10" }],
+  "items": [{ "id": "...", "code": "SUC-01", "name": "Almacén", "city": "LA PAZ", "isActive": true, "type": "SALES", "version": 1, "updatedAt": "...", "totalQuantity": "10" }],
   "nextCursor": "..."
 }
 ```
@@ -1187,6 +1199,22 @@ Response 200
 Notas
 - `totalQuantity` es la suma de `InventoryBalance.quantity` de todas las ubicaciones del almacén.
 - Para ver **qué productos/lotes** componen ese stock, usar el reporte `GET /api/v1/reports/stock/balances-expanded?warehouseId=...`.
+
+### GET /api/v1/warehouses/sub-locations
+Query
+- `city` (string, opcional) — filtra locations cuyo `warehouse.city` coincide (case-insensitive).
+- `warehouseId` (uuid, opcional) — filtra por `warehouse.id`. Toma precedencia sobre `city` cuando ambos se envían.
+
+Response 200
+```json
+{
+  "items": [{ "id": "...", "code": "Central", "type": "SUB_ALMACEN", "warehouse": { "id": "...", "code": "SUC-LPZ", "name": "LA PAZ" }, "isActive": true }]
+}
+```
+
+Notas
+- Solo retorna locations activas con `isActive=true` y `type=SUB_ALMACEN`.
+- Usado por el flujo de **Catálogo Vendedor** y por la gestión administrativa de sub-almacenes. El frontend vendedor siempre pasa `warehouseId` (del usuario autenticado) para evitar mezclar locations entre sucursales de la misma ciudad.
 
 ### GET /api/v1/warehouses/:id/locations
 Query

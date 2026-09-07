@@ -23,7 +23,7 @@ import {
   MapSelector,
   PaginationCursor,
 } from '../../components'
-import { useNavigation, useMediaQuery } from '../../hooks'
+import { useNavigation, useMediaQuery, usePermissions } from '../../hooks'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { exportQuoteToPDF } from '../../lib/quotePdf'
 
@@ -206,30 +206,19 @@ type QuoteDetailForEdit = {
 
 type LocationListItem = { id: string; name: string; code?: string }
 
-async function fetchLocations(token: string, city?: string | null): Promise<{ items: LocationListItem[] }> {
-  if (!city) return { items: [] }
+async function fetchLocations(token: string, warehouseId: string | null | undefined): Promise<{ items: LocationListItem[] }> {
+  if (!warehouseId) {
+    return { items: [] }
+  }
 
   try {
-    // 1. Buscamos el warehouse correspondiente a la ciudad del cliente
-    const warehouseParams = new URLSearchParams({ city, isActive: 'true' })
-    
-    // 👇 Le indicamos a TypeScript la forma exacta que esperamos (un objeto con un array de items que tienen un id string)
-    const warehouseRes = (await apiFetch(`/api/v1/warehouses?${warehouseParams}`, { 
-      token 
-    })) as { items?: { id: string }[] }
-    
-    const warehouseId = warehouseRes.items?.[0]?.id 
-
-    // Si no hay almacén para esa ciudad, devolvemos un array vacío
-    if (!warehouseId) {
-      console.warn(`No se encontró un almacén activo para la ciudad: ${city}`)
-      return { items: [] }
-    }
-
-    // 2. Buscamos las locations de ese warehouse específico
-    // 👇 También le decimos a TypeScript que esto devuelve lo que la función promete
-    return (await apiFetch(`/api/v1/warehouses/${warehouseId}/locations?isActive=true`, { 
-      token 
+    // Se listan los sub-almacenes (locations tipo SUB_ALMACEN) del warehouse
+    // que administra el usuario autenticado. Antes se buscaba por ciudad del
+    // cliente, lo cual mezclaba locations entre sucursales de la misma ciudad
+    // (Febsa tiene SUC-LPZ SALES y SUC-NACIONAL PROVIDER en LA PAZ; en
+    // escenarios con 3 SALES en la misma ciudad tambien se mezclarian).
+    return (await apiFetch(`/api/v1/warehouses/${warehouseId}/locations?isActive=true`, {
+      token
     })) as { items: LocationListItem[] }
 
   } catch (error) {
@@ -334,6 +323,8 @@ function clampPct(value: number): number {
 export function SellerCatalogPage() {
   const auth = useAuth()
   const navigate = useNavigate()
+  const permissions = usePermissions()
+  const userWarehouseId = permissions.warehouseId ?? null
   const [searchParams] = useSearchParams()
   const quoteId = searchParams.get('quoteId')
   const isEditing = !!quoteId
@@ -484,10 +475,10 @@ export function SellerCatalogPage() {
   const customerCity = customerDetailQuery.data?.city || (customersQuery.data?.items ?? []).find(c => c.id === customerId)?.city
 
   const locationsQuery = useQuery({
-    queryKey: ['locations', customerCity],
-    queryFn: () => fetchLocations(auth.accessToken!, customerCity),
-    // Solo se ejecuta si hay un token Y ya tenemos la ciudad del cliente
-    enabled: !!auth.accessToken && !!customerCity, 
+    queryKey: ['locations', userWarehouseId],
+    queryFn: () => fetchLocations(auth.accessToken!, userWarehouseId),
+    // Solo se ejecuta si hay un token Y el usuario tiene warehouse asignado
+    enabled: !!auth.accessToken && !!userWarehouseId,
   })
 
   const balancesQuery = useQuery({

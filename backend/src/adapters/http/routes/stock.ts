@@ -544,9 +544,8 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
     },
     async (request, reply) => {
       const tenantId = request.auth!.tenantId
-      const branchCity = branchCityOf(request)
       const branchWarehouseId = branchWarehouseIdOf(request)
-      if (branchCity === '__MISSING__') {
+      if (branchWarehouseId === '__MISSING__') {
         return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
       }
 
@@ -566,15 +565,11 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
             : {}),
           ...(from ? { createdAt: { gte: from } } : {}),
           ...(to ? { createdAt: { lt: to } } : {}),
-          ...(branchWarehouseId && branchWarehouseId !== '__MISSING__'
+          ...(branchWarehouseId
             ? {
                 toLocation: { warehouseId: branchWarehouseId },
               }
-            : branchCity
-              ? {
-                  toLocation: { warehouse: { city: { equals: branchCity, mode: 'insensitive' as const } } },
-                }
-              : {}),
+            : {}),
         },
         take: parsed.data.take,
         orderBy: [{ createdAt: 'desc' }],
@@ -647,8 +642,8 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
     },
     async (request, reply) => {
       const tenantId = request.auth!.tenantId
-      const branchCity = branchCityOf(request)
-      if (branchCity === '__MISSING__') {
+      const branchWarehouseId = branchWarehouseIdOf(request)
+      if (branchWarehouseId === '__MISSING__') {
         return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
       }
 
@@ -659,8 +654,8 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
         where: {
           id: parsed.data.id,
           tenantId,
-          ...(branchCity
-            ? { toLocation: { warehouse: { city: { equals: branchCity, mode: 'insensitive' as const } } } }
+          ...(branchWarehouseId
+            ? { toLocation: { warehouseId: branchWarehouseId } }
             : {}),
         },
         select: {
@@ -825,10 +820,10 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
     },
     async (request, reply) => {
       const tenantId = request.auth!.tenantId
-      const branchCity = branchCityOf(request)
+      const branchWarehouseId = branchWarehouseIdOf(request)
       const debugMovementRequests = process.env.DEBUG_STOCK_MOVEMENT_REQUESTS === '1'
 
-      if (branchCity === '__MISSING__') {
+      if (branchWarehouseId === '__MISSING__') {
         return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
       }
       const parsed = movementRequestsListQuerySchema.safeParse(request.query)
@@ -840,34 +835,16 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
       }
 
       if (parsed.data.warehouseId) {
-        if (branchCity && branchCity !== '__MISSING__') {
-          const wh = await (db as any).warehouse.findFirst({
-            where: { tenantId, id: parsed.data.warehouseId },
-            select: { city: true },
-          })
-          const whCity = String(wh?.city ?? '').trim().toUpperCase()
-          if (!whCity || whCity !== branchCity) {
+        if (branchWarehouseId) {
+          if (parsed.data.warehouseId !== branchWarehouseId) {
             return reply.status(403).send({ message: 'Solo puede ver solicitudes de su sucursal' })
           }
         }
         where.warehouseId = parsed.data.warehouseId
-      } else {
-        Object.assign(
-          where,
-          branchCity
-            ? {
-                requestedCity: {
-                  equals:
-                    parsed.data.status === 'OPEN' && parsed.data.city
-                      ? parsed.data.city
-                      : branchCity,
-                  mode: 'insensitive' as const,
-                },
-              }
-            : parsed.data.city
-              ? { requestedCity: { equals: parsed.data.city, mode: 'insensitive' as const } }
-              : {},
-        )
+      } else if (branchWarehouseId) {
+        where.warehouseId = branchWarehouseId
+      } else if (parsed.data.city) {
+        where.requestedCity = { equals: parsed.data.city, mode: 'insensitive' as const }
       }
 
       const rows = await db.stockMovementRequest.findMany({
@@ -1066,7 +1043,7 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
         request.log.info(
           {
             tenantId,
-            branchCity,
+            branchWarehouseId,
             status: parsed.data.status ?? null,
             rowCount: rows.length,
             movementCount: movements.length,
@@ -1202,9 +1179,9 @@ movements: (movementsByRequest.get(r.id) || []).map((m) => ({
 
       const tenantId = request.auth!.tenantId
       const userId = request.auth!.userId
-      const branchCity = branchCityOf(request)
+      const branchWarehouseId = branchWarehouseIdOf(request)
 
-      if (branchCity === '__MISSING__') {
+      if (branchWarehouseId === '__MISSING__') {
         return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
       }
 
@@ -1243,13 +1220,10 @@ movements: (movementsByRequest.get(r.id) || []).map((m) => ({
             resolvedToLocationHolder.current = loc
           }
 
-          if (branchCity) {
-            const whCity = String(warehouse.city ?? '').trim().toUpperCase()
-            if (!whCity || whCity !== branchCity) {
-              const err = new Error('Solo puede solicitar movimientos para su sucursal') as Error & { statusCode?: number }
-              err.statusCode = 403
-              throw err
-            }
+          if (branchWarehouseId && input.warehouseId !== branchWarehouseId) {
+            const err = new Error('Solo puede solicitar movimientos para su sucursal') as Error & { statusCode?: number }
+            err.statusCode = 403
+            throw err
           }
 
           // Normalize items (merge duplicates)
@@ -1411,8 +1385,8 @@ movements: (movementsByRequest.get(r.id) || []).map((m) => ({
 
       const tenantId = request.auth!.tenantId
       const userId = request.auth!.userId
-      const branchCity = branchCityOf(request)
-      if (branchCity === '__MISSING__') {
+      const branchWarehouseId = branchWarehouseIdOf(request)
+      if (branchWarehouseId === '__MISSING__') {
         return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
       }
 
@@ -1426,7 +1400,7 @@ movements: (movementsByRequest.get(r.id) || []).map((m) => ({
               tenantId,
               id,
               status: 'OPEN',
-              ...(branchCity ? { requestedCity: { equals: branchCity, mode: 'insensitive' as const } } : {}),
+              ...(branchWarehouseId ? { warehouseId: branchWarehouseId } : {}),
             },
             include: { items: true },
           })
@@ -1458,13 +1432,10 @@ movements: (movementsByRequest.get(r.id) || []).map((m) => ({
             throw err
           }
 
-          if (branchCity) {
-            const whCity = String(warehouse.city ?? '').trim().toUpperCase()
-            if (!whCity || whCity !== branchCity) {
-              const err = new Error('Solo puede solicitar movimientos para su sucursal') as Error & { statusCode?: number }
-              err.statusCode = 403
-              throw err
-            }
+          if (branchWarehouseId && input.warehouseId !== branchWarehouseId) {
+            const err = new Error('Solo puede solicitar movimientos para su sucursal') as Error & { statusCode?: number }
+            err.statusCode = 403
+            throw err
           }
 
           const normalizedItemsMap = new Map<string, { productId: string; presentationId: string; quantity: number }>()
@@ -1576,8 +1547,8 @@ movements: (movementsByRequest.get(r.id) || []).map((m) => ({
 
       const tenantId = request.auth!.tenantId
       const userId = request.auth!.userId
-      const branchCity = branchCityOf(request)
-      if (branchCity === '__MISSING__') {
+      const branchWarehouseId = branchWarehouseIdOf(request)
+      if (branchWarehouseId === '__MISSING__') {
         return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
       }
 
@@ -1591,7 +1562,7 @@ movements: (movementsByRequest.get(r.id) || []).map((m) => ({
               tenantId,
               id,
               status: 'OPEN',
-              ...(branchCity ? { requestedCity: { equals: branchCity, mode: 'insensitive' as const } } : {}),
+              ...(branchWarehouseId ? { warehouseId: branchWarehouseId } : {}),
             },
             include: { items: true },
           })
@@ -1654,8 +1625,8 @@ movements: (movementsByRequest.get(r.id) || []).map((m) => ({
     },
     async (request, reply) => {
       const tenantId = request.auth!.tenantId
-      const branchCity = branchCityOf(request)
-      if (branchCity === '__MISSING__') {
+      const branchWarehouseId = branchWarehouseIdOf(request)
+      if (branchWarehouseId === '__MISSING__') {
         return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
       }
 
@@ -1675,7 +1646,7 @@ movements: (movementsByRequest.get(r.id) || []).map((m) => ({
           tenantId,
           id,
           status: 'OPEN',
-          ...(branchCity ? { requestedCity: { equals: branchCity, mode: 'insensitive' as const } } : {}),
+          ...(branchWarehouseId ? { warehouseId: branchWarehouseId } : {}),
         },
         include: {
           warehouse: { select: { id: true, code: true, name: true, city: true } },
@@ -1965,13 +1936,6 @@ movements: (movementsByRequest.get(r.id) || []).map((m) => ({
           if (reqWarehouseId && toLoc.warehouse?.id !== reqWarehouseId) {
             throw Object.assign(new Error('toLocationId does not belong to the requested warehouse'), { statusCode: 400 })
           }
-          if (!reqWarehouseId) {
-            const toCity = String(toLoc.warehouse?.city ?? '').trim().toUpperCase()
-            const reqCity = String(req.requestedCity ?? '').trim().toUpperCase()
-            if (toCity && reqCity && toCity !== reqCity) {
-              throw Object.assign(new Error('toLocationId city does not match requestedCity'), { statusCode: 400 })
-            }
-          }
 
           const itemsById = new Map<string, any>((req.items ?? []).map((it: any) => [it.id, it]))
           const itemsByKey = new Map<string, any>()
@@ -2162,9 +2126,9 @@ movements: (movementsByRequest.get(r.id) || []).map((m) => ({
     async (request, reply) => {
       const tenantId = request.auth!.tenantId
       const userId = request.auth!.userId
-      const branchCity = branchCityOf(request)
+      const branchWarehouseId = branchWarehouseIdOf(request)
 
-      if (branchCity === '__MISSING__') {
+      if (branchWarehouseId === '__MISSING__') {
         return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
       }
 
@@ -2184,7 +2148,7 @@ movements: (movementsByRequest.get(r.id) || []).map((m) => ({
             select: {
               id: true,
               status: true,
-              requestedCity: true,
+              warehouseId: true,
               confirmationStatus: true,
             },
           })
@@ -2195,8 +2159,7 @@ movements: (movementsByRequest.get(r.id) || []).map((m) => ({
             throw err
           }
 
-          const reqCity = String(existing.requestedCity ?? '').trim().toUpperCase()
-          if (branchCity && reqCity !== branchCity) {
+          if (branchWarehouseId && existing.warehouseId !== branchWarehouseId) {
             const err = new Error('Solo puede confirmar solicitudes de su sucursal') as Error & { statusCode?: number }
             err.statusCode = 403
             throw err
@@ -2765,11 +2728,11 @@ movements: (movementsByRequest.get(r.id) || []).map((m) => ({
           if (Number.isFinite(movementQty) && movementQty > 0) {
             const toLoc = await db.location.findFirst({
               where: { id: result.createdMovement.toLocationId, tenantId },
-              select: { id: true, warehouse: { select: { id: true, city: true } } },
+              select: { id: true, warehouseId: true, warehouse: { select: { id: true, city: true } } },
             })
 
-            const city = (toLoc?.warehouse?.city ?? '').trim()
-            if (city) {
+            const toWhId = toLoc?.warehouseId ?? null
+            if (toWhId) {
               let remainingToApply = movementQty
               const openItems = await db.stockMovementRequestItem.findMany({
                 where: {
@@ -2778,7 +2741,7 @@ movements: (movementsByRequest.get(r.id) || []).map((m) => ({
                   remainingQuantity: { gt: 0 },
                   request: {
                     status: 'OPEN',
-                    requestedCity: { equals: city, mode: 'insensitive' as const },
+                    warehouseId: toWhId,
                   },
                 },
                 orderBy: [{ request: { createdAt: 'asc' } }, { createdAt: 'asc' }],
@@ -3209,11 +3172,11 @@ movements: (movementsByRequest.get(r.id) || []).map((m) => ({
           }
 
           // Validate a global toLocationId if provided; otherwise it is resolved per-request
-           let globalToLoc: { id: string; code: string; warehouse: { id: string; code: string; name: string; city: string | null } } | null = null
+            let globalToLoc: { id: string; code: string; warehouseId: string; warehouse: { id: string; code: string; name: string; city: string | null } } | null = null
           if (input.toLocationId) {
             const loc = await tx.location.findFirst({
               where: { tenantId, id: input.toLocationId },
-              select: { id: true, code: true, warehouse: { select: { id: true, code: true, name: true, city: true } } },
+              select: { id: true, code: true, warehouseId: true, warehouse: { select: { id: true, code: true, name: true, city: true } } },
             })
             if (!loc) throw Object.assign(new Error('toLocationId not found'), { statusCode: 404 })
             globalToLoc = loc as any
@@ -3279,18 +3242,16 @@ movements: (movementsByRequest.get(r.id) || []).map((m) => ({
               })
             }
 
-            const reqCity = String(req.requestedCity ?? '').trim().toUpperCase()
-
              // Resolve the destination location for this request:
              // use fulfillment.toLocationId, then global toLocationId, then the request's own toLocationId
              const effectiveToLocationId = fulfillmentToLocationId ?? input.toLocationId ?? req.toLocationId
              if (!effectiveToLocationId) {
                throw Object.assign(new Error(`Request ${requestId} has no destination location and none was provided`), { statusCode: 400 })
              }
-             const toLoc = (globalToLoc && globalToLoc.id === effectiveToLocationId) ? globalToLoc : await tx.location.findFirst({
-               where: { tenantId, id: effectiveToLocationId },
-               select: { id: true, code: true, warehouse: { select: { id: true, code: true, name: true, city: true } } },
-             }) as { id: string; code: string; warehouse: { id: string; code: string; name: string; city: string | null } }
+              const toLoc = (globalToLoc && globalToLoc.id === effectiveToLocationId) ? globalToLoc : await tx.location.findFirst({
+                where: { tenantId, id: effectiveToLocationId },
+                select: { id: true, code: true, warehouseId: true, warehouse: { select: { id: true, code: true, name: true, city: true } } },
+              }) as { id: string; code: string; warehouseId: string; warehouse: { id: string; code: string; name: string; city: string | null } }
              if (!toLoc) throw Object.assign(new Error(`Destination location not found`), { statusCode: 404 })
 
              // Check destination consistency
@@ -3298,9 +3259,9 @@ movements: (movementsByRequest.get(r.id) || []).map((m) => ({
                throw Object.assign(new Error('Destination location does not belong to the requested warehouse'), { statusCode: 400 })
              }
              if (!req.warehouseId) {
-               const toCity = String(toLoc.warehouse?.city ?? '').trim().toUpperCase()
-               if (toCity && reqCity && toCity !== reqCity) {
-                 throw Object.assign(new Error('Destination location city does not match requestedCity'), { statusCode: 400 })
+               const toWhId = String(toLoc.warehouseId ?? '').trim()
+               if (toWhId && req.warehouseId && toWhId !== req.warehouseId) {
+                 throw Object.assign(new Error('Destination location warehouse does not match request warehouse'), { statusCode: 400 })
                }
              }
 

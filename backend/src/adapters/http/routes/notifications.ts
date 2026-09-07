@@ -33,6 +33,14 @@ export async function registerNotificationRoutes(app: FastifyInstance): Promise<
     return city ? city.toUpperCase() : '__MISSING__'
   }
 
+  function branchWarehouseIdOf(request: any): string | null {
+    if (request.auth?.isTenantAdmin) return null
+    const scoped = !!request.auth?.permissions?.has(Permissions.ScopeBranch)
+    if (!scoped) return null
+    const wid = String(request.auth?.warehouseId ?? '').trim()
+    return wid ? wid : '__MISSING__'
+  }
+
   app.get(
     '/api/v1/notifications',
     {
@@ -45,6 +53,7 @@ export async function registerNotificationRoutes(app: FastifyInstance): Promise<
       const tenantId = request.auth!.tenantId
       const userId = request.auth!.userId
       const branchCity = branchCityOf(request)
+      const branchWh = branchWarehouseIdOf(request)
       if (branchCity === '__MISSING__') {
         return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
       }
@@ -56,15 +65,26 @@ export async function registerNotificationRoutes(app: FastifyInstance): Promise<
 
       const lastReadAt = userRow?.notificationsLastReadAt ?? new Date(0)
 
-      const visibleCityFilter =
-        branchCity && branchCity !== '__MISSING__'
+      // Para scope:branch el filtro prioriza warehouseId (evita mezclar
+      // notifications entre sucursales de la misma ciudad) y cae a city
+      // cuando el warehouseId no esta poblado (notificaciones historicas).
+      const visibleScopeFilter =
+        branchWh && branchWh !== '__MISSING__'
           ? {
               OR: [
-                { city: null },
-                { city: { equals: branchCity, mode: 'insensitive' as const } },
+                { warehouseId: null, city: null },
+                { warehouseId: branchWh },
+                { warehouseId: null, city: { equals: branchCity, mode: 'insensitive' as const } },
               ],
             }
-          : {}
+          : branchCity && branchCity !== '__MISSING__'
+            ? {
+                OR: [
+                  { city: null },
+                  { city: { equals: branchCity, mode: 'insensitive' as const } },
+                ],
+              }
+            : {}
 
       const where: any = {
         tenantId,
@@ -72,7 +92,7 @@ export async function registerNotificationRoutes(app: FastifyInstance): Promise<
           { targetUserId: userId },
           {
             targetUserId: null,
-            ...(request.auth?.isTenantAdmin ? {} : visibleCityFilter),
+            ...(request.auth?.isTenantAdmin ? {} : visibleScopeFilter),
           },
         ],
       }
@@ -141,15 +161,19 @@ export async function registerNotificationRoutes(app: FastifyInstance): Promise<
       const body = `${fromLabel} → ${toLabel}`
       const linkTo = `/stock/completed-movements?highlight=${encodeURIComponent(parsed.data.referenceId)}`
 
-      const targetCities = new Set<string>()
-      if (toWh?.city) targetCities.add(String(toWh.city).toUpperCase())
-      if (fromWh?.city) targetCities.add(String(fromWh.city).toUpperCase())
+      // Una notification por warehouse (no por ciudad) para que dos sucursales
+      // en la misma ciudad no se mezclen. Si falta warehouseId (datos legacy)
+      // caemos al comportamiento anterior por ciudad.
+      const targetWhIds = new Set<string>()
+      if (fromWh?.id) targetWhIds.add(String(fromWh.id))
+      if (toWh?.id) targetWhIds.add(String(toWh.id))
 
-      if (targetCities.size === 0) {
+      if (targetWhIds.size === 0) {
         await db.notification.create({
           data: {
             tenantId,
             city: null,
+            warehouseId: null,
             type: 'stock.bulk_transfer.created',
             title: '📦 Transferencia masiva',
             body,
@@ -159,17 +183,26 @@ export async function registerNotificationRoutes(app: FastifyInstance): Promise<
           },
         })
       } else {
+        const targetCities: string[] = []
+        if (fromWh?.city) targetCities.push(String(fromWh.city))
+        if (toWh?.city && (!fromWh?.city || String(toWh.city) !== String(fromWh.city))) {
+          targetCities.push(String(toWh.city))
+        }
         await db.notification.createMany({
-          data: Array.from(targetCities).map((city) => ({
-            tenantId,
-            city,
-            type: 'stock.bulk_transfer.created',
-            title: '📦 Transferencia masiva',
-            body,
-            linkTo,
-            createdBy: userId,
-            meta: { kind: 'info', referenceId: parsed.data.referenceId },
-          })),
+          data: Array.from(targetWhIds).map((whId) => {
+            const whCity = whId === fromWh?.id ? fromWh?.city : toWh?.city
+            return {
+              tenantId,
+              city: whCity ?? null,
+              warehouseId: whId,
+              type: 'stock.bulk_transfer.created',
+              title: '📦 Transferencia masiva',
+              body,
+              linkTo,
+              createdBy: userId,
+              meta: { kind: 'info', referenceId: parsed.data.referenceId },
+            }
+          }),
         })
       }
 

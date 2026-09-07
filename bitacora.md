@@ -1,8 +1,91 @@
 # Bitácora de desarrollo — PharmaFlow Bolivia (farmaSNT)
 
-> Última actualización: 02 Sep 2026
+> Última actualización: 07 Sep 2026
 
 Este documento suma (a alto nivel) decisiones, hitos y cambios relevantes que se fueron incorporando al repositorio para llegar al estado actual del MVP.
+
+---
+
+## **[07 Sep 2026] Discriminación por warehouseId (no por ciudad) + Notification.warehouseId + fix catálogo vendedor**
+
+### Contexto
+- Por primera vez un tenant (Febsa) opera con **dos sucursales en la misma ciudad** (`SUC-LPZ` SALES y `SUC-NACIONAL` PROVIDER, ambas en `LA PAZ`). El sistema estaba diseñado bajo la asunción "1 ciudad = 1 sucursal" y discriminaba por `Warehouse.city` en múltiples endpoints, lo que mezclaba locations/inventario entre sucursales.
+- La única excepción correcta al filtrado por ciudad es **`Customer.city` y `SalesOrder.deliveryCity`** (los clientes son por ciudad, no por sucursal); todo lo demás debe usar `warehouseId` o `locationId`.
+
+### Cambios principales
+
+#### Schema Prisma
+- **`Notification.warehouseId String?`** con FK a `Warehouse` (`onDelete: SetNull`) e índice `@@index([tenantId, warehouseId, createdAt])`.
+- **`Warehouse.notifications Notification[]`** (relación inversa).
+- Migración nueva: `20260907130000_notification_warehouse_id/migration.sql`. Se aplica vía `prisma migrate deploy` (incluido en `deploy.sh`).
+- Backfill en local: 1867/1888 notificaciones con `city` no nulo quedaron con `warehouseId` poblado (resolución por ciudad única); 21 quedaron NULL (caso multi-warehouse en misma ciudad, ambigüedad legítima).
+
+#### Backend — filtros por `branchCityOf` reemplazados por `branchWarehouseIdOf` / `branchOwnWarehouseIdOf`
+- `stock.ts` — refactor de 8 endpoints (`/returns`, `/returns/:id`, `/movement-requests` GET/POST/PUT/cancel/plan/confirm, `bulk-fulfill` y auto-apply transfer en `bulk-transfers`): todos los `where: { requestedCity: { equals: branchCity } }` pasan a `where: { warehouseId: branchWarehouseId }`. La validación de consistencia `toLocation.warehouseId` vs `req.warehouseId` reemplaza la vieja comparación por ciudad.
+- `products.ts` — auto-fulfill de batches (`POST /api/v1/products/:id/batches`) ahora busca solicitudes pendientes por `warehouseId` del location destino (no por `requestedCity`).
+- `salesQuotes.ts` — `GET /api/v1/sales/quotes/sub-warehouses` filtra por `warehouseId` del usuario (no por ciudad). Nuevo helper local `branchWarehouseIdOf`.
+- `warehouses.ts` — `GET /api/v1/warehouses` ahora acepta `city`, `isActive` y `type` como query params opcionales; `GET /api/v1/warehouses/sub-locations` acepta `warehouseId` además de `city`.
+- `reports.ts` — 5 endpoints de movement-requests (`summary`, `by-city`, `flows`, `fulfilled`, `:id/trace`) cambian la cláusula `requestedCity = branchCity` por `warehouseId = branchOwnWh` (helper ya existente). `BRANCH_PROVIDER` también queda aislado a su propio warehouse.
+- `notifications.ts`:
+  - `GET /api/v1/notifications` (scope:branch): el filtro prioriza `warehouseId = branchWh` y cae a `city = branchCity` solo cuando la notificación no tiene `warehouseId` poblado (compatibilidad legacy).
+  - `POST /api/v1/notifications/send-bulk-transfer`: `Set<city>` reemplazado por `Set<warehouseId>`. Se crea **una notification por warehouse** (origen y destino), cada una con `warehouseId` y `city` (compat).
+
+#### Frontend
+- `pages/stock/BulkFulfillRequestsPage.tsx` — `groupedRequests` agrupa siempre por `warehouse.id`. Si una solicitud llega sin `warehouse` queda en un grupo "Sin sucursal asignada" (no se atiende).
+- `pages/reports/StockReportsPage.tsx` — hoja Excel "Solicitudes ciudad" renombrada a "Solicitudes por sucursal".
+- `pages/catalog/SellerCatalogPage.tsx` (**fix bug Catálogo Vendedor**) — la función `fetchLocations` ya no busca sub-almacenes por **ciudad del cliente** (rompía con multi-sucursal, devolvía los del PROVIDER a un vendedor SALES). Ahora recibe el `warehouseId` del usuario autenticado (vía `usePermissions`) y consulta `GET /api/v1/warehouses/{userWarehouseId}/locations?isActive=true`. Así cada vendedor ve los sub-almacenes de su propia sucursal, sin importar la ciudad del cliente.
+
+### Operación
+- TypeScript check OK en backend y frontend.
+- Build OK en backend y frontend.
+- Una migración Prisma nueva: `20260907130000_notification_warehouse_id` — el `deploy.sh` la aplica vía `prisma migrate deploy`.
+- Backfill de `Notification.warehouseId` recomendado también en producción (mismo SQL que `18_notification_backfill.sql` + `22_backfill_demo_scz.sql`).
+- Verificado en local con `febsa.lpz@gmail.com` (SUC-LPZ SALES): el catálogo vendedor ya muestra `Institucional` y `Privado` de SUC-LPZ, no los del SUC-NACIONAL PROVIDER.
+
+---
+
+## **[04 Sep 2026] Auditoría de ventas cruzadas (tenant Febsa) + reconciliación manual de balance Abasor 75 mg / CBB**
+
+### Incidente
+- En el tenant **Febsa** se detectaron ventas (órdenes `OV-...`) cuyo `StockMovement` (tipo `OUT`, `referenceType='SALES_ORDER'`) salió de un almacén en una ciudad distinta al `deliveryCity` del cliente. Ejemplo concreto: ventas con `deliveryCity='SANTA CRUZ DE LA SIERRA'` o `'COCHABAMBA'` cuyo stock se descontó de `SUC-SCZ` o `SUC-LPZ` en lugar del almacén local.
+- 14 movimientos anómalos en 10 órdenes (Feb 2026 y Ago 2026), agrupados en 2 clusters por usuario (`febsa.scz@gmail.com` y `camilo.jadue84@gmail.com`). Detalle completo en `anomalias_febsa.md`.
+
+### Reconciliación de saldo (operación one-shot)
+- Producto afectado: **Abasor 75 mg** en **SUC-CBB** (Cochabamba).
+- En la base de datos (respaldo local y luego producción `192.168.10.57`) el `InventoryBalance` mostraba saldos que no cuadraban con el kardex (recomputado de `StockMovement`).
+- Ajustes aplicados vía SQL directo (transacción + COMMIT, validado previamente que no había reservas activas ni `reservedQuantity > 0`):
+
+  | Balance | Antes | Después | Entorno |
+  |---|---|---|---|
+  | Lote `30-26264` / Institucional / CBB | 28,320 | **0** | local |
+  | Lote `26279` / Privado / CBB | 18,150 | **10,470** | local |
+  | Lote `30-26264` / Institucional / CBB | 27,420 | **0** | producción |
+  | Lote `26279` / Privado / CBB | 18,150 | **9,570** | producción |
+
+- Scripts SQL: `C:\Users\arman\AppData\Local\Temp\kilo\12_fix_balance.sql` (con `COMMIT` al final) y `13_verify.sql` para validación post-aplicación.
+
+### Sugerencia de revisión de código (para evitar reincidencia)
+- **Backend — selección de almacén origen en el flujo de ventas**:
+  - `backend/src/application/stock/stockMovementService.ts`: confirmar que, al resolver el `fromLocationId` para un `OUT` con `referenceType='SALES_ORDER'`, se filtra estrictamente por la ciudad del cliente (`SalesOrder.deliveryCity` o `Customer.city`) o por el `warehouseId` del usuario vendedor. Hoy el síntoma sugiere que el resolver cae al "primer location con stock del lote" sin considerar la geografía.
+  - `backend/src/adapters/http/routes/salesOrders.ts` (rutas de fulfillment / `deliver`): auditar el helper que arma el payload de stock. Si delega en `stockMovementService.createStockMovementTx`, validar que el caller pase `fromLocationId`/`fromWarehouseId` con scope de ciudad, y que el servicio rechace (con `409` o `422`) cuando el almacén no pertenezca a la ciudad esperada.
+  - `backend/src/adapters/http/routes/stock.ts` (generadores de `OUT` para transferencias y devoluciones): confirmar que la selección de lote para `OUT` con `referenceType='SALES_ORDER'` no usa FEFO ciego sobre TODA la tenant, sino que acota a las locations del almacén geográficamente válido.
+- **Backend — modelo de datos**:
+  - `SalesOrder` ya tiene `deliveryCity`; considerar agregar `sourceWarehouseId` (o `sourceLocationId`) explícito al crear la línea de la venta, de modo que la generación del `OUT` no tenga que "re-descubrir" el origen desde el stock. Esto da trazabilidad y previene ambigüedad cuando un mismo lote existe en varios almacenes.
+  - `Batch` no tiene `warehouseId` propio (se infiere por location). Documentar mejor esta convención y, si es viable, denormalizar el `warehouseId` del último ingreso para acelerar validaciones geográficas.
+- **Backend — guardas**:
+  - En `stockMovementService.createStockMovementTx` (o donde se cree el `OUT` de venta): agregar validación previa que compare `Warehouse.city` del `fromLocationId` contra `SalesOrder.deliveryCity`; lanzar error explícito si no coinciden. Idem para `SALES_ORDER` contra `Customer.city` como fallback.
+  - En `salesOrders.ts` y `stock.ts`: rechazar `POST` con `409 VERSION_CONFLICT` o `422 CITY_MISMATCH` cuando el lote seleccionado por FEFO pertenece a un almacén fuera de la ciudad de entrega.
+- **Frontend — UX defensiva**:
+  - `frontend/src/pages/sales/QuoteDetailPage.tsx` y `frontend/src/pages/sales/OrdersPage.tsx`: al confirmar una venta, mostrar el **almacén origen** que se va a descontar (no solo el lote). Si el cliente tiene una ciudad definida, exigir coincidencia antes de habilitar "Confirmar".
+  - `frontend/src/pages/catalog/ProductDetailPage.tsx` (selector de lote en fulfillment): agrupar los lotes por `Warehouse:Location` y resaltar los de la ciudad del cliente, evitando que el operador tome un lote "equivocado" por error.
+- **Auditoría post-deploy**:
+  - Crear un job (puede ser un endpoint admin tipo `GET /api/v1/admin/audit/cross-city-sales?from=&to=`) que ejecute la query del reporte `anomalias_febsa.md` (revisión de `OUT` con `referenceType='SALES_ORDER'` cuyo `Warehouse.city ? SalesOrder.deliveryCity`) y devuelva los hallazgos. Programarlo diario/semanal hasta validar que el fix elimina las ocurrencias.
+  - Extender el chequeo a todos los tenants (no solo Febsa); el patrón podría repetirse.
+
+### Operación
+- Cambios solo de datos (UPDATE directo con COMMIT), no se modificaron archivos del repositorio en esta incidencia.
+- Sin migraciones Prisma.
+- Verificación post-aplicación: kardex y `InventoryBalance` cuadran en CBB (10,470 en local, 9,570 en producción, diferencia atribuible a un `MANUAL_DISCARD` adicional que se ejecutó en producción).
 
 ---
 

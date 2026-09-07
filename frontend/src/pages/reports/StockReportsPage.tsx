@@ -1343,7 +1343,7 @@ export function StockReportsPage() {
           ],
         },
         {
-          name: 'Solicitudes ciudad',
+          name: 'Solicitudes por sucursal',
           rows: report.byCity.map((item) => ({ Ciudad: item.city, Total: item.total, Abiertas: item.open, Atendidas: item.fulfilled, Canceladas: item.cancelled, Pendientes: item.pending, Aceptadas: item.accepted, Rechazadas: item.rejected })),
         },
         { name: 'Flujos', rows: report.flows.map((item) => ({ Origen: item.origin, Destino: item.destination, Completadas: item.requestsCount, TiempoPromedioMin: item.avgMinutes ?? 0 })) },

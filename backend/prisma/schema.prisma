@@ -517,6 +517,7 @@ model Warehouse {
   outputLaboratories Laboratory[] @relation("LaboratoryOutputWarehouse")
   users     User[]
   stockMovementRequests StockMovementRequest[]
+  notifications Notification[]
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -780,6 +781,7 @@ model Notification {
   id           String   @id @default(uuid())
   tenantId     String
   city         String?
+  warehouseId  String?
   targetUserId String?
   type         String
   title        String
@@ -789,8 +791,11 @@ model Notification {
   createdAt    DateTime @default(now())
   createdBy    String?
 
+  warehouse Warehouse? @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
+
   @@index([tenantId, createdAt])
   @@index([tenantId, city, createdAt])
+  @@index([tenantId, warehouseId, createdAt])
   @@index([tenantId, targetUserId, createdAt])
 }
 

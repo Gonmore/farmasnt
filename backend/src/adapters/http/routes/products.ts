@@ -1962,15 +1962,15 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
             // Check for pending stock movement requests that can be fulfilled
             const location = await tx.location.findFirst({
               where: { id: resolvedToLocationId },
-              select: { warehouse: { select: { city: true } } },
+              select: { warehouseId: true, warehouse: { select: { city: true } } },
             })
-            if (location?.warehouse?.city) {
-              const warehouseCity = location.warehouse.city
+            const targetWhId = location?.warehouseId ?? null
+            if (targetWhId) {
               const pendingRequests = await tx.stockMovementRequest.findMany({
                 where: {
                   tenantId,
                   status: 'OPEN',
-                  requestedCity: warehouseCity,
+                  warehouseId: targetWhId,
                   items: {
                     some: {
                       productId,

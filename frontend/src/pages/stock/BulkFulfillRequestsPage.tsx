@@ -101,10 +101,12 @@ export function BulkFulfillRequestsPage() {
   const groupedRequests = useMemo(() => {
     const groups = new Map<string, { key: string; title: string; items: MovementRequest[] }>()
     for (const r of requestsQuery.data?.items ?? []) {
-      const key = r.warehouse?.id ? `wh:${r.warehouse.id}` : `city:${(r.requestedCity ?? '').trim().toUpperCase()}`
+      // Siempre agrupar por warehouse.id; las solicitudes sin warehouse
+      // quedan en un grupo "Sin sucursal" para revision (no se atienden).
+      const key = r.warehouse?.id ? `wh:${r.warehouse.id}` : 'wh:__unassigned__'
       const title = r.warehouse
         ? `${r.warehouse.code} - ${r.warehouse.name}${r.warehouse.city ? ` (${r.warehouse.city})` : ''}`
-        : `Ciudad: ${r.requestedCity}`
+        : `Sin sucursal asignada`
       const g = groups.get(key) ?? { key, title, items: [] }
       g.items.push(r)
       groups.set(key, g)

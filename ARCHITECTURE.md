@@ -1,7 +1,7 @@
 ﻿# Architecture — PharmaFlow Bolivia (farmaSNT)
 
 > Fuente de verdad para la estructura del proyecto y el mapeo frontend ↔ backend.  
-> Última actualización: 02 Sep 2026
+> Última actualización: 07 Sep 2026
 
 ---
 
@@ -212,6 +212,7 @@ frontend/src/
 
 | Frontend | Backend | Archivo backend |
 |---|---|---|
+| `pages/catalog/SellerCatalogPage.tsx` (selector de sub-almacén) | `GET /api/v1/warehouses/{userWarehouseId}/locations?isActive=true` | `routes/warehouses.ts:96` | Filtra sub-almacenes por el `warehouseId` del usuario autenticado (vía `usePermissions`), NO por ciudad del cliente. Soporta multi-sucursal en la misma ciudad sin mezclar locations entre SALES y PROVIDER. |
 | `pages/sales/QuotesPage.tsx` | `GET /api/v1/sales/quotes` | `routes/salesQuotes.ts:584` |
 | | `POST /api/v1/sales/quotes` | `routes/salesQuotes.ts:674` |
 | | `GET /api/v1/sales/quotes/:id` | `routes/salesQuotes.ts:1435` |
@@ -340,14 +341,14 @@ frontend/src/
 | `Quote` | `customer`, `lines` | Cotizaciones (CREATED/PROCESSED) |
 | `AuditEvent` | — | Append-only auditoría GxP |
 | `TenantSequence` | — | Secuenciación por tenant+año |
-| `Notification` | — | Campana de notificaciones |
+| `Notification` | `warehouse` (v2.3.0) | Campana de notificaciones, filtrada por `warehouseId` (no `city`) para multi-sucursal |
 
 ---
 
 ## 5. Reglas de negocio críticas
 
 1. **Multi-tenant**: todas las queries filtran por `tenantId`. El `request.auth` incluye `tenantId`, `userId`, `permissions`, `isTenantAdmin`, `warehouseId`, `warehouseCity`.
-2. **ScopeBranch**: usuarios con `Permissions.ScopeBranch` solo pueden ver/editar **su propia sucursal**. En reportes de stock (`/api/v1/reports/stock/*`) el backend fuerza el `warehouseId` al almacén propio del usuario (`resolveBranchWarehouseId`); los admins sin scope de sucursal conservan el selector "Sucursal" (vacío = todas). `TENANT_ADMIN` y platform admin no se ven afectados. En inventario, un usuario con scope de sucursal solo puede **editar** (ubicación/estado de lote) su propio almacén (`canEditWarehouse`); el resto de almacenes se muestra en solo lectura (UI) y el backend rechaza `403` ADJUSTMENT/IN hacia almacenes ajenos. El rol `BRANCH_PROVIDER` (almacén tipo `PROVIDER`) ve TODAS las solicitudes de transferencia sin filtro de ciudad (operación) pero solo edita/solo ve su propio almacén en reportes.
+2. **ScopeBranch y discriminación por `warehouseId`**: usuarios con `Permissions.ScopeBranch` solo pueden ver/editar **su propia sucursal**. **El discriminante operativo es `warehouseId`, NO `city`** (Febsa opera con `SUC-LPZ` SALES y `SUC-NACIONAL` PROVIDER en la misma ciudad `LA PAZ`; un filtro por ciudad mezclaba locations/inventario entre ambas). En reportes de stock (`/api/v1/reports/stock/*`) el backend fuerza el `warehouseId` al almacén propio del usuario (`resolveBranchWarehouseId`); los admins sin scope de sucursal conservan el selector "Sucursal" (vacío = todas). `TENANT_ADMIN` y platform admin no se ven afectados. En inventario, un usuario con scope de sucursal solo puede **editar** (ubicación/estado de lote) su propio almacén (`canEditWarehouse`); el resto de almacenes se muestra en solo lectura (UI) y el backend rechaza `403` ADJUSTMENT/IN hacia almacenes ajenos. El rol `BRANCH_PROVIDER` (almacén tipo `PROVIDER`) ve TODAS las solicitudes de transferencia sin filtro de ciudad (operación) pero solo edita/solo ve su propio almacén en reportes. **Excepción correcta al filtrado por ciudad**: `Customer.city` y `SalesOrder.deliveryCity` (los clientes son por ciudad, no por sucursal).
 3. **Optimistic locking**: `version` en `Product`, `Batch`, `Tenant`, `TenantModule`, `Role`, `User`, etc. Retorna `409` si no coincide.
 4. **FEFO**: los movimientos `OUT`/`TRANSFER` priorizan lotes con `expiresAt` más próximo. Se bloquean movimientos de lotes vencidos.
 5. **Presentaciones**: las cantidades en UI se expresan en presentación (cajas); el backend convierte a unidades base usando `unitsPerPresentation`.
@@ -355,6 +356,7 @@ frontend/src/
 7. **Estado `SENT`**: las solicitudes de movimiento pasan por `SENT` (enviado) antes de `FULFILLED` (recibido).
 8. **Cross-city stock enforcement**: al procesar una cotización (`POST /api/v1/sales/quotes/:id/process`), el backend valida que la ubicación/lote seleccionado pertenezca a la misma ciudad que el cliente. El endpoint `available-batches` también filtra lotes por la ciudad del cliente y rechaza (fallback a filtrado por ciudad) ubicaciones de otro municipio.
 9. **Over-fulfillment permitido**: al atender una solicitud de movimiento (`POST /api/v1/stock/movement-requests/bulk-fulfill`), el backend **permite** enviar una cantidad mayor a la solicitada. El único límite es el stock disponible en el almacén origen. El `remainingQuantity` del ítem puede quedar negativo y la solicitud se marca `SENT` normalmente.
+10. **Multi-sucursal en la misma ciudad**: cuando un tenant tiene más de un warehouse en la misma ciudad (Febsa: `SUC-LPZ` SALES + `SUC-NACIONAL` PROVIDER, ambas en `LA PAZ`), el sistema **no debe filtrar por `Warehouse.city` en operaciones**. El discriminante es `warehouseId`. `Notification.warehouseId` (nuevo en v2.3.0) se usa en el filtrado de la campana para evitar que un usuario de SUC-LPZ SALES vea notificaciones del SUC-NACIONAL PROVIDER. Las notificaciones legacy sin `warehouseId` poblado se siguen filtrando por `city` (compatibilidad).
 
 ---
 

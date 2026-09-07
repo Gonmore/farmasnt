@@ -34,10 +34,14 @@ const updateLocationSchema = z.object({
 const listQuerySchema = z.object({
   take: z.coerce.number().int().min(1).max(100).default(20),
   cursor: z.string().uuid().optional(),
+  city: z.string().trim().max(120).optional(),
+  isActive: z.coerce.boolean().optional(),
+  type: z.enum(['PROVIDER', 'SALES']).optional(),
 })
 
 const subLocationsQuerySchema = z.object({
   city: z.string().trim().max(120).optional(),
+  warehouseId: z.string().uuid().optional(),
 })
 
 export async function registerWarehouseRoutes(app: FastifyInstance): Promise<void> {
@@ -56,7 +60,12 @@ export async function registerWarehouseRoutes(app: FastifyInstance): Promise<voi
       const tenantId = request.auth!.tenantId
 
       const items = await db.warehouse.findMany({
-        where: { tenantId },
+        where: {
+          tenantId,
+          ...(parsed.data.city ? { city: { equals: parsed.data.city, mode: 'insensitive' as const } } : {}),
+          ...(parsed.data.isActive !== undefined ? { isActive: parsed.data.isActive } : {}),
+          ...(parsed.data.type ? { type: parsed.data.type } : {}),
+        },
         take: parsed.data.take,
         ...(parsed.data.cursor
           ? {
@@ -102,6 +111,7 @@ export async function registerWarehouseRoutes(app: FastifyInstance): Promise<voi
 
       const tenantId = request.auth!.tenantId
       const city = parsed.data.city?.trim()
+      const warehouseId = parsed.data.warehouseId
 
       const items = await db.location.findMany({
         where: {
@@ -110,7 +120,7 @@ export async function registerWarehouseRoutes(app: FastifyInstance): Promise<voi
           isActive: true,
           warehouse: {
             isActive: true,
-            ...(city ? { city: { equals: city, mode: 'insensitive' as const } } : {}),
+            ...(warehouseId ? { id: warehouseId } : city ? { city: { equals: city, mode: 'insensitive' as const } } : {}),
           },
         },
         select: {

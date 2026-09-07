@@ -1960,6 +1960,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
 
       const tenantId = request.auth!.tenantId
       const branchCity = branchCityOf(request)
+      const branchOwnWh = branchOwnWarehouseIdOf(request)
       if (branchCity === '__MISSING__') return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
 
       const { from, to } = parsed.data
@@ -1977,7 +1978,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
         WHERE smr."tenantId" = ${tenantId}
           AND (${from ?? null}::timestamptz IS NULL OR smr."createdAt" >= ${from ?? null})
           AND (${to ?? null}::timestamptz IS NULL OR smr."createdAt" < ${to ?? null})
-          AND (${branchCity ?? null}::text IS NULL OR upper(coalesce(smr."requestedCity", '')) = upper(${branchCity ?? null}))
+          AND (${branchOwnWh ?? null}::text IS NULL OR smr."warehouseId" = ${branchOwnWh ?? null}::text)
       `
 
       const r = rows[0] ?? {
@@ -2013,6 +2014,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
 
       const tenantId = request.auth!.tenantId
       const branchCity = branchCityOf(request)
+      const branchOwnWh = branchOwnWarehouseIdOf(request)
       if (branchCity === '__MISSING__') return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
 
       const { from, to, take } = parsed.data
@@ -2031,7 +2033,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
         WHERE smr."tenantId" = ${tenantId}
           AND (${from ?? null}::timestamptz IS NULL OR smr."createdAt" >= ${from ?? null})
           AND (${to ?? null}::timestamptz IS NULL OR smr."createdAt" < ${to ?? null})
-          AND (${branchCity ?? null}::text IS NULL OR upper(coalesce(smr."requestedCity", '')) = upper(${branchCity ?? null}))
+          AND (${branchOwnWh ?? null}::text IS NULL OR smr."warehouseId" = ${branchOwnWh ?? null}::text)
         GROUP BY smr."requestedCity"
         ORDER BY count(*) DESC NULLS LAST
         LIMIT ${take}
@@ -2063,6 +2065,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
 
       const tenantId = request.auth!.tenantId
       const branchCity = branchCityOf(request)
+      const branchOwnWh = branchOwnWarehouseIdOf(request)
       if (branchCity === '__MISSING__') return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
 
       const { from, to, take } = parsed.data
@@ -2094,7 +2097,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
             AND smr."fulfilledAt" IS NOT NULL
             AND (${from ?? null}::timestamptz IS NULL OR smr."createdAt" >= ${from ?? null})
             AND (${to ?? null}::timestamptz IS NULL OR smr."createdAt" < ${to ?? null})
-            AND (${branchCity ?? null}::text IS NULL OR upper(coalesce(smr."requestedCity", '')) = upper(${branchCity ?? null}))
+            AND (${branchOwnWh ?? null}::text IS NULL OR smr."warehouseId" = ${branchOwnWh ?? null}::text)
           GROUP BY smr.id
         ), normalized AS (
           SELECT
@@ -2177,12 +2180,13 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
     async (request, reply) => {
       const parsed = stockMovementRequestsFulfilledQuerySchema.safeParse(request.query)
       if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
-
       const tenantId = request.auth!.tenantId
       const branchCity = branchCityOf(request)
+      const branchOwnWh = branchOwnWarehouseIdOf(request)
       if (branchCity === '__MISSING__') return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
 
       const { from, to, take } = parsed.data
+
 
       const rows = await db.$queryRaw<StockMovementRequestsFulfilledRow[]>`
         WITH req AS (
@@ -2205,7 +2209,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
             AND smr."fulfilledAt" IS NOT NULL
             AND (${from ?? null}::timestamptz IS NULL OR smr."fulfilledAt" >= ${from ?? null})
             AND (${to ?? null}::timestamptz IS NULL OR smr."fulfilledAt" < ${to ?? null})
-            AND (${branchCity ?? null}::text IS NULL OR upper(coalesce(smr."requestedCity", '')) = upper(${branchCity ?? null}))
+            AND (${branchOwnWh ?? null}::text IS NULL OR smr."warehouseId" = ${branchOwnWh ?? null}::text)
           ORDER BY smr."fulfilledAt" DESC
           LIMIT ${take}
         ), itemsAgg AS (
@@ -2283,6 +2287,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
     async (request, reply) => {
       const tenantId = request.auth!.tenantId
       const branchCity = branchCityOf(request)
+      const branchOwnWh = branchOwnWarehouseIdOf(request)
       if (branchCity === '__MISSING__') return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
 
       const parsedParams = movementRequestTraceParamsSchema.safeParse((request as any).params)
@@ -2293,7 +2298,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
         where: {
           tenantId,
           id,
-          ...(branchCity ? { requestedCity: { equals: branchCity, mode: 'insensitive' as const } } : {}),
+          ...(branchOwnWh ? { warehouseId: branchOwnWh } : {}),
         },
         include: {
           warehouse: { select: { id: true, code: true, name: true, city: true } },

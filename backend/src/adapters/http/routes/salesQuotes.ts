@@ -426,6 +426,14 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
     return city ? city.toUpperCase() : '__MISSING__'
   }
 
+  function branchWarehouseIdOf(request: any): string | null {
+    if (request.auth?.isTenantAdmin) return null
+    const scoped = !!request.auth?.permissions?.has(Permissions.ScopeBranch)
+    if (!scoped) return null
+    const wid = String(request.auth?.warehouseId ?? '').trim()
+    return wid ? wid : '__MISSING__'
+  }
+
   // Endpoint para obtener los sub almacenes (Tipos de venta)
   app.get(
     '/api/v1/sales/quotes/sub-warehouses',
@@ -438,7 +446,7 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
     },
     async (request, reply) => {
       const tenantId = request.auth!.tenantId
-      const branchCity = branchCityOf(request)
+      const branchWarehouseId = branchWarehouseIdOf(request)
 
       const where: any = {
         tenantId,
@@ -447,8 +455,8 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
         warehouse: { isActive: true },
       }
 
-      if (branchCity && branchCity !== '__MISSING__') {
-        where.warehouse.city = { equals: branchCity, mode: 'insensitive' }
+      if (branchWarehouseId && branchWarehouseId !== '__MISSING__') {
+        where.warehouseId = branchWarehouseId
       }
 
       const locations = await db.location.findMany({
