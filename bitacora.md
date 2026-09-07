@@ -6,6 +6,35 @@ Este documento suma (a alto nivel) decisiones, hitos y cambios relevantes que se
 
 ---
 
+## **[07 Sep 2026] Doble filtro de sub-almacenes por ciudad del cliente + warehouseId del usuario en procesamiento de cotizaciones**
+
+### Contexto
+- El flujo de creación de cotizaciones (`SellerCatalogPage.tsx`) ya usaba `warehouseId` del usuario para filtrar sub-almacenes (fix del [07 Sep 2026] anterior). Sin embargo, el flujo de **edición** de cotización (`QuoteDetailPage.tsx`) y el flujo de **procesamiento** de cotización (`QuotesPage.tsx`) seguían usando el filtrado por **ciudad del cliente**, tomando el primer warehouse de la ciudad — lo que mezclaba sub-almacenes entre sucursales de la misma ciudad (p.ej. SUC-LPZ SALES y SUC-NACIONAL PROVIDER en LA PAZ).
+
+### Cambios principales
+
+#### Backend
+- **`GET /api/v1/warehouses/sub-locations`**: el WHERE clause dejó de ser XOR (priorizaba `warehouseId` o `city` por separado) para ser un **AND**: cuando se envían ambos parámetros (`city` + `warehouseId`), se filtra por `warehouse.id = warehouseId AND warehouse.city = city`. Esto garantiza que los sub-almacenes mostrados pertenezcan tanto a la ciudad del cliente como al warehouse del usuario que procesa la orden. El esquema `subLocationsQuerySchema` ya aceptaba ambos campos.
+
+#### Frontend — `QuotesPage.tsx` (modal "Procesar cotización")
+- Se agregó `usePermissions()` y se obtiene `userWarehouseId` (el `warehouseId` del usuario autenticado).
+- `fetchSubLocations` ahora recibe `warehouseId` y lo envía como query param al endpoint `sub-locations` junto con `city` (ciudad del cliente), aplicando el **doble filtro**.
+- La query `subLocationsQuery` pasa `userWarehouseId` en el key, en el queryFn y en la condición `enabled` (solo se ejecuta si el usuario tiene warehouse asignado).
+- El `Select` de "Ubicación / Sub almacén" muestra "Sin sucursal asignada" y se deshabilita cuando el usuario no tiene warehouse; el placeholder del "Automático" refleja que busca ubicaciones de la sucursal en la ciudad del cliente.
+- La selección de lotes (FEFO) ya estaba filtrada por `locationId` (sub-almacén específico), por lo que los lotes mostrados corresponden únicamente a los sub-almacenes filtrados.
+
+#### Frontend — `QuoteDetailPage.tsx` (edición de cotización)
+- Se aplicó el mismo patrón de `SellerCatalogPage.tsx`: `fetchLocations` ahora recibe `warehouseId` (del usuario vía `usePermissions`) y consulta `GET /api/v1/warehouses/{userWarehouseId}/locations?isActive=true`, en lugar del viejo lookup por ciudad que tomaba el primer warehouse.
+- Se eliminó `fetchCustomerDetail` y `customerDetailQuery` (ya no se necesita la ciudad del cliente para filtrar sub-almacenes).
+- El `Select` de "Tipo de venta (Sub almacén)" usa `userWarehouseId` para el placeholder y el disabled.
+
+### Operación
+- TypeScript check OK en backend y frontend.
+- Sin migraciones Prisma nuevas.
+- Sin cambios de backend que requieran deploy de base de datos.
+
+---
+
 ## **[07 Sep 2026] Discriminación por warehouseId (no por ciudad) + Notification.warehouseId + fix catálogo vendedor**
 
 ### Contexto

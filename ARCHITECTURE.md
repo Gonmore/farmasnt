@@ -213,6 +213,8 @@ frontend/src/
 | Frontend | Backend | Archivo backend |
 |---|---|---|
 | `pages/catalog/SellerCatalogPage.tsx` (selector de sub-almacén) | `GET /api/v1/warehouses/{userWarehouseId}/locations?isActive=true` | `routes/warehouses.ts:96` | Filtra sub-almacenes por el `warehouseId` del usuario autenticado (vía `usePermissions`), NO por ciudad del cliente. Soporta multi-sucursal en la misma ciudad sin mezclar locations entre SALES y PROVIDER. |
+| `pages/sales/QuotesPage.tsx` (selector de sub-almacén en modal de procesar) | `GET /api/v1/warehouses/sub-locations?city=<customerCity>&warehouseId=<userWarehouseId>` | `routes/warehouses.ts:104` | Doble filtro: ciudad del cliente + `warehouseId` del usuario. El backend aplica ambos como AND para garantizar que los sub-almacenes pertenezcan a la ciudad del cliente y al warehouse del usuario. |
+| `pages/sales/QuoteDetailPage.tsx` (selector de sub-almacén en edición) | `GET /api/v1/warehouses/{userWarehouseId}/locations?isActive=true` | `routes/warehouses.ts:96` | Igual que `SellerCatalogPage`: filtra por `warehouseId` del usuario (vía `usePermissions`), no por ciudad del cliente. |
 | `pages/sales/QuotesPage.tsx` | `GET /api/v1/sales/quotes` | `routes/salesQuotes.ts:584` |
 | | `POST /api/v1/sales/quotes` | `routes/salesQuotes.ts:674` |
 | | `GET /api/v1/sales/quotes/:id` | `routes/salesQuotes.ts:1435` |

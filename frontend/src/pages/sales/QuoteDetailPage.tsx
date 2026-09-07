@@ -6,7 +6,7 @@ import { formatMoney } from '../../lib/numberFormat'
 import { formatPresentationLabel, formatPresentationQuantityLabel } from '../../lib/productPresentation'
 import { exportQuoteToPDF } from '../../lib/quotePdf'
 import { MainLayout, PageContainer, Button, Loading, ErrorState, Table, Input, Select, CustomerSelector, ProductSelector } from '../../components'
-import { useNavigation } from '../../hooks'
+import { useNavigation, usePermissions } from '../../hooks'
 import { useAuth } from '../../providers/AuthProvider'
 import { useTenant } from '../../providers/TenantProvider'
 import { PlusIcon, TrashIcon } from '@heroicons/react/24/outline'
@@ -244,19 +244,17 @@ async function updateQuote(
 // NUEVAS FUNCIONES PARA EL SELECTOR
 type LocationListItem = { id: string; name: string; code?: string }
 
-async function fetchCustomerDetail(token: string, customerId: string): Promise<{ city: string | null }> {
-  return apiFetch(`/api/v1/customers/${customerId}`, { token })
-}
+async function fetchLocations(token: string, warehouseId?: string | null): Promise<{ items: LocationListItem[] }> {
+  if (!warehouseId) {
+    return { items: [] }
+  }
 
-async function fetchLocations(token: string, city?: string | null): Promise<{ items: LocationListItem[] }> {
-  if (!city) return { items: [] }
   try {
-    const warehouseParams = new URLSearchParams({ city, isActive: 'true' })
-    const warehouseRes = (await apiFetch(`/api/v1/warehouses?${warehouseParams}`, { token })) as { items?: { id: string }[] }
-    const warehouseId = warehouseRes.items?.[0]?.id 
-    if (!warehouseId) return { items: [] }
-    return (await apiFetch(`/api/v1/warehouses/${warehouseId}/locations?isActive=true`, { token })) as { items: LocationListItem[] }
+    return (await apiFetch(`/api/v1/warehouses/${warehouseId}/locations?isActive=true`, {
+      token
+    })) as { items: LocationListItem[] }
   } catch (error) {
+    console.error("Error al obtener las ubicaciones:", error)
     return { items: [] }
   }
 }
@@ -266,6 +264,8 @@ export function QuoteDetailPage() {
   const navigate = useNavigate()
   const navGroups = useNavigation()
   const auth = useAuth()
+  const permissions = usePermissions()
+  const userWarehouseId = permissions.warehouseId ?? null
   const tenant = useTenant()
   const currency = tenant.branding?.currency || 'BOB'
 
@@ -293,19 +293,11 @@ export function QuoteDetailPage() {
     enabled: !!auth.accessToken && !!id && !!quoteQuery.data,
   })
 
-  // Consultas para alimentar el select de sub almacenes
-  const customerDetailQuery = useQuery({
-    queryKey: ['customer-city', draft?.customerId ?? quoteQuery.data?.customerId],
-    queryFn: () => fetchCustomerDetail(auth.accessToken!, (draft?.customerId ?? quoteQuery.data?.customerId)!),
-    enabled: !!auth.accessToken && !!(draft?.customerId ?? quoteQuery.data?.customerId),
-  })
-
-  const customerCity = customerDetailQuery.data?.city
-
+  
   const locationsQuery = useQuery({
-    queryKey: ['locations', customerCity],
-    queryFn: () => fetchLocations(auth.accessToken!, customerCity),
-    enabled: !!auth.accessToken && !!customerCity,
+    queryKey: ['locations', userWarehouseId],
+    queryFn: () => fetchLocations(auth.accessToken!, userWarehouseId),
+    enabled: !!auth.accessToken && !!userWarehouseId,
   })
 
   useEffect(() => {
@@ -858,21 +850,21 @@ export function QuoteDetailPage() {
                 {/* NUEVO: Campo de Tipo de venta (Sub almacén) */}
                 <div>
                   <div className="mb-1 text-sm font-medium">Tipo de venta (Sub almacén)</div>
-                  <Select
-                    value={draft.locationId}
-                    onChange={(e) => setDraft((p) => (p ? { ...p, locationId: e.target.value } : p))}
-                    options={[
-                      { 
-                        value: '', 
-                        label: !customerCity ? 'Seleccioná un cliente primero...' : 'Seleccionar sub-almacén...' 
-                      },
-                      ...(locationsQuery.data?.items.map((l) => ({
-                        value: l.id,
-                        label: l.name || l.code || 'Sin nombre',
-                      })) ?? []),
-                    ]}
-                    disabled={locationsQuery.isLoading || !canEdit || saveMutation.isPending || !customerCity}
-                  />
+                   <Select
+                     value={draft.locationId}
+                     onChange={(e) => setDraft((p) => (p ? { ...p, locationId: e.target.value } : p))}
+                     options={[
+                       { 
+                         value: '', 
+                         label: !userWarehouseId ? 'Sin sucursal asignada' : 'Seleccionar sub-almacén...' 
+                       },
+                       ...(locationsQuery.data?.items.map((l) => ({
+                         value: l.id,
+                         label: l.name || l.code || 'Sin nombre',
+                       })) ?? []),
+                     ]}
+                     disabled={locationsQuery.isLoading || !canEdit || saveMutation.isPending || !userWarehouseId}
+                   />
                 </div>
                 <div>
                   <div className="mb-1 text-sm font-medium">Validez (días)</div>

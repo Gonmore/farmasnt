@@ -5,7 +5,7 @@ import { apiFetch } from '../../lib/api'
 import { formatMoney } from '../../lib/numberFormat'
 import { useAuth } from '../../providers/AuthProvider'
 import { MainLayout, PageContainer, Button, Table, PaginationCursor, Input, Select, Badge, Modal, Loading, ErrorState } from '../../components'
-import { useNavigation } from '../../hooks'
+import { useNavigation, usePermissions } from '../../hooks'
 import { EyeIcon, ArrowPathIcon, TrashIcon, PlusIcon } from '@heroicons/react/24/outline'
 import { useNotifications } from '../../providers/NotificationsProvider'
 
@@ -92,9 +92,10 @@ async function fetchQuoteDetail(token: string, quoteId: string): Promise<QuoteDe
   return apiFetch(`/api/v1/sales/quotes/${encodeURIComponent(quoteId)}`, { token })
 }
 
-async function fetchSubLocations(token: string, city?: string): Promise<{ items: SubLocationItem[] }> {
+async function fetchSubLocations(token: string, city?: string, warehouseId?: string | null): Promise<{ items: SubLocationItem[] }> {
   const params = new URLSearchParams()
   if (city) params.set('city', city)
+  if (warehouseId) params.set('warehouseId', warehouseId)
   return apiFetch(`/api/v1/warehouses/sub-locations?${params}`, { token })
 }
 
@@ -124,9 +125,11 @@ async function requestQuoteStock(token: string, quoteId: string): Promise<{ ok: 
 }
 
 export function QuotesPage() {
-  const auth = useAuth()
-  const navigate = useNavigate()
-  const navGroups = useNavigation()
+   const auth = useAuth()
+   const navigate = useNavigate()
+   const navGroups = useNavigation()
+   const permissions = usePermissions()
+   const userWarehouseId = permissions.warehouseId ?? null
   const queryClient = useQueryClient()
   const notifications = useNotifications()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -158,9 +161,9 @@ export function QuotesPage() {
   })
 
   const subLocationsQuery = useQuery({
-    queryKey: ['warehouses', 'sub-locations', quoteDetailQuery.data?.customerCity ?? ''],
-    queryFn: () => fetchSubLocations(auth.accessToken!, quoteDetailQuery.data?.customerCity ?? undefined),
-    enabled: !!auth.accessToken && !!processModalQuoteId && !!quoteDetailQuery.data,
+    queryKey: ['warehouses', 'sub-locations', quoteDetailQuery.data?.customerCity ?? '', userWarehouseId],
+    queryFn: () => fetchSubLocations(auth.accessToken!, quoteDetailQuery.data?.customerCity ?? undefined, userWarehouseId),
+    enabled: !!auth.accessToken && !!processModalQuoteId && !!quoteDetailQuery.data && !!userWarehouseId,
   })
 
   const quoteLines = quoteDetailQuery.data?.lines ?? []
@@ -393,12 +396,13 @@ export function QuotesPage() {
                     setLineBatchSelections({})
                   }}
                   options={[
-                    { value: '', label: 'Automático (Cualquier ubicación de la sucursal)' },
+                    { value: '', label: !userWarehouseId ? 'Sin sucursal asignada' : 'Automático (cualquier ubicación de mi sucursal en la ciudad del cliente)' },
                     ...(subLocationsQuery.data?.items ?? []).map((l) => ({
                       value: l.id,
                       label: `${l.warehouse.code} - ${l.code}`,
                     })),
                   ]}
+                  disabled={!userWarehouseId}
                 />
                 {/* --- NUEVA ADVERTENCIA AQUÍ --- */}
                 {isLocationMismatch && (

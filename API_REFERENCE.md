@@ -1203,7 +1203,7 @@ Notas
 ### GET /api/v1/warehouses/sub-locations
 Query
 - `city` (string, opcional) — filtra locations cuyo `warehouse.city` coincide (case-insensitive).
-- `warehouseId` (uuid, opcional) — filtra por `warehouse.id`. Toma precedencia sobre `city` cuando ambos se envían.
+- `warehouseId` (uuid, opcional) — filtra por `warehouse.id`. Cuando se envía junto con `city`, **ambos filtros se aplican simultáneamente (AND)**, de modo que los sub-almacenes retornados pertenecen tanto a la ciudad indicada como al warehouse del usuario.
 
 Response 200
 ```json
@@ -1214,7 +1214,7 @@ Response 200
 
 Notas
 - Solo retorna locations activas con `isActive=true` y `type=SUB_ALMACEN`.
-- Usado por el flujo de **Catálogo Vendedor** y por la gestión administrativa de sub-almacenes. El frontend vendedor siempre pasa `warehouseId` (del usuario autenticado) para evitar mezclar locations entre sucursales de la misma ciudad.
+- Usado por el flujo de **Catálogo Vendedor** y por el flujo de **procesamiento de cotizaciones**. El frontend siempre pasa `warehouseId` (del usuario autenticado) junto con `city` (ciudad del cliente) para aplicar un doble filtro y evitar mezclar locations entre sucursales de la misma ciudad.
 
 ### GET /api/v1/warehouses/:id/locations
 Query

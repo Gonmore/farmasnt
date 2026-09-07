@@ -118,10 +118,11 @@ export async function registerWarehouseRoutes(app: FastifyInstance): Promise<voi
           tenantId,
           type: 'SUB_ALMACEN',
           isActive: true,
-          warehouse: {
-            isActive: true,
-            ...(warehouseId ? { id: warehouseId } : city ? { city: { equals: city, mode: 'insensitive' as const } } : {}),
-          },
+           warehouse: {
+             isActive: true,
+             ...(warehouseId ? { id: warehouseId } : {}),
+             ...(city ? { city: { equals: city, mode: 'insensitive' as const } } : {}),
+           },
         },
         select: {
           id: true,
