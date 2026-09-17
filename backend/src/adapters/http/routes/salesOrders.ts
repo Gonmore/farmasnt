@@ -4,6 +4,8 @@ import { prisma } from '../../db/prisma.js'
 import { AuditService } from '../../../application/audit/auditService.js'
 import { requireAuth, requireModuleEnabled, requirePermission } from '../../../application/security/rbac.js'
 import { Permissions } from '../../../application/security/permissions.js'
+import { branchDepartmentsOf, branchDepartmentsOfMissing } from '../../../application/security/branch.js'
+import { cityToDepartment } from '../../../shared/geo.js'
 import { currentYearUtc, nextSequence } from '../../../application/shared/sequence.js'
 
 const listQuerySchema = z.object({
@@ -13,7 +15,8 @@ const listQuerySchema = z.object({
   customerId: z.string().trim().min(1).optional(),
   customerSearch: z.string().optional(),
   productId: z.string().uuid().optional(),
-  deliveryCity: z.string().optional(),
+   deliveryCity: z.string().optional(),
+   deliveryDepartment: z.string().optional(),
   from: z.coerce.date().optional(),
   to: z.coerce.date().optional(),
   warehouseId: z.string().uuid().optional(),
@@ -24,7 +27,7 @@ const deliveriesQuerySchema = z.object({
   take: z.coerce.number().int().min(1).max(100).default(50),
   cursor: z.string().uuid().optional(),
   status: z.enum(['PENDING', 'DELIVERED', 'ALL']).default('PENDING'),
-  cities: z.string().optional(),
+  departments: z.string().optional(),
 })
 
 const orderCreateSchema = z.object({
@@ -368,19 +371,19 @@ async function reserveForOrder(
     tenantId: string
     userId: string
     orderId: string
-    preferCity?: string | null
+    preferDepartment?: string | null
     lines: Array<{ id: string; productId: string; batchId: string | null; quantity: any }>
   },
 ): Promise<void> {
   const todayUtc = startOfTodayUtc()
-  const preferCity = typeof args.preferCity === 'string' ? args.preferCity.trim().toUpperCase() : null
+  const preferDepartment = typeof args.preferDepartment === 'string' ? args.preferDepartment.trim().toUpperCase() : null
 
   // Reserve from balances across tenant (FEFO). If stock is insufficient, reserve partially.
   for (const line of args.lines) {
     let remaining = Math.max(0, toNumber(line.quantity))
     if (remaining <= 0) continue
 
-    // Important: same balances can appear in multiple passes (sameCity + anyCity).
+    // Important: same balances can appear in multiple passes (sameDepartment + anyDepartment).
     // De-duplicate to avoid over-reserving using stale reservedQuantity values.
     const seenBalanceIds = new Set<string>()
 
@@ -388,20 +391,20 @@ async function reserveForOrder(
     const lists: any[][] = []
 
     if (line.batchId) {
-      if (preferCity) {
-        const sameCity = await tx.inventoryBalance.findMany({
+      if (preferDepartment) {
+        const sameDepartment = await tx.inventoryBalance.findMany({
           where: {
             tenantId: args.tenantId,
             productId: line.productId,
             batchId: line.batchId,
             quantity: { gt: 0 },
-            location: { isActive: true, warehouse: { isActive: true, city: preferCity } },
+            location: { isActive: true, warehouse: { isActive: true, department: preferDepartment } },
             batch: { status: 'RELEASED', OR: [{ expiresAt: null }, { expiresAt: { gte: todayUtc } }] },
           },
           orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
           select: { id: true, quantity: true, reservedQuantity: true },
         })
-        lists.push(sameCity)
+        lists.push(sameDepartment)
       }
 
       const anyCity = await tx.inventoryBalance.findMany({
@@ -420,16 +423,16 @@ async function reserveForOrder(
     } else {
       const locBase = { isActive: true, warehouse: { isActive: true } }
 
-      const sameCityLoc = preferCity ? { isActive: true, warehouse: { isActive: true, city: preferCity } } : null
+      const sameDepartmentLoc = preferDepartment ? { isActive: true, warehouse: { isActive: true, department: preferDepartment } } : null
 
-      if (sameCityLoc) {
+      if (sameDepartmentLoc) {
         const withExpirySame = await tx.inventoryBalance.findMany({
           where: {
             tenantId: args.tenantId,
             productId: line.productId,
             batchId: { not: null },
             quantity: { gt: 0 },
-            location: sameCityLoc,
+            location: sameDepartmentLoc,
             batch: { status: 'RELEASED', expiresAt: { not: null, gte: todayUtc } },
           },
           orderBy: [{ batch: { expiresAt: 'asc' } }, { updatedAt: 'desc' }, { id: 'asc' }],
@@ -442,7 +445,7 @@ async function reserveForOrder(
             productId: line.productId,
             batchId: { not: null },
             quantity: { gt: 0 },
-            location: sameCityLoc,
+            location: sameDepartmentLoc,
             batch: { status: 'RELEASED', expiresAt: null },
           },
           orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
@@ -455,7 +458,7 @@ async function reserveForOrder(
             productId: line.productId,
             batchId: null,
             quantity: { gt: 0 },
-            location: sameCityLoc,
+            location: sameDepartmentLoc,
           },
           orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
           select: { id: true, quantity: true, reservedQuantity: true },
@@ -569,14 +572,6 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
   const db = prisma()
   const audit = new AuditService(db)
 
-  function branchCityOf(request: any): string | null {
-    if (request.auth?.isTenantAdmin) return null
-    const scoped = !!request.auth?.permissions?.has(Permissions.ScopeBranch)
-    if (!scoped) return null
-    const city = String(request.auth?.warehouseCity ?? '').trim()
-    return city ? city.toUpperCase() : '__MISSING__'
-  }
-
   // Deliveries (read-side): orders pending delivery / delivered.
   // Pending maps to DRAFT+CONFIRMED to support older orders created before we set CONFIRMED on quote processing.
   app.get(
@@ -589,26 +584,27 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
       if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
 
       const tenantId = request.auth!.tenantId
-      const branchCity = branchCityOf(request)
 
-      if (branchCity === '__MISSING__') {
+      if (branchDepartmentsOfMissing(request)) {
         return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
       }
+      const branchDepartments = branchDepartmentsOf(request)
+
       const statuses = parsed.data.status === 'DELIVERED' ? (['FULFILLED'] as const) : parsed.data.status === 'ALL' ? (['DRAFT', 'CONFIRMED', 'FULFILLED'] as const) : (['DRAFT', 'CONFIRMED'] as const)
-      const cities = branchCity ? [branchCity] : parsed.data.cities ? parsed.data.cities.split(',').map(c => c.toUpperCase().trim()).filter(c => c) : undefined
-      const cityDeliveryFilters = cities?.map((city) => ({ deliveryCity: { equals: city, mode: 'insensitive' as const } }))
-      const cityCustomerFilters = cities?.map((city) => ({ customer: { city: { equals: city, mode: 'insensitive' as const } } }))
+      const departments = branchDepartments ?? (parsed.data.departments ? parsed.data.departments.split(',').map(c => c.toUpperCase().trim()).filter(c => c) : undefined)
+      const departmentDeliveryFilters = departments?.map((dept) => ({ deliveryDepartment: { equals: dept, mode: 'insensitive' as const } }))
+      const departmentCustomerFilters = departments?.map((dept) => ({ customer: { department: { equals: dept, mode: 'insensitive' as const } } }))
 
       const items = await db.salesOrder.findMany({
         where: {
           tenantId,
           status: { in: statuses as any },
-          ...(cities
+          ...(departments
             ? {
-                // Keep in sync with reports/sales/by-city logic: prefer order.deliveryCity, fallback to customer.city.
+                // Keep in sync with reports/sales/by-city logic: prefer order.deliveryDepartment, fallback to customer.department.
                 OR: [
-                  { OR: cityDeliveryFilters ?? [] },
-                  { AND: [{ OR: [{ deliveryCity: null }, { deliveryCity: '' }] }, { OR: cityCustomerFilters ?? [] }] },
+                  { OR: departmentDeliveryFilters ?? [] },
+                  { AND: [{ OR: [{ deliveryDepartment: null }, { deliveryDepartment: '' }] }, { OR: departmentCustomerFilters ?? [] }] },
                 ],
               }
             : {}),
@@ -629,7 +625,7 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
           updatedAt: true,
           createdBy: true,
           deliveryDate: true,
-          deliveryCity: true,
+          deliveryCity: true, deliveryDepartment: true,
           deliveryZone: true,
           deliveryAddress: true,
           deliveryMapsUrl: true,
@@ -654,6 +650,7 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
         processedBy: o.createdBy ? authorMap.get(o.createdBy) ?? null : null,
         deliveryDate: o.deliveryDate ? o.deliveryDate.toISOString() : null,
         deliveryCity: o.deliveryCity,
+        deliveryDepartment: o.deliveryDepartment,
         deliveryZone: o.deliveryZone,
         deliveryAddress: o.deliveryAddress,
         deliveryMapsUrl: o.deliveryMapsUrl,
@@ -703,11 +700,11 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
       if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
 
       const tenantId = request.auth!.tenantId
-      const branchCity = branchCityOf(request)
 
-      if (branchCity === '__MISSING__') {
+      if (branchDepartmentsOfMissing(request)) {
         return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
       }
+      const branchDepartments = branchDepartmentsOf(request)
 
       const where: any = { tenantId, ...(parsed.data.status ? { status: parsed.data.status } : {}) }
       if (parsed.data.customerId) {
@@ -718,23 +715,15 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
           name: { contains: parsed.data.customerSearch, mode: 'insensitive' },
         }
       }
-      if (parsed.data.deliveryCity) {
-        const city = parsed.data.deliveryCity.trim()
-        if (city.toLowerCase() === 'sin ciudad') {
+      if (parsed.data.deliveryDepartment || parsed.data.deliveryCity) {
+        const dep = (parsed.data.deliveryDepartment ?? (parsed.data.deliveryCity ? cityToDepartment(parsed.data.deliveryCity.trim()) : null))?.trim()
+        if (dep) {
           where.OR = [
-            { deliveryCity: null },
-            { deliveryCity: '' },
-            { customer: { city: null } },
-            { customer: { city: '' } },
-          ]
-        } else {
-          // Keep in sync with reports/sales/by-city logic: prefer order.deliveryCity, fallback to customer.city.
-          where.OR = [
-            { deliveryCity: city },
+            { deliveryDepartment: { equals: dep, mode: 'insensitive' as const } },
             {
               AND: [
-                { OR: [{ deliveryCity: null }, { deliveryCity: '' }] },
-                { customer: { city } },
+                { OR: [{ deliveryDepartment: null }, { deliveryDepartment: '' }] },
+                { customer: { department: { equals: dep, mode: 'insensitive' as const } } },
               ],
             },
           ]
@@ -765,13 +754,13 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
         const numbers = matchedNumbers.map((r) => r.number)
         where.number = { in: numbers.length ? numbers : ['__NONE__'] }
       }
-      if (branchCity) {
+      if (branchDepartments) {
         where.AND = [
           ...(where.AND ?? []),
           {
             OR: [
-              { deliveryCity: { equals: branchCity, mode: 'insensitive' as const } },
-              { AND: [{ OR: [{ deliveryCity: null }, { deliveryCity: '' }] }, { customer: { city: { equals: branchCity, mode: 'insensitive' as const } } }] },
+              { deliveryDepartment: { in: branchDepartments, mode: 'insensitive' as const } },
+              { AND: [{ OR: [{ deliveryDepartment: null }, { deliveryDepartment: '' }] }, { customer: { department: { in: branchDepartments, mode: 'insensitive' as const } } }] },
             ],
           },
         ]
@@ -799,7 +788,7 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
           paidAt: true,
           paidAmount: true,
           deliveryDate: true,
-          deliveryCity: true,
+          deliveryCity: true, deliveryDepartment: true,
           deliveryZone: true,
           deliveryAddress: true,
           deliveryMapsUrl: true,
@@ -837,6 +826,7 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
         paidAmount: Number(o.paidAmount ?? 0),
         deliveryDate: o.deliveryDate ? o.deliveryDate.toISOString() : null,
         deliveryCity: o.deliveryCity,
+        deliveryDepartment: o.deliveryDepartment,
         deliveryZone: o.deliveryZone,
         deliveryAddress: o.deliveryAddress,
         deliveryMapsUrl: o.deliveryMapsUrl,
@@ -856,21 +846,21 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
     async (request, reply) => {
       const id = (request.params as any).id as string
       const tenantId = request.auth!.tenantId
-      const branchCity = branchCityOf(request)
 
-      if (branchCity === '__MISSING__') {
+      if (branchDepartmentsOfMissing(request)) {
         return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
       }
+      const branchDepartments = branchDepartmentsOf(request)
 
       const order = await db.salesOrder.findFirst({
         where: {
           id,
           tenantId,
-          ...(branchCity
+          ...(branchDepartments
             ? {
                 OR: [
-                  { deliveryCity: { equals: branchCity, mode: 'insensitive' as const } },
-                  { AND: [{ OR: [{ deliveryCity: null }, { deliveryCity: '' }] }, { customer: { city: { equals: branchCity, mode: 'insensitive' as const } } }] },
+                  { deliveryDepartment: { in: branchDepartments, mode: 'insensitive' as const } },
+                  { AND: [{ OR: [{ deliveryDepartment: null }, { deliveryDepartment: '' }] }, { customer: { department: { in: branchDepartments, mode: 'insensitive' as const } } }] },
                 ],
               }
             : {}),
@@ -890,7 +880,7 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
           paidAt: true,
           paidAmount: true,
           deliveryDate: true,
-          deliveryCity: true,
+          deliveryCity: true, deliveryDepartment: true,
           deliveryZone: true,
           deliveryAddress: true,
           deliveryMapsUrl: true,
@@ -967,22 +957,22 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
 
       const tenantId = request.auth!.tenantId
       const userId = request.auth!.userId
-      const branchCity = branchCityOf(request)
 
-      if (branchCity === '__MISSING__') {
+      if (branchDepartmentsOfMissing(request)) {
         return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
       }
+      const branchDepartments = branchDepartmentsOf(request)
 
       const result = await db.$transaction(async (tx) => {
         const order = await tx.salesOrder.findFirst({
           where: {
             id,
             tenantId,
-            ...(branchCity
+            ...(branchDepartments
               ? {
                   OR: [
-                    { deliveryCity: { equals: branchCity, mode: 'insensitive' as const } },
-                    { AND: [{ OR: [{ deliveryCity: null }, { deliveryCity: '' }] }, { customer: { city: { equals: branchCity, mode: 'insensitive' as const } } }] },
+                    { deliveryDepartment: { in: branchDepartments, mode: 'insensitive' as const } },
+                    { AND: [{ OR: [{ deliveryDepartment: null }, { deliveryDepartment: '' }] }, { customer: { department: { in: branchDepartments, mode: 'insensitive' as const } } }] },
                   ],
                 }
               : {}),
@@ -1086,21 +1076,21 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
     async (request, reply) => {
       const id = (request.params as any).id as string
       const tenantId = request.auth!.tenantId
-      const branchCity = branchCityOf(request)
 
-      if (branchCity === '__MISSING__') {
+      if (branchDepartmentsOfMissing(request)) {
         return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
       }
+      const branchDepartments = branchDepartmentsOf(request)
 
       const order = await db.salesOrder.findFirst({
         where: {
           id,
           tenantId,
-          ...(branchCity
+          ...(branchDepartments
             ? {
                 OR: [
-                  { deliveryCity: { equals: branchCity, mode: 'insensitive' as const } },
-                  { AND: [{ OR: [{ deliveryCity: null }, { deliveryCity: '' }] }, { customer: { city: { equals: branchCity, mode: 'insensitive' as const } } }] },
+                  { deliveryDepartment: { in: branchDepartments, mode: 'insensitive' as const } },
+                  { AND: [{ OR: [{ deliveryDepartment: null }, { deliveryDepartment: '' }] }, { customer: { department: { in: branchDepartments, mode: 'insensitive' as const } } }] },
                 ],
               }
             : {}),
@@ -1346,11 +1336,11 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
 
       const tenantId = request.auth!.tenantId
       const userId = request.auth!.userId
-      const branchCity = branchCityOf(request)
 
-      if (branchCity === '__MISSING__') {
+      if (branchDepartmentsOfMissing(request)) {
         return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
       }
+      const branchDepartments = branchDepartmentsOf(request)
 
       try {
         const deliveredAt = new Date()
@@ -1359,11 +1349,11 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
             where: {
               id,
               tenantId,
-              ...(branchCity
+              ...(branchDepartments
                 ? {
                     OR: [
-                      { deliveryCity: { equals: branchCity, mode: 'insensitive' as const } },
-                      { AND: [{ OR: [{ deliveryCity: null }, { deliveryCity: '' }] }, { customer: { city: { equals: branchCity, mode: 'insensitive' as const } } }] },
+                        { deliveryDepartment: { in: branchDepartments, mode: 'insensitive' as const } },
+                        { AND: [{ OR: [{ deliveryDepartment: null }, { deliveryDepartment: '' }] }, { customer: { department: { in: branchDepartments, mode: 'insensitive' as const } } }] },
                     ],
                   }
                 : {}),
@@ -1682,9 +1672,8 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
 
       const tenantId = request.auth!.tenantId
       const userId = request.auth!.userId
-      const branchCity = branchCityOf(request)
 
-      if (branchCity === '__MISSING__') {
+      if (branchDepartmentsOfMissing(request)) {
         return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
       }
 
@@ -1974,11 +1963,11 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
 
       const tenantId = request.auth!.tenantId
       const userId = request.auth!.userId
-      const branchCity = branchCityOf(request)
 
-      if (branchCity === '__MISSING__') {
+      if (branchDepartmentsOfMissing(request)) {
         return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
       }
+      const branchDepartments = branchDepartmentsOf(request)
 
       try {
         const deliveredAt = new Date()
@@ -1987,11 +1976,11 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
             where: {
               id,
               tenantId,
-              ...(branchCity
+              ...(branchDepartments
                 ? {
                     OR: [
-                      { deliveryCity: { equals: branchCity, mode: 'insensitive' as const } },
-                      { AND: [{ OR: [{ deliveryCity: null }, { deliveryCity: '' }] }, { customer: { city: { equals: branchCity, mode: 'insensitive' as const } } }] },
+                        { deliveryDepartment: { in: branchDepartments, mode: 'insensitive' as const } },
+                        { AND: [{ OR: [{ deliveryDepartment: null }, { deliveryDepartment: '' }] }, { customer: { department: { in: branchDepartments, mode: 'insensitive' as const } } }] },
                     ],
                   }
                 : {}),

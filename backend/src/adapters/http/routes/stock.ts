@@ -7,6 +7,7 @@ import { prisma } from '../../db/prisma.js'
 import { AuditService } from '../../../application/audit/auditService.js'
 import { requireAuth, requireModuleEnabled, requirePermission } from '../../../application/security/rbac.js'
 import { Permissions } from '../../../application/security/permissions.js'
+import { branchWarehouseIdOf } from '../../../application/security/branch.js'
 import { createStockMovementTx } from '../../../application/stock/stockMovementService.js'
 import { currentYearUtc, nextSequence } from '../../../application/shared/sequence.js'
 import { getEnv } from '../../../shared/env.js'
@@ -472,24 +473,6 @@ export async function registerStockRoutes(app: FastifyInstance): Promise<void> {
   const db = prisma()
   const audit = new AuditService(db)
   const env = getEnv()
-
-  function branchCityOf(request: any): string | null {
-    if (request.auth?.isTenantAdmin) return null
-    const scoped = !!request.auth?.permissions?.has(Permissions.ScopeBranch)
-    if (!scoped) return null
-    // Sucursales de tipo PROVEEDOR ven/atenden solicitudes de todas las ciudades (sin filtro de ciudad).
-    if (request.auth?.warehouseType === 'PROVIDER') return null
-    const city = String(request.auth?.warehouseCity ?? '').trim()
-    return city ? city.toUpperCase() : '__MISSING__'
-  }
-
-  function branchWarehouseIdOf(request: any): string | null {
-    if (request.auth?.isTenantAdmin) return null
-    const scoped = !!request.auth?.permissions?.has(Permissions.ScopeBranch)
-    if (!scoped) return null
-    const wid = String(request.auth?.warehouseId ?? '').trim()
-    return wid ? wid : '__MISSING__'
-  }
 
   app.post(
     '/api/v1/stock/returns/photo-upload',
@@ -2370,6 +2353,7 @@ movements: (movementsByRequest.get(r.id) || []).map((m) => ({
           orderBy: [{ batch: { expiresAt: 'asc' } }, { id: 'asc' }],
           select: {
             quantity: true,
+            location: { select: { id: true, code: true, warehouse: { select: { id: true, code: true } } } },
             batch: { select: { id: true, batchNumber: true, expiresAt: true, status: true } },
           },
         })
@@ -2380,6 +2364,10 @@ movements: (movementsByRequest.get(r.id) || []).map((m) => ({
           expiresAt: r.batch!.expiresAt ? r.batch!.expiresAt.toISOString() : null,
           status: r.batch!.status,
           quantity: r.quantity,
+          locationId: r.location?.id ?? null,
+          locationCode: r.location?.code ?? null,
+          warehouseId: r.location?.warehouse?.id ?? null,
+          warehouseCode: r.location?.warehouse?.code ?? null,
         }))
 
         return reply.send({ items })
@@ -2423,6 +2411,7 @@ movements: (movementsByRequest.get(r.id) || []).map((m) => ({
         expiresAt: b.expiresAt ? b.expiresAt.toISOString() : null,
         status: b.status,
         quantity: qtyByBatchId.get(b.id) ?? '0',
+        warehouseId: parsed.data.warehouseId ?? null,
       }))
 
       return reply.send({ items })

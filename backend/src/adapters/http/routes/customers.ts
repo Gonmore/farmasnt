@@ -5,6 +5,8 @@ import { prisma } from '../../db/prisma.js'
 import { AuditService } from '../../../application/audit/auditService.js'
 import { requireAuth, requireModuleEnabled, requirePermission } from '../../../application/security/rbac.js'
 import { Permissions } from '../../../application/security/permissions.js'
+import { branchDepartmentsOf, branchDepartmentsOfMissing } from '../../../application/security/branch.js'
+import { cityToDepartment } from '../../../shared/geo.js'
 
 async function findDuplicateCustomerByNit(db: ReturnType<typeof prisma>, tenantId: string, nit: string, excludeId?: string) {
   const cleanNit = nit.trim()
@@ -86,33 +88,35 @@ const customerCreateSchema = z.object({
   contactBirthYear: z.number().int().min(1900).max(2100).optional(),
   email: z.string().trim().email().max(200).optional(),
   phone: z.string().trim().max(50).optional(),
-  address: z.string().trim().max(300).optional(),
-  city: z.string().trim().min(1).max(120).optional(),
-  zone: z.string().trim().min(1).max(120).optional(),
-  mapsUrl: z.string().trim().url().max(500).optional(),
-  // Legacy flags
-  creditDays7Enabled: z.boolean().optional(),
-  creditDays14Enabled: z.boolean().optional(),
-  // New flexible credit configuration
-  creditEnabled: z.boolean().optional(),
-  creditDays: z.coerce.number().int().min(1).max(365).optional(),
+   address: z.string().trim().max(300).optional(),
+   city: z.string().trim().min(1).max(120).optional(),
+   department: z.string().trim().min(1).max(120).optional(),
+   zone: z.string().trim().min(1).max(120).optional(),
+   mapsUrl: z.string().trim().url().max(500).optional(),
+   // Legacy flags
+   creditDays7Enabled: z.boolean().optional(),
+   creditDays14Enabled: z.boolean().optional(),
+   // New flexible credit configuration
+   creditEnabled: z.boolean().optional(),
+   creditDays: z.coerce.number().int().min(1).max(365).optional(),
 })
 
 const customerUpdateSchema = z.object({
-  version: z.number().int().positive(),
-  name: z.string().trim().min(1).max(200).optional(),
-  businessName: z.string().trim().max(200).nullable().optional(),
-  nit: z.string().trim().max(40).nullable().optional(),
-  contactName: z.string().trim().max(200).nullable().optional(),
-  contactBirthDay: z.number().int().min(1).max(31).nullable().optional(),
-  contactBirthMonth: z.number().int().min(1).max(12).nullable().optional(),
-  contactBirthYear: z.number().int().min(1900).max(2100).nullable().optional(),
-  email: z.string().trim().email().max(200).nullable().optional(),
-  phone: z.string().trim().max(50).nullable().optional(),
-  address: z.string().trim().max(300).nullable().optional(),
-  isActive: z.boolean().optional(),
-  city: z.string().trim().min(1).max(120).nullable().optional(),
-  zone: z.string().trim().min(1).max(120).nullable().optional(),
+   version: z.number().int().positive(),
+   name: z.string().trim().min(1).max(200).optional(),
+   businessName: z.string().trim().max(200).nullable().optional(),
+   nit: z.string().trim().max(40).nullable().optional(),
+   contactName: z.string().trim().max(200).nullable().optional(),
+   contactBirthDay: z.number().int().min(1).max(31).nullable().optional(),
+   contactBirthMonth: z.number().int().min(1).max(12).nullable().optional(),
+   contactBirthYear: z.number().int().min(1).max(2100).nullable().optional(),
+   email: z.string().trim().email().max(200).nullable().optional(),
+   phone: z.string().trim().max(50).nullable().optional(),
+   address: z.string().trim().max(300).nullable().optional(),
+   isActive: z.boolean().optional(),
+   city: z.string().trim().min(1).max(120).nullable().optional(),
+   department: z.string().trim().min(1).max(120).nullable().optional(),
+   zone: z.string().trim().min(1).max(120).nullable().optional(),
   mapsUrl: z.string().trim().url().max(500).nullable().optional(),
   // Legacy flags
   creditDays7Enabled: z.boolean().optional(),
@@ -130,21 +134,13 @@ const listQuerySchema = z.object({
 })
 
 export async function registerCustomerRoutes(app: FastifyInstance): Promise<void> {
-  const db = prisma()
+   const db = prisma()
   const audit = new AuditService(db)
 
-  function branchCityOf(request: any): string | null {
-    if (request.auth?.isTenantAdmin) return null
-    const scoped = !!request.auth?.permissions?.has(Permissions.ScopeBranch)
-    if (!scoped) return null
-    const city = String(request.auth?.warehouseCity ?? '').trim()
-    return city ? city.toUpperCase() : '__MISSING__'
-  }
-
-  // Cities that have at least one active branch (warehouse)
-  // Used by Sales/Customers UI to restrict customer.city values
+  // Departments that have at least one active branch (warehouse)
+  // Used by Sales/Customers UI to restrict customer.department values
   app.get(
-    '/api/v1/customers/branch-cities',
+    '/api/v1/customers/branch-departments',
     {
       preHandler: [requireAuth(), requireModuleEnabled(db, 'SALES'), requirePermission(Permissions.SalesOrderRead)],
     },
@@ -155,18 +151,18 @@ export async function registerCustomerRoutes(app: FastifyInstance): Promise<void
         where: {
           tenantId,
           isActive: true,
-          city: { not: null },
+          department: { not: null },
         },
-        distinct: ['city'],
-        select: { city: true },
+        distinct: ['department'],
+        select: { department: true },
       })
 
       const items = Array.from(
         new Set(
           rows
-            .map((r) => (r.city ?? '').trim())
-            .filter((c) => c.length > 0)
-            .map((c) => c.toUpperCase()),
+            .map((r) => (r.department ?? '').trim())
+            .filter((d) => d.length > 0)
+            .map((d) => d.toUpperCase()),
         ),
       ).sort((a, b) => a.localeCompare(b))
 
@@ -185,20 +181,18 @@ export async function registerCustomerRoutes(app: FastifyInstance): Promise<void
 
       const tenantId = request.auth!.tenantId
       const userId = request.auth!.userId
-      const branchCity = branchCityOf(request)
 
-      if (branchCity === '__MISSING__') {
+      if (branchDepartmentsOfMissing(request)) {
         return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
       }
 
-      if (branchCity) {
-        const city = (parsed.data.city ?? '').trim().toUpperCase()
-        if (!city || city !== branchCity) {
+      const branchDepartments = branchDepartmentsOf(request)
+      if (branchDepartments) {
+        const dept = (parsed.data.department ?? (parsed.data.city ? cityToDepartment(parsed.data.city) : '') ?? '').toString().trim().toUpperCase()
+        if (!dept || !branchDepartments.includes(dept)) {
           return reply.status(403).send({ message: 'Solo puede crear clientes para su sucursal' })
         }
       }
-
-      // Prevent duplicates (tenant-scoped)
       if (parsed.data.nit) {
         const dupNit = await findDuplicateCustomerByNit(db, tenantId, parsed.data.nit)
         if (dupNit) return reply.status(409).send({ message: 'Cliente duplicado: ya existe un cliente con el mismo NIT.' })
@@ -228,6 +222,7 @@ export async function registerCustomerRoutes(app: FastifyInstance): Promise<void
           phone: parsed.data.phone ?? null,
           address: parsed.data.address ?? null,
           city: parsed.data.city ? parsed.data.city.toUpperCase() : null,
+          department: (parsed.data.department ?? (parsed.data.city ? cityToDepartment(parsed.data.city) : null))?.toString().trim().toUpperCase() || null,
           zone: parsed.data.zone ? parsed.data.zone.toUpperCase() : null,
           mapsUrl: parsed.data.mapsUrl ?? null,
           creditEnabled: credit.creditEnabled,
@@ -249,6 +244,7 @@ export async function registerCustomerRoutes(app: FastifyInstance): Promise<void
           phone: true,
           address: true,
           city: true,
+          department: true,
           zone: true,
           mapsUrl: true,
           isActive: true,
@@ -284,27 +280,27 @@ export async function registerCustomerRoutes(app: FastifyInstance): Promise<void
       if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
 
       const tenantId = request.auth!.tenantId
-      const branchCity = branchCityOf(request)
 
-      if (branchCity === '__MISSING__') {
+      if (branchDepartmentsOfMissing(request)) {
         return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
       }
+      const branchDepartments = branchDepartmentsOf(request)
       const q = parsed.data.q
-      const cities = parsed.data.cities ? parsed.data.cities.split(',').map((c) => c.trim()).filter((c) => c.length > 0) : undefined
+      const departments = parsed.data.cities
+        ? parsed.data.cities.split(',').map((c) => cityToDepartment(c.trim())).filter((d): d is string => d !== null && d.length > 0)
+        : undefined
+      const isBranchScoped = request.auth?.permissions?.has(Permissions.ScopeBranch) ?? false
+      const isTenantAdminUser = request.auth?.isTenantAdmin ?? false
 
       const items = await db.customer.findMany({
         where: {
           tenantId,
           ...(q ? { name: { contains: q, mode: 'insensitive' } } : {}),
-          ...(branchCity
-            ? { city: { equals: branchCity, mode: 'insensitive' as const } }
-            : cities && cities.length > 0
-              ? {
-                  OR: cities.map((city) => ({
-                    city: { equals: city.toUpperCase(), mode: 'insensitive' as const },
-                  })),
-                }
-              : {}),
+           ...(branchDepartments
+              ? { department: { in: branchDepartments, mode: 'insensitive' as const } }
+              : (!isBranchScoped || isTenantAdminUser) && departments && departments.length > 0
+                ? { department: { in: departments, mode: 'insensitive' as const } }
+                : {}),
         },
         take: parsed.data.take,
         ...(parsed.data.cursor
@@ -322,6 +318,7 @@ export async function registerCustomerRoutes(app: FastifyInstance): Promise<void
           phone: true,
           isActive: true,
           city: true,
+          department: true,
           zone: true,
           mapsUrl: true,
           creditEnabled: true,
@@ -346,17 +343,17 @@ export async function registerCustomerRoutes(app: FastifyInstance): Promise<void
     async (request, reply) => {
       const id = (request.params as any).id as string
       const tenantId = request.auth!.tenantId
-      const branchCity = branchCityOf(request)
 
-      if (branchCity === '__MISSING__') {
+      if (branchDepartmentsOfMissing(request)) {
         return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
       }
+      const branchDepartments = branchDepartmentsOf(request)
 
       const customer = await db.customer.findFirst({
         where: {
           id,
           tenantId,
-          ...(branchCity ? { city: { equals: branchCity, mode: 'insensitive' as const } } : {}),
+          ...(branchDepartments ? { department: { in: branchDepartments, mode: 'insensitive' as const } } : {}),
         },
         select: {
           id: true,
@@ -371,6 +368,7 @@ export async function registerCustomerRoutes(app: FastifyInstance): Promise<void
           phone: true,
           address: true,
           city: true,
+          department: true,
           zone: true,
           mapsUrl: true,
           isActive: true,
@@ -400,17 +398,17 @@ export async function registerCustomerRoutes(app: FastifyInstance): Promise<void
 
       const tenantId = request.auth!.tenantId
       const userId = request.auth!.userId
-      const branchCity = branchCityOf(request)
 
-      if (branchCity === '__MISSING__') {
+      if (branchDepartmentsOfMissing(request)) {
         return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
       }
+      const branchDepartments = branchDepartmentsOf(request)
 
       const before = await db.customer.findFirst({
         where: {
           id,
           tenantId,
-          ...(branchCity ? { city: { equals: branchCity, mode: 'insensitive' as const } } : {}),
+          ...(branchDepartments ? { city: { in: branchDepartments, mode: 'insensitive' as const } } : {}),
         },
         select: {
           id: true,
@@ -425,6 +423,7 @@ export async function registerCustomerRoutes(app: FastifyInstance): Promise<void
           phone: true,
           address: true,
           city: true,
+          department: true,
           zone: true,
           mapsUrl: true,
           isActive: true,
@@ -438,9 +437,9 @@ export async function registerCustomerRoutes(app: FastifyInstance): Promise<void
       if (!before) return reply.status(404).send({ message: 'Not found' })
       if (before.version !== parsed.data.version) return reply.status(409).send({ message: 'Version conflict' })
 
-      if (branchCity && parsed.data.city !== undefined) {
-        const nextCity = parsed.data.city ? String(parsed.data.city).trim().toUpperCase() : ''
-        if (!nextCity || nextCity !== branchCity) {
+      if (branchDepartments) {
+        const nextDepartment = (parsed.data.department ?? (parsed.data.city !== undefined ? cityToDepartment(parsed.data.city) : '') ?? '').toString().trim().toUpperCase()
+        if (!nextDepartment || !branchDepartments.includes(nextDepartment)) {
           return reply.status(403).send({ message: 'No puede cambiar el cliente a otra sucursal' })
         }
       }
@@ -471,6 +470,8 @@ export async function registerCustomerRoutes(app: FastifyInstance): Promise<void
       if (parsed.data.address !== undefined) updateData.address = parsed.data.address
       if (parsed.data.isActive !== undefined) updateData.isActive = parsed.data.isActive
       if (parsed.data.city !== undefined) updateData.city = parsed.data.city ? parsed.data.city.toUpperCase() : null
+      if (parsed.data.department !== undefined) updateData.department = parsed.data.department ? parsed.data.department.toUpperCase() : null
+      else if (parsed.data.city !== undefined) updateData.department = parsed.data.city ? cityToDepartment(parsed.data.city) ?? null : null
       if (parsed.data.zone !== undefined) updateData.zone = parsed.data.zone ? parsed.data.zone.toUpperCase() : null
       if (parsed.data.mapsUrl !== undefined) updateData.mapsUrl = parsed.data.mapsUrl
 
@@ -516,6 +517,7 @@ export async function registerCustomerRoutes(app: FastifyInstance): Promise<void
           phone: true,
           address: true,
           city: true,
+          department: true,
           zone: true,
           mapsUrl: true,
           isActive: true,

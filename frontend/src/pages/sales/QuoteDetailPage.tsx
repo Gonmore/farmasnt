@@ -18,12 +18,15 @@ type QuoteDetail = {
   locationId: string | null // <-- NUEVO
   locationCode: string | null // <-- NUEVO
   customerName: string
+  customerCity: string | null
+  customerDepartment: string | null
   status: 'CREATED' | 'PROCESSED'
   quotedBy: string | null
   validityDays: number
   paymentMode: string
   deliveryDays: number
-  deliveryCity: string | null
+   deliveryCity: string | null
+   deliveryDepartment: string | null
   deliveryZone: string | null
   deliveryAddress: string | null
   deliveryMapsUrl: string | null
@@ -259,6 +262,19 @@ async function fetchLocations(token: string, warehouseId?: string | null): Promi
   }
 }
 
+type SubLocationItem = {
+  id: string
+  code: string
+  warehouse: { id: string; code: string; name: string; city: string | null }
+}
+
+async function fetchLocationsByDepartment(token: string, department: string): Promise<{
+  items: SubLocationItem[]
+  warehouse: { id: string; name: string; code: string; city: string | null; department: string | null; type: string } | null
+}> {
+  return apiFetch(`/api/v1/warehouses/by-department/${encodeURIComponent(department)}/locations`, { token })
+}
+
 export function QuoteDetailPage() {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -298,6 +314,17 @@ export function QuoteDetailPage() {
     queryKey: ['locations', userWarehouseId],
     queryFn: () => fetchLocations(auth.accessToken!, userWarehouseId),
     enabled: !!auth.accessToken && !!userWarehouseId,
+  })
+
+  const customerDepartment = quoteQuery.data?.customerDepartment
+    ? quoteQuery.data.customerDepartment.trim().toUpperCase() || null
+    : null
+
+  const departmentLocationsQuery = useQuery({
+    queryKey: ['locations', 'department', customerDepartment],
+    queryFn: () => fetchLocationsByDepartment(auth.accessToken!, customerDepartment!),
+    enabled: !!auth.accessToken && !!customerDepartment,
+    staleTime: 5 * 60 * 1000,
   })
 
   useEffect(() => {
@@ -847,24 +874,32 @@ export function QuoteDetailPage() {
                   />
                 </div>
 
-                {/* NUEVO: Campo de Tipo de venta (Sub almacén) */}
-                <div>
-                  <div className="mb-1 text-sm font-medium">Tipo de venta (Sub almacén)</div>
-                   <Select
-                     value={draft.locationId}
-                     onChange={(e) => setDraft((p) => (p ? { ...p, locationId: e.target.value } : p))}
-                     options={[
-                       { 
-                         value: '', 
-                         label: !userWarehouseId ? 'Sin sucursal asignada' : 'Seleccionar sub-almacén...' 
-                       },
-                       ...(locationsQuery.data?.items.map((l) => ({
-                         value: l.id,
-                         label: l.name || l.code || 'Sin nombre',
-                       })) ?? []),
-                     ]}
-                     disabled={locationsQuery.isLoading || !canEdit || saveMutation.isPending || !userWarehouseId}
-                   />
+                 {/* NUEVO: Campo de Tipo de venta (Sub almacén) */}
+                 <div>
+                   <div className="mb-1 text-sm font-medium">Tipo de venta (Sub almacén)</div>
+                    <Select
+                      value={draft.locationId}
+                      onChange={(e) => setDraft((p) => (p ? { ...p, locationId: e.target.value } : p))}
+                      options={[
+                        { 
+                          value: '', 
+                          label: customerDepartment
+                            ? 'Automático (almacén del departamento del cliente)'
+                            : (!userWarehouseId ? 'Sin sucursal asignada' : 'Seleccionar sub-almacén...') 
+                        },
+                        ...((customerDepartment
+                          ? (departmentLocationsQuery.data?.items ?? [])
+                          : (locationsQuery.data?.items ?? [])
+                        ).map((l: any) => ({
+                          value: l.id,
+                          label: l.name || l.code || l.warehouse?.code || '',
+                        })) ?? []),
+                      ]}
+                      disabled={
+                        (!customerDepartment ? locationsQuery.isLoading : departmentLocationsQuery.isLoading) ||
+                        !canEdit || saveMutation.isPending
+                      }
+                    />
                 </div>
                 <div>
                   <div className="mb-1 text-sm font-medium">Validez (días)</div>

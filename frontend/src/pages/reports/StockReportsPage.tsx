@@ -14,6 +14,7 @@ import { formatInteger, formatMoney } from '../../lib/numberFormat'
 import { exportPickingToPdf, exportLabelToPdf } from '../../lib/movementRequestDocsPdf'
 import { useAuth } from '../../providers/AuthProvider'
 import { useTenant } from '../../providers/TenantProvider'
+import { countryCodeToName } from '../../components/geo/countryUtils'
 
 type StockTab = 'EXISTENCIAS' | 'INPUTS' | 'TRANSFERS' | 'ROTATION' | 'NOMOVEMENT' | 'LOWSTOCK' | 'EXPIRY' | 'OPS' | 'PROVIDER_ACTIVITY' | 'BRANCH_ACTIVITY'
 
@@ -2824,7 +2825,7 @@ export function StockReportsPage() {
                         Exportar picking (PDF)
                       </Button>
                       <Button size="sm" variant="outline" onClick={async () => {
-                        const country = tenant.branding?.country ?? 'BOLIVIA'
+                        const country = countryCodeToName(tenant.branding?.country ?? 'BO')
                         const destinationCity = (d.request.warehouse?.city ?? d.request.requestedCity ?? '').trim()
                         const destination = destinationCity ? `${destinationCity}, ${country}` : country
 

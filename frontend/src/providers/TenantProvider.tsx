@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useAuth } from './AuthProvider'
 import { apiFetch } from '../lib/api'
 import { DEFAULT_THOUSAND_SEPARATOR, normalizeThousandSeparator } from '../lib/numberFormat'
+import { normalizeCountryCode} from '../components/geo/countryUtils'
 
 // Helper para ajustar brillo de colores hex
 function adjustBrightness(hex: string, percent: number): string {
@@ -54,8 +55,7 @@ function parseJwtClaims(token: string): { sub?: string; tenantId?: string } {
 }
 
 function normalizeCountry(country?: string | null): string {
-  const value = (country ?? '').trim()
-  return value ? value.toUpperCase() : 'BOLIVIA'
+  return normalizeCountryCode(country)
 }
 
 export function TenantProvider(props: { children: React.ReactNode }) {
@@ -154,7 +154,7 @@ export function TenantProvider(props: { children: React.ReactNode }) {
         defaultTheme: 'LIGHT' as const,
         currency: 'BOB',
         thousandSeparator: DEFAULT_THOUSAND_SEPARATOR,
-        country: 'BOLIVIA'
+        country: 'BO'
       } : publicBranding
 
       return {

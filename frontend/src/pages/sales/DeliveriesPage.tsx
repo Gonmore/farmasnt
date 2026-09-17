@@ -34,7 +34,8 @@ type DeliveryListItem = {
   customerName: string
   processedBy: string | null
   deliveryDate: string | null
-  deliveryCity: string | null
+   deliveryCity: string | null
+   deliveryDepartment: string | null
   deliveryZone: string | null
   deliveryAddress: string | null
   deliveryMapsUrl: string | null

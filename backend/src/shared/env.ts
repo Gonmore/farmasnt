@@ -31,6 +31,11 @@ const envSchema = z.object({
   S3_PUBLIC_BASE_URL: z.preprocess(emptyStringToUndefined, z.string().url().optional()),
   // Useful for MinIO / many S3-compatible providers
   S3_FORCE_PATH_STYLE: z.coerce.boolean().default(true),
+
+  // Nominatim / OpenStreetMap georeferencing
+  NOMINATIM_BASE_URL: z.preprocess(emptyStringToUndefined, z.string().url().optional()),
+  NOMINATIM_EMAIL: z.preprocess(emptyStringToUndefined, z.string().email().optional()),
+  NOMINATIM_RATE_LIMIT_MS: z.coerce.number().int().positive().optional().default(1000),
 })
 
 export type Env = z.infer<typeof envSchema>

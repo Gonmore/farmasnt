@@ -4,6 +4,8 @@ import { api } from '../../lib/api'
 import { MainLayout, PageContainer, Button, Input, Loading, ErrorState, CountrySelector, ImageUpload } from '../../components'
 import { useNavigation } from '../../hooks'
 import { formatMoney, normalizeThousandSeparator } from '../../lib/numberFormat'
+import { geoApi } from '../../lib/geoService'
+import { normalizeCountryCode } from '../../components/geo/countryUtils'
 
 type BrandingData = {
   tenantId: string
@@ -73,7 +75,7 @@ export function BrandingPage() {
   const [defaultTheme, setDefaultTheme] = useState<'LIGHT' | 'DARK'>('LIGHT')
   const [currency, setCurrency] = useState('BOB')
   const [thousandSeparator, setThousandSeparator] = useState<'.' | ',' | ' '>('.')
-  const [country, setCountry] = useState('BOLIVIA')
+  const [country, setCountry] = useState('BO')
 
   const brandingQuery = useQuery<BrandingData>({
     queryKey: ['tenant', 'branding'],
@@ -88,7 +90,7 @@ export function BrandingPage() {
       setDefaultTheme(data.defaultTheme)
       setCurrency(data.currency || 'BOB')
       setThousandSeparator(normalizeThousandSeparator(data.thousandSeparator))
-      setCountry(data.country || 'BOLIVIA')
+      setCountry(normalizeCountryCode(data.country || 'BO'))
       return data
     },
   })
@@ -142,6 +144,13 @@ export function BrandingPage() {
   }
 
   const thousandSeparatorPreview = formatMoney(1234567.89, { thousandSeparator })
+
+  const handleCountryChange = (code: string) => {
+    setCountry(code)
+    void geoApi.getCurrency(code).then(({ currency: curr }) => {
+      if (curr) setCurrency(curr)
+    }).catch(() => {})
+  }
 
   if (brandingQuery.isLoading) {
     return (
@@ -371,10 +380,10 @@ export function BrandingPage() {
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
                 País
               </label>
-              <CountrySelector
-                value={country}
-                onChange={setCountry}
-              />
+               <CountrySelector
+                 value={country}
+                 onChange={handleCountryChange}
+               />
               <p className="mt-1 text-xs text-slate-500">
                 Requerido para poder asignar ciudades a sucursales y priorizar reservas.
               </p>
@@ -409,9 +418,9 @@ export function BrandingPage() {
                   setBrandSecondary(brandingQuery.data?.brandSecondary || '#10b981')
                   setBrandTertiary(brandingQuery.data?.brandTertiary || '#f59e0b')
                   setDefaultTheme(brandingQuery.data?.defaultTheme || 'LIGHT')
-                  setCurrency(brandingQuery.data?.currency || 'BOB')
-                  setThousandSeparator(normalizeThousandSeparator(brandingQuery.data?.thousandSeparator))
-                  setCountry(brandingQuery.data?.country || 'BOLIVIA')
+                   setCurrency(brandingQuery.data?.currency || 'BOB')
+                   setThousandSeparator(normalizeThousandSeparator(brandingQuery.data?.thousandSeparator))
+                   setCountry(normalizeCountryCode(brandingQuery.data?.country || 'BO'))
                 }}
                 disabled={updateMutation.isPending}
               >

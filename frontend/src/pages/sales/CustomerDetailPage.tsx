@@ -4,8 +4,11 @@ import * as React from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { apiFetch } from '../../lib/api'
 import { useAuth } from '../../providers/AuthProvider'
-import { MainLayout, PageContainer, Input, Button, Loading, ErrorState, Select, MapSelector } from '../../components'
+import { MainLayout, PageContainer, Input, Button, Loading, ErrorState, Select, MapSelector, CitySelector, AdminLevel1Selector } from '../../components'
 import { useNavigation } from '../../hooks'
+import { useTenant } from '../../providers/TenantProvider'
+import { normalizeCountryCode } from '../../components/geo/countryUtils'
+import { geoApi } from '../../lib/geoService'
 
 type Customer = {
   id: string
@@ -19,8 +22,9 @@ type Customer = {
   email: string | null
   phone: string | null
   address: string | null
-  city?: string | null
-  zone?: string | null
+   city?: string | null
+   department?: string | null
+   zone?: string | null
   mapsUrl?: string | null
   isActive: boolean
   creditEnabled?: boolean
@@ -28,8 +32,6 @@ type Customer = {
   version: number
   createdAt: string
 }
-
-type BranchCitiesResponse = { items: string[] }
 
 async function fetchCustomer(token: string, customerId: string): Promise<Customer> {
   return apiFetch(`/api/v1/customers/${customerId}`, { token })
@@ -47,9 +49,10 @@ async function createCustomer(
     contactBirthYear?: number
     email?: string
     phone?: string
-    address?: string
-    city?: string
-    zone?: string
+     address?: string
+     city?: string
+     department?: string
+     zone?: string
     mapsUrl?: string
     creditEnabled?: boolean
     creditDays?: number
@@ -61,11 +64,6 @@ async function createCustomer(
     body: JSON.stringify(data),
   })
 }
-
-async function fetchBranchCities(token: string): Promise<BranchCitiesResponse> {
-  return apiFetch('/api/v1/customers/branch-cities', { token })
-}
-
 async function updateCustomer(
   token: string,
   customerId: string,
@@ -81,10 +79,11 @@ async function updateCustomer(
     email?: string
     phone?: string
     address?: string
-    isActive?: boolean
-    city?: string
-    zone?: string
-    mapsUrl?: string
+     isActive?: boolean
+     city?: string
+     department?: string
+     zone?: string
+     mapsUrl?: string
     creditEnabled?: boolean
     creditDays?: number | null
   },
@@ -98,12 +97,15 @@ async function updateCustomer(
 
 export function CustomerDetailPage() {
   const auth = useAuth()
+  const tenant = useTenant()
   const navigate = useNavigate()
   const navGroups = useNavigation()
   const queryClient = useQueryClient()
   const { customerId } = useParams<{ customerId?: string }>()
   const isNew = !customerId
   const [mapMode, setMapMode] = useState<'manual' | 'interactive'>('manual')
+
+  const tenantCountryCode = normalizeCountryCode(tenant.branding?.country)
 
   const [name, setName] = useState('')
   const [businessName, setBusinessName] = useState('')
@@ -116,6 +118,7 @@ export function CustomerDetailPage() {
   const [phone, setPhone] = useState('')
   const [address, setAddress] = useState('')
   const [city, setCity] = useState('')
+  const [department, setDepartment] = useState('')
   const [zone, setZone] = useState('')
   const [mapsUrl, setMapsUrl] = useState('')
   const [isActive, setIsActive] = useState(true)
@@ -130,16 +133,26 @@ export function CustomerDetailPage() {
     }
   }, [])
 
+  const handleCityChange = useCallback(async (cityValue: string) => {
+    setCity(cityValue)
+    if (cityValue.trim()) {
+      try {
+        const { department: resolvedDept } = await geoApi.resolveDepartment(cityValue, tenantCountryCode)
+        if (resolvedDept) {
+          setDepartment(resolvedDept)
+        }
+      } catch {
+        setDepartment('')
+      }
+    } else {
+      setDepartment('')
+    }
+  }, [tenantCountryCode])
+
   const customerQuery = useQuery({
     queryKey: ['customer', customerId],
     queryFn: () => fetchCustomer(auth.accessToken!, customerId!),
     enabled: !!auth.accessToken && !!customerId,
-  })
-
-  const branchCitiesQuery = useQuery({
-    queryKey: ['customer-branch-cities'],
-    queryFn: () => fetchBranchCities(auth.accessToken!),
-    enabled: !!auth.accessToken,
   })
 
   // Cargar datos cuando se obtiene el cliente
@@ -156,6 +169,7 @@ export function CustomerDetailPage() {
       setPhone(customerQuery.data.phone || '')
       setAddress(customerQuery.data.address || '')
       setCity(customerQuery.data.city || '')
+      setDepartment(customerQuery.data.department || '')
       setZone(customerQuery.data.zone || '')
       setMapsUrl(customerQuery.data.mapsUrl || '')
       setIsActive(customerQuery.data.isActive)
@@ -184,6 +198,7 @@ export function CustomerDetailPage() {
         ...(phone && { phone }),
         ...(address && { address }),
         ...(city && { city }),
+        ...(department && { department }),
         ...(zone && { zone }),
         ...(mapsUrl && { mapsUrl }),
         creditEnabled,
@@ -215,6 +230,7 @@ export function CustomerDetailPage() {
         ...(phone && { phone }),
         ...(address && { address }),
         ...(city && { city }),
+        ...(department && { department }),
         ...(zone && { zone }),
         ...(mapsUrl && { mapsUrl }),
         isActive,
@@ -253,21 +269,6 @@ export function CustomerDetailPage() {
   if (!isNew && customerQuery.error) return <ErrorState message="Error al cargar cliente" retry={customerQuery.refetch} />
 
   const isSubmitting = isNew ? createMutation.isPending : updateMutation.isPending
-
-  const branchCities = (branchCitiesQuery.data?.items ?? []).map((c) => c.trim()).filter((c) => c.length > 0)
-  const selectedCityNormalized = city.trim().toUpperCase()
-  const branchCitySet = new Set(branchCities.map((c) => c.toUpperCase()))
-  const cityOptions = [
-    // Keep current selection visible even if no longer an active branch city.
-    ...(selectedCityNormalized && !branchCitySet.has(selectedCityNormalized)
-      ? [{ value: selectedCityNormalized, label: `${selectedCityNormalized} (sin sucursal activa)` }]
-      : []),
-    ...branchCities
-      .map((c) => c.toUpperCase())
-      .filter((c, index, arr) => arr.indexOf(c) === index)
-      .sort((a, b) => a.localeCompare(b))
-      .map((c) => ({ value: c, label: c })),
-  ]
 
   return (
     <MainLayout navGroups={navGroups}>
@@ -377,39 +378,36 @@ export function CustomerDetailPage() {
               disabled={isSubmitting}
             />
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <Select
-                label="Ciudad"
-                value={city}
-                onChange={(e) => setCity(e.target.value)}
-                disabled={
-                  isSubmitting ||
-                  branchCitiesQuery.isLoading ||
-                  branchCitiesQuery.isError ||
-                  cityOptions.length === 0
-                }
-                error={branchCitiesQuery.isError ? 'No se pudo cargar ciudades de sucursales' : undefined}
-                options={[
-                  {
-                    value: '',
-                    label: branchCitiesQuery.isLoading
-                      ? 'Cargando ciudades…'
-                      : cityOptions.length
-                        ? 'Seleccionar ciudad'
-                        : 'No hay ciudades disponibles',
-                  },
-                  ...cityOptions,
-                ]}
-              />
-              <Input
-                label="Zona"
-                type="text"
-                value={zone}
-                onChange={(e) => setZone(e.target.value)}
-                placeholder="ZONA SUR"
-                disabled={isSubmitting}
-              />
-            </div>
+             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+               <AdminLevel1Selector
+                 countryCode={tenantCountryCode}
+                 value={department}
+                 onChange={setDepartment}
+                 disabled={isSubmitting}
+                 label="Departamento / Estado"
+               />
+               <div>
+                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                   Ciudad
+                 </label>
+                 <CitySelector
+                   countryCode={tenantCountryCode}
+                   adminLevel1Code={department || undefined}
+                   value={city}
+                   onChange={handleCityChange}
+                   disabled={isSubmitting}
+                 />
+               </div>
+             </div>
+
+             <Input
+               label="Zona"
+               type="text"
+               value={zone}
+               onChange={(e) => setZone(e.target.value)}
+               placeholder="ZONA SUR"
+               disabled={isSubmitting}
+             />
 
             <div className="space-y-4">
               <div className="flex items-center gap-4">

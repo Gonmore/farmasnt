@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { prisma } from '../../db/prisma.js'
 import { requireAuth, requirePermission, requireModuleEnabled } from '../../../application/security/rbac.js'
 import { Permissions } from '../../../application/security/permissions.js'
+import { branchDepartmentsOf, branchDepartmentsOfMissing, branchWarehouseIdOf } from '../../../application/security/branch.js'
 
 const listQuerySchema = z.object({
   take: z.coerce.number().int().min(1).max(100).default(50),
@@ -25,22 +26,6 @@ const sendBulkTransferSchema = z.object({
 export async function registerNotificationRoutes(app: FastifyInstance): Promise<void> {
   const db = prisma()
 
-  function branchCityOf(request: any): string | null {
-    if (request.auth?.isTenantAdmin) return null
-    const scoped = !!request.auth?.permissions?.has(Permissions.ScopeBranch)
-    if (!scoped) return null
-    const city = String(request.auth?.warehouseCity ?? '').trim()
-    return city ? city.toUpperCase() : '__MISSING__'
-  }
-
-  function branchWarehouseIdOf(request: any): string | null {
-    if (request.auth?.isTenantAdmin) return null
-    const scoped = !!request.auth?.permissions?.has(Permissions.ScopeBranch)
-    if (!scoped) return null
-    const wid = String(request.auth?.warehouseId ?? '').trim()
-    return wid ? wid : '__MISSING__'
-  }
-
   app.get(
     '/api/v1/notifications',
     {
@@ -52,11 +37,11 @@ export async function registerNotificationRoutes(app: FastifyInstance): Promise<
 
       const tenantId = request.auth!.tenantId
       const userId = request.auth!.userId
-      const branchCity = branchCityOf(request)
       const branchWh = branchWarehouseIdOf(request)
-      if (branchCity === '__MISSING__') {
+      if (branchDepartmentsOfMissing(request)) {
         return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
       }
+      const branchDepartments = branchDepartmentsOf(request)
 
       const userRow = await db.user.findFirst({
         where: { tenantId, id: userId },
@@ -65,25 +50,24 @@ export async function registerNotificationRoutes(app: FastifyInstance): Promise<
 
       const lastReadAt = userRow?.notificationsLastReadAt ?? new Date(0)
 
-      // Para scope:branch el filtro prioriza warehouseId (evita mezclar
-      // notifications entre sucursales de la misma ciudad) y cae a city
-      // cuando el warehouseId no esta poblado (notificaciones historicas).
       const visibleScopeFilter =
         branchWh && branchWh !== '__MISSING__'
           ? {
               OR: [
-                { warehouseId: null, city: null },
-                { warehouseId: branchWh },
-                { warehouseId: null, city: { equals: branchCity, mode: 'insensitive' as const } },
-              ],
-            }
-          : branchCity && branchCity !== '__MISSING__'
-            ? {
-                OR: [
-                  { city: null },
-                  { city: { equals: branchCity, mode: 'insensitive' as const } },
-                ],
-              }
+                { warehouseId: null, department: null },
+                 { warehouseId: branchWh },
+                 branchDepartments
+                   ? { warehouseId: null, department: { in: branchDepartments, mode: 'insensitive' as const } }
+                   : {},
+               ],
+             }
+           : branchDepartments
+             ? {
+                 OR: [
+                   { department: null },
+                   { department: { in: branchDepartments, mode: 'insensitive' as const } },
+                 ],
+               }
             : {}
 
       const where: any = {
@@ -152,12 +136,12 @@ export async function registerNotificationRoutes(app: FastifyInstance): Promise<
       const userId = request.auth!.userId
 
       const [fromWh, toWh] = await Promise.all([
-        db.warehouse.findFirst({ where: { tenantId, id: parsed.data.fromWarehouseId }, select: { id: true, code: true, city: true } }),
-        db.warehouse.findFirst({ where: { tenantId, id: parsed.data.toWarehouseId }, select: { id: true, code: true, city: true } }),
+        db.warehouse.findFirst({ where: { tenantId, id: parsed.data.fromWarehouseId }, select: { id: true, code: true, city: true, department: true } }),
+        db.warehouse.findFirst({ where: { tenantId, id: parsed.data.toWarehouseId }, select: { id: true, code: true, city: true, department: true } }),
       ])
 
-      const fromLabel = fromWh?.code ?? fromWh?.city ?? 'Origen'
-      const toLabel = toWh?.code ?? toWh?.city ?? 'Destino'
+      const fromLabel = fromWh?.code ?? fromWh?.department ?? fromWh?.city ?? 'Origen'
+      const toLabel = toWh?.code ?? toWh?.department ?? toWh?.city ?? 'Destino'
       const body = `${fromLabel} → ${toLabel}`
       const linkTo = `/stock/completed-movements?highlight=${encodeURIComponent(parsed.data.referenceId)}`
 
@@ -172,6 +156,7 @@ export async function registerNotificationRoutes(app: FastifyInstance): Promise<
         await db.notification.create({
           data: {
             tenantId,
+            department: null,
             city: null,
             warehouseId: null,
             type: 'stock.bulk_transfer.created',
@@ -183,16 +168,18 @@ export async function registerNotificationRoutes(app: FastifyInstance): Promise<
           },
         })
       } else {
-        const targetCities: string[] = []
-        if (fromWh?.city) targetCities.push(String(fromWh.city))
-        if (toWh?.city && (!fromWh?.city || String(toWh.city) !== String(fromWh.city))) {
-          targetCities.push(String(toWh.city))
+        const targetDepartments: string[] = []
+        if (fromWh?.department) targetDepartments.push(String(fromWh.department))
+        if (toWh?.department && (!fromWh?.department || String(toWh.department) !== String(fromWh.department))) {
+          targetDepartments.push(String(toWh.department))
         }
         await db.notification.createMany({
           data: Array.from(targetWhIds).map((whId) => {
+            const whDept = whId === fromWh?.id ? fromWh?.department : toWh?.department
             const whCity = whId === fromWh?.id ? fromWh?.city : toWh?.city
             return {
               tenantId,
+              department: whDept ?? null,
               city: whCity ?? null,
               warehouseId: whId,
               type: 'stock.bulk_transfer.created',

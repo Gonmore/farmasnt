@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { apiFetch } from '../../lib/api'
 import { useAuth } from '../../providers/AuthProvider'
@@ -45,13 +45,12 @@ export function CustomersPage() {
   const take = 20
   const isBranchScoped = permissions.hasPermission('scope:branch') && !permissions.isTenantAdmin
   const branchCity = (permissions.user?.warehouse?.city ?? '').trim().toUpperCase()
+  const branchDepartments = permissions.branchDepartments ?? null
 
-  useEffect(() => {
-    if (!isBranchScoped || !branchCity) return
-    if (selectedCities.length === 1 && selectedCities[0] === branchCity) return
-    setSelectedCities([branchCity])
-    setCursor(undefined)
-  }, [isBranchScoped, branchCity, selectedCities])
+  const branchDepartmentsLabel = useMemo(() => {
+    if (!isBranchScoped || !branchDepartments || branchDepartments.length === 0) return null
+    return branchDepartments.join(', ')
+  }, [isBranchScoped, branchDepartments])
 
   const customersQuery = useQuery({
     queryKey: ['customers', take, cursor, selectedCities, appliedSearch],
@@ -138,10 +137,17 @@ export function CustomersPage() {
           )}
         </div>
 
-        {/* Filtro de ciudades - Chips simples */}
-        {isBranchScoped && branchCity ? (
+        {/* Información de filtrado para usuarios de sucursal */}
+        {isBranchScoped && branchDepartmentsLabel ? (
+          <div className="mb-4 flex flex-wrap items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+            <span className="font-medium">Departamentos atendidos:</span>
+            <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+              {branchDepartmentsLabel}
+            </span>
+          </div>
+        ) : isBranchScoped && branchCity ? (
           <div className="mb-4 flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
-            <span className="font-medium">Ciudad:</span>
+            <span className="font-medium">Sucursal:</span>
             <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-800 dark:bg-blue-900 dark:text-blue-200">
               {branchCity}
             </span>

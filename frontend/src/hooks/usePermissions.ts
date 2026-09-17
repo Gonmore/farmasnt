@@ -26,9 +26,12 @@ export interface UserInfo {
     code: string;
     name: string;
     city: string | null;
+    department?: string | null;
     isActive: boolean;
     type?: 'PROVIDER' | 'SALES';
   } | null;
+  warehouseCities?: string[] | null;
+  warehouseDepartments?: string[] | null;
   version?: number;
   tenant: {
     id: string;
@@ -91,6 +94,9 @@ export function usePermissions() {
     user: data?.user,
     warehouse: data?.user?.warehouse,
     warehouseId: data?.user?.warehouseId,
+    warehouseCities: data?.user?.warehouseCities,
+    warehouseDepartments: data?.user?.warehouseDepartments,
+    branchDepartments: data?.user?.warehouseDepartments ?? null,
     warehouseType,
     roles: data?.roles ?? [],
     permissions: data?.permissions ?? [],

@@ -4,6 +4,7 @@ import { Prisma } from '../../../generated/prisma/client.js'
 import { prisma } from '../../db/prisma.js'
 import { requireAuth, requireModuleEnabled, requirePermission } from '../../../application/security/rbac.js'
 import { Permissions } from '../../../application/security/permissions.js'
+import { cityToDepartment } from '../../../shared/geo.js'
 
 const createWarehouseSchema = z.object({
   code: z.string().trim().min(1).max(32).regex(/^SUC-[A-Z0-9]+$/, 'Warehouse code must start with SUC- followed by uppercase letters and numbers'),
@@ -44,6 +45,18 @@ const subLocationsQuerySchema = z.object({
   warehouseId: z.string().uuid().optional(),
 })
 
+const servedDepartmentSchema = z.object({
+  department: z.string().trim().min(1).max(120).toUpperCase(),
+})
+
+const servedDepartmentsBulkSchema = z.object({
+  departments: z.array(z.string().trim().min(1).max(120).toUpperCase()).min(1),
+})
+
+const servedDepartmentParamsSchema = z.object({
+  department: z.string().trim().min(1).max(120),
+})
+
 export async function registerWarehouseRoutes(app: FastifyInstance): Promise<void> {
   const db = prisma()
 
@@ -74,7 +87,7 @@ export async function registerWarehouseRoutes(app: FastifyInstance): Promise<voi
             }
           : {}),
         orderBy: { id: 'asc' },
-        select: { id: true, code: true, name: true, city: true, isActive: true, type: true, version: true, updatedAt: true },
+        select: { id: true, code: true, name: true, city: true, isActive: true, type: true, version: true, updatedAt: true, servedDepartments: { select: { department: true, isActive: true } } },
       })
 
       const warehouseIds = items.map((w) => w.id)
@@ -91,7 +104,7 @@ export async function registerWarehouseRoutes(app: FastifyInstance): Promise<voi
         : []
 
       const totalByWarehouseId = new Map((totals ?? []).map((r) => [r.warehouseId, String(r.quantity ?? '0')]))
-      const itemsWithTotals = items.map((w) => ({ ...w, totalQuantity: totalByWarehouseId.get(w.id) ?? '0' }))
+      const itemsWithTotals = items.map((w) => ({ ...w, totalQuantity: totalByWarehouseId.get(w.id) ?? '0', servedDepartments: w.servedDepartments.map((sc) => sc.department) }))
 
       const nextCursor = items.length === parsed.data.take ? items[items.length - 1]!.id : null
       return reply.send({ items: itemsWithTotals, nextCursor })
@@ -156,17 +169,30 @@ export async function registerWarehouseRoutes(app: FastifyInstance): Promise<voi
       try {
         const created = await db.$transaction(async (tx) => {
           // Create warehouse
+          const city = parsed.data.city.trim().toUpperCase()
+          const department = cityToDepartment(city)
           const warehouse = await tx.warehouse.create({
             data: {
               tenantId,
               code: parsed.data.code,
               name: parsed.data.name,
-              city: parsed.data.city.toUpperCase(),
+              city,
+              department: department ?? null,
               type: parsed.data.type,
               createdBy: userId,
             },
-            select: { id: true, code: true, name: true, city: true, isActive: true, type: true, version: true, updatedAt: true },
+            select: { id: true, code: true, name: true, city: true, isActive: true, type: true, version: true, updatedAt: true, servedDepartments: { select: { department: true, isActive: true } } },
           })
+
+          if (parsed.data.type === 'SALES') {
+            await tx.warehouseServedDepartment.create({
+              data: {
+                tenantId,
+                warehouseId: warehouse.id,
+                department: department ?? '',
+              },
+            })
+          }
 
           // Create default location (BIN-01)
           await tx.location.create({
@@ -182,7 +208,7 @@ export async function registerWarehouseRoutes(app: FastifyInstance): Promise<voi
           return warehouse
         })
 
-        return reply.status(201).send({ ...created, totalQuantity: '0' })
+        return reply.status(201).send({ ...created, totalQuantity: '0', servedDepartments: created.servedDepartments.map((sc) => sc.department) })
       } catch (e: any) {
         if (typeof e?.code === 'string' && e.code === 'P2002') {
           return reply.status(409).send({ message: 'Warehouse code already exists' })
@@ -208,31 +234,50 @@ export async function registerWarehouseRoutes(app: FastifyInstance): Promise<voi
 
       const warehouse = await db.warehouse.findFirst({
         where: { id: warehouseId, tenantId },
-        select: { id: true, version: true }
+        select: { id: true, version: true, city: true, type: true, servedDepartments: { select: { id: true, department: true, isActive: true } } },
       })
 
       if (!warehouse) return reply.status(404).send({ message: 'Warehouse not found' })
 
+      const oldCity = warehouse.city
+      const newCity = parsed.data.city ? parsed.data.city.toUpperCase() : null
+      const oldDepartment = cityToDepartment(oldCity)
+      const newDepartment = newCity ? cityToDepartment(newCity) : null
+
       // AÑADIDO: Bloque try/catch para capturar duplicados y colisiones
       try {
-        const updated = await db.warehouse.update({
-          where: {
-            id: warehouseId,
-            version: warehouse.version // Optimistic locking
-          },
-          data: {
-            ...(parsed.data.code !== undefined ? { code: parsed.data.code } : {}),
-            ...(parsed.data.name !== undefined ? { name: parsed.data.name } : {}),
-            ...(parsed.data.city !== undefined ? { city: parsed.data.city.toUpperCase() } : {}),
-            ...(parsed.data.isActive !== undefined ? { isActive: parsed.data.isActive } : {}),
-            ...(parsed.data.type !== undefined ? { type: parsed.data.type } : {}),
-            version: { increment: 1 },
-            createdBy: userId,
-          },
-          select: { id: true, code: true, name: true, city: true, isActive: true, type: true, version: true, updatedAt: true },
+        const updated = await db.$transaction(async (tx) => {
+          const wh = await tx.warehouse.update({
+            where: {
+              id: warehouseId,
+              version: warehouse.version,
+            },
+            data: {
+              ...(parsed.data.code !== undefined ? { code: parsed.data.code } : {}),
+              ...(parsed.data.name !== undefined ? { name: parsed.data.name } : {}),
+              ...(parsed.data.city !== undefined ? { city: newCity, department: newDepartment } : {}),
+              ...(parsed.data.isActive !== undefined ? { isActive: parsed.data.isActive } : {}),
+              ...(parsed.data.type !== undefined ? { type: parsed.data.type } : {}),
+              version: { increment: 1 },
+              createdBy: userId,
+            },
+            select: { id: true, code: true, name: true, city: true, isActive: true, type: true, version: true, updatedAt: true, servedDepartments: { select: { department: true, isActive: true } } },
+          })
+
+          if (oldDepartment && newDepartment && oldDepartment !== newDepartment) {
+            const ownDeptEntry = warehouse.servedDepartments.find((sc) => (sc.department ?? '').toUpperCase() === oldDepartment)
+            if (ownDeptEntry) {
+              await tx.warehouseServedDepartment.update({
+                where: { id: ownDeptEntry.id },
+                data: { department: newDepartment },
+              })
+            }
+          }
+
+          return wh
         })
 
-        return reply.send(updated)
+        return reply.send({ ...updated, servedDepartments: updated.servedDepartments.map((sc) => sc.department) })
       } catch (e: any) {
         if (typeof e?.code === 'string' && e.code === 'P2002') {
           return reply.status(409).send({ message: 'El código de almacén ya existe' })
@@ -411,6 +456,216 @@ export async function registerWarehouseRoutes(app: FastifyInstance): Promise<voi
         }
         throw e
       }
+    },
+  )
+
+  // List served departments for a warehouse
+  app.get(
+    '/api/v1/warehouses/:id/served-departments',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.StockRead)],
+    },
+    async (request, reply) => {
+      const warehouseId = (request.params as any).id as string
+      const tenantId = request.auth!.tenantId
+
+      const warehouse = await db.warehouse.findFirst({
+        where: { id: warehouseId, tenantId },
+        select: { id: true },
+      })
+      if (!warehouse) return reply.status(404).send({ message: 'Warehouse not found' })
+
+      const servedDepartments = await db.warehouseServedDepartment.findMany({
+        where: { warehouseId, tenantId, isActive: true },
+        select: { department: true },
+        orderBy: { department: 'asc' },
+      })
+
+      return reply.send({ items: servedDepartments.map((sc) => sc.department) })
+    },
+  )
+
+  // Add a served department to a warehouse (with overlap validation)
+  app.post(
+    '/api/v1/warehouses/:id/served-departments',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.StockManage)],
+    },
+    async (request, reply) => {
+      const warehouseId = (request.params as any).id as string
+      const parsed = servedDepartmentSchema.safeParse(request.body)
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid request', issues: parsed.error.issues })
+
+      const tenantId = request.auth!.tenantId
+      const dept = parsed.data.department.trim().toUpperCase()
+
+      const warehouse = await db.warehouse.findFirst({
+        where: { id: warehouseId, tenantId },
+        select: { id: true, type: true },
+      })
+      if (!warehouse) return reply.status(404).send({ message: 'Warehouse not found' })
+
+      try {
+        const created = await db.warehouseServedDepartment.create({
+          data: {
+            tenantId,
+            warehouseId,
+            department: dept,
+          },
+          select: { id: true, department: true, isActive: true, createdAt: true, updatedAt: true },
+        })
+        return reply.status(201).send(created)
+      } catch (e: any) {
+        if (typeof e?.code === 'string' && e.code === 'P2002') {
+          const meta = e?.meta?.target
+          if (Array.isArray(meta) && meta.includes('tenantId') && meta.includes('department')) {
+            return reply.status(409).send({ message: `El departamento ${dept} ya está asignado a otra sucursal` })
+          }
+          return reply.status(409).send({ message: 'El departamento ya está asignado a esta sucursal' })
+        }
+        throw e
+      }
+    },
+  )
+
+  // Remove a served department from a warehouse (soft-delete)
+  app.delete(
+    '/api/v1/warehouses/:id/served-departments/:department',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.StockManage)],
+    },
+    async (request, reply) => {
+      const warehouseId = (request.params as any).id as string
+      const deptParam = servedDepartmentParamsSchema.safeParse({ department: (request.params as any).department })
+      if (!deptParam.success) return reply.status(400).send({ message: 'Invalid params', issues: deptParam.error.issues })
+
+      const tenantId = request.auth!.tenantId
+      const dept = deptParam.data.department.trim().toUpperCase()
+
+      const warehouse = await db.warehouse.findFirst({
+        where: { id: warehouseId, tenantId },
+        select: { id: true, department: true },
+      })
+      if (!warehouse) return reply.status(404).send({ message: 'Warehouse not found' })
+
+      if (warehouse.department && warehouse.department.toUpperCase() === dept) {
+        return reply.status(409).send({ message: 'No se puede eliminar el departamento principal del almacén' })
+      }
+
+      const deleted = await db.warehouseServedDepartment.updateMany({
+        where: { warehouseId, tenantId, department: dept, isActive: true },
+        data: { isActive: false },
+      })
+      if (deleted.count === 0) return reply.status(404).send({ message: 'Served department not found' })
+
+      return reply.send({ success: true })
+    },
+  )
+
+  // Bulk update served departments for a warehouse
+  app.patch(
+    '/api/v1/warehouses/:id/served-departments',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.StockManage)],
+    },
+    async (request, reply) => {
+      const warehouseId = (request.params as any).id as string
+      const parsed = servedDepartmentsBulkSchema.safeParse(request.body)
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid request', issues: parsed.error.issues })
+
+      const tenantId = request.auth!.tenantId
+      const warehouse = await db.warehouse.findFirst({
+        where: { id: warehouseId, tenantId },
+        select: { id: true, department: true },
+      })
+      if (!warehouse) return reply.status(404).send({ message: 'Warehouse not found' })
+
+      const normalizedDepts = Array.from(new Set(parsed.data.departments.map((c) => c.trim().toUpperCase()))).filter(Boolean)
+
+      if (warehouse.department) {
+        const ownDept = warehouse.department.toUpperCase()
+        if (!normalizedDepts.includes(ownDept)) {
+          normalizedDepts.push(ownDept)
+        }
+      }
+
+      try {
+        const updated = await db.$transaction(async (tx) => {
+          await tx.warehouseServedDepartment.updateMany({
+            where: { warehouseId, tenantId },
+            data: { isActive: false },
+          })
+          for (const dept of normalizedDepts) {
+            await tx.warehouseServedDepartment.create({
+              data: {
+                tenantId,
+                warehouseId,
+                department: dept,
+              },
+            })
+          }
+          const servedDepartments = await tx.warehouseServedDepartment.findMany({
+            where: { warehouseId, tenantId, isActive: true },
+            select: { department: true },
+            orderBy: { department: 'asc' },
+          })
+          return servedDepartments.map((sc) => sc.department)
+        })
+        return reply.send({ items: updated })
+      } catch (e: any) {
+        if (typeof e?.code === 'string' && e.code === 'P2002') {
+          const meta = e?.meta?.target
+          if (Array.isArray(meta) && meta.includes('tenantId') && meta.includes('department')) {
+            return reply.status(409).send({ message: 'Uno o más departamentos ya están asignados a otra sucursal' })
+          }
+        }
+        throw e
+      }
+    },
+  )
+
+  app.get(
+    '/api/v1/warehouses/by-department/:department/locations',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requirePermission(Permissions.StockRead)],
+    },
+    async (request, reply) => {
+      const deptParam = servedDepartmentParamsSchema.safeParse(request.params)
+      if (!deptParam.success) return reply.status(400).send({ message: 'Invalid params', issues: deptParam.error.issues })
+
+      const tenantId = request.auth!.tenantId
+      const department = deptParam.data.department.trim().toUpperCase()
+
+      const warehouse = await db.warehouse.findFirst({
+        where: {
+          tenantId,
+          isActive: true,
+          OR: [
+            { department: { equals: department, mode: 'insensitive' } },
+            { servedDepartments: { some: { department: { equals: department, mode: 'insensitive' }, isActive: true } } },
+          ],
+        },
+        select: { id: true, name: true, code: true, city: true, department: true, type: true },
+      })
+
+      if (!warehouse) return reply.send({ items: [], warehouse: null })
+
+      const items = await db.location.findMany({
+        where: {
+          tenantId,
+          warehouseId: warehouse.id,
+          type: 'SUB_ALMACEN',
+          isActive: true,
+        },
+        select: {
+          id: true,
+          code: true,
+          warehouse: { select: { id: true, code: true, name: true, city: true } },
+        },
+        orderBy: [{ warehouse: { code: 'asc' } }, { code: 'asc' }],
+      })
+
+      return reply.send({ items, warehouse: { id: warehouse.id, name: warehouse.name, code: warehouse.code, city: warehouse.city, department: warehouse.department, type: warehouse.type } })
     },
   )
 }

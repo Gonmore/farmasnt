@@ -22,6 +22,7 @@ export type QuotePdfData = {
   paymentMode: string
   deliveryDays: string
   deliveryCity?: string
+  deliveryDepartment?: string
   deliveryZone?: string
   deliveryAddress?: string
   globalDiscountPct: string
@@ -51,6 +52,7 @@ export type DeliveryNotePdfData = {
   customerName: string
   deliveryDate: string
   deliveryCity?: string
+  deliveryDepartment?: string
   deliveryZone?: string
   deliveryAddress?: string
   items: DeliveryNotePdfItem[]

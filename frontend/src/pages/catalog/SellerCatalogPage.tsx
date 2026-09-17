@@ -90,6 +90,7 @@ type CustomerListItem = {
   name: string
   isActive: boolean
   city?: string | null
+  department?: string | null
   creditEnabled?: boolean
   creditDays?: number | null
 }
@@ -139,8 +140,9 @@ type QuoteCreateResponse = {
   validityDays: number
   paymentMode: string
   deliveryDays: number
-  deliveryCity: string | null
-  deliveryZone: string | null
+   deliveryCity: string | null
+   deliveryDepartment: string | null
+   deliveryZone: string | null
   deliveryAddress: string | null
   deliveryMapsUrl: string | null
   globalDiscountPct: number
@@ -176,8 +178,9 @@ type QuoteDetailForEdit = {
   validityDays: number
   paymentMode: string
   deliveryDays: number
-  deliveryCity: string | null
-  deliveryZone: string | null
+   deliveryCity: string | null
+   deliveryDepartment: string | null
+   deliveryZone: string | null
   deliveryAddress: string | null
   deliveryMapsUrl: string | null
   globalDiscountPct: number
@@ -222,20 +225,28 @@ async function fetchLocations(token: string, warehouseId: string | null | undefi
     })) as { items: LocationListItem[] }
 
   } catch (error) {
-    console.error("Error al obtener las ubicaciones:", error)
-    return { items: [] }
-  }
-}
+     console.error("Error al obtener las ubicaciones:", error)
+     return { items: [] }
+   }
+ }
 
-async function createQuote(
+ async function fetchLocationsByDepartment(token: string, department: string): Promise<{
+   items: LocationListItem[]
+   warehouse: { id: string; name: string; code: string; city: string | null; department: string | null; type: string } | null
+ }> {
+   return apiFetch(`/api/v1/warehouses/by-department/${encodeURIComponent(department)}/locations`, { token })
+ }
+
+ async function createQuote(
   token: string,
   data: {
     customerId: string
     validityDays: number
     paymentMode: string
     deliveryDays: number
-    deliveryCity?: string
-    deliveryZone?: string
+     deliveryCity?: string
+     deliveryDepartment?: string
+     deliveryZone?: string
     deliveryAddress?: string
     deliveryMapsUrl?: string
     globalDiscountPct: number
@@ -262,8 +273,9 @@ async function updateQuote(
     validityDays: number
     paymentMode: string
     deliveryDays: number
-    deliveryCity?: string
-    deliveryZone?: string
+     deliveryCity?: string
+     deliveryDepartment?: string
+     deliveryZone?: string
     deliveryAddress?: string
     deliveryMapsUrl?: string
     globalDiscountPct: number
@@ -291,6 +303,7 @@ type CustomerDetail = {
   name: string
   address: string | null
   city: string | null
+  department: string | null
   zone: string | null
   mapsUrl: string | null
   creditEnabled?: boolean
@@ -474,11 +487,27 @@ export function SellerCatalogPage() {
 
   const customerCity = customerDetailQuery.data?.city || (customersQuery.data?.items ?? []).find(c => c.id === customerId)?.city
 
+  const customerDepartment = useMemo(() => {
+    if (!customerId) return null
+    const dept = customerDetailQuery.data?.department
+      ?? (customersQuery.data?.items ?? []).find(c => c.id === customerId)?.department
+    const trimmed = (dept ?? '').trim().toUpperCase()
+    return trimmed || null
+  }, [customerDetailQuery.data?.department, customerId, customersQuery.data?.items])
+
+  // Locations from the warehouse that serves the customer's department
+  const departmentLocationsQuery = useQuery({
+    queryKey: ['locations', 'department', customerDepartment],
+    queryFn: () => fetchLocationsByDepartment(auth.accessToken!, customerDepartment!),
+    enabled: !!auth.accessToken && !!customerDepartment,
+    staleTime: 5 * 60 * 1000,
+  })
+
+  // Fallback: user warehouse locations (for non-department-scoped scenarios)
   const locationsQuery = useQuery({
     queryKey: ['locations', userWarehouseId],
     queryFn: () => fetchLocations(auth.accessToken!, userWarehouseId),
-    // Solo se ejecuta si hay un token Y el usuario tiene warehouse asignado
-    enabled: !!auth.accessToken && !!userWarehouseId,
+    enabled: !!auth.accessToken && !!userWarehouseId && !customerDepartment,
   })
 
   const balancesQuery = useQuery({
@@ -1118,17 +1147,26 @@ export function SellerCatalogPage() {
                       value: '', 
                       label: !customerCity ? 'Seleccioná un cliente primero...' : 'Seleccionar sub-almacén...' 
                     },
-                    ...(locationsQuery.data?.items.map((l) => ({
+                    ...((
+                      customerDepartment
+                        ? (departmentLocationsQuery.data?.items ?? [])
+                        : (locationsQuery.data?.items ?? [])
+                    ).map((l) => ({
                       value: l.id,
-                      label: l.name || l.code || 'Sin nombre', // Fallbacks seguros por si name viene vacío
-                    })) ?? []),
+                      label: l.name || l.code || 'Sin nombre',
+                    }))),
                   ]}
-                  disabled={locationsQuery.isLoading || modalReadOnly || !customerCity}
+                  disabled={(!customerDepartment ? locationsQuery.isLoading : departmentLocationsQuery.isLoading) || modalReadOnly || !customerId}
                 />
 
-                {customerCity && locationsQuery.data?.items.length === 0 && !locationsQuery.isLoading && (
+                {customerId && !customerDepartment && locationsQuery.data?.items.length === 0 && (
                   <div className="mt-2 text-xs text-amber-600 dark:text-amber-400">
-                    No se encontraron sub-almacenes para la ciudad: {customerCity}.
+                    No se encontraron sub-almacenes para su sucursal.
+                  </div>
+                )}
+                {customerId && customerDepartment && departmentLocationsQuery.data && departmentLocationsQuery.data.items.length === 0 && !departmentLocationsQuery.isLoading && (
+                  <div className="mt-2 text-xs text-amber-600 dark:text-amber-400">
+                    No se encontraron sub-almacenes para el departamento: {customerDepartment}.
                   </div>
                 )}
               </div>

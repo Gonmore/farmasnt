@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useState } from 'react'
 import { MapContainer, TileLayer, Marker, Popup, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
+import { geoApi } from '../lib/geoService'
+import { countryCodeToName } from './geo/countryUtils'
 
 // Fix for default markers in react-leaflet
 delete (L.Icon.Default.prototype as any)._getIconUrl
@@ -12,6 +14,7 @@ L.Icon.Default.mergeOptions({
 })
 
 interface MapSelectorProps {
+  countryCode?: string
   city?: string
   zone?: string
   address?: string
@@ -20,7 +23,27 @@ interface MapSelectorProps {
   disabled?: boolean
 }
 
-// Component to handle map clicks
+const BOUNTRY_FALLBACK_COORDS: Record<string, [number, number]> = {
+  BO: [-17.7833, -63.1821],
+  AR: [-38.4161, -63.6167],
+  BR: [-14.2350, -57.9229],
+  CL: [-33.4489, -70.6693],
+  PE: [-12.0464, -77.0428],
+  PY: [-25.2847, -57.6384],
+  UY: [-33.1640, -56.2000],
+  CO: [4.5709, -74.2973],
+  EC: [-1.8394, -78.1631],
+  VE: [6.4238, -66.5897],
+  MX: [23.6345, -102.5528],
+  ES: [40.4168, -3.7038],
+  US: [39.8283, -98.5698],
+}
+
+function getFallbackCenter(countryCode?: string): [number, number] {
+  if (!countryCode) return [-17.7833, -63.1821]
+  return BOUNTRY_FALLBACK_COORDS[countryCode.toUpperCase()] ?? [-17.7833, -63.1821]
+}
+
 function LocationMarker({ onLocationSelect }: { onLocationSelect: (mapsUrl: string, address?: string) => void }) {
   const [position, setPosition] = useState<L.LatLng | null>(null)
 
@@ -28,20 +51,17 @@ function LocationMarker({ onLocationSelect }: { onLocationSelect: (mapsUrl: stri
     click(e) {
       setPosition(e.latlng)
 
-      // Generate Google Maps URL
       const lat = e.latlng.lat
       const lng = e.latlng.lng
       const mapsUrl = `https://www.google.com/maps/@${lat},${lng},18z`
 
-      // Try reverse geocoding to get address
-      fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`)
-        .then(response => response.json())
-        .then(data => {
-          const address = data.display_name || `${lat.toFixed(6)}, ${lng.toFixed(6)}`
+      geoApi
+        .reverseGeocode(lat, lng)
+        .then((result) => {
+          const address = result?.formatted || `${lat.toFixed(6)}, ${lng.toFixed(6)}`
           onLocationSelect(mapsUrl, address)
         })
         .catch(() => {
-          // Fallback if geocoding fails
           onLocationSelect(mapsUrl, `${lat.toFixed(6)}, ${lng.toFixed(6)}`)
         })
     },
@@ -55,6 +75,7 @@ function LocationMarker({ onLocationSelect }: { onLocationSelect: (mapsUrl: stri
 }
 
 const MapSelector: React.FC<MapSelectorProps> = ({
+  countryCode,
   city,
   zone,
   address,
@@ -62,26 +83,20 @@ const MapSelector: React.FC<MapSelectorProps> = ({
   onLocationSelect,
   disabled = false,
 }) => {
-  const [mapCenter, setMapCenter] = useState<[number, number]>([-17.7833, -63.1821]) // Default to Santa Cruz, Bolivia
+  const [mapCenter, setMapCenter] = useState<[number, number]>(getFallbackCenter(countryCode))
   const [mapZoom, setMapZoom] = useState(12)
 
-  // Geocode address to coordinates
-  const geocodeAddress = useCallback(async (address: string, city: string, zone?: string) => {
-    const fullAddress = [address, zone, city].filter(Boolean).join(', ')
-
-    // If we only have a city, search for it specifically
+  const geocodeAddress = useCallback(async (address: string, city: string, zone?: string, countryCode?: string) => {
+    const fullAddress = [address, zone, city, countryCode ? countryCodeToName(countryCode) : null].filter(Boolean).join(', ')
     const searchQuery = fullAddress || city || 'Santa Cruz, Bolivia'
 
     try {
-      const response = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQuery)}&limit=1&countrycodes=bo,pe,ar,cl,br,py,uy`
-      )
-      const data = await response.json()
-
-      if (data && data.length > 0) {
-        const lat = parseFloat(data[0].lat)
-        const lon = parseFloat(data[0].lon)
-        return [lat, lon] as [number, number]
+      const { items } = await geoApi.searchCities(countryCode ?? 'BO', searchQuery)
+      if (items && items.length > 0) {
+        const first = items[0]
+        if (first) {
+          return [first.lat, first.lng] as [number, number]
+        }
       }
     } catch (error) {
       console.error('Geocoding error:', error)
@@ -89,12 +104,7 @@ const MapSelector: React.FC<MapSelectorProps> = ({
     return null
   }, [])
 
-  // Parse mapsUrl to coordinates
   const parseMapsUrl = useCallback((url: string) => {
-    // Handle Google Maps URLs like:
-    // https://www.google.com/maps/@-17.7833,-63.1821,15z
-    // https://www.google.com/maps/place/.../@-17.7833,-63.1821,15z
-
     const coordsMatch = url.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/)
     if (coordsMatch) {
       return {
@@ -105,14 +115,12 @@ const MapSelector: React.FC<MapSelectorProps> = ({
     return null
   }, [])
 
-  // Update map center when address changes
   useEffect(() => {
     if (disabled) return
 
     const updateMapLocation = async () => {
       let coordinates = null
 
-      // First try to parse existing mapsUrl
       if (mapsUrl) {
         const parsed = parseMapsUrl(mapsUrl)
         if (parsed) {
@@ -120,19 +128,21 @@ const MapSelector: React.FC<MapSelectorProps> = ({
         }
       }
 
-      // If no coordinates from URL, try geocoding
       if (!coordinates && (address || zone || city)) {
-        coordinates = await geocodeAddress(address || '', city || '', zone)
+        coordinates = await geocodeAddress(address || '', city || '', zone, countryCode)
       }
 
       if (coordinates) {
         setMapCenter(coordinates)
         setMapZoom(16)
+      } else {
+        setMapCenter(getFallbackCenter(countryCode))
+        setMapZoom(12)
       }
     }
 
     updateMapLocation()
-  }, [address, city, zone, mapsUrl, geocodeAddress, parseMapsUrl, disabled])
+  }, [address, city, zone, mapsUrl, geocodeAddress, parseMapsUrl, disabled, countryCode])
 
   if (disabled) {
     return (
@@ -145,7 +155,7 @@ const MapSelector: React.FC<MapSelectorProps> = ({
   return (
     <div className="h-64 w-full rounded-md border border-slate-200 dark:border-slate-700 overflow-hidden">
       <MapContainer
-        key={`${mapCenter[0]}-${mapCenter[1]}-${mapZoom}`} // Force re-render when center/zoom changes
+        key={`${mapCenter[0]}-${mapCenter[1]}-${mapZoom}`}
         center={mapCenter}
         zoom={mapZoom}
         style={{ height: '100%', width: '100%' }}

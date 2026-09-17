@@ -10,6 +10,7 @@ import { useNavigation } from '../../hooks'
 import { MainLayout, PageContainer, Table, Loading, ErrorState, EmptyState, Button, Input, Select, Modal } from '../../components'
 import { MovementQuickActions } from '../../components/MovementQuickActions'
 import { exportPickingToPdf, exportLabelToPdf } from '../../lib/movementRequestDocsPdf'
+import { countryCodeToName } from '../../components/geo/countryUtils'
 
 type WarehouseListItem = { id: string; code: string; name: string; city?: string | null; isActive: boolean }
 
@@ -246,7 +247,7 @@ export function BulkTransferPage() {
       )
 
       // Generate label PDF
-      const country = tenant.branding?.country ?? 'BOLIVIA'
+      const country = countryCodeToName(tenant.branding?.country ?? 'BO')
       await exportLabelToPdf({
         requestId: data.referenceId,
         generatedAtIso: new Date().toISOString(),

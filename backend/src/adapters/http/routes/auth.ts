@@ -655,7 +655,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
           photoUrl: true,
           warehouseId: true,
           warehouse: {
-            select: { id: true, code: true, name: true, city: true, isActive: true, type: true },
+            select: { id: true, code: true, name: true, city: true, department: true, isActive: true, type: true },
           },
           version: true,
           tenant: {
@@ -703,7 +703,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
           fullName: true,
           warehouseId: true,
           warehouse: {
-            select: { id: true, code: true, name: true, city: true, isActive: true, type: true },
+            select: { id: true, code: true, name: true, city: true, department: true, isActive: true, type: true },
           },
           version: true,
           tenant: {
@@ -742,7 +742,6 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
 
     if (!user) return reply.status(404).send({ message: 'User not found' })
 
-    // Extraer permisos únicos de todos los roles
     const permissionsMap = new Map<string, { id: string; code: string; description: string | null }>()
     for (const userRole of user.roles) {
       for (const rolePerm of userRole.role.permissions) {
@@ -755,8 +754,28 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
     const permissions = Array.from(permissionsMap.values())
     const permissionCodes = permissions.map((p) => p.code)
 
-    // Determinar si es Platform Admin
     const isPlatformAdmin = permissionCodes.includes('platform:tenants:manage')
+
+    let warehouseDepartments: string[] | null = null
+    const isScopedBranch = permissionCodes.includes('scope:branch')
+    const warehouseType = user.warehouse?.type ?? null
+    if (isScopedBranch && !isPlatformAdmin && warehouseType === 'SALES' && user.warehouseId) {
+      const servedDepartments = await db.warehouseServedDepartment.findMany({
+        where: {
+          tenantId: user.tenantId,
+          warehouseId: user.warehouseId,
+          isActive: true,
+        },
+        select: { department: true },
+      })
+      const ownDept = String(user.warehouse?.department ?? '').trim().toUpperCase()
+      const deptSet = new Set<string>()
+      if (ownDept) deptSet.add(ownDept)
+      for (const sd of servedDepartments) {
+        deptSet.add(sd.department.toUpperCase())
+      }
+      warehouseDepartments = deptSet.size > 0 ? Array.from(deptSet) : null
+    }
 
     // Fetch available tenants for multi-brand switching
     let availableTenants: Array<{ id: string; name: string; logoUrl: string | null }> = []
@@ -794,6 +813,8 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
         photoUrl: user.photoUrl ?? null,
         warehouseId: user.warehouseId ?? null,
         warehouse: user.warehouse ?? null,
+        warehouseCities: null,
+        warehouseDepartments,
         version: user.version,
         tenant: user.tenant,
       },

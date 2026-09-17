@@ -6,11 +6,12 @@ import { formatDateOnlyUtc } from '../../lib/date'
 import { getProductLabel } from '../../lib/productName'
 import { useAuth } from '../../providers/AuthProvider'
 import { useTenant } from '../../providers/TenantProvider'
-import { MainLayout, PageContainer, Table, Loading, ErrorState, EmptyState, PaginationCursor, Button, Modal, Input, Select, CitySelector } from '../../components'
+import { MainLayout, PageContainer, Table, Loading, ErrorState, EmptyState, PaginationCursor, Button, Modal, Input, Select, CitySelector, AdminLevel1Selector } from '../../components'
 import { useNavigation } from '../../hooks'
 import { PencilIcon, ArrowPathIcon, MapPinIcon, PlusIcon, EyeIcon } from '@heroicons/react/24/outline'
+import { normalizeCountryCode } from '../../components/geo/countryUtils'
 
-type WarehouseListItem = { id: string; code: string; name: string; city?: string | null; isActive: boolean; type: 'PROVIDER' | 'SALES'; totalQuantity: string }
+type WarehouseListItem = { id: string; code: string; name: string; city?: string | null; isActive: boolean; type: 'PROVIDER' | 'SALES'; totalQuantity: string; servedDepartments?: string[] }
 type ListResponse = { items: WarehouseListItem[]; nextCursor: string | null }
 
 type WarehouseStockRow = {
@@ -64,6 +65,21 @@ async function fetchWarehouses(token: string, take: number, cursor?: string): Pr
   return apiFetch(`/api/v1/warehouses?${params}`, { token })
 }
 
+async function addServedDepartment(token: string, warehouseId: string, department: string): Promise<any> {
+  return apiFetch(`/api/v1/warehouses/${warehouseId}/served-departments`, {
+    token,
+    method: 'POST',
+    body: JSON.stringify({ department }),
+  })
+}
+
+async function removeServedDepartment(token: string, warehouseId: string, department: string): Promise<any> {
+  return apiFetch(`/api/v1/warehouses/${warehouseId}/served-departments/${encodeURIComponent(department)}`, {
+    token,
+    method: 'DELETE',
+  })
+}
+
 export function WarehousesPage() {
   const auth = useAuth()
   const tenant = useTenant()
@@ -77,13 +93,15 @@ export function WarehousesPage() {
   const [editCode, setEditCode] = useState('')
   const [editIsActive, setEditIsActive] = useState(true)
   const [editType, setEditType] = useState<'PROVIDER' | 'SALES'>('SALES')
+  const [editServedDepartments, setEditServedDepartments] = useState<string[]>([])
+  const [editServedDepartmentInput, setEditServedDepartmentInput] = useState('')
   const [showCreate, setShowCreate] = useState(false)
   const [createCode, setCreateCode] = useState('')
   const [createName, setCreateName] = useState('')
   const [createCity, setCreateCity] = useState('')
   const [createType, setCreateType] = useState<'PROVIDER' | 'SALES'>('SALES')
 
-  const tenantCountry = (tenant.branding?.country ?? '').trim() || 'BOLIVIA'
+  const tenantCountryCode = normalizeCountryCode(tenant.branding?.country)
 
   const [stockWarehouse, setStockWarehouse] = useState<WarehouseListItem | null>(null)
   const [movingRow, setMovingRow] = useState<WarehouseStockRow | null>(null)
@@ -91,6 +109,7 @@ export function WarehousesPage() {
   const [moveToWarehouseId, setMoveToWarehouseId] = useState('')
   const [moveToLocationId, setMoveToLocationId] = useState('')
   const [moveError, setMoveError] = useState('')
+  const [servedDeptError, setServedDeptError] = useState('')
   const take = 50
 
   const warehousesQuery = useQuery({
@@ -117,12 +136,12 @@ export function WarehousesPage() {
   )
 
   const updateWarehouseMutation = useMutation({
-    mutationFn: async ({ id, code, name, city, isActive, type }: { id: string; code: string; name: string; city: string; isActive: boolean; type: 'PROVIDER' | 'SALES' }) => {
-      return apiFetch(`/api/v1/warehouses/${id}`, {
-        token: auth.accessToken!,
-        method: 'PATCH',
-        body: JSON.stringify({ code, name, city, isActive, type }),
-      })
+        mutationFn: async ({ id, code, name, city, isActive, type, servedDepartments }: { id: string; code: string; name: string; city: string; isActive: boolean; type: 'PROVIDER' | 'SALES'; servedDepartments?: string[] }) => {
+          return apiFetch(`/api/v1/warehouses/${id}`, {
+            token: auth.accessToken!,
+            method: 'PATCH',
+            body: JSON.stringify({ code, name, city, isActive, type, servedDepartments }),
+          })
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['warehouses'] })
@@ -132,6 +151,30 @@ export function WarehousesPage() {
       setEditCode('')
       setEditIsActive(true)
       setEditType('SALES')
+      setEditServedDepartments([])
+      setEditServedDepartmentInput('')
+      setServedDeptError('')
+    },
+  })
+
+  const addServedDepartmentMutation = useMutation({
+    mutationFn: async ({ warehouseId, department }: { warehouseId: string; department: string }) => {
+      return addServedDepartment(auth.accessToken!, warehouseId, department)
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['warehouses'] })
+    },
+  })
+
+  const removeServedDepartmentMutation = useMutation({
+    mutationFn: async ({ warehouseId, department }: { warehouseId: string; department: string }) => {
+      return removeServedDepartment(auth.accessToken!, warehouseId, department)
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['warehouses'] })
+    },
+    onError: (_err: any, variables) => {
+      setEditServedDepartments((prev) => [...prev, variables.department])
     },
   })
 
@@ -197,11 +240,13 @@ export function WarehousesPage() {
     setEditCode(warehouse.code.replace(/^SUC-/, '').toUpperCase())
     setEditIsActive(warehouse.isActive)
     setEditType(warehouse.type ?? 'SALES')
+    setEditServedDepartments(warehouse.servedDepartments ?? [])
+    setServedDeptError('')
   }
 
   const handleSaveEdit = () => {
     if (editingWarehouse && editCode.trim() && editName.trim() && editCity.trim()) {
-      updateWarehouseMutation.mutate({ id: editingWarehouse.id, code: `SUC-${editCode.trim()}`, name: editName.trim(), city: editCity.trim(), isActive: editIsActive, type: editType })
+      updateWarehouseMutation.mutate({ id: editingWarehouse.id, code: `SUC-${editCode.trim()}`, name: editName.trim(), city: editCity.trim(), isActive: editIsActive, type: editType, servedDepartments: editServedDepartments })
     }
   }
 
@@ -210,8 +255,11 @@ export function WarehousesPage() {
     setEditName('')
     setEditCity('')
     setEditCode('')
+    setEditServedDepartments([])
+    setEditServedDepartmentInput('')
     setEditIsActive(true)
     setEditType('SALES')
+    setServedDeptError('')
   }
 
   const handleLoadMore = () => {
@@ -248,6 +296,11 @@ export function WarehousesPage() {
                   { header: 'Código', accessor: (w) => w.code },
                   { header: 'Nombre', accessor: (w) => w.name },
                   { header: 'Ciudad', accessor: (w) => w.city || '-' },
+                  {
+                    header: 'Ciudades atendidas',
+                    accessor: (w) => w.servedDepartments?.length ? w.servedDepartments.join(', ') : '-',
+                    className: 'max-w-xs truncate',
+                  },
                   {
                     header: 'Tipo',
                     accessor: (w) => (
@@ -330,11 +383,11 @@ export function WarehousesPage() {
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
               Ciudad
             </label>
-             <CitySelector
-               country={tenantCountry}
-               value={createCity}
-               onChange={setCreateCity}
-             />
+               <CitySelector
+                countryCode={tenantCountryCode}
+                value={createCity}
+                onChange={setCreateCity}
+              />
            </div>
 
            <div>
@@ -425,12 +478,12 @@ export function WarehousesPage() {
 
            <div>
              <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Ciudad</label>
-             <CitySelector
-               country={tenantCountry}
-               value={editCity}
-               onChange={setEditCity}
-               disabled={updateWarehouseMutation.isPending}
-             />
+              <CitySelector
+                countryCode={tenantCountryCode}
+                value={editCity}
+                onChange={setEditCity}
+                disabled={updateWarehouseMutation.isPending}
+              />
            </div>
 
            <div>
@@ -448,19 +501,79 @@ export function WarehousesPage() {
              />
            </div>
 
-           <div className="flex items-center gap-2">
-             <input
-               type="checkbox"
-               id="edit-is-active"
-               checked={editIsActive}
-               onChange={(e) => setEditIsActive(e.target.checked)}
-               disabled={updateWarehouseMutation.isPending}
-               className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-700"
-             />
-             <label htmlFor="edit-is-active" className="text-sm font-medium text-slate-700 dark:text-slate-300">
-               Sucursal activa
-             </label>
-           </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="edit-is-active"
+                checked={editIsActive}
+                onChange={(e) => setEditIsActive(e.target.checked)}
+                disabled={updateWarehouseMutation.isPending}
+                className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-700"
+              />
+              <label htmlFor="edit-is-active" className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                Sucursal activa
+              </label>
+            </div>
+
+            {editingWarehouse && (
+              <div>
+                  <header>Departamentos atendidos</header>
+                 <div className="flex flex-wrap gap-2 mb-2">
+                    {editServedDepartments.map((dept) => (
+                      <span key={dept} className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700 dark:bg-slate-700 dark:text-slate-200">
+                        {dept}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditServedDepartments((prev) => prev.filter((d) => d !== dept))
+                            setServedDeptError('')
+                            removeServedDepartmentMutation.mutate({ warehouseId: editingWarehouse.id, department: dept })
+                          }}
+                          disabled={updateWarehouseMutation.isPending || removeServedDepartmentMutation.isPending}
+                          className="hover:text-red-500"
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                 </div>
+                 <div className="flex gap-2">
+                    <AdminLevel1Selector
+                      countryCode={tenantCountryCode}
+                      value={editServedDepartmentInput}
+                      onChange={setEditServedDepartmentInput}
+                      disabled={updateWarehouseMutation.isPending || addServedDepartmentMutation.isPending}
+                    />
+                   <Button
+                     variant="secondary"
+                     size="sm"
+                     onClick={() => {
+                       if (editServedDepartmentInput && editingWarehouse) {
+                         addServedDepartmentMutation.mutate({ warehouseId: editingWarehouse.id, department: editServedDepartmentInput })
+                         setEditServedDepartmentInput('')
+                         setEditServedDepartments([...editServedDepartments, editServedDepartmentInput])
+                       }
+                     }}
+                     disabled={updateWarehouseMutation.isPending || !editServedDepartmentInput}
+                   >
+                     Agregar
+                   </Button>
+                 </div>
+              </div>
+             )}
+
+             {servedDeptError && (
+               <div className="rounded-md bg-red-50 p-3 text-sm text-red-600 dark:bg-red-900/20 dark:text-red-400">
+                 {servedDeptError}
+               </div>
+             )}
+
+             {removeServedDepartmentMutation.error && (
+               <div className="rounded-md bg-red-50 p-3 text-sm text-red-600 dark:bg-red-900/20 dark:text-red-400">
+                 Error al quitar departamento: {(removeServedDepartmentMutation.error as any)?.response?.data?.message || removeServedDepartmentMutation.error instanceof Error ? (removeServedDepartmentMutation.error as Error).message : 'Error desconocido'}
+               </div>
+             )}
+
 
           {updateWarehouseMutation.error && (
             <div className="rounded-md bg-red-50 p-3 text-sm text-red-600 dark:bg-red-900/20 dark:text-red-400">

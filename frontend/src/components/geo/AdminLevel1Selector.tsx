@@ -1,29 +1,37 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { geoApi, type City } from '../lib/geoService'
+import { geoApi, type AdminLevel1 } from '../../lib/geoService'
+import { countryCodeToName } from './countryUtils'
 
-interface CitySelectorProps {
-  countryCode?: string
-  adminLevel1Code?: string
+interface AdminLevel1SelectorProps {
+  countryCode: string
   value: string
   onChange: (value: string) => void
+  onAdminLevel1Select?: (admin: AdminLevel1) => void
   placeholder?: string
+  label?: string
   disabled?: boolean
   required?: boolean
 }
 
-const CitySelector: React.FC<CitySelectorProps> = ({
+export type { AdminLevel1SelectorProps }
+
+const AdminLevel1Selector: React.FC<AdminLevel1SelectorProps> = ({
   countryCode,
-  adminLevel1Code,
   value,
   onChange,
-  placeholder = 'Buscar ciudad...',
+  onAdminLevel1Select,
+  placeholder = 'Buscar región...',
+  label,
   disabled = false,
   required = false,
 }) => {
   const [searchTerm, setSearchTerm] = useState('')
-  const [options, setOptions] = useState<City[]>([])
+  const [options, setOptions] = useState<AdminLevel1[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [isOpen, setIsOpen] = useState(false)
+
+  const defaultLabel = countryCode ? `${countryCodeToName(countryCode)} - Departamento` : 'Departamento'
+  const effectiveLabel = label ?? defaultLabel
 
   const performSearch = useCallback(async (query: string) => {
     if (!query || query.length < 2) {
@@ -31,21 +39,21 @@ const CitySelector: React.FC<CitySelectorProps> = ({
       return
     }
 
-    if (!countryCode) {
-      setOptions([])
-      return
-    }
-
     setIsLoading(true)
     try {
-      const { items } = await geoApi.searchCities(countryCode, query, adminLevel1Code)
+      const { items } = await geoApi.searchAdminLevel1(countryCode, query)
       setOptions(items)
     } catch {
       setOptions([])
     } finally {
       setIsLoading(false)
     }
-  }, [countryCode, adminLevel1Code])
+  }, [countryCode])
+
+  useEffect(() => {
+    setSearchTerm('')
+    setOptions([])
+  }, [countryCode])
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -57,9 +65,10 @@ const CitySelector: React.FC<CitySelectorProps> = ({
 
   useEffect(() => {
     if (value && !searchTerm) {
-      setSearchTerm(value)
+      const selected = options.find((o) => o.name.toUpperCase() === value.toUpperCase() || o.code === value)
+      setSearchTerm(selected?.name ?? value)
     }
-  }, [value, searchTerm])
+  }, [value, searchTerm, options])
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newValue = e.target.value
@@ -68,12 +77,14 @@ const CitySelector: React.FC<CitySelectorProps> = ({
 
     if (!newValue.trim()) {
       onChange('')
+      onAdminLevel1Select?.(null as any)
     }
   }
 
-  const handleOptionSelect = (option: City) => {
+  const handleOptionSelect = (option: AdminLevel1) => {
     setSearchTerm(option.name)
     onChange(option.name.toUpperCase())
+    onAdminLevel1Select?.(option)
     setIsOpen(false)
   }
 
@@ -87,6 +98,11 @@ const CitySelector: React.FC<CitySelectorProps> = ({
 
   return (
     <div className="relative">
+      {effectiveLabel && (
+        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+          {effectiveLabel}
+        </label>
+      )}
       <input
         type="text"
         value={searchTerm}
@@ -108,7 +124,7 @@ const CitySelector: React.FC<CitySelectorProps> = ({
           ) : options.length > 0 ? (
             options.map((option) => (
               <div
-                key={option.id}
+                key={option.code}
                 onClick={() => handleOptionSelect(option)}
                 className="px-3 py-2 hover:bg-slate-100 cursor-pointer dark:hover:bg-slate-600"
               >
@@ -117,7 +133,7 @@ const CitySelector: React.FC<CitySelectorProps> = ({
             ))
           ) : searchTerm.length >= 2 ? (
             <div className="px-3 py-2 text-slate-500 dark:text-slate-400">
-              No se encontraron ciudades
+              No se encontraron regiones
             </div>
           ) : (
             <div className="px-3 py-2 text-slate-500 dark:text-slate-400">
@@ -130,4 +146,4 @@ const CitySelector: React.FC<CitySelectorProps> = ({
   )
 }
 
-export default CitySelector
+export default AdminLevel1Selector

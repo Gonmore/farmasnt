@@ -7,6 +7,7 @@ import { prisma } from '../../db/prisma.js'
 import { AuditService } from '../../../application/audit/auditService.js'
 import { requireAuth, requireModuleEnabled, requirePermission } from '../../../application/security/rbac.js'
 import { Permissions } from '../../../application/security/permissions.js'
+import { branchDepartmentsOf, branchDepartmentsOfMissing } from '../../../application/security/branch.js'
 import { getEnv } from '../../../shared/env.js'
 
 const listPaymentsQuerySchema = z.object({
@@ -78,14 +79,6 @@ export function registerSalesPaymentRoutes(app: FastifyInstance) {
   const audit = new AuditService(db)
   const env = getEnv()
 
-  function branchCityOf(request: any): string | null {
-    if (request.auth?.isTenantAdmin) return null
-    const scoped = !!request.auth?.permissions?.has(Permissions.ScopeBranch)
-    if (!scoped) return null
-    const city = String(request.auth?.warehouseCity ?? '').trim()
-    return city ? city.toUpperCase() : '__MISSING__'
-  }
-
   // Accounts receivable: delivered orders pending payment.
   app.post(
     '/api/v1/sales/payments/proof-upload',
@@ -143,11 +136,11 @@ export function registerSalesPaymentRoutes(app: FastifyInstance) {
       if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
 
       const tenantId = request.auth!.tenantId
-      const branchCity = branchCityOf(request)
 
-      if (branchCity === '__MISSING__') {
+      if (branchDepartmentsOfMissing(request)) {
         return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
       }
+      const branchDepartments = branchDepartmentsOf(request)
 
       const wherePaid =
         parsed.data.status === 'PAID'
@@ -161,11 +154,11 @@ export function registerSalesPaymentRoutes(app: FastifyInstance) {
           tenantId,
           status: 'FULFILLED',
           ...wherePaid,
-          ...(branchCity
+          ...(branchDepartments
             ? {
                 OR: [
-                  { deliveryCity: { equals: branchCity, mode: 'insensitive' as const } },
-                  { AND: [{ OR: [{ deliveryCity: null }, { deliveryCity: '' }] }, { customer: { city: { equals: branchCity, mode: 'insensitive' as const } } }] },
+                  { deliveryDepartment: { in: branchDepartments, mode: 'insensitive' as const } },
+                  { AND: [{ OR: [{ deliveryDepartment: null }, { deliveryDepartment: '' }] }, { customer: { department: { in: branchDepartments, mode: 'insensitive' as const } } }] },
                 ],
               }
             : {}),
@@ -227,11 +220,11 @@ export function registerSalesPaymentRoutes(app: FastifyInstance) {
 
       const tenantId = request.auth!.tenantId
       const userId = request.auth!.userId
-      const branchCity = branchCityOf(request)
 
-      if (branchCity === '__MISSING__') {
+      if (branchDepartmentsOfMissing(request)) {
         return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
       }
+      const branchDepartments = branchDepartmentsOf(request)
 
       const receiptType = (parsed.data.paymentReceiptType ?? 'CASH').toUpperCase() as 'CASH' | 'TRANSFER_QR'
       const paymentAmountType = (parsed.data.paymentAmountType ?? 'TOTAL').toUpperCase() as 'TOTAL' | 'PARTIAL'
@@ -251,11 +244,11 @@ export function registerSalesPaymentRoutes(app: FastifyInstance) {
         where: {
           id,
           tenantId,
-          ...(branchCity
+          ...(branchDepartments
             ? {
                 OR: [
-                  { deliveryCity: { equals: branchCity, mode: 'insensitive' as const } },
-                  { AND: [{ OR: [{ deliveryCity: null }, { deliveryCity: '' }] }, { customer: { city: { equals: branchCity, mode: 'insensitive' as const } } }] },
+                  { deliveryDepartment: { in: branchDepartments, mode: 'insensitive' as const } },
+                  { AND: [{ OR: [{ deliveryDepartment: null }, { deliveryDepartment: '' }] }, { customer: { department: { in: branchDepartments, mode: 'insensitive' as const } } }] },
                 ],
               }
             : {}),

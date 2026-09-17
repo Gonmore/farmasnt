@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { prisma } from '../../db/prisma.js'
 import { requireAuth, requireModuleEnabled, requirePermission } from '../../../application/security/rbac.js'
 import { Permissions } from '../../../application/security/permissions.js'
+import { branchDepartmentsOf, branchDepartmentsOfMissing } from '../../../application/security/branch.js'
 import { getMailer } from '../../../shared/mailer.js'
 import { computeNextRunAt } from '../../../application/reports/reportScheduler.js'
 
@@ -366,16 +367,6 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
   const db = prisma()
   const mailer = getMailer()
 
-  function branchCityOf(request: any): string | null {
-    if (request.auth?.isTenantAdmin) return null
-    const scoped = !!request.auth?.permissions?.has(Permissions.ScopeBranch)
-    if (!scoped) return null
-    // Sucursales de tipo PROVEEDOR ven inventario de todas las ciudades (solo lectura).
-    if (request.auth?.warehouseType === 'PROVIDER') return null
-    const city = String(request.auth?.warehouseCity ?? '').trim()
-    return city ? city.toUpperCase() : '__MISSING__'
-  }
-
   // Autonomía de sucursal: usuarios con scope:branch (no admin de tenant) solo pueden
   // ver reportes de SU PROPIA sucursal. Devuelve el id del almacén propio o null (admin).
   function branchOwnWarehouseIdOf(request: any): string | null {
@@ -563,10 +554,13 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
       const tenantId = request.auth!.tenantId
       const { from, to, take, status, warehouseId, locationId } = parsed.data
 
-      // Prefer deliveryCity; fallback to customer.city.
+      if (branchDepartmentsOfMissing(request)) return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+      const branchDepartments = branchDepartmentsOf(request)
+
+      // Prefer deliveryDepartment; fallback to customer.department.
       const rows = await db.$queryRaw<SalesByCityRow[]>`
         SELECT
-          COALESCE(NULLIF(so."deliveryCity", ''), NULLIF(c.city, ''), 'Sin ciudad') as "city",
+          COALESCE(NULLIF(so."deliveryDepartment", ''), NULLIF(c."department", ''), 'Sin ciudad') as "city",
           count(distinct so.id) as "ordersCount",
           sum(CASE WHEN ${warehouseId ?? null}::text IS NULL AND ${locationId ?? null}::text IS NULL THEN sol.quantity ELSE COALESCE(loc_match."matchedQty", 0) END)::text as "quantity",
           sum(CASE WHEN ${warehouseId ?? null}::text IS NULL AND ${locationId ?? null}::text IS NULL THEN sol.quantity * sol."unitPrice" ELSE COALESCE(loc_match."matchedQty", 0) * sol."unitPrice" END)::text as "amount"
@@ -591,6 +585,9 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
           AND (${status ?? null}::text IS NULL OR so.status = ${status ?? null}::"SalesOrderStatus")
           AND (${from ?? null}::timestamptz IS NULL OR so."createdAt" >= ${from ?? null})
           AND (${to ?? null}::timestamptz IS NULL OR so."createdAt" < ${to ?? null})
+          AND (${branchDepartments ?? null}::text[] IS NULL OR
+            (so."deliveryDepartment" = ANY(${branchDepartments ?? null}::text[]) OR
+             (so."deliveryDepartment" IS NULL OR so."deliveryDepartment" = '') AND c."department" = ANY(${branchDepartments ?? null}::text[])))
           AND (${warehouseId ?? null}::text IS NULL OR EXISTS (
             SELECT 1 FROM "StockMovement" sm
             JOIN "Location" l ON l.id = sm."fromLocationId"
@@ -1959,9 +1956,8 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
       if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
 
       const tenantId = request.auth!.tenantId
-      const branchCity = branchCityOf(request)
       const branchOwnWh = branchOwnWarehouseIdOf(request)
-      if (branchCity === '__MISSING__') return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+      if (branchDepartmentsOfMissing(request)) return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
 
       const { from, to } = parsed.data
       const rows = await db.$queryRaw<StockMovementRequestsSummaryRow[]>`
@@ -2013,9 +2009,8 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
       if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
 
       const tenantId = request.auth!.tenantId
-      const branchCity = branchCityOf(request)
       const branchOwnWh = branchOwnWarehouseIdOf(request)
-      if (branchCity === '__MISSING__') return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+      if (branchDepartmentsOfMissing(request)) return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
 
       const { from, to, take } = parsed.data
       const rows = await db.$queryRaw<StockMovementRequestsByCityRow[]>`
@@ -2064,9 +2059,8 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
       if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
 
       const tenantId = request.auth!.tenantId
-      const branchCity = branchCityOf(request)
       const branchOwnWh = branchOwnWarehouseIdOf(request)
-      if (branchCity === '__MISSING__') return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+      if (branchDepartmentsOfMissing(request)) return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
 
       const { from, to, take } = parsed.data
 
@@ -2181,9 +2175,8 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
       const parsed = stockMovementRequestsFulfilledQuerySchema.safeParse(request.query)
       if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
       const tenantId = request.auth!.tenantId
-      const branchCity = branchCityOf(request)
       const branchOwnWh = branchOwnWarehouseIdOf(request)
-      if (branchCity === '__MISSING__') return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+      if (branchDepartmentsOfMissing(request)) return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
 
       const { from, to, take } = parsed.data
 
@@ -2286,9 +2279,8 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
     },
     async (request, reply) => {
       const tenantId = request.auth!.tenantId
-      const branchCity = branchCityOf(request)
       const branchOwnWh = branchOwnWarehouseIdOf(request)
-      if (branchCity === '__MISSING__') return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+      if (branchDepartmentsOfMissing(request)) return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
 
       const parsedParams = movementRequestTraceParamsSchema.safeParse((request as any).params)
       if (!parsedParams.success) return reply.status(400).send({ message: 'Invalid params', issues: parsedParams.error.issues })

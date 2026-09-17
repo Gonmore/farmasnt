@@ -6,6 +6,7 @@ import { getEnv } from '../../shared/env.js'
 import { prisma } from '../db/prisma.js'
 import { verifyAccessToken } from '../../application/auth/tokenService.js'
 import { loadUserPermissions } from '../../application/security/rbac.js'
+import { Permissions } from '../../application/security/permissions.js'
 import { registerHealthRoutes } from './routes/health.js'
 import { registerAuthRoutes } from './routes/auth.js'
 import { registerCatalogRoutes } from './routes/catalog.js'
@@ -26,6 +27,7 @@ import { registerWellKnownRoutes } from './routes/wellKnown.js'
 import { registerDashboardRoutes } from './routes/dashboards.js'
 import { registerLaboratoryRoutes } from './routes/laboratory.js'
 import { registerNotificationRoutes } from './routes/notifications.js'
+import { registerGeoRoutes } from './routes/geo.js'
 
 export async function createHttpServer() {
   const env = getEnv()
@@ -149,12 +151,35 @@ export async function createHttpServer() {
       where: { userId: user.id, role: { code: 'TENANT_ADMIN' } },
       select: { roleId: true },
     }))
+
+    let warehouseDepartments: string[] | null = null
+    const isBranchScoped = permissions.has(Permissions.ScopeBranch)
+    const warehouseType = (user as any).warehouse?.type ?? null
+    if (!isTenantAdmin && isBranchScoped && warehouseType === 'SALES' && (user as any).warehouseId) {
+      const servedDepartments = await db.warehouseServedDepartment.findMany({
+        where: {
+          tenantId: claims.tenantId,
+          warehouseId: (user as any).warehouseId,
+          isActive: true,
+        },
+        select: { department: true },
+      })
+      const ownDept = String((user as any).warehouse?.department ?? '').trim().toUpperCase()
+      const deptSet = new Set<string>()
+      if (ownDept) deptSet.add(ownDept)
+      for (const sd of servedDepartments) {
+        deptSet.add(sd.department.toUpperCase())
+      }
+      warehouseDepartments = deptSet.size > 0 ? Array.from(deptSet) : null
+    }
+
     request.auth = {
       userId: user.id,
-      tenantId: claims.tenantId,  // Use the active/target tenant from the JWT
+      tenantId: claims.tenantId,
       permissions,
       warehouseId: (user as any).warehouseId ?? null,
       warehouseCity: (user as any).warehouse?.city ?? null,
+      warehouseDepartments: warehouseDepartments ?? null,
       warehouseType: (user as any).warehouse?.type ?? null,
       isTenantAdmin,
     }
@@ -187,7 +212,8 @@ export async function createHttpServer() {
   await registerPlatformRoutes(app)
   await registerContactRoutes(app)
   await registerDashboardRoutes(app)
-  await registerLaboratoryRoutes(app)
+   await registerLaboratoryRoutes(app)
+   await registerGeoRoutes(app)
 
   return app
 }

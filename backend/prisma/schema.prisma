@@ -322,9 +322,10 @@ model Customer {
   contactBirthYear Int?
   email     String?
   phone     String?
-  address   String?
-  city      String?
-  zone      String?
+   address   String?
+   city      String?
+   department String?
+   zone      String?
   mapsUrl   String?
   isActive  Boolean  @default(true)
   // Legacy flags (kept for backwards compatibility)
@@ -505,8 +506,9 @@ model Warehouse {
   code      String
   name      String
   city      String?
-  isActive  Boolean  @default(true)
-  type      WarehouseType @default(SALES)
+   department String?
+   isActive  Boolean  @default(true)
+   type      WarehouseType @default(SALES)
   version   Int      @default(1)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -518,9 +520,25 @@ model Warehouse {
   users     User[]
   stockMovementRequests StockMovementRequest[]
   notifications Notification[]
+  servedDepartments WarehouseServedDepartment[]
 
   @@unique([tenantId, code])
   @@index([tenantId])
+}
+
+model WarehouseServedDepartment {
+  id          String   @id @default(uuid())
+  tenantId    String
+  warehouse   Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  warehouseId String
+  department  String
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([tenantId, warehouseId, department])
+  @@unique([tenantId, department])
+  @@index([tenantId, department])
 }
 
 model Laboratory {
@@ -668,7 +686,8 @@ model StockMovementRequest {
   toLocationId   String?
   status        StockMovementRequestStatus @default(OPEN)
   confirmationStatus StockMovementRequestConfirmationStatus @default(PENDING)
-  requestedCity String
+   requestedCity String
+   requestedDepartment String?
   quoteId       String?
   requestedBy   String
   fulfilledAt   DateTime?
@@ -694,6 +713,8 @@ model StockMovementRequest {
   @@index([tenantId, warehouseId])
   @@index([tenantId, requestedCity])
   @@index([tenantId, requestedCity, status])
+  @@index([tenantId, requestedDepartment])
+  @@index([tenantId, requestedDepartment, status])
   @@index([quoteId])
   @@index([requestedBy])
 }
@@ -781,6 +802,7 @@ model Notification {
   id           String   @id @default(uuid())
   tenantId     String
   city         String?
+  department   String?
   warehouseId  String?
   targetUserId String?
   type         String
@@ -795,6 +817,7 @@ model Notification {
 
   @@index([tenantId, createdAt])
   @@index([tenantId, city, createdAt])
+  @@index([tenantId, department, createdAt])
   @@index([tenantId, warehouseId, createdAt])
   @@index([tenantId, targetUserId, createdAt])
 }
@@ -817,9 +840,10 @@ model SalesOrder {
   paymentReceiptPhotoUrl String?
   paymentReceiptPhotoKey String?
   note       String?
-  deliveryDate DateTime?
-  deliveryCity String?
-  deliveryZone String?
+   deliveryDate DateTime?
+   deliveryCity String?
+   deliveryDepartment String?
+   deliveryZone String?
   deliveryAddress String?
   deliveryMapsUrl String?
   version    Int              @default(1)
@@ -901,17 +925,18 @@ model Quote {
   isActive   Boolean  @default(true)
   processedAt DateTime?
   validityDays Int     @default(7)
-  paymentMode  String  @default("CASH")
-  deliveryDays Int     @default(1)
-  deliveryCity String?
-  deliveryZone String?
-  deliveryAddress String?
-  deliveryMapsUrl String?
-  globalDiscountPct Decimal @default(0)
-  proposalValue String?
-  note       String?
-  version    Int      @default(1)
-  createdAt  DateTime @default(now())
+   paymentMode  String  @default("CASH")
+   deliveryDays Int     @default(1)
+   deliveryCity String?
+   deliveryDepartment String?
+   deliveryZone String?
+   deliveryAddress String?
+   deliveryMapsUrl String?
+   globalDiscountPct Decimal @default(0)
+   proposalValue String?
+   note       String?
+   version    Int      @default(1)
+   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
   createdBy  String?
 
@@ -1170,6 +1195,7 @@ model SupplyPurchaseList {
   tenantId     String
   laboratoryId String?
   city         String?
+  department   String?
   number       String
   numberYear   Int
   status       SupplyPurchaseListStatus @default(DRAFT)

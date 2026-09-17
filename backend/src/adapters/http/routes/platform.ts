@@ -120,6 +120,19 @@ function extractCustomerNameFromContact(input: string | null): string | null {
   return null
 }
 
+function parseAddressAndCity(addressField: string | null): { address: string | null; city: string | null } {
+  if (!addressField) return { address: null, city: null }
+  const raw = addressField.trim()
+  if (!raw) return { address: null, city: null }
+  const parts = raw.split(/\s*-\s*/).map((p) => p.trim()).filter(Boolean)
+  if (parts.length >= 2) {
+    const city = parts[parts.length - 1]
+    const address = parts.slice(0, -1).join(' ')
+    return { address: address || null, city: city || null }
+  }
+  return { address: raw, city: null }
+}
+
 function normalizeDomain(input: string): string {
   const v = input.trim().toLowerCase()
   // Strip protocol and path if user pasted a URL.
@@ -642,9 +655,14 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
         required: ['name'] as const,
         optional: ['nit', 'contactName', 'email', 'phone', 'address', 'city', 'zone', 'mapsUrl', 'businessName'] as const,
         notes: [
-          'name se toma de la columna "Nombre" (si está vacía, se intenta derivar del texto después de "-" en "Nombre de contacto").',
+          'Formato A (CLIENTES_SANTA_CRUZ): columnas NRO., NIT, Nombre de contacto, Nombre, DIRECCION, Correo electronico, ZONA, Teléfono 1, Teléfono móbil, Ciudad, ubicación.',
+          'Formato B (CONTACTOS_FEBSA): columnas NOMBRE, NIT, DIRECCION, DEPARTAMENTO. DIRECCION combina zona+dirección+ciudad separados por " - "; la ciudad se extrae del último segmento.',
+          'name se toma de la columna "Nombre" (formato A) o "NOMBRE" (formato B). Si está vacío, se intenta derivar del texto después de "-" en "Nombre de contacto".',
           'contactName se toma del texto antes de "-" en "Nombre de contacto".',
-          'phone usa "Teléfono 1" o "Teléfono móvil" (primer valor no vacío).',
+          'phone usa "Teléfono 1" o "Teléfono móbil" (primer valor no vacío).',
+          'address usa "DIRECCION"; en formato B se separa la ciudad (último segmento tras " - ").',
+          'city usa "Ciudad" (formato A), o se extrae de "DIRECCION" (formato B), o "DEPARTAMENTO" como fallback.',
+          'Duplicados: se considera duplicado solo cuando NIT + nombre + dirección + ciudad coinciden (archivo y base de datos). NIT "0" se trata como sin NIT.',
         ],
       }
 
@@ -681,6 +699,7 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
       const keyPhoneMobile = headerMap.get('telefono movil')
       const keyCity = headerMap.get('ciudad')
       const keyMaps = headerMap.get('ubicacion')
+      const keyDepartment = headerMap.get('departamento')
 
       const errors: Array<{ row: number; message: string }> = []
       const mapped = records.map((r, idx) => {
@@ -699,6 +718,19 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
           keyPhoneMobile ? String(r[keyPhoneMobile] ?? '').trim() : '',
         )
 
+        let addressValue = keyAddress ? (String(r[keyAddress] ?? '').trim() || null) : null
+        let cityValue = keyCity ? (String(r[keyCity] ?? '').trim() || null) : null
+        if (addressValue && !cityValue) {
+          const parsed = parseAddressAndCity(addressValue)
+          if (parsed.city) {
+            cityValue = parsed.city
+            addressValue = parsed.address
+          }
+        }
+        if (!cityValue && keyDepartment) {
+          cityValue = String(r[keyDepartment] ?? '').trim() || null
+        }
+
         const customer = {
           tenantId: tenant.id,
           name: name ?? '(sin nombre)',
@@ -707,51 +739,84 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
           contactName,
           email: keyEmail ? (String(r[keyEmail] ?? '').trim() || null) : null,
           phone,
-          address: keyAddress ? (String(r[keyAddress] ?? '').trim() || null) : null,
-          city: keyCity ? (String(r[keyCity] ?? '').trim() || null) : null,
+          address: addressValue,
+          city: cityValue,
           zone: keyZone ? (String(r[keyZone] ?? '').trim() || null) : null,
           mapsUrl: keyMaps ? (String(r[keyMaps] ?? '').trim() || null) : null,
           isActive: true,
           createdBy: actor.userId,
+          rowNumber: rowNumber,
         }
 
         return customer
       })
 
       // Basic duplicate detection (within the file + against DB)
-      const seenNit = new Set<string>()
-      const seenName = new Set<string>()
+      const seenKeys = new Set<string>()
       const deduped: typeof mapped = []
+      const skippedExistingRows: Array<{ row: number; nit: string | null; name: string; reason: string }> = []
       for (let i = 0; i < mapped.length; i++) {
         const c = mapped[i]!
+        const rowNumber = i + 2
         const nit = (c.nit ?? '').trim()
         const nameKey = c.name.trim().toLowerCase()
-        const dupNit = nit && seenNit.has(nit)
-        const dupName = !nit && seenName.has(nameKey)
-        if (dupNit || dupName) {
-          errors.push({ row: i + 2, message: 'Duplicado en el archivo (NIT o nombre)' })
+        const addressKey = (c.address ?? '').trim().toLowerCase()
+        const cityKey = (c.city ?? '').trim().toLowerCase()
+
+        // Within-file duplicate: only when NIT + name + address + city ALL match
+        const dedupKey = `${nit || ''}|${nameKey}|${addressKey}|${cityKey}`
+        if (seenKeys.has(dedupKey)) {
+          errors.push({
+            row: rowNumber,
+            message: `Duplicado en el archivo (NIT + nombre + dirección + ciudad): NIT ${nit || '(sin NIT)'}, nombre "${c.name}", ciudad "${c.city ?? '(sin ciudad)'}"`,
+          })
           continue
         }
-        if (nit) seenNit.add(nit)
-        seenName.add(nameKey)
+
+        seenKeys.add(dedupKey)
         deduped.push(c)
       }
 
-      const nits = deduped.map((d) => d.nit).filter((x): x is string => !!x)
+      const nits = deduped.map((d) => d.nit).filter((x): x is string => !!x && x !== '0')
       const names = deduped.map((d) => d.name.trim())
 
-      const existingByNit = nits.length
-        ? await db.customer.findMany({ where: { tenantId: tenant.id, nit: { in: nits } }, select: { nit: true } })
+      const existingCandidates = names.length
+        ? await db.customer.findMany({
+            where: {
+              tenantId: tenant.id,
+              OR: [
+                ...(nits.length ? [{ nit: { in: nits } }] : []),
+                { name: { in: names } },
+              ],
+            },
+            select: { nit: true, name: true, address: true, city: true },
+          })
         : []
-      const existingNitSet = new Set(existingByNit.map((x) => (x.nit ?? '').trim()).filter(Boolean))
-
-      const existingByName = await db.customer.findMany({ where: { tenantId: tenant.id, name: { in: names } }, select: { name: true } })
-      const existingNameSet = new Set(existingByName.map((x) => x.name.trim().toLowerCase()))
 
       const toCreate = deduped.filter((d) => {
         const nit = (d.nit ?? '').trim()
-        if (nit && existingNitSet.has(nit)) return false
-        if (existingNameSet.has(d.name.trim().toLowerCase())) return false
+        const nameKey = d.name.trim().toLowerCase()
+        const addressKey = (d.address ?? '').trim().toLowerCase()
+        const cityKey = (d.city ?? '').trim().toLowerCase()
+        const isDuplicate = existingCandidates.some((e) => {
+          const eNit = (e.nit ?? '').trim()
+          const eName = e.name.trim().toLowerCase()
+          const eAddress = (e.address ?? '').trim().toLowerCase()
+          const eCity = (e.city ?? '').trim().toLowerCase()
+          return eName === nameKey &&
+                 eAddress === addressKey &&
+                 eCity === cityKey &&
+                 (eNit === nit || (!eNit && !nit))
+        })
+        if (isDuplicate) {
+          skippedExistingRows.push({
+            row: d.rowNumber,
+            nit: d.nit,
+            name: d.name,
+            reason: `Ya existe en DB (NIT: ${nit || '(sin NIT)'}, nombre "${d.name}", ciudad "${d.city ?? '(sin ciudad)'}"`,
+          })
+          return false
+        }
         return true
       })
 
@@ -774,7 +839,8 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
           candidateRows: deduped.length,
           toCreate: toCreate.length,
           skippedExisting: deduped.length - toCreate.length,
-          errors: errors.slice(0, 50),
+          skippedExistingRows,
+          errors,
           preview,
         })
       }
@@ -812,7 +878,7 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
         totalRows: records.length,
         createdCount: created.count,
         skippedExisting: deduped.length - toCreate.length,
-        errors: errors.slice(0, 50),
+        errors,
       })
     },
   )

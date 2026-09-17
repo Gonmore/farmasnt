@@ -1,27 +1,36 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { geoApi, type City } from '../lib/geoService'
+import { geoApi, type Country } from '../../lib/geoService'
+import { countryCodeToName } from './countryUtils'
 
-interface CitySelectorProps {
-  countryCode?: string
-  adminLevel1Code?: string
+interface CountrySelectorProps {
   value: string
   onChange: (value: string) => void
+  onCountryDetail?: (country: Country) => void
   placeholder?: string
+  label?: string
   disabled?: boolean
   required?: boolean
 }
 
-const CitySelector: React.FC<CitySelectorProps> = ({
-  countryCode,
-  adminLevel1Code,
+export type { CountrySelectorProps }
+
+interface Option {
+  code: string
+  name: string
+  currency: string
+}
+
+const CountrySelector: React.FC<CountrySelectorProps> = ({
   value,
   onChange,
-  placeholder = 'Buscar ciudad...',
+  onCountryDetail,
+  placeholder = 'Buscar país...',
+  label = 'País',
   disabled = false,
   required = false,
 }) => {
   const [searchTerm, setSearchTerm] = useState('')
-  const [options, setOptions] = useState<City[]>([])
+  const [options, setOptions] = useState<Option[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [isOpen, setIsOpen] = useState(false)
 
@@ -31,21 +40,16 @@ const CitySelector: React.FC<CitySelectorProps> = ({
       return
     }
 
-    if (!countryCode) {
-      setOptions([])
-      return
-    }
-
     setIsLoading(true)
     try {
-      const { items } = await geoApi.searchCities(countryCode, query, adminLevel1Code)
-      setOptions(items)
+      const { items } = await geoApi.searchCountries(query)
+      setOptions(items.map((c) => ({ code: c.code, name: c.name, currency: c.currency })))
     } catch {
       setOptions([])
     } finally {
       setIsLoading(false)
     }
-  }, [countryCode, adminLevel1Code])
+  }, [])
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -57,7 +61,7 @@ const CitySelector: React.FC<CitySelectorProps> = ({
 
   useEffect(() => {
     if (value && !searchTerm) {
-      setSearchTerm(value)
+      setSearchTerm(countryCodeToName(value))
     }
   }, [value, searchTerm])
 
@@ -68,12 +72,14 @@ const CitySelector: React.FC<CitySelectorProps> = ({
 
     if (!newValue.trim()) {
       onChange('')
+      onCountryDetail?.(undefined as any)
     }
   }
 
-  const handleOptionSelect = (option: City) => {
+  const handleOptionSelect = (option: Option) => {
     setSearchTerm(option.name)
-    onChange(option.name.toUpperCase())
+    onChange(option.code)
+    onCountryDetail?.({ code: option.code, code3: option.code, name: option.name, currency: option.currency, phoneCode: '' })
     setIsOpen(false)
   }
 
@@ -87,6 +93,11 @@ const CitySelector: React.FC<CitySelectorProps> = ({
 
   return (
     <div className="relative">
+      {label && (
+        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+          {label}
+        </label>
+      )}
       <input
         type="text"
         value={searchTerm}
@@ -108,16 +119,17 @@ const CitySelector: React.FC<CitySelectorProps> = ({
           ) : options.length > 0 ? (
             options.map((option) => (
               <div
-                key={option.id}
+                key={option.code}
                 onClick={() => handleOptionSelect(option)}
                 className="px-3 py-2 hover:bg-slate-100 cursor-pointer dark:hover:bg-slate-600"
               >
-                {option.name}
+                <span className="font-medium">{option.name}</span>
+                <span className="ml-2 text-xs text-slate-500 dark:text-slate-400">({option.currency})</span>
               </div>
             ))
           ) : searchTerm.length >= 2 ? (
             <div className="px-3 py-2 text-slate-500 dark:text-slate-400">
-              No se encontraron ciudades
+              No se encontraron países
             </div>
           ) : (
             <div className="px-3 py-2 text-slate-500 dark:text-slate-400">
@@ -130,4 +142,4 @@ const CitySelector: React.FC<CitySelectorProps> = ({
   )
 }
 
-export default CitySelector
+export default CountrySelector

@@ -4,6 +4,8 @@ import { prisma } from '../../db/prisma.js'
 import { AuditService } from '../../../application/audit/auditService.js'
 import { requireAuth, requireModuleEnabled, requirePermission } from '../../../application/security/rbac.js'
 import { Permissions } from '../../../application/security/permissions.js'
+import { branchDepartmentsOf, branchDepartmentsOfMissing, branchWarehouseIdOf } from '../../../application/security/branch.js'
+import { cityToDepartment } from '../../../shared/geo.js'
 import { currentYearUtc, nextSequence } from '../../../application/shared/sequence.js'
 
 const listQuerySchema = z.object({
@@ -125,7 +127,24 @@ function deriveOrderNumberFromQuoteNumber(quoteNumber: string): string {
   }
   const dash = n.indexOf('-')
   if (dash >= 0 && dash < n.length - 1) return `OV-${n.slice(dash + 1)}`
-  return `OV-${n}`
+   return `OV-${n}`
+}
+
+async function findWarehouseByDepartment(db: any, tenantId: string, department: string): Promise<{ id: string; name: string; code: string; city: string | null; department: string | null; type: string } | null> {
+  const normalized = (department ?? '').trim().toUpperCase()
+  if (!normalized) return null
+
+  return db.warehouse.findFirst({
+    where: {
+      tenantId,
+      isActive: true,
+      OR: [
+        { department: { equals: normalized, mode: 'insensitive' } },
+        { servedDepartments: { some: { department: { equals: normalized, mode: 'insensitive' }, isActive: true } } },
+      ],
+    },
+    select: { id: true, name: true, code: true, city: true, department: true, type: true },
+  })
 }
 
 type InsufficientStockItem = { productId: string; productName: string; required: number; available: number; presentationId?: string; presentationQuantity?: number }
@@ -144,19 +163,36 @@ class InsufficientStockCityError extends Error {
 
 async function computeStockShortagesInCity(
   tx: any,
-  args: { tenantId: string; city: string; lines: Array<{ productId: string; productName: string; quantity: any; presentationId?: string; presentationQuantity?: number }> },
+  args: { tenantId: string; city: string; lines: Array<{ productId: string; productName: string; quantity: any; presentationId?: string; presentationQuantity?: number }>; department?: string },
 ): Promise<InsufficientStockItem[]> {
   const todayUtc = startOfTodayUtc()
   const cityRaw = (args.city ?? '').trim()
   const city = cityRaw ? cityRaw : ''
-  if (!city) return []
+  if (!city && !args.department) return []
 
-  const sameCityLoc = {
-    isActive: true,
-    warehouse: {
+  let scopeLoc: any
+  if (args.department) {
+    const warehouse = await findWarehouseByDepartment(tx, args.tenantId, args.department)
+    if (!warehouse) {
+      if (!city) return []
+      scopeLoc = {
+        isActive: true,
+        warehouse: {
+          isActive: true,
+          city: { equals: city, mode: 'insensitive' as const },
+        },
+      }
+    } else {
+      scopeLoc = { isActive: true, warehouseId: warehouse.id }
+    }
+  } else {
+    scopeLoc = {
       isActive: true,
-      city: { equals: city, mode: 'insensitive' as const },
-    },
+      warehouse: {
+        isActive: true,
+        city: { equals: city, mode: 'insensitive' as const },
+      },
+    }
   }
 
   const shortages: InsufficientStockItem[] = []
@@ -189,7 +225,7 @@ async function computeStockShortagesInCity(
         tenantId: args.tenantId,
         productId: line.productId,
         quantity: { gt: 0 },
-        location: sameCityLoc,
+        location: scopeLoc,
         OR: [
           { batchId: null },
           { batch: { status: 'RELEASED', OR: [{ expiresAt: null }, { expiresAt: { gte: todayUtc } }] } },
@@ -232,23 +268,42 @@ async function reserveForOrderInCityOrFail(
     orderId: string
     city: string
     locationId?: string | null
+    department?: string
     lines: Array<{ id: string; productId: string; productName: string; batchId: string | null; quantity: any }>
   },
 ): Promise<any[]> {
   const todayUtc = startOfTodayUtc()
   const cityRaw = (args.city ?? '').trim()
   const city = cityRaw ? cityRaw : ''
-  if (!city) throw new InsufficientStockCityError({ city: '(sin ciudad)', items: [] })
+  const hasDepartment = args.department && args.department.trim() !== ''
 
-  const scopeLoc = args.locationId
-    ? { id: args.locationId, isActive: true }
-    : {
+  let scopeLoc: any
+  if (args.locationId) {
+    scopeLoc = { id: args.locationId, isActive: true }
+  } else if (hasDepartment) {
+    const warehouse = await findWarehouseByDepartment(tx, args.tenantId, args.department as string)
+    if (warehouse) {
+      scopeLoc = { isActive: true, warehouseId: warehouse.id }
+    } else {
+      if (!city) throw new InsufficientStockCityError({ city: '(sin ciudad)', items: [] })
+      scopeLoc = {
         isActive: true,
         warehouse: {
           isActive: true,
           city: { equals: city, mode: 'insensitive' as const },
         },
       }
+    }
+  } else {
+    if (!city) throw new InsufficientStockCityError({ city: '(sin ciudad)', items: [] })
+    scopeLoc = {
+      isActive: true,
+      warehouse: {
+        isActive: true,
+        city: { equals: city, mode: 'insensitive' as const },
+      },
+    }
+  }
 
   const shortages: InsufficientStockItem[] = []
   for (const line of args.lines) {
@@ -417,22 +472,7 @@ async function resolveUserDisplayName(db: any, tenantId: string, userId?: string
 
 export async function salesQuotesRoutes(app: FastifyInstance) {
   const db = prisma()
-
-  function branchCityOf(request: any): string | null {
-    if (request.auth?.isTenantAdmin) return null
-    const scoped = !!request.auth?.permissions?.has(Permissions.ScopeBranch)
-    if (!scoped) return null
-    const city = String(request.auth?.warehouseCity ?? '').trim()
-    return city ? city.toUpperCase() : '__MISSING__'
-  }
-
-  function branchWarehouseIdOf(request: any): string | null {
-    if (request.auth?.isTenantAdmin) return null
-    const scoped = !!request.auth?.permissions?.has(Permissions.ScopeBranch)
-    if (!scoped) return null
-    const wid = String(request.auth?.warehouseId ?? '').trim()
-    return wid ? wid : '__MISSING__'
-  }
+  const audit = new AuditService(db)
 
   // Endpoint para obtener los sub almacenes (Tipos de venta)
   app.get(
@@ -500,35 +540,36 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
       const quote = await db.quote.findFirst({
         where: { id, tenantId },
         include: {
-          customer: { select: { city: true } },
+          customer: { select: { city: true, department: true } },
           lines: { select: { id: true, productId: true } },
         },
       })
 
       if (!quote) return reply.status(404).send({ message: 'Cotización no encontrada' })
 
-      const city = (quote.customer?.city ?? '').trim()
-      // Security: if the quote has a locationId, verify it belongs to the customer's city.
-      // A location from a different city (e.g. La Paz for a Tarija customer) would expose
-      // batches from the wrong warehouse. If mismatch, fall back to city-based filtering.
+      const userWarehouseId = request.auth?.warehouseId ?? null
+      const custDepartment = String(quote.customer?.department ?? cityToDepartment(quote.customer?.city) ?? '').trim().toUpperCase()
+      const servingWarehouse = custDepartment ? await findWarehouseByDepartment(db, tenantId, custDepartment) : null
+
       let scopeLoc: any = null
-      if (quote.locationId && city) {
+      if (quote.locationId && (userWarehouseId || servingWarehouse)) {
         const loc = await db.location.findFirst({
           where: { id: quote.locationId, tenantId, isActive: true },
-          select: { id: true, warehouse: { select: { city: true, isActive: true } } },
+          select: { id: true, warehouse: { select: { id: true, isActive: true } } },
         })
-        const locCity = String(loc?.warehouse?.city ?? '').trim().toUpperCase()
-        const custCity = city.toUpperCase()
-        if (loc && loc.warehouse?.isActive && locCity === custCity) {
+        if (loc && loc.warehouse?.isActive && (loc.warehouse.id === userWarehouseId || loc.warehouse.id === servingWarehouse?.id)) {
           scopeLoc = { id: quote.locationId, isActive: true }
         }
+      }
+      if (!scopeLoc && servingWarehouse) {
+        scopeLoc = { isActive: true, warehouseId: servingWarehouse.id }
       }
       if (!scopeLoc) {
         scopeLoc = {
           isActive: true,
           warehouse: {
             isActive: true,
-            ...(city ? { city: { equals: city, mode: 'insensitive' as const } } : {}),
+            ...(userWarehouseId ? { id: userWarehouseId } : {}),
           },
         }
       }
@@ -617,11 +658,11 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
 
       const { take, cursor, customerSearch } = parsed.data
       const tenantId = request.auth!.tenantId
-      const branchCity = branchCityOf(request)
 
-      if (branchCity === '__MISSING__') {
+      if (branchDepartmentsOfMissing(request)) {
         return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
       }
+      const branchDepartments = branchDepartmentsOf(request)
 
       const where: any = { tenantId, isActive: true }
       if (customerSearch) {
@@ -629,16 +670,15 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
           name: { contains: customerSearch, mode: 'insensitive' },
         }
       }
-      if (branchCity) {
-        const cities = [branchCity]
-        const cityDeliveryFilters = cities.map((city) => ({ deliveryCity: { equals: city, mode: 'insensitive' as const } }))
-        const cityCustomerFilters = cities.map((city) => ({ customer: { city: { equals: city, mode: 'insensitive' as const } } }))
+      if (branchDepartments) {
+        const departmentDeliveryFilters = branchDepartments.map((dept) => ({ deliveryDepartment: { equals: dept, mode: 'insensitive' as const } }))
+        const departmentCustomerFilters = branchDepartments.map((dept) => ({ customer: { department: { equals: dept, mode: 'insensitive' as const } } }))
         where.AND = [
           ...(where.AND ?? []),
           {
             OR: [
-              { OR: cityDeliveryFilters },
-              { AND: [{ OR: [{ deliveryCity: null }, { deliveryCity: '' }] }, { OR: cityCustomerFilters }] },
+              { OR: departmentDeliveryFilters },
+              { AND: [{ OR: [{ deliveryDepartment: null }, { deliveryDepartment: '' }] }, { OR: departmentCustomerFilters }] },
             ],
           },
         ]
@@ -651,7 +691,7 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
         orderBy: { createdAt: 'desc' },
         include: {
           customer: { select: { name: true } },
-          location: { select: { id: true, code: true } },
+          location: { select: { id: true, code: true, warehouse: { select: { id: true, code: true, name: true } } } },
           lines: { select: { id: true, unitPrice: true, quantity: true, discountPct: true } },
           _count: { select: { lines: true } },
         },
@@ -723,23 +763,23 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
       const tenantId = request.auth!.tenantId
       const userId = request.auth!.userId
       const audit = new AuditService(db)
-      const branchCity = branchCityOf(request)
 
-      if (branchCity === '__MISSING__') {
+      if (branchDepartmentsOfMissing(request)) {
         return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
       }
+      const branchDepartments = branchDepartmentsOf(request)
 
       const customer = await db.customer.findFirst({
         where: { id: customerId, tenantId },
-        select: { id: true, name: true, city: true, zone: true, address: true, mapsUrl: true },
+        select: { id: true, name: true, city: true, department: true, zone: true, address: true, mapsUrl: true },
       })
       if (!customer) {
         return reply.code(404).send({ error: 'Customer not found' })
       }
 
-      if (branchCity) {
-        const custCity = String(customer.city ?? '').trim().toUpperCase()
-        if (!custCity || custCity !== branchCity) {
+      if (branchDepartments) {
+        const custDepartment = (customer.department ?? cityToDepartment(customer.city) ?? '').trim().toUpperCase()
+        if (!custDepartment || !branchDepartments.includes(custDepartment)) {
           return reply.status(403).send({ message: 'Solo puede crear cotizaciones para clientes de su sucursal' })
         }
       }
@@ -880,6 +920,7 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
             locationId: locationId || null,
             status: 'CREATED',
             deliveryCity: (deliveryCity ?? customer.city ?? null) ? String(deliveryCity ?? customer.city).trim().toUpperCase() : null,
+            deliveryDepartment: (customer.department ?? cityToDepartment(customer.city) ?? deliveryCity ?? null) ? String(customer.department ?? cityToDepartment(customer.city) ?? deliveryCity).trim().toUpperCase() : null,
             deliveryZone: (deliveryZone ?? customer.zone ?? null) ? String(deliveryZone ?? customer.zone).trim().toUpperCase() : null,
             deliveryAddress: (deliveryAddress ?? customer.address ?? null) ? String(deliveryAddress ?? customer.address).trim() : null,
             deliveryMapsUrl: (deliveryMapsUrl ?? customer.mapsUrl ?? null) ? String(deliveryMapsUrl ?? customer.mapsUrl).trim() : null,
@@ -948,6 +989,7 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
         paymentMode: quote.paymentMode,
         deliveryDays: quote.deliveryDays,
         deliveryCity: quote.deliveryCity,
+        deliveryDepartment: quote.deliveryDepartment,
         deliveryZone: quote.deliveryZone,
         deliveryAddress: quote.deliveryAddress,
         deliveryMapsUrl: quote.deliveryMapsUrl,
@@ -998,11 +1040,11 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
       const tenantId = request.auth!.tenantId
       const userId = request.auth!.userId
       const audit = new AuditService(db)
-      const branchCity = branchCityOf(request)
 
-      if (branchCity === '__MISSING__') {
+      if (branchDepartmentsOfMissing(request)) {
         return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
       }
+      const branchDepartments = branchDepartmentsOf(request)
 
       const bodyParsed = processQuoteBodySchema.safeParse(request.body ?? {})
       if (!bodyParsed.success) {
@@ -1018,7 +1060,7 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
           const quote = await tx.quote.findFirst({
             where: { id, tenantId },
             include: {
-              customer: { select: { id: true, name: true, city: true } },
+              customer: { select: { id: true, name: true, city: true, department: true } },
               lines: {
                 select: {
                   id: true,
@@ -1042,31 +1084,29 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
 
           // Usar el sub almacén seleccionado al crear la cotización
           const chosenLocationId = bodyParsed.data?.locationId ?? quote.locationId ?? null
-          const custCity = String(quote.customer.city ?? '').trim().toUpperCase()
+          const custDepartment = String(quote.customer.department ?? cityToDepartment(quote.customer.city) ?? '').trim().toUpperCase()
+          const servingWarehouseId = (await findWarehouseByDepartment(tx, tenantId, custDepartment))?.id ?? null
 
           if (chosenLocationId) {
             const chosenLocation = await tx.location.findFirst({
               where: { id: chosenLocationId, tenantId, isActive: true },
-              select: { id: true, warehouse: { select: { isActive: true, city: true } } },
+              select: { id: true, warehouse: { select: { isActive: true, id: true } } },
             })
             if (!chosenLocation || !chosenLocation.warehouse.isActive) {
               const err = new Error('Ubicación (sub almacén) no encontrada') as Error & { statusCode?: number }
               err.statusCode = 404
               throw err
             }
-            // Security: the chosen location must belong to the customer's city.
-            // A location from a different city (e.g. La Paz for a Tarija customer) would allow
-            // reserving stock from the wrong warehouse.
-            const locCity = String(chosenLocation.warehouse?.city ?? '').trim().toUpperCase()
-            if (custCity && locCity && locCity !== custCity) {
-              const err = new Error(`La ubicación seleccionada pertenece a ${locCity}, no a ${custCity} (ciudad del cliente)`) as Error & { statusCode?: number }
+            const userWarehouseId = request.auth?.warehouseId ?? null
+            if (userWarehouseId && chosenLocation.warehouse.id !== userWarehouseId && chosenLocation.warehouse.id !== servingWarehouseId) {
+              const err = new Error('La ubicación seleccionada no pertenece al almacén del cliente') as Error & { statusCode?: number }
               err.statusCode = 400
               throw err
             }
           }
 
-          if (branchCity) {
-            if (!custCity || custCity !== branchCity) {
+          if (branchDepartments) {
+              if (!custDepartment || !branchDepartments.includes(custDepartment)) {
               const err = new Error('Solo puede procesar cotizaciones de su sucursal') as Error & { statusCode?: number }
               err.statusCode = 403
               throw err
@@ -1100,6 +1140,7 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
               note: `Desde cotización ${quote.number}`,
               deliveryDate,
               deliveryCity: quote.deliveryCity ?? quote.customer.city ?? null,
+              deliveryDepartment: quote.deliveryDepartment ?? quote.customer.department ?? cityToDepartment(quote.customer.city) ?? null,
               deliveryZone: quote.deliveryZone ?? null,
               deliveryAddress: quote.deliveryAddress ?? null,
               deliveryMapsUrl: quote.deliveryMapsUrl ?? null,
@@ -1138,14 +1179,25 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
             })
           }
 
-          const changedBalances = await reserveForOrderInCityOrFail(tx, {
+          const reserveArgs: {
+            tenantId: string
+            userId: string
+            orderId: string
+            city: string
+            locationId?: string | null
+            department?: string
+            lines: Array<{ id: string; productId: string; productName: string; batchId: string | null; quantity: any }>
+          } = {
             tenantId,
             userId,
             orderId: order.id,
             city,
             locationId: chosenLocationId,
             lines: createdLines,
-          })
+          }
+          if (custDepartment) reserveArgs.department = custDepartment
+
+          const changedBalances = await reserveForOrderInCityOrFail(tx, reserveArgs)
 
           const reservations = await tx.salesOrderReservation.findMany({
             where: { tenantId, salesOrderId: order.id },
@@ -1313,11 +1365,11 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
       const id = idParsed.data
       const tenantId = request.auth!.tenantId
       const userId = request.auth!.userId
-      const branchCity = branchCityOf(request)
 
-      if (branchCity === '__MISSING__') {
+      if (branchDepartmentsOfMissing(request)) {
         return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
       }
+      const branchDepartments = branchDepartmentsOf(request)
 
       const actor = await db.user.findFirst({
         where: { id: userId, tenantId, isActive: true },
@@ -1327,35 +1379,44 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
       const quote = await db.quote.findFirst({
         where: { id, tenantId },
         include: {
-          customer: { select: { id: true, city: true } },
+          customer: { select: { id: true, city: true, department: true } },
           lines: { include: { product: { select: { name: true } } } },
         },
       })
 
       if (!quote) return reply.status(404).send({ message: 'Quote not found' })
 
-      if (branchCity) {
-        const custCity = String(quote.customer?.city ?? '').trim().toUpperCase()
-        if (!custCity || custCity !== branchCity) {
+      if (branchDepartments) {
+        const custDepartment = String(quote.customer?.department ?? cityToDepartment(quote.customer?.city) ?? '').trim().toUpperCase()
+        if (!custDepartment || !branchDepartments.includes(custDepartment)) {
           return reply.status(403).send({ message: 'Solo puede solicitar stock para cotizaciones de su sucursal' })
         }
       }
 
       const city = (quote.customer?.city ?? '').trim()
-      if (!city) return reply.status(400).send({ message: 'Customer city is required to request stock' })
+      const custDepartment = String(quote.customer?.department ?? cityToDepartment(quote.customer?.city) ?? '').trim().toUpperCase()
+      if (!city && !custDepartment) return reply.status(400).send({ message: 'Customer city or department is required to request stock' })
 
       const created = await db.$transaction(async (tx) => {
-        const shortages = await computeStockShortagesInCity(tx, {
+        const shortageArgs: {
+          tenantId: string
+          city: string
+          lines: Array<{ productId: string; productName: string; quantity: any; presentationId?: string; presentationQuantity?: number }>
+          department?: string
+        } = {
           tenantId,
           city,
           lines: (quote.lines ?? []).map((l: any) => ({
             productId: String(l.productId),
-            productName: String(l.product?.name ?? ''),
+            productName: String(l?.product?.name ?? ''),
             quantity: l.quantity,
             presentationId: l.presentationId,
             presentationQuantity: l.presentationQuantity,
           })),
-        })
+        }
+        if (custDepartment) shortageArgs.department = custDepartment
+
+        const shortages = await computeStockShortagesInCity(tx, shortageArgs)
 
         const items = shortages
           .map((s) => {
@@ -1477,28 +1538,28 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
 
       const { id } = paramsParsed.data
       const tenantId = request.auth!.tenantId
-      const branchCity = branchCityOf(request)
 
-      if (branchCity === '__MISSING__') {
+      if (branchDepartmentsOfMissing(request)) {
         return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
       }
+      const branchDepartments = branchDepartmentsOf(request)
 
       const quote = await db.quote.findFirst({
         where: {
           id,
           tenantId,
-          ...(branchCity
+          ...(branchDepartments
             ? {
                 OR: [
-                  { deliveryCity: { equals: branchCity, mode: 'insensitive' as const } },
-                  { AND: [{ OR: [{ deliveryCity: null }, { deliveryCity: '' }] }, { customer: { city: { equals: branchCity, mode: 'insensitive' as const } } }] },
+                  { deliveryDepartment: { in: branchDepartments, mode: 'insensitive' as const } },
+                  { AND: [{ OR: [{ deliveryDepartment: null }, { deliveryDepartment: '' }] }, { customer: { department: { in: branchDepartments, mode: 'insensitive' as const } } }] },
                 ],
               }
             : {}),
         },
         include: {
-          customer: { select: { name: true, businessName: true, address: true, phone: true, city: true } },
-          location: { select: { id: true, code: true } },
+          customer: { select: { name: true, businessName: true, address: true, phone: true, city: true, department: true } },
+          location: { select: { id: true, code: true, warehouse: { select: { id: true, code: true, name: true } } } },
           lines: {
             include: {
               product: { select: { name: true, sku: true, genericName: true, baseUnitAbbreviation: true } },
@@ -1529,16 +1590,20 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
         customerName: quote.customer.name,
         locationId: quote.locationId ?? null,
         locationCode: quote.location?.code ?? null,
+        warehouseId: quote.location?.warehouse?.id ?? null,
+        warehouseCode: quote.location?.warehouse?.code ?? null,
         status: quote.status,
         quotedBy,
         customerBusinessName: quote.customer.businessName,
         customerAddress: quote.customer.address,
         customerPhone: quote.customer.phone,
         customerCity: quote.customer.city,
+        customerDepartment: quote.customer.department,
         validityDays: quote.validityDays,
         paymentMode: quote.paymentMode,
         deliveryDays: quote.deliveryDays,
         deliveryCity: quote.deliveryCity,
+        deliveryDepartment: quote.deliveryDepartment,
         deliveryZone: quote.deliveryZone,
         deliveryAddress: quote.deliveryAddress,
         deliveryMapsUrl: quote.deliveryMapsUrl,
@@ -1621,7 +1686,7 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
 
       const customer = await db.customer.findFirst({
         where: { id: customerId, tenantId },
-        select: { id: true, city: true, zone: true, address: true, mapsUrl: true },
+        select: { id: true, city: true, department: true, zone: true, address: true, mapsUrl: true },
       })
       if (!customer) {
         return reply.code(404).send({ error: 'Customer not found' })
@@ -1749,6 +1814,7 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
             customerId,
             locationId: locationId || null,
             deliveryCity: (deliveryCity ?? customer.city ?? null) ? String(deliveryCity ?? customer.city).trim().toUpperCase() : null,
+            deliveryDepartment: (customer.department ?? cityToDepartment(customer.city) ?? deliveryCity ?? null) ? String(customer.department ?? cityToDepartment(customer.city) ?? deliveryCity).trim().toUpperCase() : null,
             deliveryZone: (deliveryZone ?? customer.zone ?? null) ? String(deliveryZone ?? customer.zone).trim().toUpperCase() : null,
             deliveryAddress: (deliveryAddress ?? customer.address ?? null) ? String(deliveryAddress ?? customer.address).trim() : null,
             deliveryMapsUrl: (deliveryMapsUrl ?? customer.mapsUrl ?? null) ? String(deliveryMapsUrl ?? customer.mapsUrl).trim() : null,
@@ -1832,6 +1898,7 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
         paymentMode: quote.paymentMode,
         deliveryDays: quote.deliveryDays,
         deliveryCity: quote.deliveryCity,
+        deliveryDepartment: quote.deliveryDepartment,
         deliveryZone: quote.deliveryZone,
         deliveryAddress: quote.deliveryAddress,
         deliveryMapsUrl: quote.deliveryMapsUrl,

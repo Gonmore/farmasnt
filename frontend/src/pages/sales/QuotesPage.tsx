@@ -1,5 +1,5 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { apiFetch } from '../../lib/api'
 import { formatMoney } from '../../lib/numberFormat'
@@ -39,9 +39,11 @@ type QuoteDetail = {
   id: string
   number: string
   customerCity: string | null
+  customerDepartment: string | null
   locationId?: string | null
-  locationCode?: string | null // <-- NUEVO
-  locationName?: string | null // <-- NUEVO
+  locationCode?: string | null
+  warehouseId?: string | null
+  warehouseCode?: string | null
   lines: QuoteDetailLine[]
 }
 
@@ -57,6 +59,10 @@ type FefoSuggestionItem = {
   expiresAt: string | null
   status: string
   quantity: string
+  locationId?: string | null
+  locationCode?: string | null
+  warehouseId?: string | null
+  warehouseCode?: string | null
 }
 
 type ProcessQuoteResponse = {
@@ -92,14 +98,18 @@ async function fetchQuoteDetail(token: string, quoteId: string): Promise<QuoteDe
   return apiFetch(`/api/v1/sales/quotes/${encodeURIComponent(quoteId)}`, { token })
 }
 
-async function fetchSubLocations(token: string, city?: string, warehouseId?: string | null): Promise<{ items: SubLocationItem[] }> {
+async function fetchSubLocations(token: string, warehouseId?: string | null): Promise<{ items: SubLocationItem[] }> {
   const params = new URLSearchParams()
-  if (city) params.set('city', city)
   if (warehouseId) params.set('warehouseId', warehouseId)
   return apiFetch(`/api/v1/warehouses/sub-locations?${params}`, { token })
 }
 
-async function fetchFefoSuggestions(token: string, locationId: string, productId: string): Promise<{ items: FefoSuggestionItem[] }> {
+async function fetchLocationsByDepartment(token: string, department: string): Promise<{
+  items: SubLocationItem[]
+  warehouse: { id: string; name: string; code: string; city: string | null; department: string | null; type: string } | null
+}> {
+  return apiFetch(`/api/v1/warehouses/by-department/${encodeURIComponent(department)}/locations`, { token })
+}async function fetchFefoSuggestions(token: string, locationId: string, productId: string): Promise<{ items: FefoSuggestionItem[] }> {
   const params = new URLSearchParams({ locationId, productId, take: '50' })
   return apiFetch(`/api/v1/stock/fefo-suggestions?${params}`, { token })
 }
@@ -161,9 +171,22 @@ export function QuotesPage() {
   })
 
   const subLocationsQuery = useQuery({
-    queryKey: ['warehouses', 'sub-locations', quoteDetailQuery.data?.customerCity ?? '', userWarehouseId],
-    queryFn: () => fetchSubLocations(auth.accessToken!, quoteDetailQuery.data?.customerCity ?? undefined, userWarehouseId),
+    queryKey: ['warehouses', 'sub-locations', userWarehouseId],
+    queryFn: () => fetchSubLocations(auth.accessToken!, userWarehouseId),
     enabled: !!auth.accessToken && !!processModalQuoteId && !!quoteDetailQuery.data && !!userWarehouseId,
+  })
+
+  const customerDepartment = useMemo(() => {
+    if (!quoteDetailQuery.data) return null
+    const dept = quoteDetailQuery.data.customerDepartment ?? ''
+    return dept.trim().toUpperCase() || null
+  }, [quoteDetailQuery.data])
+
+  const departmentLocationsQuery = useQuery({
+    queryKey: ['warehouses', 'by-department', customerDepartment],
+    queryFn: () => fetchLocationsByDepartment(auth.accessToken!, customerDepartment!),
+    enabled: !!auth.accessToken && !!processModalQuoteId && !!customerDepartment,
+    staleTime: 5 * 60 * 1000,
   })
 
   const quoteLines = quoteDetailQuery.data?.lines ?? []
@@ -263,6 +286,10 @@ export function QuotesPage() {
   const isStockError = processMutation.isError && processErrorMsg.toLowerCase().includes('cantidad de existencias insuficientes')
 
   // Obtener los nombres de forma segura para mostrarlos u compararlos
+    const allLocations = [
+      ...(subLocationsQuery.data?.items ?? []),
+      ...(departmentLocationsQuery.data?.items ?? []),
+    ]
     const originalLocationId = quoteDetailQuery.data?.locationId ?? ''
     
     // Si processLocationId está vacío, significa que se usará la ubicación por defecto (la misma de la cotización)
@@ -270,12 +297,12 @@ export function QuotesPage() {
 
     const originalLocationName = 
       quoteDetailQuery.data?.locationCode || 
-      subLocationsQuery.data?.items.find(l => l.id === originalLocationId)?.code || 
+      allLocations.find(l => l.id === originalLocationId)?.code || 
       'la ubicación original'
 
     const newLocationName = 
-      subLocationsQuery.data?.items.find(l => l.id === finalProcessLocationId)?.code || 
-      subLocationsQuery.data?.items.find(l => l.id === finalProcessLocationId)?.warehouse?.code || 
+      allLocations.find(l => l.id === finalProcessLocationId)?.code || 
+      allLocations.find(l => l.id === finalProcessLocationId)?.warehouse?.code || 
       'la nueva ubicación'
 
     // LOG de depuración para que veas exactamente qué IDs y nombres se están comparando en consola
@@ -396,13 +423,16 @@ export function QuotesPage() {
                     setLineBatchSelections({})
                   }}
                   options={[
-                    { value: '', label: !userWarehouseId ? 'Sin sucursal asignada' : 'Automático (cualquier ubicación de mi sucursal en la ciudad del cliente)' },
-                    ...(subLocationsQuery.data?.items ?? []).map((l) => ({
+                    { value: '', label: customerDepartment ? 'Automático (almacén del departamento del cliente)' : (!userWarehouseId ? 'Sin sucursal asignada' : 'Automático (cualquier ubicación de mi sucursal)') },
+                    ...(quoteDetailQuery.data?.locationId && !(subLocationsQuery.data?.items ?? []).some(l => l.id === quoteDetailQuery.data?.locationId) && !(departmentLocationsQuery.data?.items ?? []).some(l => l.id === quoteDetailQuery.data?.locationId)
+                      ? [{ value: quoteDetailQuery.data.locationId, label: `${quoteDetailQuery.data.warehouseCode ?? ''} - ${quoteDetailQuery.data.locationCode ?? ''}` }]
+                      : []),
+                    ...((customerDepartment ? departmentLocationsQuery.data?.items : subLocationsQuery.data?.items) ?? []).map((l) => ({
                       value: l.id,
-                      label: `${l.warehouse.code} - ${l.code}`,
+                      label: `${l.warehouse?.code ?? ''} - ${l.code}`,
                     })),
                   ]}
-                  disabled={!userWarehouseId}
+                  disabled={customerDepartment ? departmentLocationsQuery.isLoading : !userWarehouseId || subLocationsQuery.isLoading}
                 />
                 {/* --- NUEVA ADVERTENCIA AQUÍ --- */}
                 {isLocationMismatch && (
@@ -448,9 +478,9 @@ export function QuotesPage() {
                                     ? [{ value: '', label: 'Cargando lotes disponilbes...' }]
                                     : items.length === 0
                                     ? [{ value: '', label: '⚠️ Sin stock/lotes disponibles' }]
-                                    : items.map((b, idx) => ({
+                                     : items.map((b, idx) => ({
                                         value: b.batchId,
-                                        label: `${idx === 0 ? '✨ (Auto FEFO) ' : ''}Lote: ${b.batchNumber}${
+                                        label: `${idx === 0 ? '✨ (Auto FEFO) ' : ''}Lote: ${b.batchNumber}${b.warehouseCode ? ` · ${b.warehouseCode}${b.locationCode ? '/' + b.locationCode : ''}` : ''}${
                                           b.expiresAt ? ` · Vence ${new Date(b.expiresAt).toLocaleDateString('es-ES')}` : ''
                                         } (Disp: ${b.quantity})`,
                                       }))

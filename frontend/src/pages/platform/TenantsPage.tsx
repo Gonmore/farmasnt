@@ -69,6 +69,7 @@ interface CustomersImportPreviewResponse {
   candidateRows: number;
   toCreate: number;
   skippedExisting: number;
+  skippedExistingRows: Array<{ row: number; nit: string | null; name: string; reason: string }>;
   errors: Array<{ row: number; message: string }>;
   preview: CustomersImportPreviewRow[];
 }
@@ -747,7 +748,10 @@ export function TenantsPage() {
             <div className="rounded border border-slate-200 bg-white p-4 text-sm dark:border-slate-700 dark:bg-slate-800">
               <div className="font-semibold text-slate-900 dark:text-slate-100">Clientes (CSV)</div>
               <div className="mt-1 text-slate-700 dark:text-slate-300">
-                Requerido: <span className="font-mono">name</span>. Mapeo: “Nombre” → name, “Nombre de contacto” → contactName (antes de “-”).
+                Formato A (CLIENTES_SANTA_CRUZ): Requerido <span className="font-mono">name</span>. Mapeo: "Nombre" → name, "Nombre de contacto" → contactName (antes de "-"). Se usan columnas CIUDAD, ZONA, DIRECCION, etc. para campos individuales.
+              </div>
+              <div className="mt-1 text-slate-700 dark:text-slate-300">
+                Formato B (CONTACTOS_FEBSA): columnas NOMBRE, NIT, DIRECCION, DEPARTAMENTO. DIRECCION combina zona+dirección+ciudad separados por " - "; la ciudad se extrae del último segmento.
               </div>
             </div>
 
@@ -861,10 +865,21 @@ export function TenantsPage() {
 
                 {importPreview.errors.length > 0 && (
                   <div className="mt-3 rounded bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-900/20 dark:text-amber-200">
-                    <div className="font-semibold">Ejemplos de errores</div>
-                    <ul className="mt-1 list-disc pl-5">
-                      {importPreview.errors.slice(0, 8).map((e, idx) => (
+                    <div className="font-semibold">Errores ({importPreview.errors.length})</div>
+                    <ul className="mt-1 list-disc pl-5 max-h-48 overflow-y-auto">
+                      {importPreview.errors.map((e, idx) => (
                         <li key={idx}>Fila {e.row}: {e.message}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {importPreview.skippedExistingRows && importPreview.skippedExistingRows.length > 0 && (
+                  <div className="mt-3 rounded bg-blue-50 p-3 text-sm text-blue-900 dark:bg-blue-900/20 dark:text-blue-200">
+                    <div className="font-semibold">Omitidos — ya existen en la base de datos ({importPreview.skippedExistingRows.length})</div>
+                    <ul className="mt-1 list-disc pl-5 max-h-48 overflow-y-auto">
+                      {importPreview.skippedExistingRows.map((s, idx) => (
+                        <li key={idx}>Fila {s.row}: {s.name} {s.nit ? `(NIT: ${s.nit})` : ''} — {s.reason}</li>
                       ))}
                     </ul>
                   </div>
@@ -881,6 +896,8 @@ export function TenantsPage() {
                           <th className="px-3 py-2">Contacto</th>
                           <th className="px-3 py-2">Teléfono</th>
                           <th className="px-3 py-2">Ciudad</th>
+                          <th className="px-3 py-2">Zona</th>
+                          <th className="px-3 py-2">Dirección</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -891,6 +908,8 @@ export function TenantsPage() {
                             <td className="px-3 py-2">{r.contactName || '—'}</td>
                             <td className="px-3 py-2">{r.phone || '—'}</td>
                             <td className="px-3 py-2">{r.city || '—'}</td>
+                            <td className="px-3 py-2">{r.zone || '—'}</td>
+                            <td className="px-3 py-2">{r.address || '—'}</td>
                           </tr>
                         ))}
                       </tbody>
