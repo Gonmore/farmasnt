@@ -19,6 +19,7 @@
 | Auth       | JWT (access token) + refresh token opaco hasheado |
 | Auditoría  | `AuditEvent` append-only (GxP-friendly) |
 | Storage    | S3-compatible (presigned URLs)          |
+| Geo        | GeoService: Nominatim + static Bolivia data (departments, cities) |
 | Deploy     | Docker + `deploy.sh`                    |
 | Base URL   | `http://127.0.0.1:6000` (dev)           |
 
@@ -40,11 +41,16 @@ backend/
 │   ├── application/
 │   │   ├── security/
 │   │   │   ├── rbac.ts        # Guards: requireAuth, requirePermission, requireModuleEnabled
-│   │   │   └── permissions.ts # Enum de códigos de permiso
+│   │   │   ├── permissions.ts # Enum de códigos de permiso
+│   │   │   ├── branch.ts      # ScopeBranch helpers: branchDepartmentsOf, branchWarehouseIdOf
+│   │   │   └── ensureSystemRoles.ts
 │   │   ├── audit/
 │   │   │   └── auditService.ts# Append-only AuditEvent
 │   │   ├── stock/
 │   │   │   └── stockMovementService.ts  # Transaccional: IN/OUT/TRANSFER/ADJUSTMENT
+│   │   ├── geo/
+│   │   │   ├── geoService.ts  # GeoService (Nominatim + static Bolivia data)
+│   │   │   └── types.ts       # Country, AdminLevel1, City, Address types
 │   │   └── shared/
 │   │       ├── sequence.ts    # TenantSequence (MSYYYY-N, SOLYY####, COT-YYYY####)
 │   │       └── productUnits.ts# formatPresentationLabel
@@ -53,8 +59,9 @@ backend/
 │   │   │   ├── auth.ts
 │   │   │   ├── catalog.ts     # GET /api/v1/catalog/search
 │   │   │   ├── products.ts    # CRUD productos, batches, presentaciones, recipe, kardex
-│   │   │   ├── warehouses.ts  # CRUD warehouses/locations
+│   │   │   ├── warehouses.ts  # CRUD warehouses/locations + served-departments
 │   │   │   ├── stock.ts       # Movimientos, balances, movimientos-requests, returns, repack
+│   │   │   ├── geo.ts         # Georef API: countries, admin-level1, cities, reverse, resolve-department
 │   │   │   ├── customers.ts   # CRUD customers
 │   │   │   ├── salesOrders.ts # Quotes, Orders, Deliveries, reservas, pagos
 │   │   │   ├── salesQuotes.ts # Cotizaciones + sub-warehouses + available-batches
@@ -73,7 +80,8 @@ backend/
 │   ├── db/
 │   │   └── prisma.ts          # Cliente Prisma singleton
 │   └── shared/
-│       └── env.ts             # Validación de env vars
+│       ├── env.ts             # Validación de env vars
+│       └── geo.ts             # cityToDepartment, isValidDepartment (delegates to GeoService)
 ├── package.json
 └── .env.example
 ```
@@ -94,7 +102,9 @@ frontend/src/
 │   ├── numberFormat.ts        # Formateo numérico con thousandSeparator
 │   ├── productName.ts         # Formateo presentaciones/cantidades
 │   ├── productSorting.ts      # Orden alfabético por nombre
-│   └── catalogPdf.tsx         # Exportación PDF del catálogo comercial (brochure resumido/extendido, jsPDF)
+│   ├── catalogPdf.tsx         # Exportación PDF del catálogo comercial (brochure resumido/extendido, jsPDF)
+│   ├── geo.ts                 # Frontend geo utilities
+│   └── geoService.ts          # Frontend wrapper for GeoService API calls
 ├── hooks/
 │   ├── usePermissions.ts      # usePermissions() → /api/v1/auth/me
 │   ├── useNavigation.ts       # Navegación filtrada por permisos
@@ -106,6 +116,7 @@ frontend/src/
 │   └── ThemeProvider.tsx      # Dark/light mode
 ├── components/
 │   ├── common/                # Reutilizables: MainLayout, PageContainer, Button, Modal, etc.
+│   ├── geo/                   # Georef components: CountrySelector, AdminLevel1Selector, CitySelector, MapSelector
 │   ├── reports/               # Componentes de reportes (KPICard, ReportSection, docs)
 │   ├── ui/                    # Componentes base (Input, Select, Table)
 │   └── index.ts               # Barrel exports
@@ -331,11 +342,12 @@ frontend/src/
 | `Product` | `batches`, `presentations`, `recipe`, `balances` | Catálogo |
 | `ProductPresentation` | `product` | Unidad de medida estructurada (unique: tenantId+productId+name+unitsPerPresentation) |
 | `Batch` | `product`, `presentation`, `balances` | Lotes con vencimiento (FEFO) |
-| `Warehouse` | `locations`, `users` | Almacén/sucursal |
+| `Warehouse` | `locations`, `users`, `servedDepartments` | Almacén/sucursal. Nuevo campo `department` (auto-asignado desde `city` via GeoService). |
+| `WarehouseServedDepartment` | `warehouse` | Departamentos adicionales que un almacén SALES puede servir (multi-departamento). Unique: tenantId+warehouseId+department, tenantId+department. |
 | `Location` | `warehouse`, `balances` | Ubicación física (BIN/SHELF/FLOOR/SUB_ALMACEN) |
 | `InventoryBalance` | `location`, `product`, `batch` | Stock por ubicación-lote |
 | `StockMovement` | `product`, `batch`, `presentation`, `from/toLocation` | IN/OUT/TRANSFER/ADJUSTMENT (numerado MSYYYY-N) |
-| `StockMovementRequest` | `warehouse`, `toLocation`, `items` | Solicitudes con código SOLYY#### + estado OPEN/SENT/FULFILLED/CANCELLED |
+| `StockMovementRequest` | `warehouse`, `toLocation`, `items` | Solicitudes con código SOLYY#### + estado OPEN/SENT/FULFILLED/CANCELLED. Nuevo `requestedDepartment`. |
 | `StockReturn` | `toLocation`, `items` | Devoluciones + IN movimientos |
 | `SalesOrder` | `customer`, `quote`, `lines`, `reservations` | Órdenes de venta (DRAFT/CONFIRMED/FULFILLED/CANCELLED) |
 | `SalesOrderLine` | `salesOrder`, `product`, `batch`, `presentation` | Líneas de orden |
@@ -343,14 +355,14 @@ frontend/src/
 | `Quote` | `customer`, `lines` | Cotizaciones (CREATED/PROCESSED) |
 | `AuditEvent` | — | Append-only auditoría GxP |
 | `TenantSequence` | — | Secuenciación por tenant+año |
-| `Notification` | `warehouse` (v2.3.0) | Campana de notificaciones, filtrada por `warehouseId` (no `city`) para multi-sucursal |
+| `Notification` | `warehouse` (v2.3.0), `department` (v2.4.0) | Campana de notificaciones, filtrada por `warehouseId` (no `city`) para multi-sucursal. `department` para filtrado legacy. |
 
 ---
 
 ## 5. Reglas de negocio críticas
 
-1. **Multi-tenant**: todas las queries filtran por `tenantId`. El `request.auth` incluye `tenantId`, `userId`, `permissions`, `isTenantAdmin`, `warehouseId`, `warehouseCity`.
-2. **ScopeBranch y discriminación por `warehouseId`**: usuarios con `Permissions.ScopeBranch` solo pueden ver/editar **su propia sucursal**. **El discriminante operativo es `warehouseId`, NO `city`** (Febsa opera con `SUC-LPZ` SALES y `SUC-NACIONAL` PROVIDER en la misma ciudad `LA PAZ`; un filtro por ciudad mezclaba locations/inventario entre ambas). En reportes de stock (`/api/v1/reports/stock/*`) el backend fuerza el `warehouseId` al almacén propio del usuario (`resolveBranchWarehouseId`); los admins sin scope de sucursal conservan el selector "Sucursal" (vacío = todas). `TENANT_ADMIN` y platform admin no se ven afectados. En inventario, un usuario con scope de sucursal solo puede **editar** (ubicación/estado de lote) su propio almacén (`canEditWarehouse`); el resto de almacenes se muestra en solo lectura (UI) y el backend rechaza `403` ADJUSTMENT/IN hacia almacenes ajenos. El rol `BRANCH_PROVIDER` (almacén tipo `PROVIDER`) ve TODAS las solicitudes de transferencia sin filtro de ciudad (operación) pero solo edita/solo ve su propio almacén en reportes. **Excepción correcta al filtrado por ciudad**: `Customer.city` y `SalesOrder.deliveryCity` (los clientes son por ciudad, no por sucursal).
+1. **Multi-tenant**: todas las queries filtran por `tenantId`. El `request.auth` incluye `tenantId`, `userId`, `permissions`, `isTenantAdmin`, `warehouseId`, `warehouseCity`, `warehouseDepartments`, `warehouseType`.
+2. **ScopeBranch y discriminación por `warehouseId` + `department`**: usuarios con `Permissions.ScopeBranch` solo pueden ver/editar **su propia sucursal**. El discriminante operativo es `warehouseId`, NO `city` (Febsa opera con `SUC-LPZ` SALES y `SUC-NACIONAL` PROVIDER en la misma ciudad `LA PAZ`). Los usuarios SALES branch-scoped reciben `warehouseDepartments` (su `Warehouse.department` + `WarehouseServedDepartment`) para filtrar solicitudes/notificaciones por **departamento** (no por ciudad). El rol `BRANCH_PROVIDER` (almacén tipo `PROVIDER`) ve TODAS las solicitudes sin filtro de ciudad. `GeoService` (`backend/src/application/geo/`) proporciona resolución estática de ciudades→departamentos para Bolivia y georeferenciación Nominatim (config vía `NOMINATIM_BASE_URL`, `NOMINATIM_EMAIL`, `NOMINATIM_RATE_LIMIT_MS`).
 3. **Optimistic locking**: `version` en `Product`, `Batch`, `Tenant`, `TenantModule`, `Role`, `User`, etc. Retorna `409` si no coincide.
 4. **FEFO**: los movimientos `OUT`/`TRANSFER` priorizan lotes con `expiresAt` más próximo. Se bloquean movimientos de lotes vencidos.
 5. **Presentaciones**: las cantidades en UI se expresan en presentación (cajas); el backend convierte a unidades base usando `unitsPerPresentation`.

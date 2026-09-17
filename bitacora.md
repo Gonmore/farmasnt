@@ -1,8 +1,56 @@
 # Bitácora de desarrollo — PharmaFlow Bolivia (farmaSNT)
 
-> Última actualización: 07 Sep 2026
+> Última actualización: 17 Sep 2026
 
 Este documento suma (a alto nivel) decisiones, hitos y cambios relevantes que se fueron incorporando al repositorio para llegar al estado actual del MVP.
+
+---
+
+## **[17 Sep 2026] Rama multiciudad: departamentos, GeoService, WarehouseServedDepartment**
+
+### Contexto
+- Refactorización de la discriminación por `city` ? `department` en todo el stack, habilitando soporte multi-departamento dentro de una ciudad y georeferenciación vía Nominatim.
+- Migration `20260914000000_warehouse_served_department` es **non-destructive** (columnas nullable + backfill estático de ciudades bolivianas ? departamentos).
+- Branch-scoped usuarios SALES ahora reciben `warehouseDepartments` en `AuthContext` (= `Warehouse.department` + `WarehouseServedDepartment`), y las queries operativas/reportes filtran por `department` en lugar de `city`.
+- `BRANCH_PROVIDER` (almacén tipo PROVIDER) ve todas las solicitudes sin filtro de ciudad, manteniendo autonomía solo en reportes de stock.
+
+### Cambios principales
+
+#### Schema Prisma (`20260914000000_warehouse_served_department`)
+- Nueva tabla `WarehouseServedDepartment` (tenantId+warehouseId+department, unique tenantId+department).
+- Nuevas columnas nullable `department` en: `Warehouse`, `Customer`, `Quote`, `SalesOrder`, `Notification`, `StockMovementRequest`, `SupplyPurchaseList`.
+- Backfill: mapea ciudades bolivianas conocidas ? departamentos (9 departamentos). Unalmacenamiento SALES recibe automáticamente su `WarehouseServedDepartment` con su propio `department`.
+- Nuevos índices: `StockMovementRequest.tenantId_requestedDepartment`, `StockMovementRequest.tenantId_requestedDepartment_status`, `Notification.tenantId_department_createdAt`.
+
+#### Backend
+- **`backend/src/application/geo/geoService.ts`**: GeoService con datos estáticos de Bolivia (9 departamentos, 11 ciudades) + integración Nominatim para otros países. Configuración vía env vars: `NOMINATIM_BASE_URL`, `NOMINATIM_EMAIL`, `NOMINATIM_RATE_LIMIT_MS`.
+- **`backend/src/shared/geo.ts`**: funciones `cityToDepartment`, `isValidDepartment`, `resolveDepartmentForCity` (delega a GeoService).
+- **`backend/src/application/security/branch.ts`**: helpers `branchDepartmentsOf`, `branchDepartmentsOfMissing`, `branchWarehouseIdOf`, `branchWarehouseIdOfMissing` — usados en lugar del antiguo `branchCityOf`.
+- **`backend/src/adapters/http/server.ts`**: `AuthContext` ahora incluye `warehouseDepartments` (resolviendo `WarehouseServedDepartment` para usuarios SALES branch-scoped). Se registra `registerGeoRoutes(app)`.
+- **`backend/src/adapters/http/routes/geo.ts`** (nuevo): endpoints `/api/v1/geo/countries`, `/countries/:code`, `/admin-level1`, `/cities`, `/reverse`, `/currency/:code`, `/resolve-department`.
+- **`backend/src/adapters/http/routes/warehouses.ts`**: 
+  - `GET /api/v1/warehouses` ahora retorna `department` y `servedDepartments`.
+  - `POST /api/v1/warehouses` resuelve `department` desde `city` y crea `WarehouseServedDepartment` para SALES.
+  - `PATCH /api/v1/warehouses/:id` actualiza `department` al cambiar `city` y sincroniza el `WarehouseServedDepartment`.
+  - Nuevos endpoints: `GET/POST/DELETE/PATCH /api/v1/warehouses/:id/served-departments/:department`, `GET /api/v1/warehouses/by-department/:department/locations`.
+- **`backend/src/adapters/http/routes/customers.ts`**: `GET /api/v1/customers` ahora filtra por `department` (usando `branchDepartmentsOf` o resolviendo desde `cities` param). Nuevo endpoint `GET /api/v1/customers/branch-departments`.
+- **`backend/src/adapters/http/routes/stock.ts`**: `branchDepartmentsOf`/`branchWarehouseIdOf` reemplazan a `branchCityOf` en 18+ endpoints.
+- **`backend/src/adapters/http/routes/notifications.ts`**: filtro prioriza `warehouseId` y `department` (no `city`).
+
+#### Frontend
+- `frontend/src/components/geo/`: `CountrySelector`, `AdminLevel1Selector`, `CitySelector`, `MapSelector` reubicados.
+- `frontend/src/lib/geoService.ts`: wrapper de API calls a `/api/v1/geo/*`.
+- `frontend/src/hooks/usePermissions.ts`: expone `warehouseDepartments`, `warehouseType`.
+- `frontend/src/pages/warehouse/WarehousesPage.tsx`: panel de departamentos servidos por sucursal.
+
+### Operación
+- TypeScript check OK (backend + frontend).
+- `npx prisma generate` OK (cliente regenerado con `WarehouseServedDepartment`).
+- Migration es **non-destructive**: columnas nullable, backfill estático (offline, sin API keys).
+- `deploy.sh` aplica la migration vía `prisma migrate deploy`.
+- Env vars nuevas (opcionales): `NOMINATIM_BASE_URL`, `NOMINATIM_EMAIL`, `NOMINATIM_RATE_LIMIT_MS`.
+- `ensureSystemRoles.ts` ya sembraba `BRANCH_PROVIDER` (desde v2.2.1).
+- Documentado en `ARCHITECTURE.md` y `API_REFERENCE.md`.
 
 ---
 

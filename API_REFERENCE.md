@@ -575,7 +575,98 @@ Response 200
 
 ---
 
-## Products
+## Geo / Georeferencing
+Requires JWT + permiso `catalog:read`.
+
+### GET /api/v1/geo/countries
+Query
+- `q` (string, opcional, min 2 chars) — filtra por nombre o código.
+- `take` (1..50, default 20)
+
+Response 200
+```json
+{
+  "items": [{ "code": "BO", "code3": "BOL", "name": "Bolivia", "currency": "BOB", "phoneCode": "+591" }]
+}
+```
+
+### GET /api/v1/geo/countries/:code
+Response 200
+```json
+{ "code": "BO", "code3": "BOL", "name": "Bolivia", "currency": "BOB", "phoneCode": "+591" }
+```
+
+### GET /api/v1/geo/admin-level1
+Query
+- `countryCode` (2-char ISO, requerido)
+- `q` (string, opcional)
+- `take` (1..50, default 50)
+
+Response 200
+```json
+{
+  "items": [{ "code": "BO03", "name": "La Paz", "countryCode": "BO", "type": "department" }]
+}
+```
+
+### GET /api/v1/geo/cities
+Query
+- `countryCode` (2-char ISO, requerido)
+- `adminLevel1Code` (string, opcional) — filtra ciudades por departamento/región.
+- `q` (string, opcional)
+- `take` (1..50, default 50)
+
+Response 200
+```json
+{
+  "items": [{ "id": "BO-LAPAZ-001", "name": "La Paz", "adminLevel1Code": "BO03", "countryCode": "BO", "lat": -16.4897, "lng": -68.1193, "population": 2729072, "featureType": "city" }]
+}
+```
+
+### GET /api/v1/geo/reverse
+Query
+- `lat` (float -90..90, requerido)
+- `lng` (float -180..180, requerido)
+
+Response 200
+```json
+{
+  "formatted": "Av. Arce #123, La Paz, Bolivia",
+  "country": { "code": "BO", "code3": "BOL", "name": "Bolivia", "currency": "BOB", "phoneCode": "+591" },
+  "lat": -16.4897,
+  "lng": -68.1193,
+  "adminLevel1": { "code": "BO03", "name": "La Paz", "countryCode": "BO", "type": "department" },
+  "city": { "id": "BO-LAPAZ-001", "name": "La Paz", "adminLevel1Code": "BO03", "countryCode": "BO", "lat": -16.4897, "lng": -68.1193, "featureType": "city" }
+}
+```
+
+### GET /api/v1/geo/currency/:code
+Query — `code` es el código de país (2-char ISO).
+
+Response 200
+```json
+{ "currency": "BOB" }
+```
+
+### GET /api/v1/geo/resolve-department
+Query
+- `city` (string, requerido)
+- `countryCode` (2-char ISO, opcional)
+
+Response 200
+```json
+{ "department": "LA PAZ" }
+```
+
+Notas
+- Usa datos estáticos para Bolivia (ciudades conocidas → departamentos) y Nominatim como fallback para otros países.
+- `department` es `null` si no se pudo resolver.
+
+---
+
+## Customers
+
+### GET /api/v1/customers
 Requiere permisos `catalog:*`.
 
 ### POST /api/v1/products
@@ -1191,14 +1282,99 @@ Query
 Response 200
 ```json
 {
-  "items": [{ "id": "...", "code": "SUC-01", "name": "Almacén", "city": "LA PAZ", "isActive": true, "type": "SALES", "version": 1, "updatedAt": "...", "totalQuantity": "10" }],
+  "items": [{ "id": "...", "code": "SUC-01", "name": "Almacén", "city": "LA PAZ", "department": "LA PAZ", "isActive": true, "type": "SALES", "version": 1, "updatedAt": "...", "totalQuantity": "10", "servedDepartments": ["LA PAZ", "COCHABAMBA"] }],
   "nextCursor": "..."
 }
 ```
 
 Notas
 - `totalQuantity` es la suma de `InventoryBalance.quantity` de todas las ubicaciones del almacén.
+- `servedDepartments` es el arreglo de departamentos que el almacén SALES puede servir (incluye su propio `department`).
 - Para ver **qué productos/lotes** componen ese stock, usar el reporte `GET /api/v1/reports/stock/balances-expanded?warehouseId=...`.
+
+### GET /api/v1/warehouses/:id/served-departments
+Requiere permisos: módulo `WAREHOUSE` + `stock:read`.
+
+Lista los departamentos servidos por un almacén (activos, ordenados alfabéticamente).
+
+Response 200
+```json
+{
+  "items": ["LA PAZ", "COCHABAMBA"]
+}
+```
+
+### POST /api/v1/warehouses/:id/served-departments
+Requiere permiso: `stock:manage`.
+
+Agrega un departamento servido a un almacén. El departamento del propio almacén (`Warehouse.department`) siempre se incluye y no puede eliminarse.
+
+Body
+```json
+{
+  "department": "COCHABAMBA"
+}
+```
+
+Response 201
+```json
+{
+  "id": "...",
+  "department": "COCHABAMBA",
+  "isActive": true,
+  "createdAt": "...",
+  "updatedAt": "..."
+}
+```
+
+Notas
+- `409` si el departamento ya está asignado a este almacén o a otro almacén del mismo tenant.
+
+### DELETE /api/v1/warehouses/:id/served-departments/:department
+Requiere permiso: `stock:manage`.
+
+Desvincula (soft-delete) un departamento servido del almacén. El departamento principal del almacén no puede eliminarse.
+
+Response 200
+```json
+{ "success": true }
+```
+
+Notas
+- `409` si intenta eliminar el `department` principal del almacén.
+- `404` si el departamento no está asignado al almacén.
+
+### PATCH /api/v1/warehouses/:id/served-departments
+Requiere permiso: `stock:manage`.
+
+Reemplaza la lista de departamentos servidos del almacén (soft-delete de los anteriores, crea los nuevos). El `department` principal del almacén se incluye automáticamente.
+
+Body
+```json
+{
+  "departments": ["LA PAZ", "COCHABAMBA", "SANTA CRUZ"]
+}
+```
+
+Response 200
+```json
+{
+  "items": ["COCHABAMBA", "LA PAZ", "SANTA CRUZ"]
+}
+```
+
+### GET /api/v1/warehouses/by-department/:department/locations
+Requiere permisos: módulo `WAREHOUSE` + `stock:read`.
+
+Resuelve el almacén que sirve un departamento (propio `Warehouse.department` o `WarehouseServedDepartment`) y lista sus `SUB_ALMACEN` activas.
+
+Response 200
+```json
+{
+  "items": [{ "id": "...", "code": "Institucional", "type": "SUB_ALMACEN", "warehouse": { "id": "...", "code": "SUC-LPZ", "name": "LA PAZ" } }],
+  "warehouse": { "id": "...", "name": "LA PAZ", "code": "SUC-LPZ", "city": "LA PAZ", "department": "LA PAZ", "type": "SALES" }
+}
+```
 
 ### GET /api/v1/warehouses/sub-locations
 Query
@@ -1248,15 +1424,19 @@ Response 201
   "code": "SUC-01",
   "name": "Sucursal Central",
   "city": "LA PAZ",
+  "department": "LA PAZ",
   "isActive": true,
+  "type": "SALES",
   "version": 1,
   "updatedAt": "...",
-  "totalQuantity": "0"
+  "totalQuantity": "0",
+  "servedDepartments": ["LA PAZ"]
 }
 ```
 
 Notas
 - Crea automáticamente una ubicación por defecto (`BIN-01`, tipo `BIN`) en la sucursal.
+- Para almacenes tipo `SALES`, se crea automáticamente un `WarehouseServedDepartment` con el `department` resuelto desde `city` (via GeoService).
 - `409` si el código ya existe (único por tenant).
 - `409` si el tenant no tiene configurado `country` (ver `PATCH /api/v1/tenant/branding`).
 - El código debe comenzar con "SUC-" y contener solo letras mayúsculas y números después del prefijo.
@@ -1279,10 +1459,12 @@ Response 200
   "code": "SUC-01",
   "name": "Sucursal Central",
   "city": "LA PAZ",
+  "department": "LA PAZ",
   "isActive": true,
   "version": 2,
   "updatedAt": "...",
-  "totalQuantity": "10"
+  "totalQuantity": "10",
+  "servedDepartments": ["LA PAZ", "COCHABAMBA"]
 }
 ```
 
@@ -2088,6 +2270,18 @@ Response 200
 ## Customers
 Requiere: módulo `SALES`.
 
+### GET /api/v1/customers/branch-departments
+Requiere permiso: `sales:order:read`.
+
+Lista los departamentos que tienen al menos un almacén activo (para restringir valores de `department` en clientes).
+
+Response 200
+```json
+{
+  "items": ["LA PAZ", "COCHABAMBA", "SANTA CRUZ"]
+}
+```
+
 ### POST /api/v1/customers
 Requiere permiso: `sales:order:write`.
 
@@ -2100,6 +2294,7 @@ Body
   "phone": "...",
   "address": "...",
   "city": "LA PAZ",
+  "department": "LA PAZ",
   "zone": "ZONA SUR",
   "mapsUrl": "https://maps.google.com/?q=...",
   "creditDays7Enabled": false,
@@ -2117,6 +2312,7 @@ Response 201
   "phone": "...",
   "address": "...",
   "city": "LA PAZ",
+  "department": "LA PAZ",
   "zone": "ZONA SUR",
   "mapsUrl": "https://maps.google.com/?q=...",
   "creditDays7Enabled": false,
@@ -2134,6 +2330,7 @@ Query
 - `take` (1..50, default 20)
 - `cursor` (uuid, opcional)
 - `q` (string, opcional; filtra por name)
+- `cities` (string, opcional; lista de ciudades separadas por coma → resuelve a departamentos y filtra por `Customer.department`)
 
 Response 200
 ```json
@@ -2146,6 +2343,7 @@ Response 200
       "email": null,
       "phone": null,
       "city": "LA PAZ",
+      "department": "LA PAZ",
       "zone": "ZONA SUR",
       "mapsUrl": null,
       "isActive": true,
@@ -2167,9 +2365,10 @@ Requiere permiso: `sales:order:write`.
 
 Body
 - `version` requerido
-- campos opcionales: `name`, `nit`, `email`, `phone`, `address`, `city`, `zone`, `mapsUrl`, `isActive`, `creditDays7Enabled`, `creditDays14Enabled`
+- campos opcionales: `name`, `nit`, `email`, `phone`, `address`, `city`, `department`, `zone`, `mapsUrl`, `isActive`, `creditDays7Enabled`, `creditDays14Enabled`
 
 Notas
+- `department` (v2.4.0) es el departamento al que pertenece la ciudad; el backend lo resuelve automáticamente desde `city` si no se envía (via GeoService).
 - `409` si `version` no coincide.
 
 ---
