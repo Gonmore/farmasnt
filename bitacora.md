@@ -1924,6 +1924,11 @@ Tenant Admin (Clientes)
 - TypeScript check OK en backend y frontend.
 - No se requiere migración (el permiso se crea/actualiza vía `ensureSystemRoles` al iniciar el servidor).
 
+### Fix: navegación lateral
+- `useNavigation.ts`: agregado `else if` para mostrar "Sistema > Usuarios" en el menú lateral 
+  para usuarios con `admin:users:manage-branch` (BRANCH_ADMIN). Antes el grupo "Sistema" 
+  era exclusivo de `isTenantAdmin`.
+
 ---
 
 ## **[02 Sep 2026] Fix: cross-city batch selection en procesamiento de cotización**
