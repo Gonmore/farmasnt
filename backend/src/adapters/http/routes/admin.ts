@@ -599,6 +599,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
             additionalProperties: false,
           },
           400: errorResponseSchema,
+          403: errorResponseSchema,
           409: errorResponseSchema,
         },
       },

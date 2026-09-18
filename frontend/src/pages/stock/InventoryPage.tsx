@@ -800,7 +800,10 @@ export function InventoryPage() {
   const perms = usePermissions()
   const queryClient = useQueryClient()
 
-  const canSeeBatchFlow = perms.hasPermission('stock:read') && perms.hasPermission('catalog:read')
+  // Branch sellers (sin stock:move / stock:manage) no ven el flujo de lote ni pueden
+  // cambiar ubicaciones de existencias; solo ver niveles de stock.
+  const canOperateStock = perms.hasPermission('stock:move') || perms.hasPermission('stock:manage')
+  const canSeeBatchFlow = canOperateStock && perms.hasPermission('stock:read') && perms.hasPermission('catalog:read')
   const canChangeBatchStatus = perms.hasPermission('stock:manage')
 
   // Usuarios de sucursal (scope:branch) solo pueden editar su propio almacén;
@@ -808,7 +811,7 @@ export function InventoryPage() {
   const isBranchScoped = perms.hasPermission('scope:branch') && !perms.isTenantAdmin
   const userWarehouseId = perms.warehouseId ?? null
   const canEditWarehouse = (warehouseId: string | undefined): boolean =>
-    !isBranchScoped || !userWarehouseId || warehouseId === userWarehouseId
+    canOperateStock && (!isBranchScoped || !userWarehouseId || warehouseId === userWarehouseId)
 
   const [groupBy, setGroupBy] = useState<'product' | 'warehouse'>('product')
   const [showZeroStock, setShowZeroStock] = useState(false)
@@ -1698,20 +1701,22 @@ export function InventoryPage() {
                               <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">Genérico: {prod.genericName}</div>
                             ) : null}
                             <div className="flex items-center gap-3">
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                icon={<TableCellsIcon />}
-                                onClick={() => {
-                                  setKardexProductId(prod.productId)
-                                  setKardexWarehouseId(wg.warehouseId)
-                                  setKardexModalOpen(true)
-                                }}
-                                className="h-7 text-xs"
-                                title="Ver kardex de este producto en esta sucursal"
-                              >
-                                Kardex
-                              </Button>
+                              {canOperateStock && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  icon={<TableCellsIcon />}
+                                  onClick={() => {
+                                    setKardexProductId(prod.productId)
+                                    setKardexWarehouseId(wg.warehouseId)
+                                    setKardexModalOpen(true)
+                                  }}
+                                  className="h-7 text-xs"
+                                  title="Ver kardex de este producto en esta sucursal"
+                                >
+                                  Kardex
+                                </Button>
+                              )}
                               <div className="text-right">
                                 <div className="text-lg font-semibold text-slate-700 dark:text-slate-300">
                                   {formatTotalsFromBatches(prod.batches, 'availableQuantity')}

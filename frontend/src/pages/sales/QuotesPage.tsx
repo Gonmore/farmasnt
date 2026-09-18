@@ -138,8 +138,10 @@ export function QuotesPage() {
    const auth = useAuth()
    const navigate = useNavigate()
    const navGroups = useNavigation()
-   const permissions = usePermissions()
-   const userWarehouseId = permissions.warehouseId ?? null
+  const permissions = usePermissions()
+  const userWarehouseId = permissions.warehouseId ?? null
+  const currentUserId = permissions.user?.id ?? null
+  const isBranchSeller = permissions.isBranchSeller
   const queryClient = useQueryClient()
   const notifications = useNotifications()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -239,7 +241,7 @@ export function QuotesPage() {
   const openProcessModal = (quoteId: string) => {
     setProcessModalQuoteId(quoteId)
     setProcessLocationId('')
-    setProcessSellerId('')
+    setProcessSellerId(isBranchSeller && currentUserId ? currentUserId : '')
     setLineBatchSelections({})
     processMutation.reset()
   }
@@ -403,16 +405,21 @@ export function QuotesPage() {
             {quoteDetailQuery.data && (
               <>
                 <Select
-                  label="Vendedor encargado (Opcional)"
+                  label="Vendedor encargado"
                   value={processSellerId}
                   onChange={(e) => setProcessSellerId(e.target.value)}
-                  options={[
-                    { value: '', label: 'Asignar automáticamente (creador de cotización)' },
-                    ...(usersQuery.data?.items ?? []).map((u) => ({
-                      value: u.id,
-                      label: u.fullName || u.email,
-                    })),
-                  ]}
+                  options={isBranchSeller && currentUserId
+                    ? [
+                        { value: currentUserId, label: `${permissions.user?.fullName ?? permissions.user?.email ?? ''} (usted)` },
+                      ]
+                    : [
+                        { value: '', label: 'Asignar automáticamente (creador de cotización)' },
+                        ...(usersQuery.data?.items ?? []).map((u) => ({
+                          value: u.id,
+                          label: u.fullName || u.email,
+                        })),
+                      ]}
+                  disabled={isBranchSeller}
                 />
 
                 <Select
