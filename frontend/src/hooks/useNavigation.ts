@@ -138,7 +138,7 @@ export function useNavigation(): NavGroup[] {
     })
   }
 
-  // Sistema (solo Tenant Admin)
+  // Sistema
   if (isTenantAdmin) {
     const systemItems = [] as Array<{ to: string; label: string }>
     systemItems.push({ to: '/warehouse/warehouses', label: '🏬 Sucursales' })
@@ -151,6 +151,11 @@ export function useNavigation(): NavGroup[] {
     if (systemItems.length > 0) {
       groups.push({ title: 'Sistema', items: systemItems })
     }
+  } else if (hasPermission('admin:users:manage-branch')) {
+    groups.push({
+      title: 'Sistema',
+      items: [{ to: '/admin/users', label: '👤 Usuarios' }],
+    })
   }
 
   return groups;
