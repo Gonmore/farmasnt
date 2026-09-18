@@ -1929,6 +1929,31 @@ Tenant Admin (Clientes)
   para usuarios con `admin:users:manage-branch` (BRANCH_ADMIN). Antes el grupo "Sistema" 
   era exclusivo de `isTenantAdmin`.
 
+
+## **[18 Sep 2026] BRANCH_SELLER: restricciones de UI en inventario y ventas**
+
+### Contexto
+- El vendedor de sucursal (BRANCH_SELLER) creado por el Branch Admin necesita permisos restrictivos:
+  no debe mover stock, ver kardex ni el flujo de lotes, y al procesar cotizaciones debe ser 
+  seleccionado automáticamente como vendedor encargado.
+
+### Cambios
+
+#### Backend
+- Ningún cambio (las restricciones se aplican en la UI; el backend ya valida permisos correctamente).
+
+#### Frontend
+- **`InventoryPage.tsx`**:
+  - Nueva variable `canOperateStock` = `stock:move` OR `stock:manage`.
+  - `canSeeBatchFlow` ahora requiere `canOperateStock` (BRANCH_SELLER no ve "Ver flujo" de lotes).
+  - `canEditWarehouse` ahora requiere `canOperateStock` (BRANCH_SELLER no puede cambiar ubicaciones).
+  - Botón "Kardex" oculto para usuarios sin `canOperateStock`.
+- **`QuotesPage.tsx`**:
+  - Al abrir el modal de "Procesar cotización", si el usuario es BRANCH_SELLER, el `processSellerId` 
+    se preselecciona como el usuario actual.
+  - El `Select` de "Vendedor encargado" muestra únicamente al usuario actual (disabled) para 
+    BRANCH_SELLER; para otros roles mantiene el comportamiento anterior (asignación automática + lista).
+
 ---
 
 ## **[02 Sep 2026] Fix: cross-city batch selection en procesamiento de cotización**
