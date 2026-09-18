@@ -456,7 +456,7 @@ export function AppRouter() {
         <Route
           path="/admin/users"
           element={
-            <ProtectedRoute requiredPermissions={['admin:users:manage']} denyPermissionCodes={['scope:branch']}>
+            <ProtectedRoute requiredPermissions={['admin:users:manage', 'admin:users:manage-branch']} requireAll={false}>
               <UsersPage />
             </ProtectedRoute>
           }

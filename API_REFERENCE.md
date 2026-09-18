@@ -130,6 +130,7 @@ Códigos usados por los guards:
 - `sales:order:read`, `sales:order:write`
 - `sales:delivery:read`, `sales:delivery:write`
 - `admin:users:manage`
+- `admin:users:manage-branch`
 - `audit:read`
 - `report:sales:read`, `report:stock:read`
 - `platform:tenants:manage`
@@ -2926,7 +2927,10 @@ Realtime emit
 ---
 
 ## Admin (multirol)
-Requiere permiso: `admin:users:manage`.
+- `admin:users:manage`: acceso completo a usuarios/roles (Tenant Admin / Platform Admin).
+- `admin:users:manage-branch`: administrador de sucursal (BRANCH_ADMIN) — puede crear vendedores (BRANCH_SELLER) 
+  para su propia sucursal, listar usuarios de su almacén, activar/desactivar y resetear contraseñas de 
+  usuarios en su sucursal. No puede gestionar roles arbitrarios ni acceso multi-empresa.
 
 ### GET /api/v1/admin/permissions
 Lista el catálogo de permisos.
@@ -2960,7 +2964,11 @@ Body
 ```
 
 Notas
+- Requiere `admin:users:manage` (Tenant Admin) o `admin:users:manage-branch` (Branch Admin).
+- BRANCH_ADMIN: solo puede asignar el rol `BRANCH_SELLER`; el `warehouseId` se fuerza al almacén 
+  asignado del administrador. Si no se envía `roleIds`, se asigna `BRANCH_SELLER` automáticamente.
 - `409` si el email ya existe.
+- PUT /roles requiere `admin:users:manage` (exclusivo Tenant Admin).
 
 ### PUT /api/v1/admin/users/:id/roles
 Body

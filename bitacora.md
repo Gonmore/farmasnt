@@ -1,6 +1,6 @@
 # Bitácora de desarrollo — PharmaFlow Bolivia (farmaSNT)
 
-> Última actualización: 17 Sep 2026
+> Última actualización: 18 Sep 2026
 
 Este documento suma (a alto nivel) decisiones, hitos y cambios relevantes que se fueron incorporando al repositorio para llegar al estado actual del MVP.
 
@@ -1881,6 +1881,48 @@ Tenant Admin (Clientes)
 ### Operación
 - TypeScript check OK en backend (`npx tsc --noEmit`).
 - Sin migraciones Prisma nuevas.
+
+
+## **[18 Sep 2026] Branch Admin: crear vendedores para su sucursal**
+
+### Contexto
+- Los administradores de sucursal (BRANCH_ADMIN) ahora pueden crear vendedores (BRANCH_SELLER) 
+  asignados a su propia sucursal, sin necesidad de elevar permisos a Tenant Admin.
+- Antes: solo usuarios con `admin:users:manage` (Tenant Admin / Platform Admin) podían acceder a 
+  `/api/v1/admin/users` y crear usuarios con cualquier rol.
+
+### Cambios
+
+#### Backend
+- **Permiso nuevo**: `admin:users:manage-branch` (`Permissions.AdminUsersManageBranch` en `permissions.ts`).
+- `ensureSystemRoles.ts`: el rol `BRANCH_ADMIN` ahora recibe `admin:users:manage-branch`.
+- `admin.ts`:
+  - `POST /api/v1/admin/users`: accesible con `admin:users:manage` (Tenant Admin, acceso completo) 
+    o `admin:users:manage-branch` (Branch Admin). Branch Admin está restringido a:
+    - Asignar únicamente el rol `BRANCH_SELLER` (cualquier otro rol ? `403`).
+    - `warehouseId` forzado al almacén asignado del Branch Admin (se ignora el enviado).
+    - Si no se envía `roleIds`, se asigna `BRANCH_SELLER` automáticamente.
+  - `GET /api/v1/admin/users`: Branch Admin ve solo usuarios de su `warehouseId`.
+  - `PATCH /api/v1/admin/users/:id/status` y `POST /api/v1/admin/users/:id/reset-password`: 
+    Branch Admin solo puede actuar sobre usuarios de su `warehouseId` (404 si no pertenece).
+  - `PUT /api/v1/admin/users/:id/roles`: mantiene `admin:users:manage` (exclusivo Tenant Admin).
+
+#### Frontend
+- `AppRouter.tsx`: la ruta `/admin/users` ahora acepta `admin:users:manage` **o** `admin:users:manage-branch` 
+  (`requireAll={false}`); se eliminó `denyPermissionCodes=['scope:branch']`.
+- `UsersPage.tsx`:
+  - Branch Admin solo ve el rol `BRANCH_SELLER` en el formulario de creación (radio disabled).
+  - Se muestra el nombre de la sucursal en el formulario de creación.
+  - Se ocultan los botones "Roles" y "Empresas" para Branch Admin.
+  - Auto-selección del rol `BRANCH_SELLER` al abrir el formulario.
+
+#### Seed
+- `seed.ts`: `permissionSpecs` incluye `admin:users:manage-branch`; `branchAdminPerms` lo asigna a `BRANCH_ADMIN`.
+- Usuario demo: `branch.scz@demo.local` (BRANCH_ADMIN en WH-03 Santa Cruz).
+
+### Operación
+- TypeScript check OK en backend y frontend.
+- No se requiere migración (el permiso se crea/actualiza vía `ensureSystemRoles` al iniciar el servidor).
 
 ---
 

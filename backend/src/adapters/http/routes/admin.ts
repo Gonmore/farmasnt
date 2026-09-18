@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
 import bcrypt from 'bcryptjs'
 import { z } from 'zod'
 import crypto from 'node:crypto'
@@ -194,6 +194,26 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
   const env = getEnv()
 
   const guard = [requireAuth(), requirePermission(Permissions.AdminUsersManage)]
+
+  // Allows tenant admins (AdminUsersManage) and branch admins (AdminUsersManageBranch)
+  // to manage users, with branch admins restricted to their own warehouse.
+  const branchGuard = async (request: FastifyRequest): Promise<void> => {
+    const auth = request.auth
+    if (!auth) {
+      const err = new Error('Unauthorized') as Error & { statusCode?: number }
+      err.statusCode = 401
+      throw err
+    }
+    if (
+      !auth.permissions.has(Permissions.AdminUsersManage) &&
+      !auth.permissions.has(Permissions.AdminUsersManageBranch)
+    ) {
+      const err = new Error('Forbidden') as Error & { statusCode?: number }
+      err.statusCode = 403
+      throw err
+    }
+  }
+  const userManageGuard = [requireAuth(), branchGuard]
 
   app.get(
     '/api/v1/admin/permissions',
@@ -478,10 +498,10 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
   app.get(
     '/api/v1/admin/users',
     {
-      preHandler: guard,
-      schema: {
-        tags: ['Admin'],
-        summary: 'List users in tenant',
+     preHandler: userManageGuard,
+     schema: {
+       tags: ['Admin'],
+       summary: 'List users in tenant',
         security: [{ bearerAuth: [] }],
         querystring: {
           type: 'object',
@@ -513,9 +533,13 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
     const tenantId = request.auth!.tenantId
     const q = parsed.data.q
 
+    const isBranchAdmin = !request.auth!.isTenantAdmin && request.auth!.permissions.has(Permissions.AdminUsersManageBranch)
+    const branchWarehouseId = isBranchAdmin ? request.auth!.warehouseId : null
+
     const items = await db.user.findMany({
       where: {
         tenantId,
+        ...(isBranchAdmin && branchWarehouseId ? { warehouseId: branchWarehouseId } : {}),
         ...(q ? { email: { contains: q, mode: 'insensitive' } } : {}),
       },
       take: parsed.data.take,
@@ -544,7 +568,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
   app.post(
     '/api/v1/admin/users',
     {
-      preHandler: guard,
+      preHandler: userManageGuard,
       schema: {
         tags: ['Admin'],
         summary: 'Create user',
@@ -586,6 +610,37 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
     const tenantId = request.auth!.tenantId
     const userId = request.auth!.userId
     const email = normalizeEmail(parsed.data.email)
+
+    const isTenantAdmin = request.auth!.isTenantAdmin ?? false
+    const isBranchAdmin = !isTenantAdmin && request.auth!.permissions.has(Permissions.AdminUsersManageBranch)
+
+    if (isBranchAdmin) {
+      const branchWarehouseId = request.auth!.warehouseId
+      if (!branchWarehouseId) {
+        return reply.status(400).send({ message: 'El administrador de sucursal no tiene almacén asignado' })
+      }
+
+      const branchSellerRole = await db.role.findFirst({
+        where: { tenantId, code: 'BRANCH_SELLER' },
+        select: { id: true },
+      })
+      if (!branchSellerRole) {
+        return reply.status(400).send({ message: 'Rol BRANCH_SELLER no está disponible en este tenant' })
+      }
+
+      const requestedRoleIds = parsed.data.roleIds ?? []
+      const invalidRoles = requestedRoleIds.filter((rid) => rid !== branchSellerRole.id)
+      if (invalidRoles.length > 0) {
+        return reply.status(403).send({ message: 'Los administradores de sucursal solo pueden asignar el rol Vendedor de Sucursal (BRANCH_SELLER)' })
+      }
+
+      parsed.data.warehouseId = branchWarehouseId
+
+      // Auto-assign BRANCH_SELLER if no roles were explicitly requested
+      if (!parsed.data.roleIds || parsed.data.roleIds.length === 0) {
+        parsed.data.roleIds = [branchSellerRole.id]
+      }
+    }
 
     if (parsed.data.warehouseId) {
       const wh = await db.warehouse.findFirst({ where: { id: parsed.data.warehouseId, tenantId, isActive: true }, select: { id: true } })
@@ -647,10 +702,10 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
   app.patch(
     '/api/v1/admin/users/:id/status',
     {
-      preHandler: guard,
-      schema: {
-        tags: ['Admin'],
-        summary: 'Activate/deactivate user',
+     preHandler: userManageGuard,
+     schema: {
+       tags: ['Admin'],
+       summary: 'Activate/deactivate user',
         security: [{ bearerAuth: [] }],
         params: {
           type: 'object',
@@ -671,19 +726,27 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
         },
       },
     },
-    async (request, reply) => {
+     async (request, reply) => {
       const id = (request.params as any).id as string
       const parsed = userStatusUpdateSchema.safeParse(request.body)
       if (!parsed.success) return reply.status(400).send({ message: 'Invalid request', issues: parsed.error.issues })
 
       const tenantId = request.auth!.tenantId
       const actorUserId = request.auth!.userId
+      const isBranchAdmin = request.auth!.permissions.has(Permissions.AdminUsersManageBranch)
 
       if (id === actorUserId && parsed.data.isActive === false) {
         return reply.status(400).send({ message: 'Cannot deactivate your own user' })
       }
 
-      const before = await db.user.findFirst({ where: { id, tenantId }, select: { id: true, email: true, isActive: true } })
+      const before = await db.user.findFirst({
+        where: {
+          id,
+          tenantId,
+          ...(isBranchAdmin && request.auth!.warehouseId ? { warehouseId: request.auth!.warehouseId } : {}),
+        },
+        select: { id: true, email: true, isActive: true },
+      })
       if (!before) return reply.status(404).send({ message: 'User not found' })
 
       const updated = await db.user.update({
@@ -726,10 +789,10 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
   app.post(
     '/api/v1/admin/users/:id/reset-password',
     {
-      preHandler: guard,
-      schema: {
-        tags: ['Admin'],
-        summary: 'Reset user password',
+     preHandler: userManageGuard,
+     schema: {
+       tags: ['Admin'],
+       summary: 'Reset user password',
         security: [{ bearerAuth: [] }],
         params: {
           type: 'object',
@@ -764,8 +827,16 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
 
       const tenantId = request.auth!.tenantId
       const actorUserId = request.auth!.userId
+      const isBranchAdmin = request.auth!.permissions.has(Permissions.AdminUsersManageBranch)
 
-      const user = await db.user.findFirst({ where: { id, tenantId }, select: { id: true, email: true } })
+      const user = await db.user.findFirst({
+        where: {
+          id,
+          tenantId,
+          ...(isBranchAdmin && request.auth!.warehouseId ? { warehouseId: request.auth!.warehouseId } : {}),
+        },
+        select: { id: true, email: true },
+      })
       if (!user) return reply.status(404).send({ message: 'User not found' })
 
       const tempPassword = parsed.data.newPassword ?? generateTempPassword()

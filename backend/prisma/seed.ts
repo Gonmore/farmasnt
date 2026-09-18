@@ -173,6 +173,7 @@ async function main() {
     { code: Permissions.ReportSalesRead, module: 'SALES' },
     { code: Permissions.ReportStockRead, module: 'WAREHOUSE' },
     { code: Permissions.AdminUsersManage, module: 'SALES' },
+    { code: Permissions.AdminUsersManageBranch, module: 'SALES' },
     { code: Permissions.PlatformTenantsManage, module: 'SALES' },
   ] as const
 
@@ -379,7 +380,7 @@ async function main() {
   ]
 
   // BRANCH_ADMIN: must be able to request/ship/receive stock movements for its own branch.
-  const branchAdminPerms: string[] = [...branchSellerPerms, Permissions.StockMove]
+  const branchAdminPerms: string[] = [...branchSellerPerms, Permissions.StockMove, Permissions.AdminUsersManageBranch]
 
   for (const code of ventasPerms) {
     const permissionId = permIdByCode.get(code)
@@ -1972,7 +1973,7 @@ async function main() {
   console.log(`   - Usuarios demo:`)
   console.log(`     * ventas@demo.local / ${adminPassword} (VENTAS)`)
   console.log(`     * logistica@demo.local / ${adminPassword} (LOGISTICA)`)
-  console.log(`     * branch.scz@demo.local / ${adminPassword} (BRANCH_ADMIN, preseleccionado en WH-03 Santa Cruz)`)
+  console.log(`     * branch.scz@demo.local / ${adminPassword} (BRANCH_ADMIN en WH-03 Santa Cruz — puede crear vendedores para su sucursal)`)
   console.log(`   - Subscription: ${demoTenant.branchLimit} branches until ${demoTenant.subscriptionExpiresAt}`)
   console.log(`   - Contact: ${demoTenant.contactName} (${demoTenant.contactEmail}, ${demoTenant.contactPhone})`)
 

@@ -13,6 +13,7 @@ export const Permissions = {
   ReportSalesRead: 'report:sales:read',
   ReportStockRead: 'report:stock:read',
   AdminUsersManage: 'admin:users:manage',
+  AdminUsersManageBranch: 'admin:users:manage-branch',
   AuditRead: 'audit:read',
   PlatformTenantsManage: 'platform:tenants:manage',
 } as const

@@ -19,6 +19,7 @@ const SYSTEM_PERMISSION_SPECS: PermissionSpec[] = [
   { code: Permissions.ReportSalesRead, module: 'SALES' },
   { code: Permissions.ReportStockRead, module: 'WAREHOUSE' },
   { code: Permissions.AdminUsersManage, module: 'SALES' },
+  { code: Permissions.AdminUsersManageBranch, module: 'SALES' },
   { code: Permissions.PlatformTenantsManage, module: 'SALES' },
 ]
 
@@ -134,7 +135,7 @@ async function ensureSystemRolesForTenantInternal(db: DbClient, tenantId: string
   ]
 
   // BRANCH_ADMIN: must be able to request/ship/receive stock movements for its own branch.
-  const branchAdminPerms: string[] = [...branchSellerPerms, Permissions.StockMove]
+  const branchAdminPerms: string[] = [...branchSellerPerms, Permissions.StockMove, Permissions.AdminUsersManageBranch]
 
   // BRANCH_PROVIDER: admin de sucursal de tipo PROVEEDOR. Crea/ajusta lotes (catalog:write)
   // y puede ver/atender TODAS las solicitudes de transferencia (sin filtro de ciudad en el backend).

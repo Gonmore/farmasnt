@@ -148,7 +148,8 @@ frontend/src/
 | `components/Layout` / navbar | `GET /api/v1/public/tenant/branding` | Branding pre-login (sin JWT) |
 | `providers/TenantProvider.tsx` | `GET /api/v1/tenant/branding` + `PATCH` | Branding con JWT |
 | `pages/platform/TenantsPage.tsx` | `GET /api/v1/platform/tenants` + `POST` | Provisioning (platform admin) |
-| `pages/admin/*` | `GET /api/v1/admin/users`, `POST`, `PATCH`, `PUT /roles`, etc. | Gestión multi-rol |
+| `pages/admin/*` (Tenant Admin) | `GET /api/v1/admin/users`, `POST`, `PATCH`, `PUT /roles`, etc. | Gestión multi-rol |
+| `pages/admin/*` (Branch Admin) | `GET /api/v1/admin/users` (filtrado por warehouse), `POST /users` (solo BRANCH_SELLER) | Gestión de vendedores de sucursal |
 
 ### 3.2 Catálogo & Productos
 

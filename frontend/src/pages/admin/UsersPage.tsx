@@ -4,6 +4,7 @@ import { apiFetch } from '../../lib/api'
 import { useAuth } from '../../providers/AuthProvider'
 import { MainLayout, PageContainer, Button, Table, Loading, ErrorState, EmptyState, Modal, Input } from '../../components'
 import { useNavigation } from '../../hooks'
+import { usePermissions } from '../../hooks/usePermissions'
 import { UserGroupIcon, PowerIcon, KeyIcon, PlusIcon, BuildingOffice2Icon } from '@heroicons/react/24/outline'
 
 type AdminUserListItem = {
@@ -28,6 +29,7 @@ async function fetchRoles(token: string): Promise<RolesResponse> {
 
 export function UsersPage() {
   const auth = useAuth()
+  const perms = usePermissions()
   const navGroups = useNavigation()
   const qc = useQueryClient()
 
@@ -90,6 +92,11 @@ export function UsersPage() {
   })
 
   const hasGroupTenants = (groupTenantsQuery.data?.items?.length ?? 0) > 0
+
+  const isBranchAdminOnly = !perms.isTenantAdmin && !perms.isPlatformAdmin && perms.hasPermission('admin:users:manage-branch')
+  const availableRoles = isBranchAdminOnly
+    ? (rolesQuery.data?.items ?? []).filter((r) => r.code === 'BRANCH_SELLER')
+    : (rolesQuery.data?.items ?? [])
 
   const createMutation = useMutation({
     mutationFn: async () => {
@@ -162,7 +169,13 @@ export function UsersPage() {
     <MainLayout navGroups={navGroups}>
       <PageContainer title="Usuarios">
         <div className="mb-3 flex justify-end">
-          <Button variant="primary" icon={<PlusIcon />} onClick={() => setCreateOpen(true)}>Crear usuario</Button>
+          <Button variant="primary" icon={<PlusIcon />} onClick={() => {
+            setCreateOpen(true)
+            if (isBranchAdminOnly) {
+              const sellerRole = rolesQuery.data?.items?.find((r) => r.code === 'BRANCH_SELLER')
+              if (sellerRole) setCreateRoleId(sellerRole.id)
+            }
+          }}>Crear usuario</Button>
         </div>
 
         <div className="rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
@@ -181,17 +194,18 @@ export function UsersPage() {
                   className: 'text-center w-auto',
                   accessor: (u) => (
                     <div className="flex items-center justify-center gap-1">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        icon={<UserGroupIcon className="w-4 h-4" />}
-                        onClick={() => {
-                          setRolesOpen({ open: true, userId: u.id, email: u.email })
-                          setSelectedRoleId((u.roleIds ?? [])[0] ?? '')
-                        }}
-                      >
-                        Roles
-                      </Button>
+                       <Button
+                         variant="ghost"
+                         size="sm"
+                         icon={<UserGroupIcon className="w-4 h-4" />}
+                         onClick={() => {
+                           setRolesOpen({ open: true, userId: u.id, email: u.email })
+                           setSelectedRoleId((u.roleIds ?? [])[0] ?? '')
+                         }}
+                         hidden={isBranchAdminOnly}
+                       >
+                         Roles
+                       </Button>
                       <Button
                         variant="ghost"
                         size="sm"
@@ -212,7 +226,7 @@ export function UsersPage() {
                       >
                         Reset
                       </Button>
-                      {hasGroupTenants && (
+                      {!isBranchAdminOnly && hasGroupTenants && (
                         <Button
                           variant="ghost"
                           size="sm"
@@ -236,6 +250,12 @@ export function UsersPage() {
         </div>
 
         <Modal isOpen={createOpen} onClose={() => setCreateOpen(false)} title="Crear usuario">
+          {isBranchAdminOnly && perms.warehouse && (
+            <div className="mb-3 text-xs text-slate-600 dark:text-slate-400">
+              Sucursal: <span className="font-medium">{perms.warehouse.code} — {perms.warehouse.name}</span>
+              <span className="text-slate-400 dark:text-slate-500"> (el vendedor se asigna a esta sucursal)</span>
+            </div>
+          )}
           <form
             onSubmit={(e) => {
               e.preventDefault()
@@ -261,15 +281,16 @@ export function UsersPage() {
             <div className="space-y-2">
               <div className="text-sm font-medium text-slate-700 dark:text-slate-300">Roles</div>
               {rolesQuery.isLoading && <div className="text-sm text-slate-600 dark:text-slate-400">Cargando roles...</div>}
-              {rolesQuery.data?.items?.length ? (
+              {availableRoles.length ? (
                 <div className="max-h-56 overflow-auto rounded border border-slate-200 p-2 dark:border-slate-700">
-                  {rolesQuery.data.items.map((r) => (
+                  {availableRoles.map((r) => (
                     <label key={r.id} className="flex items-center gap-2 py-1 text-sm text-slate-800 dark:text-slate-200">
                       <input
                         type="radio"
                         name="createRole"
                         checked={createRoleId === r.id}
                         onChange={() => setCreateRoleId(r.id)}
+                        disabled={isBranchAdminOnly}
                       />
                       <span>
                         {r.name} ({r.code})
@@ -279,6 +300,11 @@ export function UsersPage() {
                 </div>
               ) : (
                 <div className="text-sm text-slate-600 dark:text-slate-400">No hay roles</div>
+              )}
+              {isBranchAdminOnly && (
+                <div className="text-xs text-slate-600 dark:text-slate-400">
+                  Como administrador de sucursal, solo se pueden crear vendedores (BRANCH_SELLER) para su sucursal.
+                </div>
               )}
             </div>
 
