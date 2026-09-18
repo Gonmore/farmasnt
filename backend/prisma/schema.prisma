@@ -27,6 +27,7 @@ enum LocationType {
   SHELF
   FLOOR
   SUB_ALMACEN
+  SAMPLES
 }
 
 enum WarehouseType {

@@ -58,6 +58,7 @@ type BalanceExpandedItem = {
   location: {
     id: string
     code: string
+    type: string
     warehouse: { id: string; code: string; name: string }
   }
 }
@@ -80,6 +81,7 @@ type LocationListItem = {
   id: string
   warehouseId: string
   code: string
+  type: string
   isActive: boolean
 }
 
@@ -203,14 +205,15 @@ type ProductGroup = {
       version: number
       presentationName?: string | null
       unitsPerPresentation?: number | null
-      quantity: number
-      reservedQuantity: number
-      availableQuantity: number
-      locationId: string
-      locationCode: string
-      warehouseId: string
-    }>
-  }>
+       quantity: number
+       reservedQuantity: number
+       availableQuantity: number
+       locationId: string
+       locationCode: string
+       warehouseId: string
+       locationType: string
+     }>
+   }>
 }
 
 type WarehouseGroup = {
@@ -249,6 +252,7 @@ type WarehouseGroup = {
       locationId: string
       locationCode: string
       warehouseId: string
+      locationType: string
     }>
   }>
 }
@@ -303,13 +307,15 @@ function formatTotalsFromBatches(
   return parts.length ? parts.join(' + ') : '0'
 }
 
-async function fetchBalances(token: string): Promise<{ items: BalanceExpandedItem[] }> {
+async function fetchBalances(token: string, includeSamples: boolean): Promise<{ items: BalanceExpandedItem[] }> {
   const params = new URLSearchParams({ take: '200' })
+  if (includeSamples) params.append('includeSamples', 'true')
   return apiFetch(`/api/v1/reports/stock/balances-expanded?${params}`, { token })
 }
 
-async function fetchBalancesForExport(token: string): Promise<{ items: BalanceExpandedItem[] }> {
+async function fetchBalancesForExport(token: string, includeSamples: boolean): Promise<{ items: BalanceExpandedItem[] }> {
   const params = new URLSearchParams({ take: '5000' })
+  if (includeSamples) params.append('includeSamples', 'true')
   return apiFetch(`/api/v1/reports/stock/balances-expanded?${params}`, { token })
 }
 
@@ -513,11 +519,11 @@ function InlineLocationEditor({ batch, token, disabled }: { batch: any; token: s
         className="block w-full min-w-[110px] rounded-md border border-slate-300 bg-white py-1 pl-2 pr-6 text-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-slate-100 disabled:opacity-70 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:disabled:bg-slate-900"
       >
         <option value={batch.locationId}>{batch.locationCode}</option>
-        {locQuery.data?.items
+          {locQuery.data?.items
           .filter((l) => l.isActive && l.id !== batch.locationId)
           .map((l) => (
             <option key={l.id} value={l.id}>
-              {l.code}
+              {l.code}{l.type === 'SAMPLES' ? ' 📦 Muestras' : ''}
             </option>
           ))}
       </select>
@@ -819,6 +825,12 @@ export function InventoryPage() {
   useEffect(() => {
     showZeroStockRef.current = showZeroStock
   }, [showZeroStock])
+
+  const [showSampleStock, setShowSampleStock] = useState(false)
+  const showSampleStockRef = useRef(showSampleStock)
+  useEffect(() => {
+    showSampleStockRef.current = showSampleStock
+  }, [showSampleStock])
   const [expandedProduct, setExpandedProduct] = useState<string | null>(null)
   const [expandedWarehouse, setExpandedWarehouse] = useState<string | null>(null)
   const [movingItem, setMovingItem] = useState<{
@@ -876,8 +888,8 @@ export function InventoryPage() {
   }
 
   const balancesQuery = useQuery({
-    queryKey: ['balances', 'inventory'],
-    queryFn: () => fetchBalances(auth.accessToken!),
+    queryKey: ['balances', 'inventory', showSampleStock],
+    queryFn: () => fetchBalances(auth.accessToken!, showSampleStock),
     enabled: !!auth.accessToken,
   })
 
@@ -1208,7 +1220,10 @@ export function InventoryPage() {
     const map = new Map<string, ProductGroup>()
 
     for (const item of balancesQuery.data.items) {
-       const qty = Number(item.quantity)
+      const isSample = item.location.type === 'SAMPLES'
+      if (isSample && !showSampleStock) continue
+
+      const qty = Number(item.quantity)
       if (!Number.isFinite(qty) || (qty <= 0 && !showZeroStock)) continue
 
       const reserved = Math.max(0, Number(item.reservedQuantity ?? '0'))
@@ -1233,9 +1248,12 @@ export function InventoryPage() {
         map.set(item.productId, productGroup)
       }
 
-      productGroup.totalQuantity += qty
-      productGroup.totalReservedQuantity += reserved
-      productGroup.totalAvailableQuantity += available
+      // SAMPLES batches are NOT included in the product totals
+      if (!isSample) {
+        productGroup.totalQuantity += qty
+        productGroup.totalReservedQuantity += reserved
+        productGroup.totalAvailableQuantity += available
+      }
 
       let whGroup = productGroup.warehouses.find((w) => w.warehouseId === item.location.warehouse.id)
       if (!whGroup) {
@@ -1251,9 +1269,12 @@ export function InventoryPage() {
         productGroup.warehouses.push(whGroup)
       }
 
-      whGroup.quantity += qty
-      whGroup.reservedQuantity += reserved
-      whGroup.availableQuantity += available
+      // SAMPLES batches are NOT included in warehouse totals
+      if (!isSample) {
+        whGroup.quantity += qty
+        whGroup.reservedQuantity += reserved
+        whGroup.availableQuantity += available
+      }
       whGroup.batches.push({
         id: item.id,
         productId: item.productId,
@@ -1271,11 +1292,12 @@ export function InventoryPage() {
         locationId: item.locationId,
         locationCode: item.location.code,
         warehouseId: item.location.warehouse.id,
+        locationType: item.location.type,
       })
     }
 
      return sortProductsByDisplayName(Array.from(map.values()))
-  }, [balancesQuery.data, showZeroStock])
+  }, [balancesQuery.data, showZeroStock, showSampleStock])
 
   const warehouseGroups = useMemo<WarehouseGroup[]>(() => {
     if (!balancesQuery.data?.items) return []
@@ -1283,7 +1305,10 @@ export function InventoryPage() {
     const map = new Map<string, WarehouseGroup>()
 
     for (const item of balancesQuery.data.items) {
-       const qty = Number(item.quantity)
+      const isSample = item.location.type === 'SAMPLES'
+      if (isSample && !showSampleStock) continue
+
+      const qty = Number(item.quantity)
       if (!Number.isFinite(qty) || (qty <= 0 && !showZeroStock)) continue
 
       const reserved = Math.max(0, Number(item.reservedQuantity ?? '0'))
@@ -1303,9 +1328,12 @@ export function InventoryPage() {
         map.set(item.location.warehouse.id, whGroup)
       }
 
-      whGroup.totalQuantity += qty
-      whGroup.totalReservedQuantity += reserved
-      whGroup.totalAvailableQuantity += available
+      // SAMPLES batches excluded from warehouse totals
+      if (!isSample) {
+        whGroup.totalQuantity += qty
+        whGroup.totalReservedQuantity += reserved
+        whGroup.totalAvailableQuantity += available
+      }
 
       let prodGroup = whGroup.products.find((p) => p.productId === item.productId)
       if (!prodGroup) {
@@ -1326,9 +1354,12 @@ export function InventoryPage() {
         whGroup.products.push(prodGroup)
       }
 
-      prodGroup.quantity += qty
-      prodGroup.reservedQuantity += reserved
-      prodGroup.availableQuantity += available
+      // SAMPLES batches excluded from product totals
+      if (!isSample) {
+        prodGroup.quantity += qty
+        prodGroup.reservedQuantity += reserved
+        prodGroup.availableQuantity += available
+      }
       prodGroup.batches.push({
         id: item.id,
         productId: item.productId,
@@ -1346,6 +1377,7 @@ export function InventoryPage() {
         locationId: item.locationId,
         locationCode: item.location.code,
         warehouseId: item.location.warehouse.id,
+        locationType: item.location.type,
       })
     }
 
@@ -1359,7 +1391,7 @@ export function InventoryPage() {
         numeric: true,
       }),
     )
-   }, [balancesQuery.data, showZeroStock])
+   }, [balancesQuery.data, showZeroStock, showSampleStock])
 
   const activeWarehouses = useMemo(
     () => (warehousesQuery.data?.items ?? []).filter((w) => w.isActive),
@@ -1367,12 +1399,13 @@ export function InventoryPage() {
   )
 
   const exportMutation = useMutation({
-    mutationFn: async () => fetchBalancesForExport(auth.accessToken!),
+    mutationFn: async () => fetchBalancesForExport(auth.accessToken!, showSampleStock),
     onSuccess: (data) => {
       const rows = (data.items ?? [])
         .filter((item) => {
           const qty = Number(item.quantity || '0')
-          return Number.isFinite(qty) && (qty > 0 || showZeroStockRef.current)
+          const isSample = item.location.type === 'SAMPLES'
+          return Number.isFinite(qty) && (qty > 0 || showZeroStockRef.current) && (!isSample || showSampleStockRef.current)
         })
         .map((item) => {
         const total = Number(item.quantity || '0')
@@ -1474,6 +1507,15 @@ export function InventoryPage() {
               className="h-3.5 w-3.5 cursor-pointer rounded border-slate-400 text-blue-600 focus:ring-blue-500"
             />
             Mostrar lotes sin stock
+          </label>
+          <label className="flex cursor-pointer items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300">
+            <input
+              type="checkbox"
+              checked={showSampleStock}
+              onChange={(e) => setShowSampleStock(e.target.checked)}
+              className="h-3.5 w-3.5 cursor-pointer rounded border-slate-400 text-purple-600 focus:ring-purple-500"
+            />
+            Mostrar lotes de muestra
           </label>
         </div>
         <div className="space-y-4">
@@ -1621,11 +1663,12 @@ export function InventoryPage() {
                             return (a.batchNumber ?? '').localeCompare(b.batchNumber ?? '')
                           })
 
-                        return (
+                          return (
                           <Table
                             columns={productExpandedColumns}
                             data={rows}
                             keyExtractor={(b: any) => `${b.batchId ?? 'null'}-${b.locationId}`}
+                            rowClassName={(b: any) => b.locationType === 'SAMPLES' ? 'bg-purple-50/50 dark:bg-purple-900/20' : ''}
                           />
                         )
                       })()}
@@ -1732,6 +1775,7 @@ export function InventoryPage() {
                             columns={warehouseColumns}
                             data={prod.batches}
                             keyExtractor={(b) => `${b.batchId ?? 'null'}-${b.locationId}`}
+                            rowClassName={(b) => b.locationType === 'SAMPLES' ? 'bg-purple-50/50 dark:bg-purple-900/20' : ''}
                           />
                         </div>
                       ))}

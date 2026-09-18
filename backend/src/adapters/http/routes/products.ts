@@ -1256,6 +1256,7 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
                 select: {
                   id: true,
                   code: true,
+                  type: true,
                   warehouse: { select: { id: true, code: true, name: true, city: true } },
                 },
               },
@@ -1298,6 +1299,7 @@ export async function registerProductRoutes(app: FastifyInstance): Promise<void>
               warehouseCity: x.location.warehouse.city,
                 locationId: x.location.id,
                 locationCode: x.location.code,
+                locationType: x.location.type,
                 quantity: x.quantity,
                 reservedQuantity: x.reservedQuantity,
                 availableQuantity: String(Math.max(0, Number(x.quantity || '0') - Number(x.reservedQuantity || '0'))),

@@ -2,7 +2,44 @@
 
 > Última actualización: 18 Sep 2026
 
-Este documento suma (a alto nivel) decisiones, hitos y cambios relevantes que se fueron incorporando al repositorio para llegar al estado actual del MVP.
+> Este documento suma (a alto nivel) decisiones, hitos y cambios relevantes que se fueron incorporando al repositorio para llegar al estado actual del MVP.
+
+---
+
+## **[18 Sep 2026] Tipo de ubicación SAMPLES — sub-almacén de muestras + UI de inventario/moventos**
+
+### Contexto
+- Se agregó el tipo de ubicación `SAMPLES` al enum `LocationType` para representar sub-almacenes de muestra (producto de muestra / samples), distintos del stock comercial. Los lotes en ubicaciones `SAMPLES` se excluyen de los totales de balance por defecto.
+- La UI de inventario (`/stock/inventory`) y movimientos (`/stock/movements`) se actualizaron para mostrar/ocultar lotes de muestra bajo demanda, con color púrpura distintivo, y para permitir movimientos entre ubicaciones de muestra.
+
+### Cambios principales
+
+#### Schema Prisma + migración
+- **`backend/prisma/schema.prisma`**: `enum LocationType` extiende `SAMPLES` (después de `SUB_ALMACEN`). El campo `Location.type` usa `@default(BIN)`.
+- **`backend/prisma/migrations/20260918000000_add_samples_location_type/migration.sql`**: `ALTER TYPE "LocationType" ADD VALUE 'SAMPLES';` — migración no destructiva (agg value), aplicada vía `prisma migrate deploy`.
+
+#### Backend — Zod schemas y queries
+- **`backend/src/adapters/http/routes/warehouses.ts`**: `createLocationSchema` y `updateLocationSchema` aceptan ahora `type: 'SAMPLES'`. El endpoint `POST /api/v1/warehouses/:id/locations` ya retorna `type` (incluido en el `select`), por lo que el frontend recibe `locationType` sin cambios de contrato adicionales.
+- **`backend/src/adapters/http/routes/reports.ts`**: `stockBalancesExpandedQuerySchema` agrega `includeSamples: z.coerce.boolean().optional().default(false)`. El handler de `GET /api/v1/reports/stock/balances-expanded` aplica condicionalmente `type: { not: 'SAMPLES' }` en el filtro de locations (omite el filtro cuando `includeSamples=true`). El `select` de la query ya incluía `location.type`.
+- **`backend/src/adapters/http/routes/products.ts`**: `GET /api/v1/products/:id/batches` ahora expone `locationType` (`x.location.type`) en el arreglo `locations[]` de cada lote, para que el frontend distinga ubicaciones de muestra.
+
+#### Frontend
+- **`frontend/src/pages/warehouse/LocationsPage.tsx`**: opción "Sub Almacén de Muestras" (`SAMPLES`) agregada al dropdown de tipos de ubicación; los `useState` y tipos de `createType`/`editType` incluyen `'SAMPLES'`.
+- **`frontend/src/pages/stock/InventoryPage.tsx`**:
+  - Nuevo checkbox "Mostrar lotes de muestra" (`showSampleStock`, estado + `useRef` para acceso en export).
+  - `fetchBalances` / `fetchBalancesForExport` envían `includeSamples=true` al backend cuando el checkbox está activo.
+  - Los lotes de muestra (`location.type === 'SAMPLES'`) se filtran en el `useMemo` de productos y warehouses; **no se incluyen en los totales** (ni de producto ni de warehouse), pero **se muestran** como filas de lote con `rowClassName` púrpura (`bg-purple-50 dark:bg-purple-900/20`).
+  - El selector de ubicación en el `InlineLocationEditor` incluye options `SAMPLES` etiquetadas como "?? Muestras".
+- **`frontend/src/pages/stock/MovementsPage.tsx`**:
+  - Nueva opción UI `OUT_SAMPLE` ("Salida producto de muestra") en el dropdown de tipos de movimiento.
+  - Filtrado de stock: cuando `type === 'OUT_SAMPLE'`, la tabla de lotes muestra **solo** ubicaciones `SAMPLES`; para `OUT`/`TRANSFER`/`ADJUSTMENT` excluye ubicaciones `SAMPLES`.
+  - El payload de movimiento usa `referenceType='PRODUCT_SAMPLE'` (en lugar de `MANUAL_SALE`/`MANUAL_DISCARD`) y envía la nota obligatoria para salidas de muestra.
+
+### Operación
+- `npx tsc --noEmit` limpio en backend y frontend.
+- Migration `20260918000000_add_samples_location_type` aplicada localmente (`prisma migrate deploy`).
+- Verificado manualmente via Vite proxy: creación y edición de locations con `type: SAMPLES` (201/200), consulta de balances-expanded con/son `includeSamples` (200), y respuesta de `GET /api/v1/products/:id/batches` incluye `locationType`.
+- Documentado en `ARCHITECTURE.md` (modelo `Location` + regla de negocio SAMPLES) y `API_REFERENCE.md` (`balances-expanded` con `includeSamples`, tipos de location, `locationType` en batches, nota `PRODUCT_SAMPLE` en movimientos).
 
 ---
 

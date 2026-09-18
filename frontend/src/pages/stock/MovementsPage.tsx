@@ -101,6 +101,7 @@ type ProductBatchListItem = {
     warehouseCity?: string | null
     locationId: string
     locationCode: string
+    locationType?: string | null
     quantity: string
     reservedQuantity?: string
     availableQuantity?: string
@@ -757,11 +758,10 @@ export function MovementsPage() {
 
 
   // Obtener existencias por lote/ubicación para mostrar en tabla
-  const stockRows = useMemo(() => {
+const stockRows = useMemo(() => {
     const data = productBatchesQuery.data
     if (!data?.hasStockRead) return []
 
-    // Usuarios con scope de sucursal (no admin de tenant) solo ven lotes de su propio almacén.
     const branchScoped = permissions.hasPermission('scope:branch') && !permissions.isTenantAdmin
     const ownWarehouseId = permissions.warehouseId ?? null
 
@@ -769,6 +769,14 @@ export function MovementsPage() {
     for (const batch of data.items) {
       for (const loc of batch.locations ?? []) {
         if (branchScoped && ownWarehouseId && loc.warehouseId !== ownWarehouseId) continue
+
+        // Filter by location type based on movement type:
+        // - OUT_SAMPLE: only SAMPLES locations
+        // - OUT / TRANSFER / ADJUSTMENT: exclude SAMPLES locations
+        const locType = loc.locationType ?? null
+        if (type === 'OUT_SAMPLE' && locType !== 'SAMPLES') continue
+        if (type !== 'OUT_SAMPLE' && type !== 'IN' && locType === 'SAMPLES') continue
+
         const total = Number(loc.quantity || '0')
         const reserved = Number(loc.reservedQuantity ?? '0')
         const available = Number(loc.availableQuantity ?? String(Math.max(0, total - reserved)))
@@ -790,7 +798,7 @@ export function MovementsPage() {
       }
     }
     return rows.filter((r) => Number(r.totalQuantity || '0') > 0)
-  }, [productBatchesQuery.data, permissions])
+  }, [productBatchesQuery.data, permissions, type])
 
   const selectableStockRows = useMemo(
     () => stockRows.filter((r) => Number(r.availableQuantity || '0') > 0),

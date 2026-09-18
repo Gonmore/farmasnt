@@ -23,12 +23,12 @@ const updateWarehouseSchema = z.object({
 
 const createLocationSchema = z.object({
   code: z.string().trim().min(1).max(32),
-  type: z.enum(['BIN', 'SHELF', 'FLOOR', 'SUB_ALMACEN']).default('BIN'),
+  type: z.enum(['BIN', 'SHELF', 'FLOOR', 'SUB_ALMACEN', 'SAMPLES']).default('BIN'),
 })
 
 const updateLocationSchema = z.object({
   code: z.string().trim().min(1).max(32).optional(),
-  type: z.enum(['BIN', 'SHELF', 'FLOOR', 'SUB_ALMACEN']).optional(),
+  type: z.enum(['BIN', 'SHELF', 'FLOOR', 'SUB_ALMACEN', 'SAMPLES']).optional(),
   isActive: z.boolean().optional(),
 })
 
@@ -636,16 +636,49 @@ export async function registerWarehouseRoutes(app: FastifyInstance): Promise<voi
       const tenantId = request.auth!.tenantId
       const department = deptParam.data.department.trim().toUpperCase()
 
+      const isTenantAdmin = request.auth!.isTenantAdmin ?? false
+      const isBranchScoped = request.auth!.permissions.has(Permissions.ScopeBranch) && !isTenantAdmin
+      const authWarehouseType = request.auth!.warehouseType
+      const authWarehouseId = request.auth!.warehouseId
+
+      const baseWhere: any = { tenantId, isActive: true }
+
+      if (isBranchScoped && authWarehouseType === 'SALES' && authWarehouseId) {
+        // SALES branch user: only their own warehouse, filtered by department match.
+        const servesDept =
+          (await db.warehouse.count({
+            where: {
+              id: authWarehouseId,
+              type: 'SALES',
+              OR: [
+                { department: { equals: department, mode: 'insensitive' } },
+                { servedDepartments: { some: { department: { equals: department, mode: 'insensitive' }, isActive: true } } },
+              ],
+            },
+          })) > 0
+
+        if (!servesDept) {
+          return reply.send({ items: [], warehouse: null })
+        }
+        baseWhere.id = authWarehouseId
+      } else if (isBranchScoped && authWarehouseType === 'PROVIDER') {
+        // PROVIDER branch user: only PROVIDER warehouses serving the department.
+        baseWhere.type = 'PROVIDER'
+        baseWhere.OR = [
+          { department: { equals: department, mode: 'insensitive' } },
+          { servedDepartments: { some: { department: { equals: department, mode: 'insensitive' }, isActive: true } } },
+        ]
+      } else {
+        baseWhere.OR = [
+          { department: { equals: department, mode: 'insensitive' } },
+          { servedDepartments: { some: { department: { equals: department, mode: 'insensitive' }, isActive: true } } },
+        ]
+      }
+
       const warehouse = await db.warehouse.findFirst({
-        where: {
-          tenantId,
-          isActive: true,
-          OR: [
-            { department: { equals: department, mode: 'insensitive' } },
-            { servedDepartments: { some: { department: { equals: department, mode: 'insensitive' }, isActive: true } } },
-          ],
-        },
+        where: baseWhere,
         select: { id: true, name: true, code: true, city: true, department: true, type: true },
+        orderBy: { code: 'asc' },
       })
 
       if (!warehouse) return reply.send({ items: [], warehouse: null })

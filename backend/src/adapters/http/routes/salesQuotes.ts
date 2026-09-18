@@ -130,7 +130,7 @@ function deriveOrderNumberFromQuoteNumber(quoteNumber: string): string {
    return `OV-${n}`
 }
 
-async function findWarehouseByDepartment(db: any, tenantId: string, department: string): Promise<{ id: string; name: string; code: string; city: string | null; department: string | null; type: string } | null> {
+async function findWarehouseByDepartment(db: any, tenantId: string, department: string, options?: { warehouseType?: 'SALES' | 'PROVIDER' }): Promise<{ id: string; name: string; code: string; city: string | null; department: string | null; type: string } | null> {
   const normalized = (department ?? '').trim().toUpperCase()
   if (!normalized) return null
 
@@ -138,6 +138,7 @@ async function findWarehouseByDepartment(db: any, tenantId: string, department: 
     where: {
       tenantId,
       isActive: true,
+      ...(options?.warehouseType ? { type: options.warehouseType } : {}),
       OR: [
         { department: { equals: normalized, mode: 'insensitive' } },
         { servedDepartments: { some: { department: { equals: normalized, mode: 'insensitive' }, isActive: true } } },
@@ -548,8 +549,11 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
       if (!quote) return reply.status(404).send({ message: 'Cotización no encontrada' })
 
       const userWarehouseId = request.auth?.warehouseId ?? null
+      const userWarehouseType = request.auth?.warehouseType ?? null
       const custDepartment = String(quote.customer?.department ?? cityToDepartment(quote.customer?.city) ?? '').trim().toUpperCase()
-      const servingWarehouse = custDepartment ? await findWarehouseByDepartment(db, tenantId, custDepartment) : null
+      const servingWarehouse = custDepartment
+        ? await findWarehouseByDepartment(db, tenantId, custDepartment, userWarehouseType ? { warehouseType: userWarehouseType } : {})
+        : null
 
       let scopeLoc: any = null
       if (quote.locationId && (userWarehouseId || servingWarehouse)) {
@@ -582,7 +586,10 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
           tenantId,
           productId: { in: productIds },
           quantity: { gt: 0 },
-          location: scopeLoc,
+          location: {
+            ...scopeLoc,
+            type: { not: 'SAMPLES' },
+          },
           batchId: { not: null },
           batch: {
             status: 'RELEASED',
@@ -1083,9 +1090,9 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
           }
 
           // Usar el sub almacén seleccionado al crear la cotización
-          const chosenLocationId = bodyParsed.data?.locationId ?? quote.locationId ?? null
-          const custDepartment = String(quote.customer.department ?? cityToDepartment(quote.customer.city) ?? '').trim().toUpperCase()
-          const servingWarehouseId = (await findWarehouseByDepartment(tx, tenantId, custDepartment))?.id ?? null
+           const chosenLocationId = bodyParsed.data?.locationId ?? quote.locationId ?? null
+           const custDepartment = String(quote.customer.department ?? cityToDepartment(quote.customer.city) ?? '').trim().toUpperCase()
+           const servingWarehouseId = (await findWarehouseByDepartment(tx, tenantId, custDepartment, request.auth!.warehouseType ? { warehouseType: request.auth!.warehouseType } : {}))?.id ?? null
 
           if (chosenLocationId) {
             const chosenLocation = await tx.location.findFirst({

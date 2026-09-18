@@ -959,18 +959,19 @@ Response 200
       "totalQuantity": "30",
       "totalReservedQuantity": "0",
       "totalAvailableQuantity": "30",
-      "locations": [
-        {
-          "warehouseId": "...",
-          "warehouseCode": "WH-01",
-          "warehouseName": "Almacén",
-          "locationId": "...",
-          "locationCode": "BIN-01",
-          "quantity": "30",
-          "reservedQuantity": "0",
-          "availableQuantity": "30"
-        }
-      ]
+         "locations": [
+         {
+           "warehouseId": "...",
+           "warehouseCode": "WH-01",
+           "warehouseName": "Almacén",
+           "locationId": "...",
+           "locationCode": "BIN-01",
+           "locationType": "BIN",
+           "quantity": "30",
+           "reservedQuantity": "0",
+           "availableQuantity": "30"
+         }
+       ]
     }
   ]
 }
@@ -979,6 +980,7 @@ Response 200
 Notas
 - `hasStockRead=false` si el usuario no tiene `stock:read`; en ese caso `totalQuantity` es `null` y `locations` viene vacío.
 - `canManage=true` solo si el lote fue creado por el usuario actual (habilita editar/eliminar metadata).
+- `locations[].locationType` indica el tipo de ubicación (`BIN`, `SHELF`, `FLOOR`, `SUB_ALMACEN`, `SAMPLES`). Los lotes en `SAMPLES` no afectan el total de stock comercial.
 
 ### POST /api/v1/products/:id/batches
 Body
@@ -1494,7 +1496,8 @@ Response 201
 ```
 
 Notas
-- `type` puede ser `BIN`, `SHELF`, `FLOOR`.
+- `type` puede ser `BIN`, `SHELF`, `FLOOR`, `SUB_ALMACEN`, `SAMPLES`.
+- `SAMPLES` se usa para sub-almacenes de muestra; los lotes en estas ubicaciones se excluyen de los totales de stock por defecto (ver `includeSamples` en `balances-expanded`).
 - `409` si el código ya existe en esa sucursal.
 
 ---
@@ -1620,6 +1623,7 @@ Notas de reglas
 - `ADJUSTMENT` requiere `fromLocationId` o `toLocationId`.
 - `409` si stock insuficiente.
 - `409` si intenta descontar stock de un lote vencido (`batch.expiresAt` < hoy UTC).
+- `referenceType='PRODUCT_SAMPLE'` para salidas de producto de muestra: la nota es obligatoria, y `fromLocationId` debe pertenecer a una ubicación tipo `SAMPLES`.
 
 Nota de uso (operación por “existencias”)
 - Para mover existencias reales (lote + ubicación), primero listar balances con `GET /api/v1/reports/stock/balances-expanded` (filtrando por `warehouseId`, `productId` o `locationId`).
@@ -3189,14 +3193,15 @@ Response 200 sin body.
 
 ### Stock
 
-#### GET /api/v1/reports/stock/balances-expanded
+### GET /api/v1/reports/stock/balances-expanded
 Requiere: módulo `WAREHOUSE` + permiso `report:stock:read`.
 
 Query
 - `warehouseId` (uuid, opcional)
 - `locationId` (uuid, opcional)
 - `productId` (uuid, opcional)
-- `take` (1..200, default 100)
+- `take` (1..5000, default 100)
+- `includeSamples` (bool, opcional, default `false`) — cuando es `true`, incluye lotes ubicados en locations de tipo `SAMPLES` en la respuesta. Por defecto, los batches en locations `SAMPLES` se excluyen (no afectan totales de stock).
 
 Response 200
 ```json
@@ -3212,11 +3217,15 @@ Response 200
       "locationId": "...",
       "product": { "sku": "SKU-001", "name": "Producto" },
       "batch": null,
-      "location": { "id": "...", "code": "BIN-01", "warehouse": { "id": "...", "code": "WH-01", "name": "Almacén" } }
+      "location": { "id": "...", "code": "BIN-01", "type": "BIN", "warehouse": { "id": "...", "code": "WH-01", "name": "Almacén" } }
     }
   ]
 }
 ```
+
+Notas
+- `location.type` indica el tipo de ubicación (`BIN`, `SHELF`, `FLOOR`, `SUB_ALMACEN`, `SAMPLES`).
+- Los items en locations `SAMPLES` se excluyen de los totales por defecto; habilitar `includeSamples=true` para incluirlos.
 
 #### GET /api/v1/reports/stock/movements-expanded
 Requiere: módulo `WAREHOUSE` + permiso `report:stock:read`.

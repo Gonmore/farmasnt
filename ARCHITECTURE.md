@@ -345,7 +345,7 @@ frontend/src/
 | `Batch` | `product`, `presentation`, `balances` | Lotes con vencimiento (FEFO) |
 | `Warehouse` | `locations`, `users`, `servedDepartments` | Almacén/sucursal. Nuevo campo `department` (auto-asignado desde `city` via GeoService). |
 | `WarehouseServedDepartment` | `warehouse` | Departamentos adicionales que un almacén SALES puede servir (multi-departamento). Unique: tenantId+warehouseId+department, tenantId+department. |
-| `Location` | `warehouse`, `balances` | Ubicación física (BIN/SHELF/FLOOR/SUB_ALMACEN) |
+| `Location` | `warehouse`, `balances` | Ubicación física (BIN/SHELF/FLOOR/SUB_ALMACEN/SAMPLES) |
 | `InventoryBalance` | `location`, `product`, `batch` | Stock por ubicación-lote |
 | `StockMovement` | `product`, `batch`, `presentation`, `from/toLocation` | IN/OUT/TRANSFER/ADJUSTMENT (numerado MSYYYY-N) |
 | `StockMovementRequest` | `warehouse`, `toLocation`, `items` | Solicitudes con código SOLYY#### + estado OPEN/SENT/FULFILLED/CANCELLED. Nuevo `requestedDepartment`. |
@@ -370,6 +370,7 @@ frontend/src/
 6. **S3 opcional**: si no se configuran las env vars S3, el sistema funciona excepto uploads de fotos/logos.
 7. **Estado `SENT`**: las solicitudes de movimiento pasan por `SENT` (enviado) antes de `FULFILLED` (recibido).
 8. **Cross-city stock enforcement**: al procesar una cotización (`POST /api/v1/sales/quotes/:id/process`), el backend valida que la ubicación/lote seleccionado pertenezca a la misma ciudad que el cliente. El endpoint `available-batches` también filtra lotes por la ciudad del cliente y rechaza (fallback a filtrado por ciudad) ubicaciones de otro municipio.
+9. **SAMPLES location type**: ubicaciones de tipo `SAMPLES` (sub-almacén de muestras) se excluyen de los totales de balance por defecto; el endpoint `balances-expanded` acepta `?includeSamples=true` para incluirlos. Se usan para lotes de muestra que no deben afectar el stock comercial. El movimiento `OUT_SAMPLE` requiere que el lote provenga de una ubicación `SAMPLES`.
 9. **Over-fulfillment permitido**: al atender una solicitud de movimiento (`POST /api/v1/stock/movement-requests/bulk-fulfill`), el backend **permite** enviar una cantidad mayor a la solicitada. El único límite es el stock disponible en el almacén origen. El `remainingQuantity` del ítem puede quedar negativo y la solicitud se marca `SENT` normalmente.
 10. **Multi-sucursal en la misma ciudad**: cuando un tenant tiene más de un warehouse en la misma ciudad (Febsa: `SUC-LPZ` SALES + `SUC-NACIONAL` PROVIDER, ambas en `LA PAZ`), el sistema **no debe filtrar por `Warehouse.city` en operaciones**. El discriminante es `warehouseId`. `Notification.warehouseId` (nuevo en v2.3.0) se usa en el filtrado de la campana para evitar que un usuario de SUC-LPZ SALES vea notificaciones del SUC-NACIONAL PROVIDER. Las notificaciones legacy sin `warehouseId` poblado se siguen filtrando por `city` (compatibilidad).
 

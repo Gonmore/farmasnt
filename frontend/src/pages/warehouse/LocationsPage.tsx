@@ -23,6 +23,7 @@ const LOCATION_TYPE_OPTIONS = [
   { value: 'SHELF', label: 'SHELF (Estante)' },
   { value: 'FLOOR', label: 'FLOOR (Piso)' },
   { value: 'SUB_ALMACEN', label: 'Sub Almacén' },
+  { value: 'SAMPLES', label: 'Sub Almacén de Muestras' },
 ]
 
 async function fetchLocations(token: string, warehouseId: string, take: number, cursor?: string): Promise<ListResponse> {
@@ -40,10 +41,10 @@ export function LocationsPage() {
   const take = 50
   const [showCreate, setShowCreate] = useState(false)
   const [createCode, setCreateCode] = useState('')
-  const [createType, setCreateType] = useState<'BIN' | 'SHELF' | 'FLOOR' | 'SUB_ALMACEN'>('BIN')
+  const [createType, setCreateType] = useState<'BIN' | 'SHELF' | 'FLOOR' | 'SUB_ALMACEN' | 'SAMPLES'>('BIN')
   const [editingLocation, setEditingLocation] = useState<LocationListItem | null>(null)
   const [editCode, setEditCode] = useState('')
-  const [editType, setEditType] = useState<'BIN' | 'SHELF' | 'FLOOR' | 'SUB_ALMACEN'>('BIN')
+  const [editType, setEditType] = useState<'BIN' | 'SHELF' | 'FLOOR' | 'SUB_ALMACEN' | 'SAMPLES'>('BIN')
   const [editIsActive, setEditIsActive] = useState(true)
   const [deleteError, setDeleteError] = useState<string>('')
   const queryClient = useQueryClient()
@@ -55,7 +56,7 @@ export function LocationsPage() {
   })
 
   const createLocationMutation = useMutation({
-    mutationFn: async (data: { code: string; type: 'BIN' | 'SHELF' | 'FLOOR' | 'SUB_ALMACEN' }) => {
+    mutationFn: async (data: { code: string; type: 'BIN' | 'SHELF' | 'FLOOR' | 'SUB_ALMACEN' | 'SAMPLES' }) => {
       return apiFetch(`/api/v1/warehouses/${warehouseId}/locations`, {
         method: 'POST',
         token: auth.accessToken!,
@@ -71,7 +72,7 @@ export function LocationsPage() {
   })
 
   const updateLocationMutation = useMutation({
-    mutationFn: async (data: { code: string; type: 'BIN' | 'SHELF' | 'FLOOR' | 'SUB_ALMACEN'; isActive: boolean }) => {
+    mutationFn: async (data: { code: string; type: 'BIN' | 'SHELF' | 'FLOOR' | 'SUB_ALMACEN' | 'SAMPLES'; isActive: boolean }) => {
       return apiFetch(`/api/v1/warehouses/${warehouseId}/locations/${editingLocation!.id}`, {
         method: 'PATCH',
         token: auth.accessToken!,
@@ -108,7 +109,7 @@ export function LocationsPage() {
   const openEditModal = (location: LocationListItem) => {
     setEditingLocation(location)
     setEditCode(location.code)
-    setEditType(location.type as 'BIN' | 'SHELF' | 'FLOOR' | 'SUB_ALMACEN')
+      setEditType(location.type as 'BIN' | 'SHELF' | 'FLOOR' | 'SUB_ALMACEN' | 'SAMPLES')
     setEditIsActive(location.isActive)
   }
 
@@ -224,7 +225,7 @@ export function LocationsPage() {
             <Select
               label="Tipo"
               value={createType}
-              onChange={(e) => setCreateType(e.target.value as 'BIN' | 'SHELF' | 'FLOOR' | 'SUB_ALMACEN')}
+              onChange={(e) => setCreateType(e.target.value as 'BIN' | 'SHELF' | 'FLOOR' | 'SUB_ALMACEN' | 'SAMPLES')}
               options={LOCATION_TYPE_OPTIONS}
             />
             {createLocationMutation.error && (
@@ -264,7 +265,7 @@ export function LocationsPage() {
             <Select
               label="Tipo"
               value={editType}
-              onChange={(e) => setEditType(e.target.value as 'BIN' | 'SHELF' | 'FLOOR' | 'SUB_ALMACEN')}
+              onChange={(e) => setEditType(e.target.value as 'BIN' | 'SHELF' | 'FLOOR' | 'SUB_ALMACEN' | 'SAMPLES')}
               options={LOCATION_TYPE_OPTIONS}
             />
             <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">

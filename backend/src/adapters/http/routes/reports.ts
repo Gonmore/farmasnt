@@ -88,6 +88,7 @@ const stockBalancesExpandedQuerySchema = z.object({
   locationId: z.string().uuid().optional(),
   productId: z.string().uuid().optional(),
   take: z.coerce.number().int().min(1).max(5000).default(100),
+  includeSamples: z.coerce.boolean().optional().default(false),
 })
 
 const stockMovementsExpandedQuerySchema = dateRangeQuerySchema.extend({
@@ -1515,7 +1516,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
       if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
 
       const tenantId = request.auth!.tenantId
-      const { locationId, productId, take } = parsed.data
+      const { locationId, productId, take, includeSamples } = parsed.data
 
       // Autonomía de sucursal: usuarios con scope:branch (SALES) solo ven SU almacén propio.
       // BRANCH_PROVIDER (warehouseType PROVIDER) ve TODOS los warehouses en inventario (allowProviderAll);
@@ -1531,13 +1532,10 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
           tenantId,
           ...(productId ? { productId } : {}),
           ...(locationId ? { locationId } : {}),
-          ...(warehouseId
-            ? {
-                location: {
-                  warehouseId,
-                },
-              }
-            : {}),
+          location: {
+            ...(warehouseId ? { warehouseId } : {}),
+            ...(!includeSamples ? { type: { not: 'SAMPLES' } } : {}),
+          },
         },
         take,
         orderBy: [{ updatedAt: 'desc' }],
@@ -1565,6 +1563,7 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
             select: {
               id: true,
               code: true,
+              type: true,
               warehouse: { select: { id: true, code: true, name: true } },
             },
           },
