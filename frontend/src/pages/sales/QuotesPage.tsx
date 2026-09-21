@@ -5,8 +5,8 @@ import { apiFetch } from '../../lib/api'
 import { formatMoney } from '../../lib/numberFormat'
 import { useAuth } from '../../providers/AuthProvider'
 import { MainLayout, PageContainer, Button, Table, PaginationCursor, Input, Select, Badge, Modal, Loading, ErrorState } from '../../components'
-import { useNavigation, usePermissions } from '../../hooks'
-import { EyeIcon, ArrowPathIcon, TrashIcon, PlusIcon } from '@heroicons/react/24/outline'
+import { useNavigation, usePermissions, useCursorPagination } from '../../hooks'
+import { EyeIcon, ArrowPathIcon, TrashIcon, PlusIcon, MagnifyingGlassIcon } from '@heroicons/react/24/outline'
 import { useNotifications } from '../../providers/NotificationsProvider'
 
 type QuoteListItem = {
@@ -144,10 +144,12 @@ export function QuotesPage() {
   const isBranchSeller = permissions.isBranchSeller
   const queryClient = useQueryClient()
   const notifications = useNotifications()
-  const [searchParams, setSearchParams] = useSearchParams()
-  const highlightId = searchParams.get('highlight')
-  const [cursor, setCursor] = useState<string | undefined>()
-  const [customerSearch, setCustomerSearch] = useState('')
+   const [searchParams, setSearchParams] = useSearchParams()
+   const highlightId = searchParams.get('highlight')
+   const [customerSearch, setCustomerSearch] = useState('')
+   const [appliedSearch, setAppliedSearch] = useState('')
+   const take = 50
+   const pag = useCursorPagination()
   const [stockErrorModalOpen, setStockErrorModalOpen] = useState(false)
   const [stockErrorMessage, setStockErrorMessage] = useState<string>('')
   const [processSellerId, setProcessSellerId] = useState<string>('')
@@ -204,11 +206,11 @@ export function QuotesPage() {
 
   const fefoByProductId = new Map(quoteLines.map((line, idx) => [line.productId, fefoQueries[idx]]))
 
-  const quotesQuery = useQuery({
-    queryKey: ['quotes', cursor, customerSearch],
-    queryFn: () => fetchQuotes(auth.accessToken!, 20, cursor, customerSearch || undefined),
-    enabled: !!auth.accessToken,
-  })
+   const quotesQuery = useQuery({
+     queryKey: ['quotes', take, pag.currentCursor, appliedSearch],
+     queryFn: () => fetchQuotes(auth.accessToken!, take, pag.currentCursor, appliedSearch || undefined),
+     enabled: !!auth.accessToken,
+   })
 
   useEffect(() => {
     if (!highlightId) return
@@ -526,12 +528,24 @@ export function QuotesPage() {
         </Modal>
 
         <div className="mb-4">
-          <Input
-            placeholder="Buscar por cliente..."
-            value={customerSearch}
-            onChange={(e) => setCustomerSearch(e.target.value)}
-            className="max-w-sm"
-          />
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              setAppliedSearch(customerSearch.trim())
+              pag.reset()
+            }}
+            className="flex gap-2 max-w-sm"
+          >
+            <Input
+              placeholder="Buscar por cliente, departamento o ciudad..."
+              value={customerSearch}
+              onChange={(e) => setCustomerSearch(e.target.value)}
+              className="flex-1"
+            />
+            <Button variant="outline" icon={<MagnifyingGlassIcon />} type="submit" disabled={customerSearch.length === 0}>
+              Buscar
+            </Button>
+          </form>
         </div>
 
         <div className="rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
@@ -616,9 +630,17 @@ export function QuotesPage() {
                 }
               />
               <PaginationCursor
-                hasMore={!!quotesQuery.data.nextCursor}
-                onLoadMore={() => setCursor(quotesQuery.data!.nextCursor!)}
-                loading={quotesQuery.isFetching}
+                 hasMore={!!quotesQuery.data.nextCursor}
+                 onLoadMore={() => pag.goForward(quotesQuery.data!.nextCursor)}
+                 loading={quotesQuery.isFetching}
+                 currentCount={quotesQuery.data.items.length}
+                 currentPage={pag.currentPage}
+                 maxPage={quotesQuery.data.nextCursor ? pag.maxVisitedPage + 1 : pag.maxVisitedPage}
+                 take={take}
+                 canGoBack={pag.canGoBack}
+                 onGoBack={pag.goBack}
+                 onGoToStart={pag.goToStart}
+                 onGoToPage={(page) => pag.goToPage(page)}
               />
             </>
           )}

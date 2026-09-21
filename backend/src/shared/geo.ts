@@ -24,8 +24,8 @@ export function cityToDepartment(city: string | null | undefined): string | null
   return geoService.resolveDepartmentFromStatic(city)
 }
 
-export async function resolveDepartmentForCity(city: string, countryCode?: string): Promise<string | null> {
-  return geoService.resolveDepartmentForCity(city, countryCode)
+export async function resolveDepartmentForCity(city: string, countryCode?: string, adminLevel1Code?: string): Promise<string | null> {
+  return geoService.resolveDepartmentForCity(city, countryCode, adminLevel1Code)
 }
 
 export function isValidDepartment(value: string | null | undefined): boolean {

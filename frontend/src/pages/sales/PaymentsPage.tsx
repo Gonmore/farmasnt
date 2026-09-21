@@ -1,13 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { MainLayout, PageContainer, Button, Table, Loading, ErrorState, EmptyState, Badge, Modal, Input, Select, ImageUpload } from '../../components'
+import { MainLayout, PageContainer, Button, Table, Loading, ErrorState, EmptyState, Badge, Modal, Input, Select, ImageUpload, PaginationCursor } from '../../components'
 import { apiFetch } from '../../lib/api'
 import { formatMoney } from '../../lib/numberFormat'
-import { useNavigation } from '../../hooks'
+import { useNavigation, useCursorPagination } from '../../hooks'
 import { useAuth } from '../../providers/AuthProvider'
 import { useTenant } from '../../providers/TenantProvider'
-import { EyeIcon, CheckCircleIcon } from '@heroicons/react/24/outline'
+import { EyeIcon, CheckCircleIcon, MagnifyingGlassIcon } from '@heroicons/react/24/outline'
 
 type PaymentStatus = 'DUE' | 'PAID' | 'ALL'
 
@@ -27,7 +27,7 @@ type PaymentListItem = {
   paidAt: string | null
 }
 
-type ListResponse = { items: PaymentListItem[] }
+type ListResponse = { items: PaymentListItem[]; nextCursor: string | null }
 
 type PaymentReceiptType = 'CASH' | 'TRANSFER_QR' | 'CHECK'
 type PaymentProofUpload = { uploadUrl: string; publicUrl: string; key: string; method?: string }
@@ -50,8 +50,10 @@ function paymentModeLabel(mode: string): string {
   return mode
 }
 
-async function fetchPayments(token: string, status: PaymentStatus): Promise<ListResponse> {
-  const params = new URLSearchParams({ status, take: '200' })
+async function fetchPayments(token: string, status: PaymentStatus, take: number, cursor?: string, q?: string): Promise<ListResponse> {
+  const params = new URLSearchParams({ status, take: String(take) })
+  if (cursor) params.append('cursor', cursor)
+  if (q && q.trim()) params.append('q', q.trim())
   return apiFetch(`/api/v1/sales/payments?${params}`, { token })
 }
 
@@ -101,6 +103,10 @@ export function PaymentsPage() {
   const queryClient = useQueryClient()
 
   const [status, setStatus] = useState<PaymentStatus>('DUE')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [appliedSearch, setAppliedSearch] = useState('')
+  const take = 50
+  const pag = useCursorPagination()
   const [payModalOpen, setPayModalOpen] = useState(false)
   const [payTarget, setPayTarget] = useState<PaymentListItem | null>(null)
   const [amountType, setAmountType] = useState<'TOTAL' | 'PARTIAL'>('TOTAL')
@@ -111,11 +117,11 @@ export function PaymentsPage() {
   const [receiptError, setReceiptError] = useState('')
   const [uploadingProof, setUploadingProof] = useState(false)
 
-  const paymentsQuery = useQuery({
-    queryKey: ['payments', status],
-    queryFn: () => fetchPayments(auth.accessToken!, status),
-    enabled: !!auth.accessToken,
-  })
+   const paymentsQuery = useQuery({
+     queryKey: ['payments', status, take, pag.currentCursor, appliedSearch],
+     queryFn: () => fetchPayments(auth.accessToken!, status, take, pag.currentCursor, appliedSearch || undefined),
+     enabled: !!auth.accessToken,
+   })
 
   const payMutation = useMutation({
     mutationFn: (vars: {
@@ -184,19 +190,46 @@ export function PaymentsPage() {
   return (
     <MainLayout navGroups={navGroups}>
       <PageContainer title="Pagos">
+        <div className="mb-4">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              setAppliedSearch(searchQuery.trim())
+              pag.reset()
+            }}
+            className="flex gap-2 max-w-sm"
+          >
+            <Input
+              placeholder="Buscar por cliente o número de orden..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="flex-1"
+            />
+            <Button variant="outline" icon={<MagnifyingGlassIcon />} type="submit" disabled={searchQuery.length === 0}>
+              Buscar
+            </Button>
+          </form>
+        </div>
+
         {/* Botones de filtro - segunda fila en móvil */}
         <div className="mb-4 flex flex-wrap items-center gap-2">
           <Button
             size="sm"
             variant={status === 'DUE' ? 'primary' : 'ghost'}
-            onClick={() => setStatus('DUE')}
+            onClick={() => {
+              setStatus('DUE')
+              pag.reset()
+            }}
           >
             Por cobrar
           </Button>
           <Button
             size="sm"
             variant={status === 'PAID' ? 'primary' : 'ghost'}
-            onClick={() => setStatus('PAID')}
+            onClick={() => {
+              setStatus('PAID')
+              pag.reset()
+            }}
           >
             Cobradas
           </Button>
@@ -204,7 +237,10 @@ export function PaymentsPage() {
           <Button
             size="sm"
             variant={status === 'ALL' ? 'primary' : 'ghost'}
-            onClick={() => setStatus('ALL')}
+            onClick={() => {
+              setStatus('ALL')
+              pag.reset()
+            }}
           >
             Ver todas
           </Button>
@@ -291,6 +327,21 @@ export function PaymentsPage() {
               ]}
               data={items}
               keyExtractor={(p) => p.id}
+            />
+          )}
+          {paymentsQuery.data && items.length > 0 && (
+            <PaginationCursor
+              hasMore={!!paymentsQuery.data.nextCursor}
+              onLoadMore={() => pag.goForward(paymentsQuery.data!.nextCursor)}
+              loading={paymentsQuery.isFetching}
+              currentCount={items.length}
+              currentPage={pag.currentPage}
+              maxPage={paymentsQuery.data.nextCursor ? pag.maxVisitedPage + 1 : pag.maxVisitedPage}
+              take={take}
+              canGoBack={pag.canGoBack}
+              onGoBack={pag.goBack}
+              onGoToStart={pag.goToStart}
+              onGoToPage={(page) => pag.goToPage(page)}
             />
           )}
         </div>

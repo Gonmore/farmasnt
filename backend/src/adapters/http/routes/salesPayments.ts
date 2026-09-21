@@ -12,7 +12,9 @@ import { getEnv } from '../../../shared/env.js'
 
 const listPaymentsQuerySchema = z.object({
   status: z.enum(['DUE', 'PAID', 'ALL']).default('DUE'),
-  take: z.coerce.number().int().min(1).max(200).default(100),
+  take: z.coerce.number().int().min(1).max(100).default(50),
+  cursor: z.string().uuid().optional(),
+  q: z.string().trim().min(1).max(200).optional(),
 })
 
 const paymentProofPresignSchema = z.object({
@@ -160,10 +162,24 @@ export function registerSalesPaymentRoutes(app: FastifyInstance) {
                   { deliveryDepartment: { in: branchDepartments, mode: 'insensitive' as const } },
                   { AND: [{ OR: [{ deliveryDepartment: null }, { deliveryDepartment: '' }] }, { customer: { department: { in: branchDepartments, mode: 'insensitive' as const } } }] },
                 ],
+               }
+            : {}),
+          ...(parsed.data.q
+            ? {
+                OR: [
+                  { customer: { name: { contains: parsed.data.q, mode: 'insensitive' } } },
+                  { number: { contains: parsed.data.q, mode: 'insensitive' } },
+                ],
               }
             : {}),
         },
         take: parsed.data.take,
+        ...(parsed.data.cursor
+          ? {
+            skip: 1,
+            cursor: { id: parsed.data.cursor },
+          }
+          : {}),
         orderBy: [{ deliveryDate: 'asc' }, { id: 'asc' }],
         select: {
           id: true,
@@ -204,7 +220,8 @@ export function registerSalesPaymentRoutes(app: FastifyInstance) {
         }
       })
 
-      return reply.send({ items })
+      const nextCursor = orders.length === parsed.data.take ? orders[orders.length - 1]!.id : null
+      return reply.send({ items, nextCursor })
     },
   )
 

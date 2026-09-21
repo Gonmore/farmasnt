@@ -9,7 +9,7 @@ import { cityToDepartment } from '../../../shared/geo.js'
 import { currentYearUtc, nextSequence } from '../../../application/shared/sequence.js'
 
 const listQuerySchema = z.object({
-  take: z.coerce.number().int().min(1).max(50).default(20),
+  take: z.coerce.number().int().min(1).max(50).default(50),
   cursor: z.string().uuid().optional(),
   customerSearch: z.string().optional(),
 })
@@ -673,9 +673,11 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
 
       const where: any = { tenantId, isActive: true }
       if (customerSearch) {
-        where.customer = {
-          name: { contains: customerSearch, mode: 'insensitive' },
-        }
+        where.OR = [
+          { customer: { name: { contains: customerSearch, mode: 'insensitive' } } },
+          { customer: { city: { contains: customerSearch, mode: 'insensitive' } } },
+          { customer: { department: { contains: customerSearch, mode: 'insensitive' } } },
+        ]
       }
       if (branchDepartments) {
         const departmentDeliveryFilters = branchDepartments.map((dept) => ({ deliveryDepartment: { equals: dept, mode: 'insensitive' as const } }))

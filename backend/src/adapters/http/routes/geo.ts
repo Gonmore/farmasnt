@@ -38,6 +38,7 @@ const countryParamSchema = z.object({
 const resolveDepartmentQuerySchema = z.object({
   city: z.string().trim().min(1).max(120),
   countryCode: z.string().trim().min(2).max(2).toUpperCase().optional(),
+  adminLevel1Code: z.string().trim().max(10).optional(),
 })
 
 export async function registerGeoRoutes(app: FastifyInstance): Promise<void> {
@@ -147,7 +148,7 @@ export async function registerGeoRoutes(app: FastifyInstance): Promise<void> {
       const parsed = resolveDepartmentQuerySchema.safeParse(request.query)
       if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
 
-      const department = await geoService.resolveDepartmentForCity(parsed.data.city, parsed.data.countryCode)
+      const department = await geoService.resolveDepartmentForCity(parsed.data.city, parsed.data.countryCode, parsed.data.adminLevel1Code)
       return reply.send({ department: department ?? null })
     },
   )

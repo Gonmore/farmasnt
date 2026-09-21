@@ -4,9 +4,45 @@
 
 > Este documento suma (a alto nivel) decisiones, hitos y cambios relevantes que se fueron incorporando al repositorio para llegar al estado actual del MVP.
 
----
+## **[21 Sep 2026] Geografía de clientes: Ciudad/Provincia/Municipio + auto-resolución de departamento + branch validation**
 
-## **[21 Sep 2026] Tabla de clientes — columna Departamento + búsqueda multi-campo**
+### Contexto
+- La etiqueta "Ciudad" en formulario y tabla de clientes se renombró a **"Ciudad / Provincia / Municipio"** para reflejar que el campo acepta municipios, ciudades y provincias.
+- Al seleccionar directamente un municipio o provincia, el departamento se resuelve automáticamente usando el `adminLevel1Code` del objeto `City` retornado por el buscador geográfico (sin requerir un round-trip adicional a Nominatim).
+- El buscador de ubicaciones (`CitySelector`) ahora incluye resultados de tipo **provincia** (además de ciudad, pueblo, aldea, municipio) y muestra un badge aclaratorio del tipo de localidad en el dropdown.
+- Para usuarios de sucursal (branch-scoped), se muestra una **alerta inline** si la localidad seleccionada pertenece a un departamento no atendido por la sucursal.
+
+### Cambios
+
+#### Backend
+- **`backend/src/application/geo/geoService.ts`**:
+  - `searchCitiesFromNominatim`: el filtro de tipos ahora incluye `'province'`; el nombre extraído prioriza `address.city` ? `address.town` ? `address.village` ? `address.province`.
+  - `CityFeatureType`: agregado `'province'`.
+  - `resolveDepartmentForCity`: acepta `adminLevel1Code?` opcional; cuando se provee, resuelve el departamento directamente desde el código (evita Nominatim) antes del fallback.
+  - `featureTypeFromNominatimType`: agregado mapping `province ? 'province'`.
+- **`backend/src/adapters/http/routes/geo.ts`**: `resolve-department` acepta `adminLevel1Code` en query params (Zod schema + handler).
+- **`backend/src/shared/geo.ts`**: `resolveDepartmentForCity` propaga `adminLevel1Code`.
+
+#### Frontend
+- **`frontend/src/components/CitySelector.tsx`**:
+  - Nueva prop opcional `onCitySelect?: (city: City) => void` que pasa el objeto `City` completo al padre al seleccionar una opción.
+  - El dropdown muestra un badge con el tipo de localidad (Ciudad / Pueblo / Aldea / Municipio / Provincia).
+- **`frontend/src/pages/sales/CustomerDetailPage.tsx`**:
+  - Label "Ciudad" ? "Ciudad / Provincia / Municipio".
+  - `handleCityChange` acepta `cityObj?: { adminLevel1Code?: string }` y lo pasa a `resolveDepartment`.
+  - `CitySelector` usa `onCitySelect` para pasar `adminLevel1Code` de inmediato.
+  - Nuevo estado `cityScopeError`: muestra alerta amber cuando la ciudad seleccionada resuelve a un departamento fuera del alcance de la sucursal. Se limpia al cambiar la ciudad o el departamento.
+- **`frontend/src/pages/sales/CustomersPage.tsx`**:
+  - Columna "Ciudad" renombrada a "Ciudad / Provincia / Municipio".
+  - Ambas columnas (Departamento y Ciudad/Provincia/Municipio) usan `truncate block` con `title` tooltip para evitar solapamiento de texto.
+- **`frontend/src/lib/geoService.ts`**: `resolveDepartment` envía `adminLevel1Code` como query param; `City.FeatureType` incluye `'province'`.
+
+### Operación
+- `npx tsc --noEmit` limpio en backend y frontend.
+- `npm run build` OK en frontend.
+- No se requieren migraciones Prisma nuevas (cambios en lógica de geo, no en schema).
+
+---
 
 ### Contexto
 - La tabla de clientes (Ventas > Clientes) no mostraba el departamento del cliente, y el buscador solo filtraba por nombre.

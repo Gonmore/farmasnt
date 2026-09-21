@@ -15,7 +15,7 @@ export interface AdminLevel1 {
   type: AdminLevel1Type
 }
 
-export type CityFeatureType = 'city' | 'town' | 'village' | 'municipality'
+export type CityFeatureType = 'city' | 'town' | 'village' | 'municipality' | 'province'
 
 export interface City {
   id: string

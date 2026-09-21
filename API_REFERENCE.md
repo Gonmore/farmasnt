@@ -627,6 +627,7 @@ Response 200
 Notas
 - Para Bolivia (`countryCode=BO`): prioriza la lista estática de ciudades; si no hay coincidencias para la query, hace fallback a Nominatim y fusiona resultados.
 - `adminLevel1Code` filtra ciudades por departamento. Para Bolivia, el código es interno (`BO01`..`BO09`).
+- La búsqueda de Nominatim incluye ahora resultados de tipo `province` (además de `city`, `town`, `village`, `municipality`), permitiendo seleccionar provincias como localidad de cliente.
 
 ### GET /api/v1/geo/reverse
 Query
@@ -657,6 +658,7 @@ Response 200
 Query
 - `city` (string, requerido)
 - `countryCode` (2-char ISO, opcional)
+- `adminLevel1Code` (string, opcional) — si se provee, resuelve el departamento directamente desde el código sin necesidad de Nominatim.
 
 Response 200
 ```json
@@ -664,7 +666,8 @@ Response 200
 ```
 
 Notas
-- Usa datos estáticos para Bolivia (ciudades conocidas → departamentos) y Nominatim como fallback. Cuando una ciudad boliviana no está en el mapa estático (ej: Montero, Warnes), se consulta Nominatim y se cachea el resultado.
+- Usa datos estáticos para Bolivia (ciudades conocidas ? departamentos) y Nominatim como fallback. Cuando una ciudad boliviana no está en `BOLIVIA_CITY_TO_DEPARTMENT` (ej: Montero, Warnes), se consulta Nominatim y cachea el resultado.
+- Si `adminLevel1Code` se provee, se resuelve el nombre del departamento directamente desde el código (sin Nominatim), acelerando la resolución en el formulario de clientes.
 - `department` es `null` si no se pudo resolver.
 
 ---

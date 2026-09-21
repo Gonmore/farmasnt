@@ -116,7 +116,7 @@ frontend/src/
 │   └── ThemeProvider.tsx      # Dark/light mode
 ├── components/
 │   ├── common/                # Reutilizables: MainLayout, PageContainer, Button, Modal, etc.
-│   ├── geo/                   # Georef components: CountrySelector, AdminLevel1Selector, CitySelector, MapSelector
+│   ├── geo/                   # Georef components: CountrySelector, AdminLevel1Selector, CitySelector (supports city/town/village/municipality/province), MapSelector
 │   ├── reports/               # Componentes de reportes (KPICard, ReportSection, docs)
 │   ├── ui/                    # Componentes base (Input, Select, Table)
 │   └── index.ts               # Barrel exports

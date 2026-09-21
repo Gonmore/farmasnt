@@ -128,6 +128,7 @@ export function CustomerDetailPage() {
   const [creditEnabled, setCreditEnabled] = useState(false)
   const [creditDays, setCreditDays] = useState('')
   const [error, setError] = useState('')
+  const [cityScopeError, setCityScopeError] = useState('')
 
   const handleMapLocationSelect = useCallback((mapsUrl: string, geocodedAddress?: string) => {
     setMapsUrl(mapsUrl)
@@ -136,14 +137,16 @@ export function CustomerDetailPage() {
     }
   }, [])
 
-  const handleCityChange = useCallback(async (cityValue: string) => {
+  const handleCityChange = useCallback(async (cityValue: string, cityObj?: { adminLevel1Code?: string }) => {
     setCity(cityValue)
+    setCityScopeError('')
     if (cityValue.trim()) {
       try {
-        const { department: resolvedDept } = await geoApi.resolveDepartment(cityValue, tenantCountryCode)
+        const { department: resolvedDept } = await geoApi.resolveDepartment(cityValue, tenantCountryCode, cityObj?.adminLevel1Code)
         if (resolvedDept) {
           if (isBranchScoped && branchDepartments && !branchDepartments.includes(resolvedDept)) {
             setDepartment('')
+            setCityScopeError(`La ciudad seleccionada pertenece al departamento "${resolvedDept}", que no está en tu alcance (${branchDepartments.join(', ')}).`)
             return
           }
           setDepartment(resolvedDept)
@@ -390,7 +393,10 @@ export function CustomerDetailPage() {
                   <Select
                     label="Departamento / Estado"
                     value={department || ''}
-                    onChange={(e) => setDepartment(e.target.value)}
+                    onChange={(e) => {
+                      setDepartment(e.target.value)
+                      setCityScopeError('')
+                    }}
                     disabled={isSubmitting}
                     options={[
                       { value: '', label: 'Seleccionar...' },
@@ -408,15 +414,21 @@ export function CustomerDetailPage() {
                 )}
                 <div>
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-                    Ciudad
+                    Ciudad / Provincia / Municipio
                   </label>
                   <CitySelector
                     countryCode={tenantCountryCode}
                     adminLevel1Code={department || undefined}
                     value={city}
-                    onChange={handleCityChange}
+                    onChange={(v) => handleCityChange(v)}
+                    onCitySelect={(c) => handleCityChange(c.name.toUpperCase(), { adminLevel1Code: c.adminLevel1Code })}
                     disabled={isSubmitting}
                   />
+                  {cityScopeError && (
+                    <div className="mt-1 text-sm text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded px-3 py-2">
+                      {cityScopeError}
+                    </div>
+                  )}
                 </div>
               </div>
 

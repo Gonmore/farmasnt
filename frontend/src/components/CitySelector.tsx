@@ -6,6 +6,7 @@ interface CitySelectorProps {
   adminLevel1Code?: string
   value: string
   onChange: (value: string) => void
+  onCitySelect?: (city: City) => void
   placeholder?: string
   disabled?: boolean
   required?: boolean
@@ -16,6 +17,7 @@ const CitySelector: React.FC<CitySelectorProps> = ({
   adminLevel1Code,
   value,
   onChange,
+  onCitySelect,
   placeholder = 'Buscar ciudad...',
   disabled = false,
   required = false,
@@ -74,6 +76,7 @@ const CitySelector: React.FC<CitySelectorProps> = ({
   const handleOptionSelect = (option: City) => {
     setSearchTerm(option.name)
     onChange(option.name.toUpperCase())
+    onCitySelect?.(option)
     setIsOpen(false)
   }
 
@@ -106,15 +109,25 @@ const CitySelector: React.FC<CitySelectorProps> = ({
               Buscando...
             </div>
           ) : options.length > 0 ? (
-            options.map((option) => (
-              <div
-                key={option.id}
-                onClick={() => handleOptionSelect(option)}
-                className="px-3 py-2 hover:bg-slate-100 cursor-pointer dark:hover:bg-slate-600"
-              >
-                {option.name}
-              </div>
-            ))
+            options.map((option) => {
+              const typeLabel =
+                option.featureType === 'city' ? 'Ciudad' :
+                option.featureType === 'town' ? 'Pueblo' :
+                option.featureType === 'village' ? 'Aldea' :
+                option.featureType === 'municipality' ? 'Municipio' :
+                option.featureType === 'province' ? 'Provincia' :
+                option.featureType
+              return (
+                <div
+                  key={option.id}
+                  onClick={() => handleOptionSelect(option)}
+                  className="px-3 py-2 hover:bg-slate-100 cursor-pointer dark:hover:bg-slate-600"
+                >
+                  <div className="font-medium text-sm">{option.name}</div>
+                  <div className="text-xs text-slate-500 dark:text-slate-400">{typeLabel}</div>
+                </div>
+              )
+            })
           ) : searchTerm.length >= 2 ? (
             <div className="px-3 py-2 text-slate-500 dark:text-slate-400">
               No se encontraron ciudades

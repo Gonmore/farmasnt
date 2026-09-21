@@ -9,7 +9,7 @@ import { cityToDepartment } from '../../../shared/geo.js'
 import { currentYearUtc, nextSequence } from '../../../application/shared/sequence.js'
 
 const listQuerySchema = z.object({
-  take: z.coerce.number().int().min(1).max(1000).default(20),
+  take: z.coerce.number().int().min(1).max(1000).default(50),
   cursor: z.string().uuid().optional(),
   status: z.enum(['DRAFT', 'CONFIRMED', 'FULFILLED', 'CANCELLED']).optional(),
   customerId: z.string().trim().min(1).optional(),
@@ -28,6 +28,7 @@ const deliveriesQuerySchema = z.object({
   cursor: z.string().uuid().optional(),
   status: z.enum(['PENDING', 'DELIVERED', 'ALL']).default('PENDING'),
   departments: z.string().optional(),
+  q: z.string().trim().min(1).max(200).optional(),
 })
 
 const orderCreateSchema = z.object({
@@ -595,19 +596,36 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
       const departmentDeliveryFilters = departments?.map((dept) => ({ deliveryDepartment: { equals: dept, mode: 'insensitive' as const } }))
       const departmentCustomerFilters = departments?.map((dept) => ({ customer: { department: { equals: dept, mode: 'insensitive' as const } } }))
 
+      const deptClause = departments
+        ? {
+            OR: [
+              { OR: departmentDeliveryFilters ?? [] },
+              { AND: [{ OR: [{ deliveryDepartment: null }, { deliveryDepartment: '' }] }, { OR: departmentCustomerFilters ?? [] }] },
+            ],
+          }
+        : null
+
       const items = await db.salesOrder.findMany({
         where: {
           tenantId,
           status: { in: statuses as any },
-          ...(departments
+          ...(parsed.data.q
             ? {
-                // Keep in sync with reports/sales/by-city logic: prefer order.deliveryDepartment, fallback to customer.department.
-                OR: [
-                  { OR: departmentDeliveryFilters ?? [] },
-                  { AND: [{ OR: [{ deliveryDepartment: null }, { deliveryDepartment: '' }] }, { OR: departmentCustomerFilters ?? [] }] },
+                AND: [
+                  ...(deptClause ? [deptClause] : []),
+                  {
+                    OR: [
+                      { customer: { name: { contains: parsed.data.q, mode: 'insensitive' } } },
+                      { number: { contains: parsed.data.q, mode: 'insensitive' } },
+                      { deliveryCity: { contains: parsed.data.q, mode: 'insensitive' } },
+                      { deliveryDepartment: { contains: parsed.data.q, mode: 'insensitive' } },
+                    ],
+                  },
                 ],
               }
-            : {}),
+            : deptClause
+              ? { OR: deptClause.OR }
+              : {}),
         },
         take: parsed.data.take,
         ...(parsed.data.cursor
@@ -711,9 +729,11 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
         where.customerId = parsed.data.customerId
       }
       if (parsed.data.customerSearch) {
-        where.customer = {
-          name: { contains: parsed.data.customerSearch, mode: 'insensitive' },
-        }
+        where.OR = [
+          { customer: { name: { contains: parsed.data.customerSearch, mode: 'insensitive' } } },
+          { customer: { city: { contains: parsed.data.customerSearch, mode: 'insensitive' } } },
+          { customer: { department: { contains: parsed.data.customerSearch, mode: 'insensitive' } } },
+        ]
       }
       if (parsed.data.deliveryDepartment || parsed.data.deliveryCity) {
         const dep = (parsed.data.deliveryDepartment ?? (parsed.data.deliveryCity ? cityToDepartment(parsed.data.deliveryCity.trim()) : null))?.trim()

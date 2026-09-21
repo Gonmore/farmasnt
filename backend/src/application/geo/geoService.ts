@@ -140,13 +140,14 @@ function adminLevel1TypeForCountry(countryCode: string): AdminLevel1Type {
   return types[countryCode.toUpperCase()] ?? 'region'
 }
 
-function featureTypeFromNominatimType(type: string): CityFeatureType {
-  const mapping: Record<string, CityFeatureType> = {
-    city: 'city',
-    town: 'town',
-    village: 'village',
-    municipality: 'municipality',
-  }
+  function featureTypeFromNominatimType(type: string): CityFeatureType {
+    const mapping: Record<string, CityFeatureType> = {
+      city: 'city',
+      town: 'town',
+      village: 'village',
+      municipality: 'municipality',
+      province: 'province',
+    }
   return mapping[type.toLowerCase()] ?? 'city'
 }
 
@@ -500,10 +501,10 @@ export class GeoService {
     const results: City[] = data
       .filter((item) => {
         const placeType = item.type
-        return ['city', 'town', 'village', 'municipality'].includes(placeType) || item.class === 'place'
+        return ['city', 'town', 'village', 'municipality', 'province'].includes(placeType) || item.class === 'place'
       })
       .map((item) => {
-        const cityName = ((item.address?.city || item.address?.town || item.address?.village) ?? item.display_name.split(',')[0] ?? '').trim()
+        const cityName = ((item.address?.city || item.address?.town || item.address?.village || item.address?.province) ?? item.display_name.split(',')[0] ?? '').trim()
         const adminName = item.address?.state || item.address?.province || item.address?.region || item.address?.county || ''
         const result: City = {
           id: item.osm_id ? `osm:${item.osm_id}` : `${cityName.toUpperCase()}`,
@@ -627,8 +628,8 @@ export class GeoService {
     return currency
   }
 
-  async resolveDepartmentForCity(city: string, countryCode?: string): Promise<string | null> {
-    const cacheKey = `dept:${countryCode ?? 'any'}:${normalizeCityName(city)}`
+  async resolveDepartmentForCity(city: string, countryCode?: string, adminLevel1Code?: string): Promise<string | null> {
+    const cacheKey = `dept:${countryCode ?? 'any'}:${normalizeCityName(city)}:${adminLevel1Code ?? 'nocode'}`
     const cached = this.getCached<string | null>(cacheKey)
     if (cached !== null) return cached
 
@@ -644,6 +645,14 @@ export class GeoService {
     if (boliviaDept) {
       this.setCached(cacheKey, boliviaDept, this.ttl.adminLevel1)
       return boliviaDept
+    }
+
+    if (adminLevel1Code) {
+      const deptName = this.adminLevel1CodeToDepartmentName(adminLevel1Code)
+      if (deptName) {
+        this.setCached(cacheKey, deptName, this.ttl.adminLevel1)
+        return deptName
+      }
     }
 
     try {

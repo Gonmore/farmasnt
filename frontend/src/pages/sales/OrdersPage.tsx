@@ -4,8 +4,8 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { apiFetch } from '../../lib/api'
 import { useAuth } from '../../providers/AuthProvider'
 import { MainLayout, PageContainer, Button, Table, Loading, ErrorState, EmptyState, Badge, PaginationCursor, Input } from '../../components'
-import { useNavigation } from '../../hooks'
-import { EyeIcon, TrashIcon } from '@heroicons/react/24/outline'
+import { useNavigation, useCursorPagination } from '../../hooks'
+import { EyeIcon, TrashIcon, MagnifyingGlassIcon } from '@heroicons/react/24/outline'
 import { useNotifications } from '../../providers/NotificationsProvider'
 
 type OrderListItem = {
@@ -54,14 +54,16 @@ export function OrdersPage() {
   const notifications = useNotifications()
   const [searchParams, setSearchParams] = useSearchParams()
   const highlightId = searchParams.get('highlight')
-  const [cursor, setCursor] = useState<string | undefined>()
-  const [customerSearch, setCustomerSearch] = useState('')
+   const [customerSearch, setCustomerSearch] = useState('')
+   const [appliedSearch, setAppliedSearch] = useState('')
+   const take = 50
+   const pag = useCursorPagination()
 
-  const ordersQuery = useQuery({
-    queryKey: ['orders', cursor, customerSearch],
-    queryFn: () => fetchOrders(auth.accessToken!, 20, cursor, customerSearch || undefined),
-    enabled: !!auth.accessToken,
-  })
+   const ordersQuery = useQuery({
+     queryKey: ['orders', take, pag.currentCursor, appliedSearch],
+     queryFn: () => fetchOrders(auth.accessToken!, take, pag.currentCursor, appliedSearch || undefined),
+     enabled: !!auth.accessToken,
+   })
 
   const cancelMutation = useMutation({
     mutationFn: async (o: OrderListItem) => cancelOrder(auth.accessToken!, o.id, o.version),
@@ -92,12 +94,24 @@ export function OrdersPage() {
     <MainLayout navGroups={navGroups}>
       <PageContainer title="Órdenes de Venta" actions={<Button onClick={() => navigate('/sales/quotes')}>Ir a cotizaciones</Button>}>
         <div className="mb-4">
-          <Input
-            placeholder="Buscar por cliente..."
-            value={customerSearch}
-            onChange={(e) => setCustomerSearch(e.target.value)}
-            className="max-w-sm"
-          />
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              setAppliedSearch(customerSearch.trim())
+              pag.reset()
+            }}
+            className="flex gap-2 max-w-sm"
+          >
+            <Input
+              placeholder="Buscar por cliente, departamento o ciudad..."
+              value={customerSearch}
+              onChange={(e) => setCustomerSearch(e.target.value)}
+              className="flex-1"
+            />
+            <Button variant="outline" icon={<MagnifyingGlassIcon />} type="submit" disabled={customerSearch.length === 0}>
+              Buscar
+            </Button>
+          </form>
         </div>
         <div className="rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
           {ordersQuery.isLoading && <Loading />}
@@ -108,7 +122,7 @@ export function OrdersPage() {
               <Table
                 columns={[
                   { header: 'Número', width: '130px', accessor: (o) => o.number },
-                  { header: 'Cliente', width: '200px', accessor: (o) => o.customerName },
+                  { header: 'Cliente', width: '200px', accessor: (o) => <span className="truncate block" title={o.customerName}>{o.customerName}</span> },
                   {
                     header: 'Estado',
                     width: '140px',
@@ -171,9 +185,17 @@ export function OrdersPage() {
                 }
               />
               <PaginationCursor
-                hasMore={!!ordersQuery.data.nextCursor}
-                onLoadMore={() => setCursor(ordersQuery.data!.nextCursor!)}
-                loading={ordersQuery.isFetching}
+                 hasMore={!!ordersQuery.data.nextCursor}
+                 onLoadMore={() => pag.goForward(ordersQuery.data!.nextCursor)}
+                 loading={ordersQuery.isFetching}
+                 currentCount={ordersQuery.data.items.length}
+                 currentPage={pag.currentPage}
+                 maxPage={ordersQuery.data.nextCursor ? pag.maxVisitedPage + 1 : pag.maxVisitedPage}
+                 take={take}
+                 canGoBack={pag.canGoBack}
+                 onGoBack={pag.goBack}
+                 onGoToStart={pag.goToStart}
+                 onGoToPage={(page) => pag.goToPage(page)}
               />
             </>
           )}

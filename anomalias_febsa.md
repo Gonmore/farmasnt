@@ -36,13 +36,16 @@ CBB, SUCRE y TARIJA como origen: 0 anomalías.
 
 | # | Orden | Status | deliveryCity | Cliente | Producto | Lote | Cantidad | from_warehouse | from_city | Fecha |
 |---|---|---|---|---|---|---|---|---|---|---|
-| 1 | OV-20260003 | CONFIRMED | LA PAZ | HOTEL MITRU SUR | Imoss 40mg Iny 10ml | LOT-2026010 | 22 | SUC-SCZ | SANTA CRUZ | 2026-02-03 23:12:43.931 |
-| 2 | OV-20260003 | CONFIRMED | LA PAZ | HOTEL MITRU SUR | Imoss 40mg Iny 10ml | LOT-2026011 | 3 | SUC-SCZ | SANTA CRUZ | 2026-02-03 23:12:43.940 |
-| 3 | OV-20260003 | CONFIRMED | LA PAZ | HOTEL MITRU SUR | Cardil 6.25 | LOT-2026003 | 100 | SUC-SCZ | SANTA CRUZ | 2026-02-03 23:12:43.948 |
-| 4 | OV-20260003 | CONFIRMED | LA PAZ | HOTEL MITRU SUR | Cardil 12.5 | LOT-2026004 | 200 | SUC-SCZ | SANTA CRUZ | 2026-02-03 23:12:43.953 |
-| 5 | OV-20260007 | FULFILLED | COCHABAMBA | Farmacia del Valle | Imoss 40mg Iny 10ml | LOT-2026010 | 10 | SUC-SCZ | SANTA CRUZ | 2026-02-05 18:57:49.794 |
-| 6 | OV-20260011 | CONFIRMED | COCHABAMBA | Farmacia Cristo | Abasor 150 mg | LOT-2026013 | 30 | SUC-SCZ | SANTA CRUZ | 2026-02-10 13:05:51.752 |
-| 7 | OV-20260012 | FULFILLED | COCHABAMBA | Farmacia Cristo | Imoss 40mg Iny 10ml | LOT-2026010 | 25 | SUC-SCZ | SANTA CRUZ | 2026-02-10 13:05:54.628 |
+| 1 | OV-20260003 | CONFIRMED | LA PAZ | HOTEL MITRU SUR | Imoss 40mg Iny 10ml | LOT-2026010 | 22 | SUC-SCZ | SANTA CRUZ | 2026-02-03 23:12:43.931 | Error nombre Farmacia: Farmacia tania
+| 2 | OV-20260003 | CONFIRMED | LA PAZ | HOTEL MITRU SUR | Imoss 40mg Iny 10ml | LOT-2026011 | 3 | SUC-SCZ | SANTA CRUZ | 2026-02-03 23:12:43.940 | Error nombre Farmacia: Farmacia tania
+| 3 | OV-20260003 | CONFIRMED | LA PAZ | HOTEL MITRU SUR | Cardil 6.25 | LOT-2026003 | 100 | SUC-SCZ | SANTA CRUZ | 2026-02-03 23:12:43.948 | Error nombre Farmacia: Farmacia tania
+| 4 | OV-20260003 | CONFIRMED | LA PAZ | HOTEL MITRU SUR | Cardil 12.5 | LOT-2026004 | 200 | SUC-SCZ | SANTA CRUZ | 2026-02-03 23:12:43.953 | Error nombre Farmacia: Farmacia tania
+
+
+| 5 | OV-20260007 | FULFILLED | COCHABAMBA | Farmacia del Valle | Imoss 40mg Iny 10ml | LOT-2026010 | 10 | SUC-SCZ | SANTA CRUZ | 2026-02-05 18:57:49.794 | Error nombre Farmacia: Farmacia Martinez
+
+| 6 | OV-20260011 | CONFIRMED | COCHABAMBA | Farmacia Cristo | Abasor 150 mg | LOT-2026013 | 30 | SUC-SCZ | SANTA CRUZ | 2026-02-10 13:05:51.752 | Error nombre Farmacia: Farmacia Eldy
+| 7 | OV-20260012 | FULFILLED | COCHABAMBA | Farmacia Cristo | Imoss 40mg Iny 10ml | LOT-2026010 | 25 | SUC-SCZ | SANTA CRUZ | 2026-02-10 13:05:54.628 | Error nombre Farmacia: Farmacia Nueva Luz
 
 **Subtotal cluster 1:** 7 movs / 390 unidades, 4 órdenes, todas con `from_warehouse = SUC-SCZ`.
 
@@ -50,13 +53,15 @@ CBB, SUCRE y TARIJA como origen: 0 anomalías.
 
 | # | Orden | Status | deliveryCity | Cliente | Producto | Lote | Cantidad | from_warehouse | from_city | Fecha |
 |---|---|---|---|---|---|---|---|---|---|---|
-| 8 | OV-20260453 | FULFILLED | MUNICIPIO TARIJA | HOSPITAL SAN JUAN DE DIOS - TARIJA | Abasor 75 mg | C5024 | 1,500 | SUC-LPZ | LA PAZ | 2026-08-01 00:52:09.449 |
-| 9 | OV-20260497 | FULFILLED | COCHABAMBA | LA LUZ | Abasor 150 mg | C4015 | 900 | SUC-LPZ | LA PAZ | 2026-08-19 11:18:04.059 |
-| 10 | OV-20260498 | FULFILLED | COCHABAMBA | LA LUZ | Abasor 75 mg | C5024 | 900 | SUC-LPZ | LA PAZ | 2026-08-19 11:19:27.616 |
-| 11 | OV-20260499 | FULFILLED | COCHABAMBA | LA LUZ | Abasor 75 mg | C5024 | 900 | SUC-LPZ | LA PAZ | 2026-08-19 11:35:34.652 |
+| 8 | OV-20260453 | FULFILLED | MUNICIPIO TARIJA | HOSPITAL SAN JUAN DE DIOS - TARIJA | Abasor 75 mg | C5024 | 1,500 | SUC-LPZ | LA PAZ | 2026-08-01 00:52:09.449 | Solucionado con Devolucion de envio de las 1500 unidades
+
+| 9 | OV-20260497 | FULFILLED | COCHABAMBA | LA LUZ | Abasor 150 mg | C4015 | 900 | SUC-LPZ | LA PAZ | 2026-08-19 11:18:04.059 | Solcionado con baja del producto en CBBA (LOTE C4017) y ajuste del lote en LPZ (C4015)
+| 10 | OV-20260498 | FULFILLED | COCHABAMBA | LA LUZ | Abasor 75 mg | C5024 | 900 | SUC-LPZ | LA PAZ | 2026-08-19 11:19:27.616 | Solcionado con baja del producto en CBBA (LOTE 30-26264) y ajuste del lote en LPZ (C5024)
+| 11 | OV-20260499 | FULFILLED | COCHABAMBA | LA LUZ | Abasor 75 mg | C5024 | 900 | SUC-LPZ | LA PAZ | 2026-08-19 11:35:34.652 | Solcionado con baja del producto en CBBA (LOTE 30-26264) y ajuste del lote en LPZ (C5024)
+
 | 12 | OV-20260528 | FULFILLED | COCHABAMBA | SEGURO SOCIAL UNIVERSITARIO | Medifor 850mg | 26215 | 13 | SUC-LPZ | LA PAZ | 2026-08-20 11:40:24.141 |
-| 13 | OV-20260528 | FULFILLED | COCHABAMBA | SEGURO SOCIAL UNIVERSITARIO | Medifor 850mg | 26239 | 62,000 | SUC-LPZ | LA PAZ | 2026-08-20 11:40:24.151 |
-| 14 | OV-20260528 | FULFILLED | COCHABAMBA | SEGURO SOCIAL UNIVERSITARIO | Medifor 850mg | 26245 | 8,987 | SUC-LPZ | LA PAZ | 2026-08-20 11:40:24.156 |
+| 13 | OV-20260528 | FULFILLED | COCHABAMBA | SEGURO SOCIAL UNIVERSITARIO | Medifor 850mg | 26239 | 62,000 | SUC-LPZ | LA PAZ | 2026-08-20 11:40:24.151 | 
+| 14 | OV-20260528 | FULFILLED | COCHABAMBA | SEGURO SOCIAL UNIVERSITARIO | Medifor 850mg | 26245 | 8,987 | SUC-LPZ | LA PAZ | 2026-08-20 11:40:24.156 | 
 
 **Subtotal cluster 2:** 7 movs / 75,200 unidades, 4 órdenes, todas con `from_warehouse = SUC-LPZ`. El movimiento #13 (62,000 unidades de `Medifor 850mg`) es el de mayor impacto.
 

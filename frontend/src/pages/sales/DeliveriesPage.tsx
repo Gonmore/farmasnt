@@ -16,13 +16,13 @@ import {
   Table,
   Input,
 } from '../../components'
-import { useNavigation } from '../../hooks'
+import { useNavigation, useCursorPagination } from '../../hooks'
 import { usePermissions } from '../../hooks/usePermissions'
 import { apiFetch } from '../../lib/api'
 import { formatDateOnlyUtc } from '../../lib/date'
 import { useAuth } from '../../providers/AuthProvider'
 import { useTenant } from '../../providers/TenantProvider'
-import { EyeIcon, CheckCircleIcon, DocumentTextIcon } from '@heroicons/react/24/outline'
+import { EyeIcon, CheckCircleIcon, DocumentTextIcon, MagnifyingGlassIcon } from '@heroicons/react/24/outline'
 
 type DeliveryListItem = {
   id: string
@@ -114,12 +114,13 @@ function formatDeliveryPlace(d: DeliveryListItem): string {
   return parts.length ? parts.join(' · ') : '—'
 }
 
-async function fetchDeliveries(token: string, take: number, status: DeliverStatusFilter, cursor?: string, cities?: string[]): Promise<ListResponse> {
+async function fetchDeliveries(token: string, take: number, status: DeliverStatusFilter, cursor?: string, cities?: string[], q?: string): Promise<ListResponse> {
   const params = new URLSearchParams({ take: String(take), status })
   if (cursor) params.append('cursor', cursor)
   if (cities && cities.length > 0) {
     params.append('cities', cities.join(','))
   }
+  if (q && q.trim()) params.append('q', q.trim())
   return apiFetch(`/api/v1/sales/deliveries?${params}`, { token })
 }
 
@@ -425,10 +426,13 @@ export function DeliveriesPage() {
   const tenant = useTenant()
 
   const [status, setStatus] = useState<DeliverStatusFilter>('PENDING')
-  const [cursor, setCursor] = useState<string | undefined>()
   const [selectedCities, setSelectedCities] = useState<string[]>([])
+  const [searchQuery, setSearchQuery] = useState('')
+  const [appliedSearch, setAppliedSearch] = useState('')
+  const take = 50
   const isBranchScoped = perms.hasPermission('scope:branch') && !perms.isTenantAdmin
   const branchCity = (perms.user?.warehouse?.city ?? '').trim().toUpperCase()
+  const pag = useCursorPagination()
 
   const [deliverLocationModalOpen, setDeliverLocationModalOpen] = useState(false)
   const [deliverTarget, setDeliverTarget] = useState<{ orderId: string; version: number; number: string } | null>(null)
@@ -455,8 +459,8 @@ export function DeliveriesPage() {
   const [exportingDeliveryNote, setExportingDeliveryNote] = useState(false)
 
   const deliveriesQuery = useQuery({
-    queryKey: ['deliveries', status, cursor, selectedCities],
-    queryFn: () => fetchDeliveries(auth.accessToken!, 50, status, cursor, selectedCities.length > 0 ? selectedCities : undefined),
+    queryKey: ['deliveries', status, take, pag.currentCursor, selectedCities, appliedSearch],
+    queryFn: () => fetchDeliveries(auth.accessToken!, take, status, pag.currentCursor, selectedCities.length > 0 ? selectedCities : undefined, appliedSearch || undefined),
     enabled: !!auth.accessToken,
   })
 
@@ -464,7 +468,7 @@ export function DeliveriesPage() {
     if (!isBranchScoped || !branchCity) return
     if (selectedCities.length === 1 && selectedCities[0] === branchCity) return
     setSelectedCities([branchCity])
-    setCursor(undefined)
+    pag.reset()
   }, [isBranchScoped, branchCity, selectedCities])
 
   const availableCities = useMemo((): string[] => {
@@ -519,6 +523,28 @@ export function DeliveriesPage() {
   return (
     <MainLayout navGroups={navGroups}>
       <PageContainer title="Entregas">
+        {/* Buscador */}
+        <div className="mb-4">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              setAppliedSearch(searchQuery.trim())
+              pag.reset()
+            }}
+            className="flex gap-2 max-w-sm"
+          >
+            <Input
+              placeholder="Buscar por cliente, orden, ciudad o departamento..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="flex-1"
+            />
+            <Button variant="outline" icon={<MagnifyingGlassIcon />} type="submit" disabled={searchQuery.length === 0}>
+              Buscar
+            </Button>
+          </form>
+        </div>
+
         {/* Botones de filtro - segunda fila en móvil */}
         <div className="mb-4 flex flex-wrap items-center gap-2">
           <Button
@@ -526,7 +552,7 @@ export function DeliveriesPage() {
             variant={status === 'PENDING' ? 'primary' : 'ghost'}
             onClick={() => {
               setStatus('PENDING')
-              setCursor(undefined)
+              pag.reset()
             }}
           >
             Pendientes
@@ -536,7 +562,7 @@ export function DeliveriesPage() {
             variant={status === 'DELIVERED' ? 'primary' : 'ghost'}
             onClick={() => {
               setStatus('DELIVERED')
-              setCursor(undefined)
+              pag.reset()
             }}
           >
             Entregadas
@@ -547,7 +573,7 @@ export function DeliveriesPage() {
             variant={status === 'ALL' ? 'primary' : 'ghost'}
             onClick={() => {
               setStatus('ALL')
-              setCursor(undefined)
+              pag.reset()
             }}
           >
             Ver todas
@@ -720,8 +746,14 @@ export function DeliveriesPage() {
               />
               <PaginationCursor
                 hasMore={!!deliveriesQuery.data.nextCursor}
-                onLoadMore={() => setCursor(deliveriesQuery.data!.nextCursor!)}
+                onLoadMore={() => pag.goForward(deliveriesQuery.data!.nextCursor!)}
                 loading={deliveriesQuery.isFetching}
+                currentPage={pag.currentPage}
+                maxPage={pag.maxVisitedPage}
+                onGoToStart={() => pag.reset()}
+                onGoBack={() => pag.goBack()}
+                onGoToPage={(page) => pag.goToPage(page)}
+                canGoBack={pag.canGoBack}
               />
             </>
           )}

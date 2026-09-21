@@ -23,7 +23,7 @@ export interface City {
   lat: number
   lng: number
   population?: number
-  featureType: 'city' | 'town' | 'village' | 'municipality'
+  featureType: 'city' | 'town' | 'village' | 'municipality' | 'province'
 }
 
 export interface Address {
@@ -73,8 +73,8 @@ export const geoApi = {
   getCurrency: (countryCode: string) =>
     apiFetch<{ currency: string }>(`/api/v1/geo/currency/${encodeURIComponent(countryCode)}`),
 
-  resolveDepartment: (city: string, countryCode?: string) =>
+  resolveDepartment: (city: string, countryCode?: string, adminLevel1Code?: string) =>
     apiFetch<{ department: string | null }>(
-      buildUrl('/api/v1/geo/resolve-department', { city, countryCode }),
+      buildUrl('/api/v1/geo/resolve-department', { city, countryCode, adminLevel1Code }),
     ),
 }

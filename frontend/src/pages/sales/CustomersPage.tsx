@@ -4,8 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { apiFetch } from '../../lib/api'
 import { useAuth } from '../../providers/AuthProvider'
 import { MainLayout, PageContainer, Button, Table, Loading, ErrorState, EmptyState, PaginationCursor, Input } from '../../components'
-import { useNavigation } from '../../hooks'
-import { usePermissions } from '../../hooks/usePermissions'
+import { useNavigation, usePermissions, useCursorPagination } from '../../hooks'
 import { EyeIcon, PlusIcon, MagnifyingGlassIcon, XMarkIcon } from '@heroicons/react/24/outline'
 
 type CustomerListItem = {
@@ -39,14 +38,15 @@ export function CustomersPage() {
   const navigate = useNavigate()
   const navGroups = useNavigation()
   const permissions = usePermissions()
-  const [cursor, setCursor] = useState<string | undefined>()
   const [selectedCities, setSelectedCities] = useState<string[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [appliedSearch, setAppliedSearch] = useState('')
-  const take = 20
+  const take = 50
   const isBranchScoped = permissions.hasPermission('scope:branch') && !permissions.isTenantAdmin
   const branchCity = (permissions.user?.warehouse?.city ?? '').trim().toUpperCase()
   const branchDepartments = permissions.branchDepartments ?? null
+
+  const pag = useCursorPagination()
 
   const branchDepartmentsLabel = useMemo(() => {
     if (!isBranchScoped || !branchDepartments || branchDepartments.length === 0) return null
@@ -54,8 +54,8 @@ export function CustomersPage() {
   }, [isBranchScoped, branchDepartments])
 
   const customersQuery = useQuery({
-    queryKey: ['customers', take, cursor, selectedCities, appliedSearch],
-    queryFn: () => fetchCustomers(auth.accessToken!, take, cursor, selectedCities.length > 0 ? selectedCities : undefined, appliedSearch || undefined),
+    queryKey: ['customers', take, pag.currentCursor, selectedCities, appliedSearch],
+    queryFn: () => fetchCustomers(auth.accessToken!, take, pag.currentCursor, selectedCities.length > 0 ? selectedCities : undefined, appliedSearch || undefined),
     enabled: !!auth.accessToken,
   })
 
@@ -81,34 +81,34 @@ export function CustomersPage() {
       >
         {/* Buscador de clientes */}
         <div className="mb-4">
-          <form
-            onSubmit={(e) => {
-              e.preventDefault()
-              setAppliedSearch(searchQuery.trim())
-              setCursor(undefined) // Reset pagination on new search
-            }}
-            className="flex gap-2"
-          >
-            <div className="relative flex-1">
-              <Input
-                placeholder="Buscar clientes por nombre, departamento o ciudad..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pr-10"
-              />
-              {searchQuery && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSearchQuery('')
-                    setAppliedSearch('')
-                    setCursor(undefined)
-                  }}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
-                >
-                  <XMarkIcon className="w-4 h-4" />
-                </button>
-              )}
+           <form
+             onSubmit={(e) => {
+               e.preventDefault()
+               setAppliedSearch(searchQuery.trim())
+               pag.reset()
+             }}
+             className="flex gap-2"
+           >
+             <div className="relative flex-1">
+               <Input
+                 placeholder="Buscar clientes por nombre, departamento o ciudad..."
+                 value={searchQuery}
+                 onChange={(e) => setSearchQuery(e.target.value)}
+                 className="pr-10"
+               />
+               {searchQuery && (
+                 <button
+                   type="button"
+                   onClick={() => {
+                     setSearchQuery('')
+                     setAppliedSearch('')
+                     pag.reset()
+                   }}
+                   className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
+                 >
+                   <XMarkIcon className="w-4 h-4" />
+                 </button>
+               )}
             </div>
             <Button variant="outline" icon={<MagnifyingGlassIcon />} type="submit" disabled={searchQuery.length === 0}>
               Buscar
@@ -118,7 +118,8 @@ export function CustomersPage() {
               onClick={() => {
                 setSearchQuery('')
                 setAppliedSearch('')
-                setCursor(undefined)
+                setSelectedCities([])
+                pag.reset()
               }}
               disabled={!appliedSearch}
             >
@@ -210,8 +211,8 @@ export function CustomersPage() {
                        </div>
                      )
                    },
-                   { header: 'Departamento', width: '160px', accessor: (c) => c.department ? c.department.toUpperCase() : '-' },
-                   { header: 'Ciudad', width: '140px', accessor: (c) => c.city ? c.city.toUpperCase() : '-' },
+                   { header: 'Departamento', width: '160px', accessor: (c) => <span className="truncate block max-w-[150px]" title={c.department ? c.department.toUpperCase() : undefined}>{c.department ? c.department.toUpperCase() : '-'}</span> },
+                   { header: 'Ciudad / Provincia / Municipio', width: '180px', accessor: (c) => <span className="truncate block max-w-[160px]" title={c.city ? c.city.toUpperCase() : undefined}>{c.city ? c.city.toUpperCase() : '-'}</span> },
                    {
                      header: 'Acciones',
                      className: 'text-center',
@@ -227,9 +228,17 @@ export function CustomersPage() {
                 keyExtractor={(c) => c.id}
               />
               <PaginationCursor
-                hasMore={!!customersQuery.data.nextCursor}
-                onLoadMore={() => setCursor(customersQuery.data!.nextCursor!)}
-                loading={customersQuery.isFetching}
+                 hasMore={!!customersQuery.data.nextCursor}
+                 onLoadMore={() => pag.goForward(customersQuery.data!.nextCursor)}
+                 loading={customersQuery.isFetching}
+                 currentCount={customersQuery.data.items.length}
+                 currentPage={pag.currentPage}
+                 maxPage={customersQuery.data.nextCursor ? pag.maxVisitedPage + 1 : pag.maxVisitedPage}
+                 take={take}
+                 canGoBack={pag.canGoBack}
+                 onGoBack={pag.goBack}
+                 onGoToStart={pag.goToStart}
+                 onGoToPage={(page) => pag.goToPage(page)}
               />
             </>
           )}
