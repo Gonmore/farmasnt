@@ -203,17 +203,15 @@ export function CustomersPage() {
                  columns={[
                    { 
                      header: 'Nombre', 
-                     width: '250px',
+                     width: '220px',
                      accessor: (c) => (
-                       <div className="inline-flex items-center px-3 py-1 rounded-full bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 border border-blue-200 dark:border-blue-800">
-                         <span className="text-sm font-medium text-blue-900 dark:text-blue-100">{c.name}</span>
+                       <div className="inline-flex items-center px-3 py-1 rounded-full bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 border border-blue-200 dark:border-blue-800 overflow-hidden">
+                         <span className="text-sm font-medium text-blue-900 dark:text-blue-100 truncate max-w-[200px] block" title={c.name}>{c.name}</span>
                        </div>
                      )
                    },
-                   { header: 'Departamento', width: '150px', accessor: (c) => c.department ? c.department.toUpperCase() : '-' },
-                   { header: 'Ciudad', width: '130px', accessor: (c) => c.city ? c.city.toUpperCase() : '-' },
-                   { header: 'Email', width: '200px', accessor: (c) => c.email || '-' },
-                   { header: 'Teléfono', width: '140px', accessor: (c) => c.phone || '-' },
+                   { header: 'Departamento', width: '160px', accessor: (c) => c.department ? c.department.toUpperCase() : '-' },
+                   { header: 'Ciudad', width: '140px', accessor: (c) => c.city ? c.city.toUpperCase() : '-' },
                    {
                      header: 'Acciones',
                      className: 'text-center',
