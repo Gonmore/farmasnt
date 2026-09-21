@@ -624,6 +624,10 @@ Response 200
 }
 ```
 
+Notas
+- Para Bolivia (`countryCode=BO`): prioriza la lista estática de ciudades; si no hay coincidencias para la query, hace fallback a Nominatim y fusiona resultados.
+- `adminLevel1Code` filtra ciudades por departamento. Para Bolivia, el código es interno (`BO01`..`BO09`).
+
 ### GET /api/v1/geo/reverse
 Query
 - `lat` (float -90..90, requerido)
@@ -660,7 +664,7 @@ Response 200
 ```
 
 Notas
-- Usa datos estáticos para Bolivia (ciudades conocidas → departamentos) y Nominatim como fallback para otros países.
+- Usa datos estáticos para Bolivia (ciudades conocidas → departamentos) y Nominatim como fallback. Cuando una ciudad boliviana no está en el mapa estático (ej: Montero, Warnes), se consulta Nominatim y se cachea el resultado.
 - `department` es `null` si no se pudo resolver.
 
 ---

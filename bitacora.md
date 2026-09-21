@@ -1,8 +1,29 @@
 # Bitácora de desarrollo — PharmaFlow Bolivia (farmaSNT)
 
-> Última actualización: 18 Sep 2026
+> Última actualización: 21 Sep 2026
 
 > Este documento suma (a alto nivel) decisiones, hitos y cambios relevantes que se fueron incorporando al repositorio para llegar al estado actual del MVP.
+
+---
+
+## **[21 Sep 2026] Geo-referencia ciudades Bolivia — fallback Nominatim + ciudades faltantes**
+
+### Contexto
+- El `GeoService` para Bolivia usaba únicamente listas estáticas (`BOLIVIA_CITIES`, `BOLIVIA_CITY_TO_DEPARTMENT`), por lo que ciudades como **Montero** y **Warnes** no se encontraban en búsquedas ni en la resolución automática de departamento. Esto rompía la UX en el formulario de creación/edición de clientes para usuarios de sucursal.
+
+### Cambios
+- **`backend/src/application/geo/geoService.ts`**:
+  - **`searchCities`**: cuando la lista estática no retorna resultados para una query en Bolivia, ahora hace fallback a Nominatim y fusiona resultados. Se extrajo la lógica Nominatim a `searchCitiesFromNominatim()` (método privado reutilizable), que también filtra por `adminLevel1Code` cuando se provee.
+  - **`resolveDepartmentForCity`**: eliminado el `return null` anticipado para Bolivia, de modo que ciudades no presentes en `BOLIVIA_CITY_TO_DEPARTMENT` (como Montero, Warnes) caen al fallback de Nominatim y resuelven el departamento correctamente (ej: "SANTA CRUZ").
+  - **`BOLIVIA_CITIES`**: agregadas ciudades faltantes: `Montero`, `Warnes`, `Vinto`, y otros menores.
+  - **`BOLIVIA_CITY_TO_DEPARTMENT`**: agregados mapeos: `MONTERO?SANTA CRUZ`, `WARNES?SANTA CRUZ`, `VINTO?COCHABAMBA`, `COLCAPIRQUA?COCHABAMBA`, `TIQUIPIA?COCHABAMBA`, `CLIZA?COCHABAMBA`, `CALAMO?COCHABAMBA`, `YOTALA?CHUQUISACA`, `RIBERALTA?BENI`.
+- **`frontend/src/pages/sales/CustomerDetailPage.tsx`**:
+  - Para usuarios branch-scoped (`BRANCH_ADMIN`/`BRANCH_SELLER`/`BRANCH_PROVIDER`), el campo **Departamento** ahora es un `Select` dropdown con solo los departamentos que atiende la sucursal (via `branchDepartments` del endpoint `/auth/me`), en lugar del buscador `AdminLevel1Selector`.
+  - El `handleCityChange` respeta la restricción: si la ciudad resuelta corresponde a un departamento NO atendido por la sucursal, no lo autoselecciona (deja el campo en blanco para que el usuario elija de la lista).
+
+### Operación
+- `npx tsc --noEmit` limpio en backend y frontend.
+- Consistente con el trabajo previo en `Sistema > Sucursales` donde cada sucursal atiende departamentos (no ciudades) vía `servedDepartments`.
 
 ---
 

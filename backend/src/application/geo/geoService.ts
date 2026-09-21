@@ -63,7 +63,10 @@ const BOLIVIA_CITIES: City[] = [
   { id: 'BO-LAPAZ-001', name: 'La Paz', adminLevel1Code: 'BO03', countryCode: 'BO', lat: -16.4897, lng: -68.1193, population: 2729072, featureType: 'city' },
   { id: 'BO-ELALTO-001', name: 'El Alto', adminLevel1Code: 'BO03', countryCode: 'BO', lat: -16.4975, lng: -68.1436, population: 2076328, featureType: 'city' },
   { id: 'BO-COCHABAMBA-001', name: 'Cochabamba', adminLevel1Code: 'BO02', countryCode: 'BO', lat: -17.2878, lng: -66.1623, population: 945415, featureType: 'city' },
+  { id: 'BO-VINTO-001', name: 'Vinto', adminLevel1Code: 'BO02', countryCode: 'BO', lat: -17.3333, lng: -66.2500, population: 33000, featureType: 'city' },
   { id: 'BO-SANTACRUZ-001', name: 'Santa Cruz de la Sierra', adminLevel1Code: 'BO07', countryCode: 'BO', lat: -17.7833, lng: -63.1821, population: 1440000, featureType: 'city' },
+  { id: 'BO-MONTERO-001', name: 'Montero', adminLevel1Code: 'BO07', countryCode: 'BO', lat: -17.8469, lng: -63.3675, population: 157287, featureType: 'city' },
+  { id: 'BO-WARNES-001', name: 'Warnes', adminLevel1Code: 'BO07', countryCode: 'BO', lat: -17.5717, lng: -63.2125, population: 73718, featureType: 'city' },
   { id: 'BO-ORURO-001', name: 'Oruro', adminLevel1Code: 'BO04', countryCode: 'BO', lat: -17.9583, lng: -67.3367, population: 271962, featureType: 'city' },
   { id: 'BO-POTOSI-001', name: 'Potosí', adminLevel1Code: 'BO06', countryCode: 'BO', lat: -19.5827, lng: -65.7592, population: 189105, featureType: 'city' },
   { id: 'BO-SUCRE-001', name: 'Sucre', adminLevel1Code: 'BO01', countryCode: 'BO', lat: -19.5435, lng: -65.7431, population: 270628, featureType: 'city' },
@@ -91,17 +94,31 @@ const BOLIVIA_CITY_TO_DEPARTMENT: Record<string, string> = {
   'EL ALTO': 'LA PAZ',
   'VIACHA': 'LA PAZ',
   'COPEPAZ': 'LA PAZ',
+  'COPEPAS': 'LA PAZ',
   'COCHABAMBA': 'COCHABAMBA',
+  'VINTO': 'COCHABAMBA',
+  'COLCAPIRQUA': 'COCHABAMBA',
+  'TIQUIPIA': 'COCHABAMBA',
+  'CLIZA': 'COCHABAMBA',
+  'CALAMO': 'COCHABAMBA',
   'SANTA CRUZ': 'SANTA CRUZ',
   'SANTA CRUZ DE LA SIERRA': 'SANTA CRUZ',
+  'MONTERO': 'SANTA CRUZ',
+  'WARNES': 'SANTA CRUZ',
+  'SAN ANTONIO DE HUarón': 'SANTA CRUZ',
+  'SAN ANTONIO DE HUARÓN': 'SANTA CRUZ',
+  'SAN PEDRO': 'SANTA CRUZ',
   'ORURO': 'ORURO',
   'POTOSI': 'POTOSÍ',
   'POTOSÍ': 'POTOSÍ',
   'SUCRE': 'CHUQUISACA',
+  'YOTALA': 'CHUQUISACA',
   'TARIJA': 'TARIJA',
   'TRINIDAD': 'BENI',
   'COBIJA': 'PANDO',
   'PANDO': 'PANDO',
+  'RIBERALTA': 'BENI',
+  'BENI': 'BENI',
 }
 
 function adminLevel1TypeForCountry(countryCode: string): AdminLevel1Type {
@@ -430,52 +447,89 @@ export class GeoService {
         return a.name.localeCompare(b.name)
       })
 
+      if (query.trim() && results.length === 0) {
+        const nominatimResults = await this.searchCitiesFromNominatim(cc, query, adminLevel1Code, tenantId)
+        if (nominatimResults.length > 0) {
+          const merged = new Map<string, City>()
+          for (const c of nominatimResults) {
+            const key = normalizeCityName(c.name)
+            if (!merged.has(key)) merged.set(key, c)
+          }
+          const mergedResults = Array.from(merged.values()).sort((a, b) => {
+            if (b.population && a.population) return b.population - a.population
+            if (b.population) return 1
+            if (a.population) return -1
+            return a.name.localeCompare(b.name)
+          })
+          this.setCached(cacheKey, mergedResults, this.ttl.cities)
+          return mergedResults
+        }
+      }
+
       this.setCached(cacheKey, results, this.ttl.cities)
       return results
     }
 
     try {
-      const url = new URL(`${this.config.nominatimBaseUrl}/search`)
-      url.searchParams.set('format', 'json')
-      url.searchParams.set('countrycodes', cc)
-      url.searchParams.set('limit', '50')
-      url.searchParams.set('addressdetails', '1')
-      if (query.trim()) {
-        url.searchParams.set('q', query.trim())
-      }
-
-      const data = await this.nominatimFetch(url, tenantId) as NominatimSearchResult[]
-
-      const results: City[] = data
-        .filter((item) => {
-          const placeType = item.type
-          return ['city', 'town', 'village', 'municipality'].includes(placeType) || item.class === 'place'
-        })
-        .map((item) => {
-          const cityName = ((item.address?.city || item.address?.town || item.address?.village) ?? item.display_name.split(',')[0] ?? '').trim()
-          const adminName = item.address?.state || item.address?.province || item.address?.region || item.address?.county || ''
-          const result: City = {
-            id: item.osm_id ? `osm:${item.osm_id}` : `${cityName.toUpperCase()}`,
-            name: cityName,
-            adminLevel1Code: this.resolveAdminLevel1Code(cc, adminName ?? ''),
-            countryCode: cc,
-            lat: parseFloat(item.lat),
-            lng: parseFloat(item.lon),
-            featureType: featureTypeFromNominatimType(item.type),
-          }
-          if (item.importance) {
-            result.population = Math.round(item.importance * 100000)
-          }
-          return result
-        })
-        .filter((c) => c.name && c.name.length > 0)
-
+      const results = await this.searchCitiesFromNominatim(cc, query, adminLevel1Code, tenantId)
       this.setCached(cacheKey, results, this.ttl.cities)
       return results
     } catch {
       this.setCached(cacheKey, [], this.ttl.cities)
       return []
     }
+  }
+
+  private async searchCitiesFromNominatim(
+    countryCode: string,
+    query: string,
+    adminLevel1Code?: string,
+    tenantId = 'default',
+  ): Promise<City[]> {
+    const url = new URL(`${this.config.nominatimBaseUrl}/search`)
+    url.searchParams.set('format', 'json')
+    url.searchParams.set('countrycodes', countryCode)
+    url.searchParams.set('limit', '50')
+    url.searchParams.set('addressdetails', '1')
+    if (query.trim()) {
+      url.searchParams.set('q', query.trim())
+    }
+
+    const data = await this.nominatimFetch(url, tenantId) as NominatimSearchResult[]
+
+    const results: City[] = data
+      .filter((item) => {
+        const placeType = item.type
+        return ['city', 'town', 'village', 'municipality'].includes(placeType) || item.class === 'place'
+      })
+      .map((item) => {
+        const cityName = ((item.address?.city || item.address?.town || item.address?.village) ?? item.display_name.split(',')[0] ?? '').trim()
+        const adminName = item.address?.state || item.address?.province || item.address?.region || item.address?.county || ''
+        const result: City = {
+          id: item.osm_id ? `osm:${item.osm_id}` : `${cityName.toUpperCase()}`,
+          name: cityName,
+          adminLevel1Code: this.resolveAdminLevel1Code(countryCode, adminName ?? ''),
+          countryCode,
+          lat: parseFloat(item.lat),
+          lng: parseFloat(item.lon),
+          featureType: featureTypeFromNominatimType(item.type),
+        }
+        if (item.importance) {
+          result.population = Math.round(item.importance * 100000)
+        }
+        return result
+      })
+      .filter((c) => c.name && c.name.length > 0)
+
+    if (adminLevel1Code) {
+      const deptName = this.adminLevel1CodeToDepartmentName(adminLevel1Code)
+      return results.filter((c) => {
+        const dept = BOLIVIA_CITY_TO_DEPARTMENT[c.name.toUpperCase()] || c.adminLevel1Code
+        return dept === deptName || this.resolveAdminLevel1Code(countryCode, c.adminLevel1Code ?? '') === deptName
+      })
+    }
+
+    return results
   }
 
   private adminLevel1CodeToDepartmentName(code: string): string | undefined {
@@ -590,11 +644,6 @@ export class GeoService {
     if (boliviaDept) {
       this.setCached(cacheKey, boliviaDept, this.ttl.adminLevel1)
       return boliviaDept
-    }
-
-    if (countryCode && countryCode.toUpperCase() === 'BO') {
-      this.setCached(cacheKey, null, this.ttl.adminLevel1)
-      return null
     }
 
     try {
