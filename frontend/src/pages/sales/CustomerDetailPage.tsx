@@ -5,7 +5,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { apiFetch } from '../../lib/api'
 import { useAuth } from '../../providers/AuthProvider'
 import { MainLayout, PageContainer, Input, Button, Loading, ErrorState, Select, MapSelector, CitySelector, AdminLevel1Selector } from '../../components'
-import { useNavigation } from '../../hooks'
+import { useNavigation, usePermissions } from '../../hooks'
 import { useTenant } from '../../providers/TenantProvider'
 import { normalizeCountryCode } from '../../components/geo/countryUtils'
 import { geoApi } from '../../lib/geoService'
@@ -107,6 +107,9 @@ export function CustomerDetailPage() {
 
   const tenantCountryCode = normalizeCountryCode(tenant.branding?.country)
 
+  const { isBranchAdmin, isBranchSeller, isBranchProvider, branchDepartments } = usePermissions()
+  const isBranchScoped = isBranchAdmin || isBranchSeller || isBranchProvider
+
   const [name, setName] = useState('')
   const [businessName, setBusinessName] = useState('')
   const [nit, setNit] = useState('')
@@ -139,6 +142,10 @@ export function CustomerDetailPage() {
       try {
         const { department: resolvedDept } = await geoApi.resolveDepartment(cityValue, tenantCountryCode)
         if (resolvedDept) {
+          if (isBranchScoped && branchDepartments && !branchDepartments.includes(resolvedDept)) {
+            setDepartment('')
+            return
+          }
           setDepartment(resolvedDept)
         }
       } catch {
@@ -147,7 +154,7 @@ export function CustomerDetailPage() {
     } else {
       setDepartment('')
     }
-  }, [tenantCountryCode])
+  }, [tenantCountryCode, isBranchScoped, branchDepartments])
 
   const customerQuery = useQuery({
     queryKey: ['customer', customerId],
@@ -379,26 +386,39 @@ export function CustomerDetailPage() {
             />
 
              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-               <AdminLevel1Selector
-                 countryCode={tenantCountryCode}
-                 value={department}
-                 onChange={setDepartment}
-                 disabled={isSubmitting}
-                 label="Departamento / Estado"
-               />
-               <div>
-                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-                   Ciudad
-                 </label>
-                 <CitySelector
-                   countryCode={tenantCountryCode}
-                   adminLevel1Code={department || undefined}
-                   value={city}
-                   onChange={handleCityChange}
-                   disabled={isSubmitting}
-                 />
-               </div>
-             </div>
+                {isBranchScoped && branchDepartments && branchDepartments.length > 0 ? (
+                  <Select
+                    label="Departamento / Estado"
+                    value={department || ''}
+                    onChange={(e) => setDepartment(e.target.value)}
+                    disabled={isSubmitting}
+                    options={[
+                      { value: '', label: 'Seleccionar...' },
+                      ...branchDepartments.map(dept => ({ value: dept, label: dept })),
+                    ]}
+                  />
+                ) : (
+                  <AdminLevel1Selector
+                    countryCode={tenantCountryCode}
+                    value={department}
+                    onChange={setDepartment}
+                    disabled={isSubmitting}
+                    label="Departamento / Estado"
+                  />
+                )}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                    Ciudad
+                  </label>
+                  <CitySelector
+                    countryCode={tenantCountryCode}
+                    adminLevel1Code={department || undefined}
+                    value={city}
+                    onChange={handleCityChange}
+                    disabled={isSubmitting}
+                  />
+                </div>
+              </div>
 
              <Input
                label="Zona"
