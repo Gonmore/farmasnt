@@ -293,9 +293,15 @@ export async function registerCustomerRoutes(app: FastifyInstance): Promise<void
       const isTenantAdminUser = request.auth?.isTenantAdmin ?? false
 
       const items = await db.customer.findMany({
-        where: {
-          tenantId,
-          ...(q ? { name: { contains: q, mode: 'insensitive' } } : {}),
+         where: {
+           tenantId,
+           ...(q ? {
+             OR: [
+               { name: { contains: q, mode: 'insensitive' } },
+               { city: { contains: q, mode: 'insensitive' } },
+               { department: { contains: q, mode: 'insensitive' } },
+             ]
+           } : {}),
            ...(branchDepartments
               ? { department: { in: branchDepartments, mode: 'insensitive' as const } }
               : (!isBranchScoped || isTenantAdminUser) && departments && departments.length > 0

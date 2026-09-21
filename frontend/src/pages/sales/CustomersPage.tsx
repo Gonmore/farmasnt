@@ -15,6 +15,7 @@ type CustomerListItem = {
   email: string | null
   phone: string | null
   city: string | null
+  department: string | null
   isActive: boolean
 }
 
@@ -90,7 +91,7 @@ export function CustomersPage() {
           >
             <div className="relative flex-1">
               <Input
-                placeholder="Buscar clientes por nombre..."
+                placeholder="Buscar clientes por nombre, departamento o ciudad..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="pr-10"
@@ -199,30 +200,31 @@ export function CustomersPage() {
           {customersQuery.data && customersQuery.data.items.length > 0 && (
             <>
               <Table
-                columns={[
-                  { 
-                    header: 'Nombre', 
-                    width: '250px',
-                    accessor: (c) => (
-                      <div className="inline-flex items-center px-3 py-1 rounded-full bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 border border-blue-200 dark:border-blue-800">
-                        <span className="text-sm font-medium text-blue-900 dark:text-blue-100">{c.name}</span>
-                      </div>
-                    )
-                  },
-                  { header: 'Ciudad', width: '130px', accessor: (c) => c.city ? c.city.toUpperCase() : '-' },
-                  { header: 'Email', width: '200px', accessor: (c) => c.email || '-' },
-                  { header: 'Teléfono', width: '140px', accessor: (c) => c.phone || '-' },
-                  {
-                    header: 'Acciones',
-                    className: 'text-center',
-                    width: '120px',
-                    accessor: (c) => (
-                      <div className="flex items-center justify-center gap-1">
-                        <Button variant="ghost" size="sm" icon={<EyeIcon className="w-4 h-4" />} onClick={() => navigate(`/sales/customers/${c.id}`)}>Ver</Button>
-                      </div>
-                    ),
-                  },
-                ]}
+                 columns={[
+                   { 
+                     header: 'Nombre', 
+                     width: '250px',
+                     accessor: (c) => (
+                       <div className="inline-flex items-center px-3 py-1 rounded-full bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 border border-blue-200 dark:border-blue-800">
+                         <span className="text-sm font-medium text-blue-900 dark:text-blue-100">{c.name}</span>
+                       </div>
+                     )
+                   },
+                   { header: 'Departamento', width: '150px', accessor: (c) => c.department ? c.department.toUpperCase() : '-' },
+                   { header: 'Ciudad', width: '130px', accessor: (c) => c.city ? c.city.toUpperCase() : '-' },
+                   { header: 'Email', width: '200px', accessor: (c) => c.email || '-' },
+                   { header: 'Teléfono', width: '140px', accessor: (c) => c.phone || '-' },
+                   {
+                     header: 'Acciones',
+                     className: 'text-center',
+                     width: '120px',
+                     accessor: (c) => (
+                       <div className="flex items-center justify-center gap-1">
+                         <Button variant="ghost" size="sm" icon={<EyeIcon className="w-4 h-4" />} onClick={() => navigate(`/sales/customers/${c.id}`)}>Ver</Button>
+                       </div>
+                     ),
+                   },
+                 ]}
                 data={customersQuery.data.items}
                 keyExtractor={(c) => c.id}
               />

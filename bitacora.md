@@ -6,6 +6,22 @@
 
 ---
 
+## **[21 Sep 2026] Tabla de clientes — columna Departamento + búsqueda multi-campo**
+
+### Contexto
+- La tabla de clientes (Ventas > Clientes) no mostraba el departamento del cliente, y el buscador solo filtraba por nombre.
+
+### Cambios
+- **`frontend/src/pages/sales/CustomersPage.tsx`**:
+  - Agregada columna **Departamento** (uppercase) entre Nombre y Ciudad en la tabla.
+  - Agregado `department: string | null` al tipo `CustomerListItem`.
+  - El placeholder del buscador ahora indica: "Buscar clientes por nombre, departamento o ciudad...".
+- **`backend/src/adapters/http/routes/customers.ts`**:
+  - `GET /api/v1/customers?q=`: el filtro `q` ahora usa `OR` para buscar simultáneamente en `name`, `city` y `department` (modo *insensitive*). Aplica para cualquier rol de usuario.
+  - El `select` ya incluía `department` (no se modificó).
+
+---
+
 ## **[21 Sep 2026] Geo-referencia ciudades Bolivia — fallback Nominatim + ciudades faltantes**
 
 ### Contexto
