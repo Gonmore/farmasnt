@@ -8,6 +8,7 @@ import { prisma } from '../../db/prisma.js'
 import { requireAuth, requirePermission } from '../../../application/security/rbac.js'
 import { Permissions } from '../../../application/security/permissions.js'
 import { AuditService } from '../../../application/audit/auditService.js'
+import { cityToDepartment } from '../../../shared/geo.js'
 import { ensureSystemRolesForTenant } from '../../../application/security/ensureSystemRoles.js'
 
 const uuidLike = z
@@ -657,11 +658,13 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
         notes: [
           'Formato A (CLIENTES_SANTA_CRUZ): columnas NRO., NIT, Nombre de contacto, Nombre, DIRECCION, Correo electronico, ZONA, Teléfono 1, Teléfono móbil, Ciudad, ubicación.',
           'Formato B (CONTACTOS_FEBSA): columnas NOMBRE, NIT, DIRECCION, DEPARTAMENTO. DIRECCION combina zona+dirección+ciudad separados por " - "; la ciudad se extrae del último segmento.',
-          'name se toma de la columna "Nombre" (formato A) o "NOMBRE" (formato B). Si está vacío, se intenta derivar del texto después de "-" en "Nombre de contacto".',
+          'Formato C (farmacias_La_Paz.csv): columnas NOMBRE DE LA FARMACIA, NOMBRE DE CLIENTE, DIRECCION, DEPARTAMENTO, MUNICIPIO, TELEFONO, CELULAR, NIT. name=municipio|nombre|nombre de contacto; city=municipio; departamento=DEPARTAMENTO (mayúsculas); phone=TELEFONO con fallback a CELULAR.',
+          'name se toma de la columna "Nombre" (formato A), "NOMBRE" (formato B), "NOMBRE DE LA FARMACIA" (formato C) o derivado de "Nombre de contacto".',
           'contactName se toma del texto antes de "-" en "Nombre de contacto".',
-          'phone usa "Teléfono 1" o "Teléfono móbil" (primer valor no vacío).',
+          'phone usa "Teléfono 1", "Teléfono móbil", "Teléfono" o "Celular" (primer valor no vacío).',
           'address usa "DIRECCION"; en formato B se separa la ciudad (último segmento tras " - ").',
-          'city usa "Ciudad" (formato A), o se extrae de "DIRECCION" (formato B), o "DEPARTAMENTO" como fallback.',
+          'city usa "Ciudad" (formato A), "Municipio" (formato C), o se extrae de "DIRECCION" (formato B), o "DEPARTAMENTO" como fallback.',
+          'department usa "DEPARTAMENTO" (formato C y B) en mayúsculas; si falta, se resuelve desde city vía cityToDepartment.',
           'Duplicados: se considera duplicado solo cuando NIT + nombre + dirección + ciudad coinciden (archivo y base de datos). NIT "0" se trata como sin NIT.',
         ],
       }
@@ -692,12 +695,16 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
       const keyNit = headerMap.get('nit')
       const keyContact = headerMap.get('nombre de contacto')
       const keyName = headerMap.get('nombre')
+      const keyNamePharma = headerMap.get('nombre de la farmacia')
       const keyAddress = headerMap.get('direccion')
       const keyEmail = headerMap.get('correo electronico')
       const keyZone = headerMap.get('zona')
       const keyPhone1 = headerMap.get('telefono 1')
+      const keyPhone = headerMap.get('telefono')
       const keyPhoneMobile = headerMap.get('telefono movil')
+      const keyPhoneCelular = headerMap.get('celular')
       const keyCity = headerMap.get('ciudad')
+      const keyMunicipio = headerMap.get('municipio')
       const keyMaps = headerMap.get('ubicacion')
       const keyDepartment = headerMap.get('departamento')
 
@@ -707,19 +714,25 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
         const nitRaw = keyNit ? String(r[keyNit] ?? '').trim() : ''
         const contactRaw = keyContact ? String(r[keyContact] ?? '').trim() : ''
         const nameRaw = keyName ? String(r[keyName] ?? '').trim() : ''
+        const nameFromPharma = keyNamePharma ? String(r[keyNamePharma] ?? '').trim() : ''
 
         const nameFromContact = extractCustomerNameFromContact(contactRaw) ?? null
-        const name = pickFirstNonEmpty(nameRaw, nameFromContact, contactRaw) // last fallback
-        if (!name) errors.push({ row: rowNumber, message: 'Falta nombre (Nombre / Nombre de contacto)' })
+        const name = pickFirstNonEmpty(nameRaw, nameFromPharma, nameFromContact, contactRaw) // last fallback
+        if (!name) errors.push({ row: rowNumber, message: 'Falta nombre (Nombre / Nombre de contacto / Nombre de la farmacia)' })
 
         const contactName = extractContactName(contactRaw)
         const phone = pickFirstNonEmpty(
           keyPhone1 ? String(r[keyPhone1] ?? '').trim() : '',
           keyPhoneMobile ? String(r[keyPhoneMobile] ?? '').trim() : '',
+          keyPhone ? String(r[keyPhone] ?? '').trim() : '',
+          keyPhoneCelular ? String(r[keyPhoneCelular] ?? '').trim() : '',
         )
 
         let addressValue = keyAddress ? (String(r[keyAddress] ?? '').trim() || null) : null
-        let cityValue = keyCity ? (String(r[keyCity] ?? '').trim() || null) : null
+        let cityValue = keyMunicipio ? (String(r[keyMunicipio] ?? '').trim() || null) : null
+        if (!cityValue && keyCity) {
+          cityValue = String(r[keyCity] ?? '').trim() || null
+        }
         if (addressValue && !cityValue) {
           const parsed = parseAddressAndCity(addressValue)
           if (parsed.city) {
@@ -731,16 +744,29 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
           cityValue = String(r[keyDepartment] ?? '').trim() || null
         }
 
+        let departmentValue: string | null = null
+        if (keyDepartment) {
+          const deptFromColumn = String(r[keyDepartment] ?? '').trim()
+          if (deptFromColumn) {
+            departmentValue = deptFromColumn.toUpperCase()
+          }
+        }
+        if (!departmentValue && cityValue) {
+          const resolvedDept = cityToDepartment(cityValue)
+          if (resolvedDept) departmentValue = resolvedDept
+        }
+
         const customer = {
           tenantId: tenant.id,
           name: name ?? '(sin nombre)',
-          businessName: null as string | null,
+          businessName: nameFromPharma && nameFromPharma !== name ? nameFromPharma : (null as string | null),
           nit: nitRaw || null,
           contactName,
           email: keyEmail ? (String(r[keyEmail] ?? '').trim() || null) : null,
           phone,
           address: addressValue,
           city: cityValue,
+          department: departmentValue,
           zone: keyZone ? (String(r[keyZone] ?? '').trim() || null) : null,
           mapsUrl: keyMaps ? (String(r[keyMaps] ?? '').trim() || null) : null,
           isActive: true,
@@ -854,9 +880,10 @@ export async function registerPlatformRoutes(app: FastifyInstance): Promise<void
           contactName: c.contactName,
           email: c.email,
           phone: c.phone,
-          address: c.address,
-          city: c.city,
-          zone: c.zone,
+        address: c.address,
+        city: c.city,
+        department: c.department,
+        zone: c.zone,
           mapsUrl: c.mapsUrl,
           isActive: c.isActive,
           createdBy: c.createdBy,

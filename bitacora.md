@@ -4,6 +4,35 @@
 
 > Este documento suma (a alto nivel) decisiones, hitos y cambios relevantes que se fueron incorporando al repositorio para llegar al estado actual del MVP.
 
+## **[22 Sep 2026] Importación CSV de clientes: Formato C (farmacias_La_Paz.csv)**
+
+### Contexto
+- Un nuevo formato de CSV de clientes necesita ser soportado en la importación via `POST /api/v1/platform/tenants/:tenantId/import/customers` (modo dry-run y ejecución).
+- Formato C (`farmacias_La_Paz.csv`): columnas `NOMBRE DE LA FARMACIA, NOMBRE DE CLIENTE, DIRECCION, DEPARTAMENTO, MUNICIPIO, TELEFONO, CELULAR, NIT`.
+- Diferencias con Formato A y B existentes:
+  - `name` proviene de `NOMBRE DE LA FARMACIA` (formato C) en lugar de `Nombre` (A) o `NOMBRE` (B).
+  - `city` proviene de `MUNICIPIO` (formato C), no de `Ciudad` (A) ni se extrae de `DIRECCION` (B).
+  - `department` se mapea desde `DEPARTAMENTO` (mayúsculas) — campo nuevo en la importación (no existía antes).
+  - `phone` usa `TELEFONO` con fallback a `CELULAR` (formato C) en lugar de `Teléfono 1`/`Teléfono móbil` (formato A).
+- **Mantiene compatibilidad total** con formatos A y B ya soportados.
+
+### Cambios
+- **`backend/src/adapters/http/routes/platform.ts`**:
+  - Agregados imports de `cityToDepartment` desde `../../../shared/geo.js`.
+  - Agregados mapeos de encabezado: `keyNamePharma` (`nombre de la farmacia`), `keyPhone` (`telefono`), `keyPhoneCelular` (`celular`), `keyMunicipio` (`municipio`).
+  - `name`: prioridad `Nombre` > `Nombre de la farmacia` > nombre derivado de contacto > `Nombre de contacto` (fallback).
+  - `businessName`: cuando `Nombre de la farmacia` existe y difiere de `name`, se usa como `businessName`.
+  - `phone`: prioridad `Teléfono 1` > `Teléfono móbil` > `Teléfono` > `Celular`.
+  - `city`: prioridad `Municipio` (formato C) > `Ciudad` (formato A) > extraído de `DIRECCION` > `DEPARTAMENTO` como fallback.
+  - `department`: nuevo campo — toma `DEPARTAMENTO` en mayúsculas; si falta, resuelve vía `cityToDepartment(city)`.
+  - El objeto `customer`, el `createMany` payload y la vista previa (`preview`) incluyen `department`.
+  - Actualizadas las `notes` del schema documentando el Formato C y el campo `department`.
+
+### Operación
+- `npx tsc --noEmit` limpio en backend.
+- No se requieren migraciones Prisma nuevas (`department` ya existe en el modelo `Customer`).
+- Sin cambios de frontend (la UI ya consumía el mismo endpoint; el `preview` ahora incluye `department`).
+
 ## **[22 Sep 2026] Historial de pagos por orden de venta + paginación en PaymentsPage**
 
 ### Contexto
