@@ -186,6 +186,10 @@ export function registerSalesPaymentRoutes(app: FastifyInstance) {
           number: true,
           version: true,
           paymentMode: true,
+          paymentReceiptType: true,
+          paymentReceiptRef: true,
+          paymentReceiptPhotoUrl: true,
+          paymentReceiptPhotoKey: true,
           deliveryDate: true,
           deliveredAt: true,
           paidAt: true,
@@ -210,6 +214,10 @@ export function registerSalesPaymentRoutes(app: FastifyInstance) {
           customerId: o.customer.id,
           customerName: o.customer.name,
           paymentMode: o.paymentMode,
+          paymentReceiptType: o.paymentReceiptType,
+          paymentReceiptRef: o.paymentReceiptRef,
+          paymentReceiptPhotoUrl: o.paymentReceiptPhotoUrl,
+          paymentReceiptPhotoKey: o.paymentReceiptPhotoKey,
           deliveryDate: o.deliveryDate ? o.deliveryDate.toISOString() : null,
           deliveredAt: o.deliveredAt ? o.deliveredAt.toISOString() : null,
           dueAt: dueAt.toISOString(),
@@ -277,6 +285,7 @@ export function registerSalesPaymentRoutes(app: FastifyInstance) {
           version: true,
           paidAt: true,
           paidAmount: true,
+          paymentMode: true,
           deliveryCity: true,
           customerId: true,
           lines: { select: { quantity: true, unitPrice: true } },
@@ -326,6 +335,21 @@ export function registerSalesPaymentRoutes(app: FastifyInstance) {
             paymentReceiptPhotoKey: receiptPhotoKey,
           },
           select: { id: true, number: true, status: true, version: true, paidAt: true },
+        })
+
+        await db.salesOrderPayment.create({
+          data: {
+            tenantId,
+            salesOrderId: order.id,
+            paidById: userId,
+            amount: String(payAmount),
+            paymentMode: order.paymentMode,
+            paymentReceiptType: receiptType,
+            paymentReceiptRef: receiptRef,
+            paymentReceiptPhotoUrl: receiptPhotoUrl,
+            paymentReceiptPhotoKey: receiptPhotoKey,
+            createdBy: userId,
+          },
         })
 
         await audit.append({

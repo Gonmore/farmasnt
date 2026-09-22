@@ -219,6 +219,7 @@ model User {
   passwordResetTokens PasswordResetToken[]
   auditEvents  AuditEvent[] @relation("AuditActor")
   tenantAccess UserTenantAccess[]
+  payments     SalesOrderPayment[] @relation("UserPayments")
 
   @@unique([tenantId, email])
   @@index([tenantId])
@@ -856,6 +857,7 @@ model SalesOrder {
   quote    Quote?   @relation(fields: [quoteId], references: [id], onDelete: Restrict)
   lines    SalesOrderLine[]
   reservations SalesOrderReservation[]
+  payments   SalesOrderPayment[]
 
   @@unique([tenantId, number])
   @@unique([quoteId])
@@ -863,6 +865,28 @@ model SalesOrder {
   @@index([customerId])
   @@index([quoteId])
   @@index([status])
+}
+
+model SalesOrderPayment {
+  id           String    @id @default(uuid())
+  tenantId     String
+  salesOrderId String
+  paidById     String?
+  amount       Decimal   @default(0)
+  paymentMode  String    @default("CASH")
+  paymentReceiptType    String?
+  paymentReceiptRef     String?
+  paymentReceiptPhotoUrl String?
+  paymentReceiptPhotoKey String?
+  createdAt    DateTime  @default(now())
+  createdBy    String?
+
+  salesOrder SalesOrder @relation(fields: [salesOrderId], references: [id], onDelete: Cascade)
+  paidBy     User?      @relation("UserPayments", fields: [paidById], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([salesOrderId])
+  @@index([createdAt])
 }
 
 model SalesOrderLine {

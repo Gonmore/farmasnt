@@ -28,6 +28,7 @@ import { registerDashboardRoutes } from './routes/dashboards.js'
 import { registerLaboratoryRoutes } from './routes/laboratory.js'
 import { registerNotificationRoutes } from './routes/notifications.js'
 import { registerGeoRoutes } from './routes/geo.js'
+import { registerS3ProxyRoutes } from './routes/s3Proxy.js'
 
 export async function createHttpServer() {
   const env = getEnv()
@@ -214,6 +215,7 @@ export async function createHttpServer() {
   await registerDashboardRoutes(app)
    await registerLaboratoryRoutes(app)
    await registerGeoRoutes(app)
+   await registerS3ProxyRoutes(app)
 
   return app
 }

@@ -252,6 +252,7 @@ frontend/src/
 | `pages/sales/PaymentsPage.tsx` | `POST /api/v1/sales/payments/proof-upload` | `routes/salesPayments.ts:91` |
 | | `GET /api/v1/sales/payments` | `routes/salesPayments.ts:137` |
 | | `POST /api/v1/sales/payments/:id/pay` | `routes/salesPayments.ts:219` |
+| | `GET /api/v1/sales/orders/:id/payments` | `routes/salesOrders.ts:968` | Historial de pagos de la orden (SalesOrderPayment), ordenado ASC por createdAt. Filtra por branchDepartments (scope:branch). |
 | `pages/customers/CustomersPage.tsx` | `GET /api/v1/customers` | `routes/customers.ts:278` |
 | | `GET /api/v1/customers/:id` | `routes/customers.ts:342` |
 | | `POST /api/v1/customers` | `routes/customers.ts:178` |
@@ -353,6 +354,7 @@ frontend/src/
 | `SalesOrder` | `customer`, `quote`, `lines`, `reservations` | Órdenes de venta (DRAFT/CONFIRMED/FULFILLED/CANCELLED) |
 | `SalesOrderLine` | `salesOrder`, `product`, `batch`, `presentation` | Líneas de orden |
 | `SalesOrderReservation` | `balance` | Stock reservado |
+| `SalesOrderPayment` | `salesOrder`, `paidBy` | Historial de pagos de orden (monto, modo, comprobante, fecha). Ordenado ASC por `createdAt`. |
 | `Quote` | `customer`, `lines` | Cotizaciones (CREATED/PROCESSED) |
 | `AuditEvent` | — | Append-only auditoría GxP |
 | `TenantSequence` | — | Secuenciación por tenant+año |

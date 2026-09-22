@@ -37,10 +37,14 @@ type SalesOrderDetail = {
   deliveredAt: string | null
   paidAt: string | null
   paidAmount: number
+  paymentReceiptType: string | null
+  paymentReceiptRef: string | null
+  paymentReceiptPhotoUrl: string | null
+  paymentReceiptPhotoKey: string | null
   processedBy: string | null
   deliveryDate: string | null
-   deliveryCity: string | null
-   deliveryDepartment: string | null
+  deliveryCity: string | null
+  deliveryDepartment: string | null
   deliveryZone: string | null
   deliveryAddress: string | null
   deliveryMapsUrl: string | null
@@ -90,6 +94,56 @@ function toNumber(value: unknown): number {
 
 function money(n: number): string {
   return formatMoney(n)
+}
+
+function isPdfKey(key: string): boolean {
+  return key.toLowerCase().endsWith('.pdf')
+}
+
+interface ReceiptViewerProps {
+  photoUrl: string | null
+  photoKey: string
+}
+
+const ReceiptViewer = ({ photoUrl, photoKey }: ReceiptViewerProps) => {
+  const proxyUrl = `/api/v1/s3/get/${encodeURIComponent(photoKey)}`
+  const isPdf = isPdfKey(photoKey)
+  const imgSrc = photoUrl ?? proxyUrl
+
+  return (
+    <div>
+      <div className="mb-2 text-sm font-medium text-slate-700 dark:text-slate-300">
+        Comprobante: {isPdf ? 'PDF' : 'Imagen'}
+      </div>
+      <div className="flex items-center justify-center rounded-lg border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-800 min-h-52">
+        {isPdf ? (
+          <iframe
+            src={imgSrc}
+            title="Comprobante PDF"
+            className="h-96 w-full rounded border border-slate-300 dark:border-slate-600"
+          />
+        ) : (
+          <img
+            src={imgSrc}
+            alt="Comprobante"
+            className="max-h-96 max-w-full object-contain"
+          />
+        )}
+      </div>
+      {photoUrl && (
+        <div className="mt-2 text-center">
+          <a
+            href={photoUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+          >
+            Abrir comprobante en nueva pestaña
+          </a>
+        </div>
+      )}
+    </div>
+  )
 }
 
 async function fetchOrder(token: string, id: string): Promise<SalesOrderDetail> {
@@ -350,6 +404,36 @@ export function OrderDetailPage() {
                 <span className="font-semibold">{money(total)} {currency}</span>
               </div>
             </div>
+
+            {orderQuery.data?.paidAt && (
+              <div className="rounded-lg border border-slate-200 bg-white p-4 text-sm dark:border-slate-700 dark:bg-slate-900">
+                <div className="font-semibold text-slate-900 dark:text-slate-100 mb-3">Información de pago</div>
+                <div className="grid gap-2 md:grid-cols-2">
+                  <div><strong>Fecha de pago:</strong> {new Date(orderQuery.data.paidAt).toLocaleString()}</div>
+                  <div><strong>Monto pagado:</strong> {money(toNumber(orderQuery.data.paidAmount))} {currency}</div>
+                  {orderQuery.data.paymentReceiptType && (
+                    <div><strong>Tipo de comprobante:</strong>
+                      {orderQuery.data.paymentReceiptType === 'CASH' ? 'CONTADO'
+                        : orderQuery.data.paymentReceiptType === 'TRANSFER_QR' ? 'Transferencia / QR'
+                        : orderQuery.data.paymentReceiptType === 'CHECK' ? 'Cheque'
+                        : orderQuery.data.paymentReceiptType}
+                    </div>
+                  )}
+                  {orderQuery.data.paymentReceiptRef && (
+                    <div><strong>Referencia:</strong> {orderQuery.data.paymentReceiptRef}</div>
+                  )}
+                </div>
+
+                {orderQuery.data.paymentReceiptPhotoKey && (
+                  <div className="mt-4">
+                    <ReceiptViewer
+                      photoUrl={orderQuery.data.paymentReceiptPhotoUrl ?? null}
+                      photoKey={orderQuery.data.paymentReceiptPhotoKey}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </PageContainer>

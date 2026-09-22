@@ -899,6 +899,10 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
           deliveredAt: true,
           paidAt: true,
           paidAmount: true,
+          paymentReceiptType: true,
+          paymentReceiptRef: true,
+          paymentReceiptPhotoUrl: true,
+          paymentReceiptPhotoKey: true,
           deliveryDate: true,
           deliveryCity: true, deliveryDepartment: true,
           deliveryZone: true,
@@ -952,8 +956,75 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
         deliveredAt: order.deliveredAt ? order.deliveredAt.toISOString() : null,
         paidAt: order.paidAt ? order.paidAt.toISOString() : null,
         paidAmount: Number(order.paidAmount ?? 0),
+        paymentReceiptType: order.paymentReceiptType ?? null,
+        paymentReceiptRef: order.paymentReceiptRef ?? null,
+        paymentReceiptPhotoUrl: order.paymentReceiptPhotoUrl ?? null,
+        paymentReceiptPhotoKey: order.paymentReceiptPhotoKey ?? null,
         deliveryDate: order.deliveryDate ? order.deliveryDate.toISOString() : null,
       })
+    },
+  )
+
+  app.get(
+    '/api/v1/sales/orders/:id/payments',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'SALES'), requirePermission(Permissions.SalesOrderRead)],
+    },
+    async (request, reply) => {
+      const id = (request.params as any).id as string
+      const tenantId = request.auth!.tenantId
+
+      if (branchDepartmentsOfMissing(request)) {
+        return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+      }
+      const branchDepartments = branchDepartmentsOf(request)
+
+      const order = await db.salesOrder.findFirst({
+        where: {
+          id,
+          tenantId,
+          ...(branchDepartments
+            ? {
+                OR: [
+                  { deliveryDepartment: { in: branchDepartments, mode: 'insensitive' as const } },
+                  { AND: [{ OR: [{ deliveryDepartment: null }, { deliveryDepartment: '' }] }, { customer: { department: { in: branchDepartments, mode: 'insensitive' } } }] },
+                ],
+              }
+            : {}),
+        },
+        select: { id: true },
+      })
+      if (!order) return reply.status(404).send({ message: 'Not found' })
+
+      const payments = await db.salesOrderPayment.findMany({
+        where: { tenantId, salesOrderId: order.id },
+        orderBy: { createdAt: 'asc' },
+        select: {
+          id: true,
+          amount: true,
+          paymentMode: true,
+          paymentReceiptType: true,
+          paymentReceiptRef: true,
+          paymentReceiptPhotoUrl: true,
+          paymentReceiptPhotoKey: true,
+          createdAt: true,
+          paidBy: { select: { fullName: true, email: true } },
+        },
+      })
+
+      const items = payments.map((p) => ({
+        id: p.id,
+        amount: Number(p.amount),
+        paymentMode: p.paymentMode,
+        paymentReceiptType: p.paymentReceiptType,
+        paymentReceiptRef: p.paymentReceiptRef,
+        paymentReceiptPhotoUrl: p.paymentReceiptPhotoUrl,
+        paymentReceiptPhotoKey: p.paymentReceiptPhotoKey,
+        createdAt: p.createdAt.toISOString(),
+        paidByName: p.paidBy ? ((p.paidBy.fullName ?? '').trim() || p.paidBy.email) : null,
+      }))
+
+      return reply.send({ items })
     },
   )
 
@@ -1589,7 +1660,7 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
                 productId: ret.productId,
                 batchId: ret.batchId ?? null,
               },
-              orderBy: { createdAt: 'desc' },
+      orderBy: { createdAt: 'asc' },
               select: { fromLocationId: true, productId: true, batchId: true },
             })
 

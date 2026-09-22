@@ -18,6 +18,10 @@ type PaymentListItem = {
   customerId: string
   customerName: string
   paymentMode: string
+  paymentReceiptType: string | null
+  paymentReceiptRef: string | null
+  paymentReceiptPhotoUrl: string | null
+  paymentReceiptPhotoKey: string | null
   deliveryDate: string | null
   deliveredAt: string | null
   dueAt: string
@@ -31,6 +35,22 @@ type ListResponse = { items: PaymentListItem[]; nextCursor: string | null }
 
 type PaymentReceiptType = 'CASH' | 'TRANSFER_QR' | 'CHECK'
 type PaymentProofUpload = { uploadUrl: string; publicUrl: string; key: string; method?: string }
+
+type OrderPayment = {
+  id: string
+  amount: number
+  paymentMode: string
+  paymentReceiptType: string | null
+  paymentReceiptRef: string | null
+  paymentReceiptPhotoUrl: string | null
+  paymentReceiptPhotoKey: string | null
+  createdAt: string
+  paidByName: string | null
+}
+
+async function fetchOrderPayments(token: string, orderId: string): Promise<{ items: OrderPayment[] }> {
+  return apiFetch(`/api/v1/sales/orders/${encodeURIComponent(orderId)}/payments`, { token })
+}
 
 function money(n: number): string {
   return formatMoney(n)
@@ -114,8 +134,10 @@ export function PaymentsPage() {
   const [receiptType, setReceiptType] = useState<PaymentReceiptType>('CASH')
   const [receiptRef, setReceiptRef] = useState('')
   const [receiptPhoto, setReceiptPhoto] = useState<{ url: string; key: string } | null>(null)
+  const [receiptFile, setReceiptFile] = useState<File | null>(null)
   const [receiptError, setReceiptError] = useState('')
   const [uploadingProof, setUploadingProof] = useState(false)
+  const [paymentDetail, setPaymentDetail] = useState<PaymentListItem | null>(null)
 
    const paymentsQuery = useQuery({
      queryKey: ['payments', status, take, pag.currentCursor, appliedSearch],
@@ -146,6 +168,7 @@ export function PaymentsPage() {
       setReceiptType('CASH')
       setReceiptRef('')
       setReceiptPhoto(null)
+      setReceiptFile(null)
       setReceiptError('')
     },
     onError: (err: any) => {
@@ -167,24 +190,10 @@ export function PaymentsPage() {
     setPayModalOpen(true)
   }
 
-  const handleUploadProof = async (file: File) => {
-    if (!auth.accessToken) return
-    setUploadingProof(true)
+  const handleSelectProof = (file: File) => {
+    setReceiptFile(file)
+    setReceiptPhoto(null)
     setReceiptError('')
-    try {
-      const presign = await presignPaymentProof(auth.accessToken, file)
-      const res = await fetch(presign.uploadUrl, {
-        method: presign.method ?? 'PUT',
-        body: file,
-        headers: { 'Content-Type': file.type },
-      })
-      if (!res.ok) throw new Error('No se pudo subir la imagen')
-      setReceiptPhoto({ url: presign.publicUrl, key: presign.key })
-    } catch (err: any) {
-      setReceiptError(err?.message ?? 'No se pudo subir la imagen')
-    } finally {
-      setUploadingProof(false)
-    }
   }
 
   return (
@@ -295,7 +304,7 @@ export function PaymentsPage() {
                     )
                   },
                 },
-                {
+                 {
                   header: 'Acciones',
                   className: 'text-center',
                   accessor: (p) => (
@@ -304,7 +313,7 @@ export function PaymentsPage() {
                         variant="ghost"
                         size="sm"
                         icon={<EyeIcon className="w-4 h-4" />}
-                        onClick={() => navigate(`/sales/orders/${encodeURIComponent(p.id)}`)}
+                        onClick={() => setPaymentDetail(p)}
                       >
                         <span className="hidden md:inline">Ver</span>
                       </Button>
@@ -426,15 +435,17 @@ export function PaymentsPage() {
                   <div className="mb-2 text-sm font-medium text-slate-700 dark:text-slate-300">
                     {receiptType === 'CHECK' ? 'Foto o PDF del cheque (opcional)' : 'Foto o Captura (opcional)'}
                   </div>
-                  <ImageUpload
-                    mode="select"
-                    accept="image/png,image/jpeg,image/webp,application/pdf"
-                    currentImageUrl={receiptPhoto?.url ?? null}
-                    onImageSelect={handleUploadProof}
-                    onImageRemove={() => setReceiptPhoto(null)}
-                    loading={uploadingProof}
-                    disabled={payMutation.isPending || uploadingProof}
-                  />
+                   <ImageUpload
+                     mode="select"
+                     accept="image/png,image/jpeg,image/webp,application/pdf"
+                     currentImageUrl={receiptPhoto?.url ?? null}
+                     currentFileType={receiptFile?.type === 'application/pdf' ? 'pdf' : 'image'}
+                     fallbackUrl={receiptPhoto?.key ? `/api/v1/s3/get/${encodeURIComponent(receiptPhoto.key)}` : null}
+                     onImageSelect={handleSelectProof}
+                     onImageRemove={() => { setReceiptFile(null); setReceiptPhoto(null) }}
+                     loading={uploadingProof}
+                     disabled={payMutation.isPending || uploadingProof}
+                   />
                 </div>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
                   {receiptType === 'CHECK'
@@ -454,68 +465,229 @@ export function PaymentsPage() {
               <Button
                 variant="secondary"
                 onClick={() => {
-                  if (payMutation.isPending) return
-                  setPayModalOpen(false)
-                  setPayTarget(null)
-                  setAmountType('TOTAL')
-                  setPartialAmount('')
-                  setReceiptType('CASH')
-                  setReceiptRef('')
-                  setReceiptPhoto(null)
-                  setReceiptError('')
-                }}
+                   if (payMutation.isPending) return
+                   setPayModalOpen(false)
+                   setPayTarget(null)
+                   setAmountType('TOTAL')
+                   setPartialAmount('')
+                   setReceiptType('CASH')
+                   setReceiptRef('')
+                   setReceiptPhoto(null)
+                   setReceiptFile(null)
+                   setReceiptError('')
+                   setUploadingProof(false)
+                 }}
                 disabled={payMutation.isPending}
               >
                 Cancelar
               </Button>
-              <Button
-                variant="primary"
-                loading={payMutation.isPending}
-                disabled={!payTarget || uploadingProof || payMutation.isPending}
-                onClick={() => {
-                  if (!payTarget) return
+               <Button
+                 variant="primary"
+                 loading={payMutation.isPending || uploadingProof}
+                 disabled={!payTarget || payMutation.isPending}
+                 onClick={async () => {
+                   if (!payTarget || !auth.accessToken) return
 
-                  const remaining = Number(payTarget.remaining)
-                  const resolvedAmount = amountType === 'TOTAL' ? remaining : Number(partialAmount)
-                  if (amountType === 'PARTIAL') {
-                    if (!Number.isFinite(resolvedAmount) || resolvedAmount <= 0) {
-                      setReceiptError('Ingresá un monto parcial válido.')
-                      return
-                    }
-                    if (resolvedAmount > remaining + 1e-9) {
-                      setReceiptError('El monto parcial excede el saldo pendiente.')
-                      return
-                    }
-                  }
+                   const remaining = Number(payTarget.remaining)
+                   const resolvedAmount = amountType === 'TOTAL' ? remaining : Number(partialAmount)
+                   if (amountType === 'PARTIAL') {
+                     if (!Number.isFinite(resolvedAmount) || resolvedAmount <= 0) {
+                       setReceiptError('Ingresá un monto parcial válido.')
+                       return
+                     }
+                     if (resolvedAmount > remaining + 1e-9) {
+                       setReceiptError('El monto parcial excede el saldo pendiente.')
+                       return
+                     }
+                   }
 
-                  const needsProof = receiptType === 'TRANSFER_QR' || receiptType === 'CHECK'
-                  const hasRef = receiptRef.trim().length > 0
-                  const hasPhoto = !!receiptPhoto?.url
-                  if (needsProof && !hasRef && !hasPhoto) {
-                    setReceiptError(receiptType === 'CHECK'
-                      ? 'Ingrese el número de cheque o suba una imagen.'
-                      : 'Ingrese número de transacción o suba una imagen.')
-                    return
-                  }
+                   const needsProof = receiptType === 'TRANSFER_QR' || receiptType === 'CHECK'
+                   const hasRef = receiptRef.trim().length > 0
+                   const hasPhoto = !!receiptPhoto?.url || !!receiptFile
+                   if (needsProof && !hasRef && !hasPhoto) {
+                     setReceiptError(receiptType === 'CHECK'
+                       ? 'Ingrese el número de cheque o suba una imagen.'
+                       : 'Ingrese número de transacción o suba una imagen.')
+                     return
+                   }
 
-                  payMutation.mutate({
-                    id: payTarget.id,
-                    version: payTarget.version,
-                    paymentAmountType: amountType,
-                    ...(amountType === 'PARTIAL' ? { amount: resolvedAmount } : {}),
-                    paymentReceiptType: receiptType,
-                    paymentReceiptRef: receiptRef.trim() || undefined,
-                    paymentReceiptPhotoUrl: receiptPhoto?.url ?? undefined,
-                    paymentReceiptPhotoKey: receiptPhoto?.key ?? undefined,
-                  })
-                }}
-              >
-                Confirmar pago
-              </Button>
+                   setReceiptError('')
+
+                   // Upload proof file first, then confirm payment
+                   let photoUrl: string | undefined
+                   let photoKey: string | undefined
+
+                   if (receiptFile) {
+                     setUploadingProof(true)
+                     try {
+                       const presign = await presignPaymentProof(auth.accessToken, receiptFile)
+                       const res = await fetch(presign.uploadUrl, {
+                         method: presign.method ?? 'PUT',
+                         body: receiptFile,
+                         headers: { 'Content-Type': receiptFile.type },
+                       })
+                       if (!res.ok) throw new Error('No se pudo subir la imagen')
+                       photoUrl = presign.publicUrl
+                       photoKey = presign.key
+                     } catch (err: any) {
+                       setReceiptError(err?.message ?? 'No se pudo subir la imagen')
+                       setUploadingProof(false)
+                       return
+                     } finally {
+                       setUploadingProof(false)
+                     }
+                   } else if (receiptPhoto?.url) {
+                     photoUrl = receiptPhoto.url
+                     photoKey = receiptPhoto.key
+                   }
+
+                   payMutation.mutate({
+                     id: payTarget.id,
+                     version: payTarget.version,
+                     paymentAmountType: amountType,
+                     ...(amountType === 'PARTIAL' ? { amount: resolvedAmount } : {}),
+                     paymentReceiptType: receiptType,
+                     paymentReceiptRef: receiptRef.trim() || undefined,
+                     paymentReceiptPhotoUrl: photoUrl,
+                     paymentReceiptPhotoKey: photoKey,
+                   })
+                 }}
+               >
+                 Confirmar pago
+               </Button>
             </div>
           </div>
-        </Modal>
+         </Modal>
+
+        {paymentDetail && (
+          <PaymentDetailModal
+            payment={paymentDetail}
+            onClose={() => setPaymentDetail(null)}
+            onNavigateToOrder={() => {
+              setPaymentDetail(null)
+              navigate(`/sales/orders/${encodeURIComponent(paymentDetail.id)}`)
+            }}
+          />
+        )}
       </PageContainer>
     </MainLayout>
+  )
+}
+
+interface PaymentDetailModalProps {
+  payment: PaymentListItem
+  onClose: () => void
+  onNavigateToOrder: () => void
+}
+
+function PaymentDetailModal({ payment, onClose, onNavigateToOrder }: PaymentDetailModalProps) {
+  const auth = useAuth()
+  const paymentsQuery = useQuery({
+    queryKey: ['order-payments', payment.id],
+    queryFn: () => fetchOrderPayments(auth.accessToken!, payment.id),
+    enabled: !!auth.accessToken,
+  })
+  const payments = paymentsQuery.data?.items ?? []
+
+  const receiptTypeText = (rt: string | null) => {
+    if (rt === 'CASH') return 'CONTADO'
+    if (rt === 'TRANSFER_QR') return 'Transferencia / QR'
+    if (rt === 'CHECK') return 'Cheque'
+    return rt ?? '-'
+  }
+
+  const isPdfKey = (key: string) => key.toLowerCase().endsWith('.pdf')
+
+  return (
+    <Modal
+      isOpen={true}
+      onClose={onClose}
+      title={`Orden ${payment.number} - Detalle de pagos`}
+      maxWidth="3xl"
+      actions={
+        <>
+          <Button variant="secondary" onClick={onClose}>Cerrar</Button>
+          <Button variant="primary" onClick={onNavigateToOrder}>Ver orden de venta</Button>
+        </>
+      }
+    >
+      <div className="space-y-4 text-sm">
+        <div className="grid gap-2 md:grid-cols-2">
+          <div><strong>Estado:</strong> {payment.paidAt ? 'PAGADO' : 'PENDIENTE'}</div>
+          <div><strong>Fecha de vencimiento:</strong> {new Date(payment.dueAt).toLocaleDateString()}</div>
+          <div><strong>Monto total:</strong> {formatMoney(payment.total)}</div>
+          <div><strong>Total pagado:</strong> {formatMoney(payment.paidAmount)}</div>
+          <div><strong>Saldo pendiente:</strong> {formatMoney(payment.remaining)}</div>
+          {payment.paidAt && payment.remaining === 0 && (
+            <div><strong>Tipo de pago:</strong> <Badge variant="success">COMPLETO</Badge></div>
+          )}
+          {payment.paidAt && payment.remaining > 0 && (
+            <div><strong>Tipo de pago:</strong> <Badge variant="warning">PARCIAL</Badge></div>
+          )}
+        </div>
+
+        <div className="border-t border-slate-200 dark:border-slate-700 pt-3">
+          <div className="font-semibold text-slate-700 dark:text-slate-300 mb-2">Historial de pagos</div>
+          {payments.length === 0 ? (
+            <div className="text-slate-500 dark:text-slate-400">No hay pagos registrados.</div>
+          ) : (
+            <div className="space-y-4">
+              {payments.map((p, idx) => {
+                const key = p.paymentReceiptPhotoKey
+                const hasReceipt = !!key
+                const isPdf = hasReceipt && key && isPdfKey(key)
+                const displayUrl = p.paymentReceiptPhotoUrl
+                  ? p.paymentReceiptPhotoUrl
+                  : hasReceipt && key
+                    ? `/api/v1/s3/get/${encodeURIComponent(key)}`
+                    : null
+                return (
+                  <div key={p.id} className="rounded-lg border border-slate-200 dark:border-slate-700 p-3">
+                    <div className="flex items-center justify-between">
+                      <div className="font-medium">Pago #{idx + 1}</div>
+                      <Badge variant={p.paymentReceiptType ? 'default' : 'info'}>
+                        {formatMoney(p.amount)}
+                      </Badge>
+                    </div>
+                    <div className="grid gap-1 mt-2 md:grid-cols-2 text-xs">
+                      <div><strong>Fecha:</strong> {new Date(p.createdAt).toLocaleString()}</div>
+                      {p.paidByName && <div><strong>Pagado por:</strong> {p.paidByName}</div>}
+                      <div><strong>Tipo:</strong> {receiptTypeText(p.paymentReceiptType)}</div>
+                      {p.paymentReceiptRef && <div><strong>Referencia:</strong> {p.paymentReceiptRef}</div>}
+                    </div>
+                    {hasReceipt && displayUrl && (
+                      <div className="mt-2">
+                        <div className="mb-1 text-xs font-medium text-slate-600 dark:text-slate-400">
+                          Comprobante: {isPdf ? 'PDF' : 'Imagen'}
+                        </div>
+                        <div className="flex items-center justify-center rounded-lg border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-800 min-h-40">
+                          {isPdf ? (
+                            <iframe src={displayUrl} title="Comprobante PDF" className="h-60 w-full rounded" />
+                          ) : (
+                            <img src={displayUrl} alt="Comprobante" className="max-h-60 max-w-full object-contain" />
+                          )}
+                        </div>
+                        {p.paymentReceiptPhotoUrl && (
+                          <div className="mt-1 text-center">
+                            <a
+                              href={p.paymentReceiptPhotoUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                            >
+                              Abrir en nueva pestaña
+                            </a>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    </Modal>
   )
 }

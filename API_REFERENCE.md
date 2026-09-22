@@ -2937,6 +2937,44 @@ Realtime emit
 
 ---
 
+## Historial de pagos
+
+### GET /api/v1/sales/orders/:id/payments
+Requiere permiso: `sales:order:read`.
+
+Requiere módulo `SALES`.
+
+Retorna el historial de pagos registrados para una orden de venta, ordenado cronológicamente ascendente (el primer pago aparece primero).
+
+Query
+- (n/a — el `:id` es el UUID de la orden en la ruta)
+
+Notas
+- Filtra por `tenantId` (multi-tenant).
+- Si el usuario está scopeado por sucursal (`scope:branch`), la orden debe pertenecer a un departamento atendido por la sucursal del usuario; si no, responde `404`.
+- Si el usuario no tiene sucursal seleccionada, responde `409`.
+
+Response 200
+```json
+{
+  "items": [
+    {
+      "id": "...",
+      "amount": 50,
+      "paymentMode": "CASH",
+      "paymentReceiptType": "CASH",
+      "paymentReceiptRef": null,
+      "paymentReceiptPhotoUrl": null,
+      "paymentReceiptPhotoKey": null,
+      "createdAt": "2026-05-12T16:15:33.147Z",
+      "paidByName": "admin@demo.local"
+    }
+  ]
+}
+```
+
+---
+
 ## Admin (multirol)
 - `admin:users:manage`: acceso completo a usuarios/roles (Tenant Admin / Platform Admin).
 - `admin:users:manage-branch`: administrador de sucursal (BRANCH_ADMIN) — puede crear vendedores (BRANCH_SELLER) 

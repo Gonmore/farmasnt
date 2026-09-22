@@ -1,8 +1,33 @@
 # Bitácora de desarrollo — PharmaFlow Bolivia (farmaSNT)
 
-> Última actualización: 21 Sep 2026
+> Última actualización: 22 Sep 2026
 
 > Este documento suma (a alto nivel) decisiones, hitos y cambios relevantes que se fueron incorporando al repositorio para llegar al estado actual del MVP.
+
+## **[22 Sep 2026] Historial de pagos por orden de venta + paginación en PaymentsPage**
+
+### Contexto
+- El `PaymentsPage` no mostraba el historial detallado de pagos para una orden de venta. Se agregó el endpoint `GET /api/v1/sales/orders/:id/payments` y el modal `PaymentDetailModal` que consume este endpoint para mostrar el historial de pagos con fechas, montos y comprobantes, ordenado cronológicamente (asc) para que "Pago #1" sea el primer pago y "Pago #N" el más reciente.
+
+### Cambios
+
+#### Backend
+- **`backend/src/adapters/http/routes/salesOrders.ts`**:
+  - Nuevo endpoint `GET /api/v1/sales/orders/:id/payments` que retorna el historial de `SalesOrderPayment` para una orden específica, con filtro por `tenantId` y discriminación por `branchDepartments` (scope:branch).
+  - `orderBy: { createdAt: 'asc' }` para orden ascendente cronológico.
+
+#### Frontend
+- **`frontend/src/pages/sales/PaymentsPage.tsx`**:
+  - Nuevo componente `PaymentDetailModal` que muestra el historial de pagos (fecha, monto, modo, estado, comprobante) con navegación a la orden de venta.
+  - Estado `paymentDetail` para abrir el modal desde la tabla de pagos.
+
+#### Migración + backfill
+- **`backend/prisma/migrations/20260921000000_add_payment_history_model/migration.sql`**: migración idempotente (`IF NOT EXISTS`/`DO $$`) creando `SalesOrderPayment` + backfill de órdenes con `paidAt IS NOT NULL OR paidAmount > 0`.
+
+### Operación
+- `npx tsc --noEmit` limpio en backend y frontend.
+- Build OK en backend y frontend.
+- API verificada: `GET /api/v1/sales/orders/:id/payments` retorna historial correctamente ordenado.
 
 ## **[21 Sep 2026] Geografía de clientes: Ciudad/Provincia/Municipio + auto-resolución de departamento + branch validation**
 

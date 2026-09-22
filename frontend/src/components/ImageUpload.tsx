@@ -4,6 +4,8 @@ import { autoCompressImage } from '../lib/imageUtils'
 
 interface ImageUploadProps {
   currentImageUrl?: string | null
+  currentFileType?: 'image' | 'pdf'
+  fallbackUrl?: string | null
   onImageSelect: (file: File) => void
   onImageRemove: () => void
   mode?: 'upload' | 'select'
@@ -16,6 +18,8 @@ interface ImageUploadProps {
 
 export function ImageUpload({
   currentImageUrl,
+  currentFileType = 'image',
+  fallbackUrl,
   onImageSelect,
   onImageRemove,
   mode = 'upload',
@@ -31,6 +35,7 @@ export function ImageUpload({
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [isProcessing, setIsProcessing] = useState(false)
   const [imageLoadError, setImageLoadError] = useState(false)
+  const [triedFallback, setTriedFallback] = useState(false)
 
   useEffect(() => {
     return () => {
@@ -39,8 +44,9 @@ export function ImageUpload({
   }, [previewUrl])
 
   useEffect(() => {
-    setImageLoadError(false)
-  }, [currentImageUrl])
+     setImageLoadError(false)
+     setTriedFallback(false)
+   }, [currentImageUrl])
 
   const validateAndProcessFile = useCallback(async (file: File): Promise<File | null> => {
     // Check file type
@@ -158,7 +164,8 @@ export function ImageUpload({
     onImageRemove()
   }, [onImageRemove, previewUrl])
 
-  const displayImageUrl = previewUrl || currentImageUrl
+  const displayImageUrl = previewUrl || (triedFallback ? fallbackUrl : currentImageUrl)
+  const isPdf = selectedFile?.type === 'application/pdf' || (!selectedFile && currentFileType === 'pdf')
 
   return (
     <div className={`space-y-4 ${className}`}>
@@ -175,32 +182,48 @@ export function ImageUpload({
         onDragOver={disabled ? undefined : handleDragOver}
         onDragLeave={disabled ? undefined : handleDragLeave}
       >
-        {displayImageUrl && !imageLoadError ? (
-          selectedFile?.type === 'application/pdf' ? (
-            <div className="space-y-3">
-              <div className="mx-auto flex h-32 w-32 items-center justify-center rounded-lg bg-slate-100 dark:bg-slate-800">
-                <span className="text-4xl">📄</span>
-              </div>
-              <p className="text-center text-sm text-slate-600 dark:text-slate-400">
-                Vista previa - {selectedFile?.name ?? 'PDF seleccionado'}
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-3">
+         {displayImageUrl && !imageLoadError ? (
+           isPdf ? (
+             <div className="space-y-3">
+               <div className="mx-auto flex h-32 w-32 items-center justify-center rounded-lg bg-slate-100 dark:bg-slate-800">
+                 <span className="text-4xl">📄</span>
+               </div>
+               <p className="text-center text-sm text-slate-600 dark:text-slate-400">
+                 Vista previa - {selectedFile?.name ?? 'PDF seleccionado'}
+               </p>
+               <div className="text-center">
+                 <a
+                   href={displayImageUrl}
+                   target="_blank"
+                   rel="noopener noreferrer"
+                   className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                 >
+                   Abrir PDF
+                 </a>
+               </div>
+             </div>
+           ) : (
+             <div className="space-y-3">
               <img
-                src={displayImageUrl}
-                alt="Foto del producto"
-                className="mx-auto max-h-48 w-auto rounded-lg object-contain bg-white shadow-md dark:bg-slate-900"
-                onError={() => setImageLoadError(true)}
-              />
-              {previewUrl && (
-                <p className="text-center text-sm text-slate-600 dark:text-slate-400">
-                  Vista previa - {selectedFile?.name}
-                </p>
-              )}
-            </div>
-          )
-        ) : (
+                  src={displayImageUrl}
+                  alt="Foto del producto"
+                  className="mx-auto max-h-48 w-auto rounded-lg object-contain bg-white shadow-md dark:bg-slate-900"
+                  onError={() => {
+                    if (!triedFallback && fallbackUrl && displayImageUrl === currentImageUrl) {
+                      setTriedFallback(true)
+                    } else {
+                      setImageLoadError(true)
+                    }
+                  }}
+                />
+               {previewUrl && (
+                 <p className="text-center text-sm text-slate-600 dark:text-slate-400">
+                   Vista previa - {selectedFile?.name}
+                 </p>
+               )}
+             </div>
+           )
+         ) : (
           <div className="text-center">
             {isProcessing ? (
               <div className="mb-4">
