@@ -17,6 +17,7 @@ interface NominatimSearchResult {
   display_name: string
   class: string
   type: string
+  addresstype?: string
   importance: number
   place_id: number
   osm_id?: string
@@ -156,15 +157,16 @@ function adminLevel1TypeForCountry(countryCode: string): AdminLevel1Type {
   return types[countryCode.toUpperCase()] ?? 'region'
 }
 
-  function featureTypeFromNominatimType(type: string): CityFeatureType {
-    const mapping: Record<string, CityFeatureType> = {
-      city: 'city',
-      town: 'town',
-      village: 'village',
-      municipality: 'municipality',
-      province: 'province',
-    }
-  return mapping[type.toLowerCase()] ?? 'city'
+function featureTypeFromNominatimType(type: string, addresstype?: string): CityFeatureType {
+  const mapping: Record<string, CityFeatureType> = {
+    city: 'city',
+    town: 'town',
+    village: 'village',
+    municipality: 'municipality',
+    province: 'province',
+  }
+  const resolved = addresstype ?? type
+  return mapping[resolved.toLowerCase()] ?? 'city'
 }
 
 function stripDiacritics(text: string): string {
@@ -524,7 +526,10 @@ export class GeoService {
     const results: City[] = data
       .filter((item) => {
         const placeType = item.type
-        return ['city', 'town', 'village', 'municipality', 'province'].includes(placeType) || item.class === 'place'
+        const addressType = item.addresstype ?? ''
+        return ['city', 'town', 'village', 'municipality', 'province'].includes(placeType)
+          || ['city', 'town', 'village', 'municipality', 'province'].includes(addressType)
+          || item.class === 'place'
       })
       .map((item) => {
         const cityName = ((item.address?.city || item.address?.town || item.address?.village || item.address?.province) ?? item.display_name.split(',')[0] ?? '').trim()
@@ -536,7 +541,7 @@ export class GeoService {
           countryCode,
           lat: parseFloat(item.lat),
           lng: parseFloat(item.lon),
-          featureType: featureTypeFromNominatimType(item.type),
+           featureType: featureTypeFromNominatimType(item.type, item.addresstype),
         }
         if (item.importance) {
           result.population = Math.round(item.importance * 100000)
