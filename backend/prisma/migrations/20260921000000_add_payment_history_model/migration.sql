@@ -61,7 +61,7 @@ SELECT
     o."paymentReceiptRef",
     o."paymentReceiptPhotoUrl",
     o."paymentReceiptPhotoKey",
-    o."paidAt",
+    COALESCE(o."paidAt", CURRENT_TIMESTAMP),
     o."paidBy"
 FROM "SalesOrder" o
 WHERE (o."paidAt" IS NOT NULL OR o."paidAmount" > 0)
