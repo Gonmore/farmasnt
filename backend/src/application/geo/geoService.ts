@@ -105,19 +105,35 @@ const BOLIVIA_CITY_TO_DEPARTMENT: Record<string, string> = {
   'SANTA CRUZ DE LA SIERRA': 'SANTA CRUZ',
   'MONTERO': 'SANTA CRUZ',
   'WARNES': 'SANTA CRUZ',
-  'SAN ANTONIO DE HUarón': 'SANTA CRUZ',
-  'SAN ANTONIO DE HUARÓN': 'SANTA CRUZ',
+  'SAN ANTONIO DE HUARON': 'SANTA CRUZ',
   'SAN PEDRO': 'SANTA CRUZ',
+  'YAPACANI': 'SANTA CRUZ',
+  'SAN JOSE DE CHIQUITOS': 'SANTA CRUZ',
+  'SAN RAMON': 'SANTA CRUZ',
+  'COMARAPA': 'SANTA CRUZ',
+  'SAN RAFAEL': 'SANTA CRUZ',
   'ORURO': 'ORURO',
   'POTOSI': 'POTOSÍ',
-  'POTOSÍ': 'POTOSÍ',
+  'TUPIZA': 'POTOSÍ',
+  'VILLAZON': 'POTOSÍ',
+  'UYUNI': 'POTOSÍ',
   'SUCRE': 'CHUQUISACA',
   'YOTALA': 'CHUQUISACA',
+  'CINTURRILIO': 'CHUQUISACA',
+  'CINTURILLO': 'CHUQUISACA',
+  'VILLA ABECIA': 'CHUQUISACA',
+  'POROMA': 'CHUQUISACA',
   'TARIJA': 'TARIJA',
+  'BERMUDEZ': 'TARIJA',
+  'YACUIBA': 'TARIJA',
+  'VILLAMONTES': 'TARIJA',
+  'VALLECITO': 'TARIJA',
   'TRINIDAD': 'BENI',
+  'RIBERALTA': 'BENI',
+  'SAN BORJA': 'BENI',
+  'SAN RAMON DE QUEMADO': 'BENI',
   'COBIJA': 'PANDO',
   'PANDO': 'PANDO',
-  'RIBERALTA': 'BENI',
   'BENI': 'BENI',
 }
 
@@ -151,16 +167,20 @@ function adminLevel1TypeForCountry(countryCode: string): AdminLevel1Type {
   return mapping[type.toLowerCase()] ?? 'city'
 }
 
-function normalizeCountryName(name: string): string {
-  return name.trim().toUpperCase()
+function stripDiacritics(text: string): string {
+  return text.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
 }
 
-function normalizeDepartmentName(name: string): string {
-  return name.trim().toUpperCase()
+function normalizeCountryName(name: string): string {
+  return stripDiacritics(name.trim().toUpperCase())
 }
 
 function normalizeCityName(name: string): string {
-  return name.trim().toUpperCase()
+  return stripDiacritics(name.trim().toUpperCase())
+}
+
+function normalizeDepartmentName(name: string): string {
+  return stripDiacritics(name.trim().toUpperCase())
 }
 
 export class GeoService {
@@ -431,14 +451,17 @@ export class GeoService {
       if (adminLevel1Code) {
         const deptName = this.adminLevel1CodeToDepartmentName(adminLevel1Code)
         results = results.filter((c) => {
-          const dept = BOLIVIA_CITY_TO_DEPARTMENT[c.name.toUpperCase()]
+          const dept = BOLIVIA_CITY_TO_DEPARTMENT[normalizeCityName(c.name)]
           return dept === deptName
         })
       }
 
       if (query.trim()) {
         const q = normalizeCityName(query)
-        results = results.filter((c) => c.name.toUpperCase().includes(q) || c.name.toUpperCase().startsWith(q))
+        results = results.filter((c) => {
+          const normName = normalizeCityName(c.name)
+          return normName.includes(q) || normName.startsWith(q)
+        })
       }
 
       results.sort((a, b) => {
@@ -525,8 +548,14 @@ export class GeoService {
     if (adminLevel1Code) {
       const deptName = this.adminLevel1CodeToDepartmentName(adminLevel1Code)
       return results.filter((c) => {
-        const dept = BOLIVIA_CITY_TO_DEPARTMENT[c.name.toUpperCase()] || c.adminLevel1Code
-        return dept === deptName || this.resolveAdminLevel1Code(countryCode, c.adminLevel1Code ?? '') === deptName
+        const mappedDept = BOLIVIA_CITY_TO_DEPARTMENT[normalizeCityName(c.name)]
+        if (mappedDept) {
+          return mappedDept === deptName
+        }
+        const cityDeptName = c.adminLevel1Code
+          ? this.adminLevel1CodeToDepartmentName(c.adminLevel1Code)
+          : undefined
+        return cityDeptName === deptName
       })
     }
 
@@ -545,9 +574,9 @@ export class GeoService {
     const cc = countryCode.toUpperCase()
     if (cc === 'BO') {
       const dept = BOLIVIA_ADMIN_LEVEL1.find(
-        (a) => a.name.toUpperCase() === adminName.toUpperCase() || a.name.toUpperCase() === normalizeDepartmentName(adminName),
+        (a) => normalizeDepartmentName(a.name) === normalizeDepartmentName(adminName),
       )
-      return dept?.code ?? adminName.toUpperCase()
+      return dept?.code ?? normalizeDepartmentName(adminName)
     }
     return normalizeDepartmentName(adminName)
   }
@@ -645,6 +674,13 @@ export class GeoService {
     if (boliviaDept) {
       this.setCached(cacheKey, boliviaDept, this.ttl.adminLevel1)
       return boliviaDept
+    }
+
+    const cleanedUpper = upper.replace(/^MUNICIPIO\s+/, '').trim()
+    const boliviaDeptFromClean = BOLIVIA_CITY_TO_DEPARTMENT[cleanedUpper]
+    if (boliviaDeptFromClean) {
+      this.setCached(cacheKey, boliviaDeptFromClean, this.ttl.adminLevel1)
+      return boliviaDeptFromClean
     }
 
     if (adminLevel1Code) {
