@@ -1,8 +1,57 @@
 # Bitácora de desarrollo — PharmaFlow Bolivia (farmaSNT)
 
-> Última actualización: 22 Sep 2026
+> Última actualización: 25 Sep 2026
 
 > Este documento suma (a alto nivel) decisiones, hitos y cambios relevantes que se fueron incorporando al repositorio para llegar al estado actual del MVP.
+
+## **[25 Sep 2026] Criterio de unicidad de clientes (doble condición) + código único del cliente (customerCode)**
+
+### Contexto
+- El criterio de unicidad de clientes cambió de una condición triple (nombre + NIT + ciudad) a **dos condiciones independientes** (OR), permitiendo coexistir clientes con el mismo NIT o mismo nombre siempre que estén en ciudades distintas:
+  1. **NIT + ciudad**: mismo NIT + misma ciudad ? conflicto (aunque el nombre difiera)
+  2. **Nombre + ciudad**: mismo nombre (normalizado, case-insensitive) + misma ciudad ? conflicto (aunque el NIT difiera)
+- Se agregó un **identificador único de 7 caracteres** (`customerCode`) con patrón `C***LPZ` (C + 3 chars alfanuméricos + acrónimo de 3 letter de ciudad).
+- La búsqueda de clientes ahora incluye `customerCode`.
+
+### Cambios
+
+#### Backend
+
+- **`backend/prisma/schema.prisma`**: agregado campo `customerCode String?` al modelo `Customer`.
+- **`backend/prisma/migrations/20260925_add_customer_code/migration.sql`**: migración con `ALTER TABLE` + script de data migration (DO block) que genera `customerCode` para clientes existentes usando acrónimos de ciudad bolivianos.
+- **`backend/src/application/geo/geoService.ts`**:
+  - Agregado mapeo `BOLIVIA_DEPARTMENT_ACRONYMS` (La Paz?LPZ, Cochabamba?CBC, Santa Cruz?SCZ, Oruro?ORU, Potosí?PTS, Chuquisaca?CHU, Tarija?TAR, Trinidad?TRI, Cobija?COB, Beni?BEN, Pando?PAN).
+  - Nuevo método `resolveCityAcronym(city)` que resuelve el acrónimo de 3 letras (con fallback genérico usando iniciales).
+  - Nuevo método `generateCustomerCode(city)` que genera `C` + 3 chars aleatorios + acrónimo de ciudad (ej: `CabcLPZ`).
+- **`backend/src/adapters/http/routes/customers.ts`**:
+  - Funciones `findDuplicateCustomerByNit` y `findDuplicateCustomerByName` ahora aceptan y filtran por `city` (criterio NIT+ciudad y nombre+ciudad respectivamente).
+  - Lógica de conflictos en `GET /api/v1/customers?conflicts=true`: dos agrupaciones independientes — `(normalizedNIT, normalizedCity)` y `(normalizedName, normalizedCity)` — un cliente está en conflicto si aparece en un grupo con >1 miembro en **cualquiera** de las dos agrupaciones.
+  - `customerCode` agregado a schemas (create, update), handlers (POST, PATCH) con generación automática en POST (`geoService.generateCustomerCode`), y a todos los `select` (list, get-one, before, after).
+  - Búsqueda `q` ahora incluye `customerCode` en el OR clause.
+- **`backend/prisma/seed.ts`**: los 5 clientes seed reciben `customerCode` fijo (`C001LPZ`, `C001CBC`, `C001SCZ`, `C002LPZ`, `C002CBC`).
+
+#### Frontend
+- **`frontend/src/pages/sales/CustomersPage.tsx`**:
+  - Tipo `CustomerListItem` incluye `customerCode: string | null`.
+  - Nueva columna "Código" (`font-mono`) en la tabla de clientes.
+  - Label del toggle "Clientes en conflicto" actualizado a reflejar los dos criterios.
+- **`frontend/src/pages/sales/CustomerDetailPage.tsx`**:
+  - Tipo `Customer` incluye `customerCode`.
+  - `createCustomer`/`updateCustomer` envían `customerCode`.
+  - Estado `customerCode` + carga desde query.
+  - Display del código en el formulario (read-only para clientes existentes; editable para nuevos).
+
+### Cómo funciona
+- **Creación**: si el cliente no envía `customerCode`, el backend genera uno automáticamente usando la ciudad del cliente (ej: "La Paz" ? acrónimo LPZ ? `CabcLPZ`). El código es único por tenant (SQL `WHILE` loop de retry en migration; en runtime se confía en la aleatoriedad del sufijo de 3 chars).
+- **Prevención de duplicados**: al crear/editar, se verifica NIT+ciudad y nombre+ciudad por separado; cualquiera de los dos duplicados bloquea con `409 Conflict` con mensaje específico.
+- **Clientes en conflicto**: el botón filtra por `conflicts=true` que devuelve todos los clientes que comparten NIT+ciudad o nombre+ciudad con otro cliente en la misma tenant (y mismo branch scope si aplica).
+
+### Operación
+- `npx tsc --noEmit` limpio en backend y frontend.
+- `prisma generate` OK (cliente regenerado con `customerCode`).
+- Migration `20260925_add_customer_code` aplicada localmente (columna + data migration).
+- API verificada: creación de cliente genera código, búsqueda por NIT y por customerCode funciona, prevención de duplicados (409) funciona para NIT+ciudad y nombre+ciudad, endpoint de conflictos detecta correctamente.
+
 
 ## **[22 Sep 2026] Importación CSV de clientes: Formato C (farmacias_La_Paz.csv)**
 
@@ -29,9 +78,24 @@
   - Actualizadas las `notes` del schema documentando el Formato C y el campo `department`.
 
 ### Operación
-- `npx tsc --noEmit` limpio en backend.
+- `npx tsc --noEmit` limpio en backend y frontend.
 - No se requieren migraciones Prisma nuevas (`department` ya existe en el modelo `Customer`).
-- Sin cambios de frontend (la UI ya consumía el mismo endpoint; el `preview` ahora incluye `department`).
+
+## **[22 Sep 2026] Fix: mapa de cliente carga en modo interactivo + geocodificación por countryCode**
+
+### Contexto
+- Al importar clientes con dirección (formato CSV C), al abrir `CustomerDetailPage` el checkbox "Ingresar URL Manualmente" aparecía marcado por defecto (`mapMode='manual'`), y el campo de mapsUrl estaba vacío, ocultando el mapa interactivo.
+- El `MapSelector` no recibía `countryCode`, por lo que la geocodificación del address caía en el fallback genérico (BO) y podía resolver coordenadas de otro departamento.
+
+### Cambios
+- **`frontend/src/pages/sales/CustomerDetailPage.tsx`**:
+  - `mapMode` inicializado como `'interactive'` (antes `'manual'`).
+  - En el `useEffect` de carga del cliente: se establece `mapMode` a `'manual'` solo si el cliente ya tiene `mapsUrl`, de lo contrario permanece en `'interactive'` (mapa con geocodificación de address).
+  - `MapSelector` ahora recibe `countryCode={tenantCountryCode}`, permitiendo que `geocodeAddress` use el código de país correcto (ej: `BO` para Bolivia) en lugar del fallback.
+
+### Operación
+- `npx tsc --noEmit` limpio en frontend.
+- Sin cambios de backend ni migraciones Prisma.
 
 ## **[22 Sep 2026] Historial de pagos por orden de venta + paginación en PaymentsPage**
 

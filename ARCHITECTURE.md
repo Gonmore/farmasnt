@@ -19,7 +19,7 @@
 | Auth       | JWT (access token) + refresh token opaco hasheado |
 | Auditoría  | `AuditEvent` append-only (GxP-friendly) |
 | Storage    | S3-compatible (presigned URLs)          |
-| Geo        | GeoService: Nominatim + static Bolivia data (departments, cities) |
+| Geo | `GeoService` (`backend/src/application/geo/geoService.ts`): Nominatim + datos estáticos de Bolivia (departamentos, ciudades, acrónimos de ciudad). Métodos: `resolveCityAcronym(city)`, `generateCustomerCode(city)` (patrón `C***LPZ`). |
 | Deploy     | Docker + `deploy.sh`                    |
 | Base URL   | `http://127.0.0.1:6000` (dev)           |
 
@@ -351,6 +351,7 @@ frontend/src/
 | `StockMovement` | `product`, `batch`, `presentation`, `from/toLocation` | IN/OUT/TRANSFER/ADJUSTMENT (numerado MSYYYY-N) |
 | `StockMovementRequest` | `warehouse`, `toLocation`, `items` | Solicitudes con código SOLYY#### + estado OPEN/SENT/FULFILLED/CANCELLED. Nuevo `requestedDepartment`. |
 | `StockReturn` | `toLocation`, `items` | Devoluciones + IN movimientos |
+| `Customer` | — | Clientes con `customerCode` (único por tenant). Doble criterio de unicidad: NIT+ciudad y nombre+ciudad (OR). |
 | `SalesOrder` | `customer`, `quote`, `lines`, `reservations` | Órdenes de venta (DRAFT/CONFIRMED/FULFILLED/CANCELLED) |
 | `SalesOrderLine` | `salesOrder`, `product`, `batch`, `presentation` | Líneas de orden |
 | `SalesOrderReservation` | `balance` | Stock reservado |
@@ -375,6 +376,7 @@ frontend/src/
 9. **SAMPLES location type**: ubicaciones de tipo `SAMPLES` (sub-almacén de muestras) se excluyen de los totales de balance por defecto; el endpoint `balances-expanded` acepta `?includeSamples=true` para incluirlos. Se usan para lotes de muestra que no deben afectar el stock comercial. El movimiento `OUT_SAMPLE` requiere que el lote provenga de una ubicación `SAMPLES`.
 9. **Over-fulfillment permitido**: al atender una solicitud de movimiento (`POST /api/v1/stock/movement-requests/bulk-fulfill`), el backend **permite** enviar una cantidad mayor a la solicitada. El único límite es el stock disponible en el almacén origen. El `remainingQuantity` del ítem puede quedar negativo y la solicitud se marca `SENT` normalmente.
 10. **Multi-sucursal en la misma ciudad**: cuando un tenant tiene más de un warehouse en la misma ciudad (Febsa: `SUC-LPZ` SALES + `SUC-NACIONAL` PROVIDER, ambas en `LA PAZ`), el sistema **no debe filtrar por `Warehouse.city` en operaciones**. El discriminante es `warehouseId`. `Notification.warehouseId` (nuevo en v2.3.0) se usa en el filtrado de la campana para evitar que un usuario de SUC-LPZ SALES vea notificaciones del SUC-NACIONAL PROVIDER. Las notificaciones legacy sin `warehouseId` poblado se siguen filtrando por `city` (compatibilidad).
+11. **Unicidad de clientes (doble criterio, v2.4.1)**: un cliente es duplicado si comparte (NIT + ciudad) **o** (nombre + ciudad) con otro cliente del mismo tenant. Las funciones `findDuplicateCustomerByNit` y `findDuplicateCustomerByName` filtran por ciudad. El endpoint `GET /api/v1/customers?conflicts=true` detecta conflictos usando dos agrupaciones independientes: `(normalizedNIT, normalizedCity)` y `(normalizedName, normalizedCity)`; un cliente está en conflicto si aparece en un grupo con >1 miembro en **cualquiera** de las dos agrupaciones. Cada duplicado bloquea la creación/edición con `409 Conflict` y un mensaje específico.
 
 ---
 

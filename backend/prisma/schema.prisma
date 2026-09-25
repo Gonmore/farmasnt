@@ -315,6 +315,7 @@ model TenantModule {
 model Customer {
   id        String   @id @default(uuid())
   tenantId  String
+  customerCode String?
   name      String
   businessName String?
   nit       String?

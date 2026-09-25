@@ -711,10 +711,11 @@ async function main() {
   // Clientes en diferentes ciudades
   const customerLaPaz = await db.customer.upsert({
     where: { id: 'customer-lp-001' }, // Usar ID fijo para upsert
-    update: {
-      businessName: 'Farmacia Central La Paz S.R.L.',
-      nit: '123456789',
-      contactName: 'María González',
+     update: {
+       businessName: 'Farmacia Central La Paz S.R.L.',
+       nit: '123456789',
+       customerCode: 'C001LPZ',
+       contactName: 'María González',
       contactBirthDay: 15,
       contactBirthMonth: 3,
       contactBirthYear: 1985,
@@ -727,6 +728,7 @@ async function main() {
     create: {
       id: 'customer-lp-001',
       tenantId: demoTenant.id,
+      customerCode: 'C001LPZ',
       name: 'Farmacia Central La Paz',
       businessName: 'Farmacia Central La Paz S.R.L.',
       nit: '123456789',
@@ -748,6 +750,7 @@ async function main() {
     update: {
       businessName: 'Farmacia del Valle Ltda.',
       nit: '987654321',
+      customerCode: 'C001CBC',
       contactName: 'Carlos Rodríguez',
       contactBirthDay: 22,
       contactBirthMonth: 7,
@@ -761,6 +764,7 @@ async function main() {
     create: {
       id: 'customer-cbba-001',
       tenantId: demoTenant.id,
+      customerCode: 'C001CBC',
       name: 'Farmacia del Valle',
       businessName: 'Farmacia del Valle Ltda.',
       nit: '987654321',
@@ -782,6 +786,7 @@ async function main() {
     update: {
       businessName: 'Farmacia Oriental S.A.',
       nit: '456789123',
+      customerCode: 'C001SCZ',
       contactName: 'Ana López',
       contactBirthDay: 8,
       contactBirthMonth: 11,
@@ -795,6 +800,7 @@ async function main() {
     create: {
       id: 'customer-scz-001',
       tenantId: demoTenant.id,
+      customerCode: 'C001SCZ',
       name: 'Farmacia Oriental',
       businessName: 'Farmacia Oriental S.A.',
       nit: '456789123',

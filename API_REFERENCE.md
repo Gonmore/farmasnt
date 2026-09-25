@@ -672,38 +672,7 @@ Notas
 
 ---
 
-## Customers
-
-### GET /api/v1/customers
-Requiere permisos `catalog:*`.
-
-### POST /api/v1/products
-Requiere permiso: `catalog:write`.
-
-Body
-```json
-{
-  "sku": "SKU-001",
-  "name": "Paracetamol 500mg",
-  "description": "Opcional"
-}
-```
-
-Response 201
-```json
-{
-  "id": "...",
-  "sku": "SKU-001",
-  "name": "Paracetamol 500mg",
-  "version": 1,
-  "createdAt": "2025-01-01T00:00:00.000Z"
-}
-```
-
-Notas
-- `409` si el SKU ya existe (único por tenant).
-
-### GET /api/v1/products
+## Products
 Requiere permiso: `catalog:read`.
 
 Query
@@ -2282,6 +2251,10 @@ Response 200
 ## Customers
 Requiere: módulo `SALES`.
 
+Notas
+- **customerCode** (v2.4.1): campo único de 7 caracteres generado por el backend con patrón `C` + 3 chars alfanuméricos + 3-letter city acronym (ej: `CabcLPZ`). Se genera automáticamente al crear un cliente si no se envía; usa `GeoService.generateCustomerCode(city)`.
+- **Doble criterio de unicidad** (v2.4.1): un cliente es duplicado si comparte (NIT + ciudad) **o** (nombre + ciudad) con otro cliente del mismo tenant. Ver `POST`/`PATCH` para manejo de `409`.
+
 ### GET /api/v1/customers/branch-departments
 Requiere permiso: `sales:order:read`.
 
@@ -2302,6 +2275,7 @@ Body
 {
   "name": "Cliente",
   "nit": "123",
+  "customerCode": "CabcLPZ",
   "email": "c@c.com",
   "phone": "...",
   "address": "...",
@@ -2318,6 +2292,7 @@ Response 201
 ```json
 {
   "id": "...",
+  "customerCode": "CabcLPZ",
   "name": "Cliente",
   "nit": "123",
   "email": "c@c.com",
@@ -2335,14 +2310,20 @@ Response 201
 }
 ```
 
+Notas
+- `customerCode` es opcional; si no se envía, el backend lo genera automáticamente usando la ciudad del cliente (`GeoService.generateCustomerCode`).
+- `409` si el NIT ya existe para otro cliente en la misma ciudad.
+- `409` si el nombre ya existe para otro cliente en la misma ciudad.
+
 ### GET /api/v1/customers
 Requiere permiso: `sales:order:read`.
 
 Query
 - `take` (1..50, default 20)
 - `cursor` (uuid, opcional)
-- `q` (string, opcional; filtra por name)
+- `q` (string, opcional; filtra por `name`, `nit`, `customerCode`, `city`, `department`)
 - `cities` (string, opcional; lista de ciudades separadas por coma → resuelve a departamentos y filtra por `Customer.department`)
+- `conflicts` (boolean, opcional; si `true`, devuelve solo clientes en conflicto — ver notas de doble criterio de unicidad)
 
 Response 200
 ```json
@@ -2350,6 +2331,7 @@ Response 200
   "items": [
     {
       "id": "...",
+      "customerCode": "CabcLPZ",
       "name": "...",
       "nit": null,
       "email": null,
@@ -2377,11 +2359,14 @@ Requiere permiso: `sales:order:write`.
 
 Body
 - `version` requerido
-- campos opcionales: `name`, `nit`, `email`, `phone`, `address`, `city`, `department`, `zone`, `mapsUrl`, `isActive`, `creditDays7Enabled`, `creditDays14Enabled`
+- campos opcionales: `name`, `nit`, `customerCode`, `email`, `phone`, `address`, `city`, `department`, `zone`, `mapsUrl`, `isActive`, `creditDays7Enabled`, `creditDays14Enabled`
 
 Notas
 - `department` (v2.4.0) es el departamento al que pertenece la ciudad; el backend lo resuelve automáticamente desde `city` si no se envía (via GeoService).
+- `customerCode` (v2.4.1) es opcional; si se envía `null`, se conserva el código existente. No se valida unicidad en PATCH (el código es generado por el backend con sufijo aleatorio).
 - `409` si `version` no coincide.
+- `409` si al cambiar el NIT, otro cliente con el mismo NIT+ciudad ya existe.
+- `409` si al cambiar el nombre, otro cliente con el mismo nombre+ciudad ya existe.
 
 ---
 

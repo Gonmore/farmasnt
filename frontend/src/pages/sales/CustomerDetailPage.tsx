@@ -12,6 +12,7 @@ import { geoApi } from '../../lib/geoService'
 
 type Customer = {
   id: string
+  customerCode: string | null
   name: string
   businessName?: string | null
   nit: string | null
@@ -43,6 +44,7 @@ async function createCustomer(
     name: string
     businessName?: string
     nit?: string
+    customerCode?: string
     contactName?: string
     contactBirthDay?: number
     contactBirthMonth?: number
@@ -72,6 +74,7 @@ async function updateCustomer(
     name?: string
     businessName?: string
     nit?: string
+    customerCode?: string | null
     contactName?: string
     contactBirthDay?: number
     contactBirthMonth?: number
@@ -103,7 +106,7 @@ export function CustomerDetailPage() {
   const queryClient = useQueryClient()
   const { customerId } = useParams<{ customerId?: string }>()
   const isNew = !customerId
-  const [mapMode, setMapMode] = useState<'manual' | 'interactive'>('manual')
+  const [mapMode, setMapMode] = useState<'manual' | 'interactive'>('interactive')
 
   const tenantCountryCode = normalizeCountryCode(tenant.branding?.country)
 
@@ -113,6 +116,7 @@ export function CustomerDetailPage() {
   const [name, setName] = useState('')
   const [businessName, setBusinessName] = useState('')
   const [nit, setNit] = useState('')
+  const [customerCode, setCustomerCode] = useState('')
   const [contactName, setContactName] = useState('')
   const [contactBirthDay, setContactBirthDay] = useState('')
   const [contactBirthMonth, setContactBirthMonth] = useState('')
@@ -170,6 +174,7 @@ export function CustomerDetailPage() {
     if (customerQuery.data) {
       setName(customerQuery.data.name)
       setBusinessName(customerQuery.data.businessName || '')
+      setCustomerCode(customerQuery.data.customerCode || '')
       setNit(customerQuery.data.nit || '')
       setContactName(customerQuery.data.contactName || '')
       setContactBirthDay(customerQuery.data.contactBirthDay?.toString() || '')
@@ -182,6 +187,7 @@ export function CustomerDetailPage() {
       setDepartment(customerQuery.data.department || '')
       setZone(customerQuery.data.zone || '')
       setMapsUrl(customerQuery.data.mapsUrl || '')
+      setMapMode(customerQuery.data.mapsUrl ? 'manual' : 'interactive')
       setIsActive(customerQuery.data.isActive)
       setCreditEnabled(!!customerQuery.data.creditEnabled)
       setCreditDays(
@@ -200,6 +206,7 @@ export function CustomerDetailPage() {
         name,
         ...(businessName && { businessName }),
         ...(nit && { nit }),
+        ...(customerCode && { customerCode }),
         ...(contactName && { contactName }),
         ...(contactBirthDay && { contactBirthDay: parseInt(contactBirthDay) }),
         ...(contactBirthMonth && { contactBirthMonth: parseInt(contactBirthMonth) }),
@@ -227,11 +234,12 @@ export function CustomerDetailPage() {
   const updateMutation = useMutation({
     mutationFn: () => {
       if (!customerQuery.data) throw new Error('Cliente no cargado')
-      return updateCustomer(auth.accessToken!, customerId!, {
+      return       updateCustomer(auth.accessToken!, customerId!, {
         version: customerQuery.data.version,
         name,
         ...(businessName && { businessName }),
         ...(nit && { nit }),
+        customerCode: customerCode || null,
         ...(contactName && { contactName }),
         ...(contactBirthDay && { contactBirthDay: parseInt(contactBirthDay) }),
         ...(contactBirthMonth && { contactBirthMonth: parseInt(contactBirthMonth) }),
@@ -312,6 +320,17 @@ export function CustomerDetailPage() {
               placeholder="Ej: 1234567890"
               disabled={isSubmitting}
             />
+
+            {!isNew && customerCode && (
+              <Input
+                label="Código de Cliente"
+                type="text"
+                value={customerCode}
+                onChange={(e) => setCustomerCode(e.target.value)}
+                placeholder="Código único"
+                disabled={isSubmitting}
+              />
+            )}
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Input
@@ -494,6 +513,7 @@ export function CustomerDetailPage() {
                     city={city}
                     zone={zone}
                     address={address}
+                    countryCode={tenantCountryCode}
                     mapsUrl={mapsUrl}
                     onLocationSelect={handleMapLocationSelect}
                     disabled={isSubmitting}

@@ -5,10 +5,11 @@ import { apiFetch } from '../../lib/api'
 import { useAuth } from '../../providers/AuthProvider'
 import { MainLayout, PageContainer, Button, Table, Loading, ErrorState, EmptyState, PaginationCursor, Input } from '../../components'
 import { useNavigation, usePermissions, useCursorPagination } from '../../hooks'
-import { EyeIcon, PlusIcon, MagnifyingGlassIcon, XMarkIcon } from '@heroicons/react/24/outline'
+import { EyeIcon, PlusIcon, MagnifyingGlassIcon, XMarkIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 
 type CustomerListItem = {
   id: string
+  customerCode: string | null
   name: string
   nit: string | null
   email: string | null
@@ -20,7 +21,7 @@ type CustomerListItem = {
 
 type ListResponse = { items: CustomerListItem[]; nextCursor: string | null }
 
-async function fetchCustomers(token: string, take: number, cursor?: string, cities?: string[], q?: string): Promise<ListResponse> {
+async function fetchCustomers(token: string, take: number, cursor?: string, cities?: string[], q?: string, conflicts?: boolean): Promise<ListResponse> {
   const params = new URLSearchParams({ take: String(take) })
   if (cursor) params.append('cursor', cursor)
   if (cities && cities.length > 0) {
@@ -29,6 +30,9 @@ async function fetchCustomers(token: string, take: number, cursor?: string, citi
   }
   if (q && q.trim()) {
     params.append('q', q.trim())
+  }
+  if (conflicts) {
+    params.append('conflicts', 'true')
   }
   return apiFetch(`/api/v1/customers?${params}`, { token })
 }
@@ -41,6 +45,7 @@ export function CustomersPage() {
   const [selectedCities, setSelectedCities] = useState<string[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [appliedSearch, setAppliedSearch] = useState('')
+  const [showConflicts, setShowConflicts] = useState(false)
   const take = 50
   const isBranchScoped = permissions.hasPermission('scope:branch') && !permissions.isTenantAdmin
   const branchCity = (permissions.user?.warehouse?.city ?? '').trim().toUpperCase()
@@ -54,8 +59,8 @@ export function CustomersPage() {
   }, [isBranchScoped, branchDepartments])
 
   const customersQuery = useQuery({
-    queryKey: ['customers', take, pag.currentCursor, selectedCities, appliedSearch],
-    queryFn: () => fetchCustomers(auth.accessToken!, take, pag.currentCursor, selectedCities.length > 0 ? selectedCities : undefined, appliedSearch || undefined),
+    queryKey: ['customers', take, pag.currentCursor, selectedCities, appliedSearch, showConflicts],
+    queryFn: () => fetchCustomers(auth.accessToken!, take, pag.currentCursor, selectedCities.length > 0 ? selectedCities : undefined, appliedSearch || undefined, showConflicts),
     enabled: !!auth.accessToken,
   })
 
@@ -81,21 +86,21 @@ export function CustomersPage() {
       >
         {/* Buscador de clientes */}
         <div className="mb-4">
-           <form
-             onSubmit={(e) => {
-               e.preventDefault()
-               setAppliedSearch(searchQuery.trim())
-               pag.reset()
-             }}
-             className="flex gap-2"
-           >
-             <div className="relative flex-1">
-               <Input
-                 placeholder="Buscar clientes por nombre, departamento o ciudad..."
-                 value={searchQuery}
-                 onChange={(e) => setSearchQuery(e.target.value)}
-                 className="pr-10"
-               />
+          <form
+              onSubmit={(e) => {
+                e.preventDefault()
+                setAppliedSearch(searchQuery.trim())
+                pag.reset()
+              }}
+              className="flex flex-col sm:flex-row gap-2"
+            >
+              <div className="relative flex-1">
+                <Input
+                  placeholder="Buscar clientes por nombre, NIT, departamento o ciudad..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pr-10"
+                />
                {searchQuery && (
                  <button
                    type="button"
@@ -114,14 +119,25 @@ export function CustomersPage() {
               Buscar
             </Button>
             <Button
+              variant={showConflicts ? 'primary' : 'outline'}
+              icon={<MagnifyingGlassIcon />}
+              onClick={() => {
+                setShowConflicts(!showConflicts)
+                pag.reset()
+              }}
+            >
+              {showConflicts ? 'Clientes en conflicto' : 'Clientes en conflicto (NIT+ciudad o nombre+ciudad duplicados)'}
+            </Button>
+            <Button
               variant="outline"
               onClick={() => {
                 setSearchQuery('')
                 setAppliedSearch('')
                 setSelectedCities([])
+                setShowConflicts(false)
                 pag.reset()
               }}
-              disabled={!appliedSearch}
+              disabled={!appliedSearch && !showConflicts}
             >
               Limpiar
             </Button>
@@ -201,18 +217,37 @@ export function CustomersPage() {
           {customersQuery.data && customersQuery.data.items.length > 0 && (
             <>
               <Table
-                 columns={[
-                   { 
-                     header: 'Nombre', 
-                     width: '220px',
-                     accessor: (c) => (
+                   columns={[
+                    {
+                      header: 'Código',
+                      width: '100px',
+                      accessor: (c) => (
+                        <span className="font-mono text-xs" title={c.customerCode ?? ''}>{c.customerCode ?? '-'}</span>
+                      )
+                    },
+                    { 
+                      header: 'Nombre', 
+                      width: '220px',
+                      accessor: (c) => (
                        <div className="inline-flex items-center px-3 py-1 rounded-full bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 border border-blue-200 dark:border-blue-800 overflow-hidden">
                          <span className="text-sm font-medium text-blue-900 dark:text-blue-100 truncate max-w-[200px] block" title={c.name}>{c.name}</span>
                        </div>
                      )
                    },
-                   { header: 'Departamento', width: '160px', accessor: (c) => <span className="truncate block max-w-[150px]" title={c.department ? c.department.toUpperCase() : undefined}>{c.department ? c.department.toUpperCase() : '-'}</span> },
-                   { header: 'Ciudad / Provincia / Municipio', width: '180px', accessor: (c) => <span className="truncate block max-w-[160px]" title={c.city ? c.city.toUpperCase() : undefined}>{c.city ? c.city.toUpperCase() : '-'}</span> },
+                    { header: 'Departamento', width: '160px', accessor: (c) => <span className="truncate block max-w-[150px]" title={c.department ? c.department.toUpperCase() : undefined}>{c.department ? c.department.toUpperCase() : '-'}</span> },
+                    { header: 'NIT', width: '160px', accessor: (c) => (
+                      <div className="flex items-center gap-1">
+                        {c.nit ? (
+                          <>
+                            <span className="font-mono text-sm" title={c.nit}>{c.nit}</span>
+                            {showConflicts && c.nit && (
+                              <ExclamationTriangleIcon className="w-4 h-4 text-amber-500" title="NIT duplicado" />
+                            )}
+                          </>
+                        ) : '-'}
+                      </div>
+                    ) },
+                    { header: 'Ciudad / Provincia / Municipio', width: '180px', accessor: (c) => <span className="truncate block max-w-[160px]" title={c.city ? c.city.toUpperCase() : undefined}>{c.city ? c.city.toUpperCase() : '-'}</span> },
                    {
                      header: 'Acciones',
                      className: 'text-center',

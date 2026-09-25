@@ -7,10 +7,25 @@ import { requireAuth, requireModuleEnabled, requirePermission } from '../../../a
 import { Permissions } from '../../../application/security/permissions.js'
 import { branchDepartmentsOf, branchDepartmentsOfMissing } from '../../../application/security/branch.js'
 import { cityToDepartment } from '../../../shared/geo.js'
+import { geoService } from '../../../application/geo/geoService.js'
 
-async function findDuplicateCustomerByNit(db: ReturnType<typeof prisma>, tenantId: string, nit: string, excludeId?: string) {
-  const cleanNit = nit.trim()
+function normalizeNit(nit: string): string {
+  return nit.trim().replace(/[^0-9a-zA-Z]+/g, '').toLowerCase()
+}
+
+function normalizeName(name: string): string {
+  return name.trim().replace(/\s+/g, ' ').toLowerCase()
+}
+
+function normalizeCity(city: string): string {
+  return (city ?? '').trim().toLowerCase()
+}
+
+async function findDuplicateCustomerByNit(db: ReturnType<typeof prisma>, tenantId: string, nit: string, city: string | null | undefined, excludeId?: string) {
+  const cleanNit = normalizeNit(nit)
   if (!cleanNit) return null
+  const cleanCity = normalizeCity(city ?? '')
+  if (!cleanCity) return null
 
   type Row = { id: string; nit: string | null }
   const rows = await db.$queryRaw<Row[]>(Prisma.sql`
@@ -20,14 +35,18 @@ async function findDuplicateCustomerByNit(db: ReturnType<typeof prisma>, tenantI
       AND (${excludeId ? Prisma.sql`c.id <> ${excludeId}` : Prisma.sql`TRUE`})
       AND lower(regexp_replace(coalesce(c.nit, ''), '[^0-9a-zA-Z]+', '', 'g')) =
           lower(regexp_replace(${cleanNit}, '[^0-9a-zA-Z]+', '', 'g'))
+      AND lower(regexp_replace(coalesce(c.city, ''), '\\s+', ' ', 'g')) =
+          lower(regexp_replace(${cleanCity}, '\\s+', ' ', 'g'))
     LIMIT 1
   `)
   return rows?.[0] ?? null
 }
 
-async function findDuplicateCustomerByName(db: ReturnType<typeof prisma>, tenantId: string, name: string, excludeId?: string) {
-  const cleanName = name.trim()
+async function findDuplicateCustomerByName(db: ReturnType<typeof prisma>, tenantId: string, name: string, city: string | null | undefined, excludeId?: string) {
+  const cleanName = normalizeName(name)
   if (!cleanName) return null
+  const cleanCity = normalizeCity(city ?? '')
+  if (!cleanCity) return null
 
   type Row = { id: string; name: string }
   const rows = await db.$queryRaw<Row[]>(Prisma.sql`
@@ -37,6 +56,8 @@ async function findDuplicateCustomerByName(db: ReturnType<typeof prisma>, tenant
       AND (${excludeId ? Prisma.sql`c.id <> ${excludeId}` : Prisma.sql`TRUE`})
       AND lower(regexp_replace(trim(c.name), '\\s+', ' ', 'g')) =
           lower(regexp_replace(trim(${cleanName}), '\\s+', ' ', 'g'))
+      AND lower(regexp_replace(coalesce(c.city, ''), '\\s+', ' ', 'g')) =
+          lower(regexp_replace(${cleanCity}, '\\s+', ' ', 'g'))
     LIMIT 1
   `)
   return rows?.[0] ?? null
@@ -82,6 +103,7 @@ const customerCreateSchema = z.object({
   name: z.string().trim().min(1).max(200),
   businessName: z.string().trim().max(200).optional(),
   nit: z.string().trim().max(40).optional(),
+  customerCode: z.string().trim().min(1).max(20).optional(),
   contactName: z.string().trim().max(200).optional(),
   contactBirthDay: z.number().int().min(1).max(31).optional(),
   contactBirthMonth: z.number().int().min(1).max(12).optional(),
@@ -106,6 +128,7 @@ const customerUpdateSchema = z.object({
    name: z.string().trim().min(1).max(200).optional(),
    businessName: z.string().trim().max(200).nullable().optional(),
    nit: z.string().trim().max(40).nullable().optional(),
+   customerCode: z.string().trim().min(1).max(20).nullable().optional(),
    contactName: z.string().trim().max(200).nullable().optional(),
    contactBirthDay: z.number().int().min(1).max(31).nullable().optional(),
    contactBirthMonth: z.number().int().min(1).max(12).nullable().optional(),
@@ -131,6 +154,7 @@ const listQuerySchema = z.object({
   cursor: z.string().uuid().optional(),
   q: z.string().trim().min(1).max(200).optional(),
   cities: z.string().optional(),
+  conflicts: z.coerce.boolean().optional(),
 })
 
 export async function registerCustomerRoutes(app: FastifyInstance): Promise<void> {
@@ -194,11 +218,13 @@ export async function registerCustomerRoutes(app: FastifyInstance): Promise<void
         }
       }
       if (parsed.data.nit) {
-        const dupNit = await findDuplicateCustomerByNit(db, tenantId, parsed.data.nit)
-        if (dupNit) return reply.status(409).send({ message: 'Cliente duplicado: ya existe un cliente con el mismo NIT.' })
+        const resolvedCity = parsed.data.city ? parsed.data.city.toUpperCase() : null
+        const dupNit = await findDuplicateCustomerByNit(db, tenantId, parsed.data.nit, resolvedCity)
+        if (dupNit) return reply.status(409).send({ message: 'Cliente duplicado: ya existe un cliente con el mismo NIT en esta ciudad.' })
       }
-      const dupName = await findDuplicateCustomerByName(db, tenantId, parsed.data.name)
-      if (dupName) return reply.status(409).send({ message: 'Cliente duplicado: ya existe un cliente con el mismo nombre.' })
+      const resolvedCityForName = parsed.data.city ? parsed.data.city.toUpperCase() : null
+      const dupName = await findDuplicateCustomerByName(db, tenantId, parsed.data.name, resolvedCityForName)
+      if (dupName) return reply.status(409).send({ message: 'Cliente duplicado: ya existe un cliente con el mismo nombre en esta ciudad.' })
 
       let credit: ReturnType<typeof resolveCustomerCredit>
       try {
@@ -208,9 +234,13 @@ export async function registerCustomerRoutes(app: FastifyInstance): Promise<void
         throw e
       }
 
+      const resolvedCity = parsed.data.city ? parsed.data.city.toUpperCase() : null
+      const customerCode = parsed.data.customerCode ?? geoService.generateCustomerCode(resolvedCity)
+
       const created = await db.customer.create({
         data: {
           tenantId,
+          customerCode,
           name: parsed.data.name,
           businessName: parsed.data.businessName ?? null,
           nit: parsed.data.nit ?? null,
@@ -221,7 +251,7 @@ export async function registerCustomerRoutes(app: FastifyInstance): Promise<void
           email: parsed.data.email ?? null,
           phone: parsed.data.phone ?? null,
           address: parsed.data.address ?? null,
-          city: parsed.data.city ? parsed.data.city.toUpperCase() : null,
+          city: resolvedCity,
           department: (parsed.data.department ?? (parsed.data.city ? cityToDepartment(parsed.data.city) : null))?.toString().trim().toUpperCase() || null,
           zone: parsed.data.zone ? parsed.data.zone.toUpperCase() : null,
           mapsUrl: parsed.data.mapsUrl ?? null,
@@ -233,6 +263,7 @@ export async function registerCustomerRoutes(app: FastifyInstance): Promise<void
         },
         select: {
           id: true,
+          customerCode: true,
           name: true,
           businessName: true,
           nit: true,
@@ -292,22 +323,71 @@ export async function registerCustomerRoutes(app: FastifyInstance): Promise<void
       const isBranchScoped = request.auth?.permissions?.has(Permissions.ScopeBranch) ?? false
       const isTenantAdminUser = request.auth?.isTenantAdmin ?? false
 
+      let conflictCustomerIds: string[] | null = null
+      if (parsed.data.conflicts) {
+        const conflictCandidates = await db.customer.findMany({
+            where: {
+              tenantId,
+              nit: { not: null },
+              city: { not: null },
+            ...(branchDepartments
+              ? { department: { in: branchDepartments, mode: 'insensitive' as const } }
+              : {}),
+          },
+          select: {
+            id: true,
+            name: true,
+            nit: true,
+            city: true,
+          },
+        })
+
+        const nitCityGroups = new Map<string, string[]>()
+        const nameCityGroups = new Map<string, string[]>()
+        for (const c of conflictCandidates) {
+          if (!c.nit || !c.nit.trim() || !c.name || !c.name.trim() || !c.city || !c.city.trim()) continue
+          const nitKey = `${normalizeNit(c.nit)}|${normalizeCity(c.city)}`
+          const nitArr = nitCityGroups.get(nitKey) ?? []
+          nitArr.push(c.id)
+          nitCityGroups.set(nitKey, nitArr)
+
+          const nameKey = `${normalizeName(c.name)}|${normalizeCity(c.city)}`
+          const nameArr = nameCityGroups.get(nameKey) ?? []
+          nameArr.push(c.id)
+          nameCityGroups.set(nameKey, nameArr)
+        }
+
+        const conflictIds = new Set<string>()
+        for (const ids of nitCityGroups.values()) {
+          if (ids.length > 1) ids.forEach((id) => conflictIds.add(id))
+        }
+        for (const ids of nameCityGroups.values()) {
+          if (ids.length > 1) ids.forEach((id) => conflictIds.add(id))
+        }
+        conflictCustomerIds = Array.from(conflictIds)
+      }
+
       const items = await db.customer.findMany({
          where: {
            tenantId,
-           ...(q ? {
-             OR: [
-               { name: { contains: q, mode: 'insensitive' } },
-               { city: { contains: q, mode: 'insensitive' } },
-               { department: { contains: q, mode: 'insensitive' } },
-             ]
-           } : {}),
+            ...(q ? {
+              OR: [
+                { name: { contains: q, mode: 'insensitive' } },
+                { nit: { contains: q, mode: 'insensitive' } },
+                { customerCode: { contains: q, mode: 'insensitive' } },
+                { city: { contains: q, mode: 'insensitive' } },
+                { department: { contains: q, mode: 'insensitive' } },
+              ]
+             } : {}),
+            ...(parsed.data.conflicts
+              ? { id: { in: conflictCustomerIds ?? [] } }
+              : {}),
            ...(branchDepartments
               ? { department: { in: branchDepartments, mode: 'insensitive' as const } }
               : (!isBranchScoped || isTenantAdminUser) && departments && departments.length > 0
                 ? { department: { in: departments, mode: 'insensitive' as const } }
                 : {}),
-        },
+         },
         take: parsed.data.take,
         ...(parsed.data.cursor
           ? {
@@ -316,24 +396,25 @@ export async function registerCustomerRoutes(app: FastifyInstance): Promise<void
             }
           : {}),
         orderBy: { id: 'asc' },
-        select: {
-          id: true,
-          name: true,
-          nit: true,
-          email: true,
-          phone: true,
-          isActive: true,
-          city: true,
-          department: true,
-          zone: true,
-          mapsUrl: true,
-          creditEnabled: true,
-          creditDays: true,
-          creditDays7Enabled: true,
-          creditDays14Enabled: true,
-          version: true,
-          updatedAt: true,
-        },
+          select: {
+             id: true,
+             customerCode: true,
+             name: true,
+             nit: true,
+             email: true,
+             phone: true,
+             isActive: true,
+             city: true,
+             department: true,
+             zone: true,
+             mapsUrl: true,
+             creditEnabled: true,
+             creditDays: true,
+             creditDays7Enabled: true,
+             creditDays14Enabled: true,
+             version: true,
+             updatedAt: true,
+         },
       })
 
       const nextCursor = items.length === parsed.data.take ? items[items.length - 1]!.id : null
@@ -361,31 +442,32 @@ export async function registerCustomerRoutes(app: FastifyInstance): Promise<void
           tenantId,
           ...(branchDepartments ? { department: { in: branchDepartments, mode: 'insensitive' as const } } : {}),
         },
-        select: {
-          id: true,
-          name: true,
-          businessName: true,
-          nit: true,
-          contactName: true,
-          contactBirthDay: true,
-          contactBirthMonth: true,
-          contactBirthYear: true,
-          email: true,
-          phone: true,
-          address: true,
-          city: true,
-          department: true,
-          zone: true,
-          mapsUrl: true,
-          isActive: true,
-          creditEnabled: true,
-          creditDays: true,
-          creditDays7Enabled: true,
-          creditDays14Enabled: true,
-          version: true,
-          updatedAt: true,
-        },
-      })
+         select: {
+           id: true,
+           customerCode: true,
+           name: true,
+           businessName: true,
+           nit: true,
+           contactName: true,
+           contactBirthDay: true,
+           contactBirthMonth: true,
+           contactBirthYear: true,
+           email: true,
+           phone: true,
+           address: true,
+           city: true,
+           department: true,
+           zone: true,
+           mapsUrl: true,
+           isActive: true,
+           creditEnabled: true,
+           creditDays: true,
+           creditDays7Enabled: true,
+           creditDays14Enabled: true,
+           version: true,
+           updatedAt: true,
+         },
+       })
 
       if (!customer) return reply.status(404).send({ message: 'Not found' })
       return reply.send(customer)
@@ -414,10 +496,11 @@ export async function registerCustomerRoutes(app: FastifyInstance): Promise<void
         where: {
           id,
           tenantId,
-          ...(branchDepartments ? { city: { in: branchDepartments, mode: 'insensitive' as const } } : {}),
+          ...(branchDepartments ? { department: { in: branchDepartments, mode: 'insensitive' as const } } : {}),
         },
         select: {
           id: true,
+          customerCode: true,
           name: true,
           businessName: true,
           nit: true,
@@ -450,14 +533,17 @@ export async function registerCustomerRoutes(app: FastifyInstance): Promise<void
         }
       }
 
-      // Prevent duplicates when changing identifying fields
+      const nextCity = parsed.data.city !== undefined
+        ? (parsed.data.city ? parsed.data.city.toUpperCase() : null)
+        : before.city
+
       if (parsed.data.nit !== undefined && parsed.data.nit !== null) {
-        const dupNit = await findDuplicateCustomerByNit(db, tenantId, parsed.data.nit, id)
-        if (dupNit) return reply.status(409).send({ message: 'Cliente duplicado: ya existe otro cliente con el mismo NIT.' })
+        const dupNit = await findDuplicateCustomerByNit(db, tenantId, parsed.data.nit, nextCity, id)
+        if (dupNit) return reply.status(409).send({ message: 'Cliente duplicado: ya existe otro cliente con el mismo NIT en esta ciudad.' })
       }
       if (parsed.data.name !== undefined) {
-        const dupName = await findDuplicateCustomerByName(db, tenantId, parsed.data.name, id)
-        if (dupName) return reply.status(409).send({ message: 'Cliente duplicado: ya existe otro cliente con el mismo nombre.' })
+        const dupName = await findDuplicateCustomerByName(db, tenantId, parsed.data.name, nextCity, id)
+        if (dupName) return reply.status(409).send({ message: 'Cliente duplicado: ya existe otro cliente con el mismo nombre en esta ciudad.' })
       }
 
       const updateData: any = {
@@ -467,6 +553,7 @@ export async function registerCustomerRoutes(app: FastifyInstance): Promise<void
       if (parsed.data.name !== undefined) updateData.name = parsed.data.name
       if (parsed.data.businessName !== undefined) updateData.businessName = parsed.data.businessName
       if (parsed.data.nit !== undefined) updateData.nit = parsed.data.nit
+      if (parsed.data.customerCode !== undefined) updateData.customerCode = parsed.data.customerCode
       if (parsed.data.contactName !== undefined) updateData.contactName = parsed.data.contactName
       if (parsed.data.contactBirthDay !== undefined) updateData.contactBirthDay = parsed.data.contactBirthDay
       if (parsed.data.contactBirthMonth !== undefined) updateData.contactBirthMonth = parsed.data.contactBirthMonth
@@ -510,30 +597,31 @@ export async function registerCustomerRoutes(app: FastifyInstance): Promise<void
       const updated = await db.customer.update({
         where: { id },
         data: updateData,
-        select: {
-          id: true,
-          name: true,
-          businessName: true,
-          nit: true,
-          contactName: true,
-          contactBirthDay: true,
-          contactBirthMonth: true,
-          contactBirthYear: true,
-          email: true,
-          phone: true,
-          address: true,
-          city: true,
-          department: true,
-          zone: true,
-          mapsUrl: true,
-          isActive: true,
-          creditEnabled: true,
-          creditDays: true,
-          creditDays7Enabled: true,
-          creditDays14Enabled: true,
-          version: true,
-          updatedAt: true,
-        },
+         select: {
+           id: true,
+           customerCode: true,
+           name: true,
+           businessName: true,
+           nit: true,
+           contactName: true,
+           contactBirthDay: true,
+           contactBirthMonth: true,
+           contactBirthYear: true,
+           email: true,
+           phone: true,
+           address: true,
+           city: true,
+           department: true,
+           zone: true,
+           mapsUrl: true,
+           isActive: true,
+           creditEnabled: true,
+           creditDays: true,
+           creditDays7Enabled: true,
+           creditDays14Enabled: true,
+           version: true,
+           updatedAt: true,
+         },
       })
 
       await audit.append({

@@ -90,6 +90,21 @@ const BOLIVIA_DEPARTMENT_LABELS: Record<string, AdminLevel1Type> = {
   'BENI': 'department',
 }
 
+const BOLIVIA_DEPARTMENT_ACRONYMS: Record<string, string> = {
+  'LA PAZ': 'LPZ',
+  'COCHABAMBA': 'CBC',
+  'SANTA CRUZ': 'SCZ',
+  'ORURO': 'ORU',
+  'POTOSÍ': 'PTS',
+  'POTOSI': 'PTS',
+  'CHUQUISACA': 'CHU',
+  'TARIJA': 'TAR',
+  'TRINIDAD': 'TRI',
+  'COBIJA': 'COB',
+  'BENI': 'BEN',
+  'PANDO': 'PAN',
+}
+
 const BOLIVIA_CITY_TO_DEPARTMENT: Record<string, string> = {
   'LA PAZ': 'LA PAZ',
   'EL ALTO': 'LA PAZ',
@@ -726,6 +741,38 @@ export class GeoService {
     if (!city) return null
     const normalized = city.trim().toUpperCase()
     return BOLIVIA_CITY_TO_DEPARTMENT[normalized] ?? null
+  }
+
+  resolveCityAcronym(city: string | null | undefined): string {
+    if (!city) {
+      this.setCached('cityAcronym:__fallback__', 'GEN', this.ttl.adminLevel1)
+      return 'GEN'
+    }
+    const cacheKey = `cityAcronym:${normalizeCityName(city)}`
+    const cached = this.getCached<string>(cacheKey)
+    if (cached !== null) return cached
+
+    const dept = this.resolveDepartmentFromStatic(city)
+    let acronym: string
+    if (dept && BOLIVIA_DEPARTMENT_ACRONYMS[dept]) {
+      acronym = BOLIVIA_DEPARTMENT_ACRONYMS[dept]!
+    } else {
+      const words = city.trim().split(/\s+/)
+      acronym = words.map((w) => w[0]!).join('').toUpperCase().slice(0, 3).padEnd(3, 'X')
+    }
+
+    this.setCached(cacheKey, acronym, this.ttl.adminLevel1)
+    return acronym
+  }
+
+  generateCustomerCode(city: string | null | undefined): string {
+    const acronym = this.resolveCityAcronym(city)
+    const chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+    let suffix = ''
+    for (let i = 0; i < 3; i++) {
+      suffix += chars[Math.floor(Math.random() * chars.length)]
+    }
+    return `C${suffix}${acronym}`
   }
 
   isValidBoliviaDepartment(value: string | null | undefined): boolean {
