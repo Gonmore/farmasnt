@@ -66,7 +66,10 @@ backend/
 │   │   │   ├── salesOrders.ts # Quotes, Orders, Deliveries, reservas, pagos
 │   │   │   ├── salesQuotes.ts # Cotizaciones + sub-warehouses + available-batches
 │   │   │   ├── salesPayments.ts  # Pagos (proof-upload, lista, pay)
-│   │   │   ├── reports.ts     # Reportes read-only (sales, stock)
+│   │   │   ├── reportsShared.ts # Esquemas, tipos y helpers compartidos de reportes
+│   │   │   ├── salesReports.ts  # Reportes read-only: ventas + email
+│   │   │   ├── stockReports.ts  # Reportes read-only: stock + email
+│   │   │   ├── reportSchedules.ts  # CRUD de envíos programados (SALES + STOCK)
 │   │   │   ├── admin.ts       # RBAC: usuarios, roles, permisos
 │   │   │   ├── audit.ts       # Read-side de auditoría
 │   │   │   ├── notifications.ts
@@ -117,7 +120,7 @@ frontend/src/
 ├── components/
 │   ├── common/                # Reutilizables: MainLayout, PageContainer, Button, Modal, etc.
 │   ├── geo/                   # Georef components: CountrySelector, AdminLevel1Selector, CitySelector (supports city/town/village/municipality/province), MapSelector
-│   ├── reports/               # Componentes de reportes (KPICard, ReportSection, docs)
+│   ├── reports/               # Componentes de reportes (KPICard, ReportSection, docs, ReportSchedulesManager, utils)
 │   ├── ui/                    # Componentes base (Input, Select, Table)
 │   └── index.ts               # Barrel exports
 ├── pages/
@@ -263,45 +266,45 @@ frontend/src/
 
 | Frontend | Backend | Archivo backend |
 |---|---|---|
-| `pages/reports/SalesReportsPage.tsx` | `GET /api/v1/reports/sales/summary` | `routes/reports.ts:353` |
-| | `GET /api/v1/reports/sales/by-customer` | `routes/reports.ts:423` |
-| | `GET /api/v1/reports/sales/by-city` | `routes/reports.ts:497` |
-| | `GET /api/v1/reports/sales/funnel` | `routes/reports.ts:569` |
-| | `GET /api/v1/reports/sales/by-month` | `routes/reports.ts:695` |
-| | `GET /api/v1/reports/sales/margins` | `routes/reports.ts:766` |
-| | `GET /api/v1/reports/sales/top-products` | `routes/reports.ts:1295` |
-| | `GET /api/v1/reports/sales/top-products-by-presentation` | `routes/reports.ts:1367` |
-| | `POST /api/v1/reports/sales/email` | `routes/reports.ts:1104` |
-| | `GET /api/v1/reports/sales/schedules` | `routes/reports.ts:1131` |
-| | `POST /api/v1/reports/sales/schedules` | `routes/reports.ts:1162` |
-| | `PATCH /api/v1/reports/sales/schedules/:id` | `routes/reports.ts:1218` |
-| | `DELETE /api/v1/reports/sales/schedules/:id` | `routes/reports.ts:1280` |
-| `pages/reports/StockReportsPage.tsx` | `GET /api/v1/reports/stock/balances-expanded` | `routes/reports.ts:1436` |
-| | `GET /api/v1/reports/stock/inputs-by-product` | `routes/reports.ts:1527` |
-| | `GET /api/v1/reports/stock/existencias` | `routes/reports.ts:1570` |
-| | `GET /api/v1/reports/stock/transfers-between-warehouses` | `routes/reports.ts:1851` |
-| | `GET /api/v1/reports/stock/low-stock` | `routes/reports.ts:863` |
-| | `GET /api/v1/reports/stock/expiry-alerts` | `routes/reports.ts:938` |
-| | `GET /api/v1/reports/stock/rotation` | `routes/reports.ts:1005` |
-| | `GET /api/v1/reports/stock/movements-expanded` | `routes/reports.ts:2672` |
-| | `GET /api/v1/reports/stock/movement-requests/by-city` | `routes/reports.ts:1954` |
-| | `GET /api/v1/reports/stock/movement-requests/flows` | `routes/reports.ts:2004` |
-| | `GET /api/v1/reports/stock/movement-requests/fulfilled` | `routes/reports.ts:2121` |
-| | `GET /api/v1/reports/stock/movement-requests/:id/trace` | `routes/reports.ts:2227` |
-| | `GET /api/v1/reports/stock/movement-requests/summary` | `routes/reports.ts:1901` |
-| | `GET /api/v1/reports/stock/returns/summary` | `routes/reports.ts:2396` |
-| | `GET /api/v1/reports/stock/returns/by-warehouse` | `routes/reports.ts:2434` |
-| | `POST /api/v1/reports/stock/email` | `routes/reports.ts:2481` |
-| | `GET /api/v1/reports/stock/schedules` | `routes/reports.ts:2508` |
-| | `POST /api/v1/reports/stock/schedules` | `routes/reports.ts:2539` |
-| | `PATCH /api/v1/reports/stock/schedules/:id` | `routes/reports.ts:2596` |
-| | `DELETE /api/v1/reports/stock/schedules/:id` | `routes/reports.ts:2658` |
-| | `GET /api/v1/reports/stock/provider-activity` | `routes/reports.ts:2774` |
-| | `GET /api/v1/reports/stock/sales-branch-activity` | `routes/reports.ts:2866` |
+| `pages/reports/SalesReportsPage.tsx` | `GET /api/v1/reports/sales/summary` | `routes/salesReports.ts:108` |
+| | `GET /api/v1/reports/sales/by-customer` | `routes/salesReports.ts:177` |
+| | `GET /api/v1/reports/sales/by-city` | `routes/salesReports.ts:251` |
+| | `GET /api/v1/reports/sales/funnel` | `routes/salesReports.ts:327` |
+| | `GET /api/v1/reports/sales/by-month` | `routes/salesReports.ts:453` |
+| | `GET /api/v1/reports/sales/margins` | `routes/salesReports.ts:522` |
+| | `GET /api/v1/reports/sales/top-products` | `routes/salesReports.ts:618` |
+| | `GET /api/v1/reports/sales/top-products-by-presentation` | `routes/salesReports.ts:690` |
+| | `POST /api/v1/reports/sales/email` | `routes/salesReports.ts:758` |
+| | `GET /api/v1/reports/sales/schedules` | `routes/reportSchedules.ts:42` |
+| | `POST /api/v1/reports/sales/schedules` | `routes/reportSchedules.ts:56` |
+| | `PATCH /api/v1/reports/sales/schedules/:id` | `routes/reportSchedules.ts:98` |
+| | `DELETE /api/v1/reports/sales/schedules/:id` | `routes/reportSchedules.ts:158` |
+| `pages/reports/StockReportsPage.tsx` | `GET /api/v1/reports/stock/balances-expanded` | `routes/stockReports.ts:231` |
+| | `GET /api/v1/reports/stock/inputs-by-product` | `routes/stockReports.ts:296` |
+| | `GET /api/v1/reports/stock/existencias` | `routes/stockReports.ts:591` |
+| | `GET /api/v1/reports/stock/transfers-between-warehouses` | `routes/stockReports.ts:862` |
+| | `GET /api/v1/reports/stock/low-stock` | `routes/stockReports.ts:339` |
+| | `GET /api/v1/reports/stock/expiry-alerts` | `routes/stockReports.ts:416` |
+| | `GET /api/v1/reports/stock/rotation` | `routes/stockReports.ts:485` |
+| | `GET /api/v1/reports/stock/movements-expanded` | `routes/stockReports.ts:1527` |
+| | `GET /api/v1/reports/stock/movement-requests/by-city` | `routes/stockReports.ts:970` |
+| | `GET /api/v1/reports/stock/movement-requests/flows` | `routes/stockReports.ts:1020` |
+| | `GET /api/v1/reports/stock/movement-requests/fulfilled` | `routes/stockReports.ts:1137` |
+| | `GET /api/v1/reports/stock/movement-requests/:id/trace` | `routes/stockReports.ts:1243` |
+| | `GET /api/v1/reports/stock/movement-requests/summary` | `routes/stockReports.ts:915` |
+| | `GET /api/v1/reports/stock/returns/summary` | `routes/stockReports.ts:1411` |
+| | `GET /api/v1/reports/stock/returns/by-warehouse` | `routes/stockReports.ts:1451` |
+| | `POST /api/v1/reports/stock/email` | `routes/stockReports.ts:1500` |
+| | `GET /api/v1/reports/stock/schedules` | `routes/reportSchedules.ts:42` |
+| | `POST /api/v1/reports/stock/schedules` | `routes/reportSchedules.ts:56` |
+| | `PATCH /api/v1/reports/stock/schedules/:id` | `routes/reportSchedules.ts:98` |
+| | `DELETE /api/v1/reports/stock/schedules/:id` | `routes/reportSchedules.ts:158` |
+| | `GET /api/v1/reports/stock/provider-activity` | `routes/stockReports.ts:1646` |
+| | `GET /api/v1/reports/stock/sales-branch-activity` | `routes/stockReports.ts:1738` |
 | `pages/DashboardPage.tsx` | `GET /api/v1/dashboards/executive-summary` | `routes/dashboards.ts:10` |
 
 > **Nota de filtrado de fechas**: los reportes que aceptan `from` / `to` usan semántica de rango hábil: `from` es inclusive (`>=`), `to` es exclusivo (`<`). Para reportar un mes completo (ej. julio), enviar `from=2026-07-01` y `to=2026-08-01`. Si `from`/`to` son omáltos (null), no se filtra por fecha.
-| `pages/stock/InventoryPage.tsx` (ver stock) | `GET /api/v1/reports/stock/balances-expanded?warehouseId=...` | `routes/reports.ts:1436` |
+| `pages/stock/InventoryPage.tsx` (ver stock) | `GET /api/v1/reports/stock/balances-expanded?warehouseId=...` | `routes/stockReports.ts:231` |
 
 ### 3.6 Auditoría
 

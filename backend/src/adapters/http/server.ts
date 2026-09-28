@@ -19,7 +19,9 @@ import { salesQuotesRoutes } from './routes/salesQuotes.js'
 import { registerSalesPaymentRoutes } from './routes/salesPayments.js'
 import { registerAdminRoutes } from './routes/admin.js'
 import { registerAuditRoutes } from './routes/audit.js'
-import { registerReportRoutes } from './routes/reports.js'
+import { registerSalesReportRoutes } from './routes/salesReports.js'
+import { registerStockReportRoutes } from './routes/stockReports.js'
+import { registerReportScheduleRoutes } from './routes/reportSchedules.js'
 import { registerTenantRoutes } from './routes/tenant.js'
 import { registerPlatformRoutes } from './routes/platform.js'
 import { registerContactRoutes } from './routes/contact.js'
@@ -208,7 +210,10 @@ export async function createHttpServer() {
   await registerWellKnownRoutes(app)
   await registerAdminRoutes(app)
   await registerAuditRoutes(app)
-  await registerReportRoutes(app)
+  await registerSalesReportRoutes(app)
+  await registerStockReportRoutes(app)
+  await registerReportScheduleRoutes(app, { segment: 'sales' })
+  await registerReportScheduleRoutes(app, { segment: 'stock' })
   await registerTenantRoutes(app)
   await registerPlatformRoutes(app)
   await registerContactRoutes(app)

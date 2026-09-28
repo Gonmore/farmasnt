@@ -1,6 +1,6 @@
 # Bitácora de desarrollo — PharmaFlow Bolivia (farmaSNT)
 
-> Última actualización: 25 Sep 2026
+> Última actualización: 28 Sep 2026
 
 > Este documento suma (a alto nivel) decisiones, hitos y cambios relevantes que se fueron incorporando al repositorio para llegar al estado actual del MVP.
 
@@ -50,7 +50,32 @@
 - `npx tsc --noEmit` limpio en backend y frontend.
 - `prisma generate` OK (cliente regenerado con `customerCode`).
 - Migration `20260925_add_customer_code` aplicada localmente (columna + data migration).
-- API verificada: creación de cliente genera código, búsqueda por NIT y por customerCode funciona, prevención de duplicados (409) funciona para NIT+ciudad y nombre+ciudad, endpoint de conflictos detecta correctamente.
+   - API verificada: creación de cliente genera código, búsqueda por NIT y por customerCode funciona, prevención de duplicados (409) funciona para NIT+ciudad y nombre+ciudad, endpoint de conflictos detecta correctamente.
+
+## **[28 Sep 2026] Reestructuración del módulo de reportes (modularización)**
+
+### Contexto
+- El archivo `reports.ts` era un monolito de 3041 líneas con 35 endpoints mezclando reportes de ventas, reportes de stock y CRUD de envíos programados.
+- Se reestructuró en 4 archivos modulares siguiendo el patrón existente de rutas planas (`routes/*.ts`).
+
+### Cambios
+
+#### Backend
+- **`backend/src/adapters/http/routes/reportsShared.ts`** (nuevo): esquemas Zod compartidos (`dateRangeQuerySchema`, `locationFilterQuerySchema`, `reportEmailBodySchema`, `reportScheduleBodySchema`, `reportSchedulePatchBodySchema`), helpers `requireStockReportOrBranchAccess()`, `branchOwnWarehouseIdOf()`, `resolveBranchWarehouseId()`, y constantes de selección (`reportScheduleSelect`, `reportScheduleItemSelect`).
+- **`backend/src/adapters/http/routes/salesReports.ts`** (nuevo, 805 líneas): endpoints de reportes de ventas — summary, by-customer, by-city, funnel, by-month, margins, top-products, top-products-by-presentation — y `POST /sales/email`.
+- **`backend/src/adapters/http/routes/stockReports.ts`** (nuevo, 1755 líneas): endpoints de reportes de stock — balances-expanded, inputs-by-product, low-stock, expiry-alerts, rotation, existencias, transfers-between-warehouses, movement-requests/* (summary, by-city, flows, fulfilled, :id/trace), returns/* (summary, by-warehouse), movements-expanded, provider-activity, sales-branch-activity — y `POST /stock/email`.
+- **`backend/src/adapters/http/routes/reportSchedules.ts`** (nuevo, 175 líneas): CRUD de envíos programados parametrizado por `segment` ('sales' | 'stock'). Registra 4 endpoints genéricos (GET/POST/PATCH/DELETE) con diferenciación de tipo (`SALES` vs `STOCK`), módulo y permisos.
+- **`backend/src/adapters/http/routes/reports.ts`** (eliminado): reemplazado por los archivos anteriores.
+- **`backend/src/adapters/http/server.ts`**: actualizado imports — reemplaza `registerReportRoutes(app)` por `registerSalesReportRoutes(app)`, `registerStockReportRoutes(app)`, y `registerReportScheduleRoutes(app, { segment })` para 'sales' y 'stock'.
+
+#### Frontend
+- **`frontend/src/components/reports/reportsUtils.ts`** (nuevo): funciones utilitarias compartidas extraídas de ambas páginas — `toIsoDate`, `startOfMonth`, `startOfNextMonth`, `money`, `toNumber`, `formatDate`, `formatMinutes`, `formatPresentationLabel`, `formatWarehouseLabel`, `formatLocationWithWarehouse`, `statusLabel`, `orderStatusLabel`, `parseEmails`, `buildTopCustomerMix`, `buildStatusMix` — y tipos compartidos (`SalesStatus`, `ScheduleItem`, `ScheduleListResponse`, `ReportFrequency`, `OrderDetailItem`).
+- **`frontend/src/components/reports/ReportSchedulesManager.tsx`** (nuevo): componente React reutilizable que encapsula toda la UI de gestión de envíos programados (modal, creación, toggle, eliminación, tabla). Acepta props: `accessToken`, `segment`, `reportKey`, `scheduleModalOpen`, `setScheduleModalOpen`.
+- **`frontend/src/components/reports/index.ts`** (actualizado): exportaciones agregadas para `ReportSchedulesManager` y `reportsUtils` (barrel `*`).
+
+### Verificación
+- `npx tsc --noEmit` limpio en backend y frontend.
+- No se cambiaron las direcciones de API ni los contratos de respuesta.
 
 
 ## **[22 Sep 2026] Importación CSV de clientes: Formato C (farmacias_La_Paz.csv)**
