@@ -1,8 +1,9 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Button, Input, IconButton, Loading, ErrorState, EmptyState, Modal, Table } from '../../components'
 import { apiFetch } from '../../lib/api'
-import { parseEmails, ScheduleItem, ScheduleListResponse, ReportFrequency } from './reportsUtils'
+import { parseEmails } from './reportsUtils'
+import type { ScheduleListResponse, ReportFrequency } from './reportsUtils'
 
 interface ReportSchedulesManagerProps {
   accessToken: string | null
@@ -59,7 +60,7 @@ export function ReportSchedulesManager({
       await schedulesQuery.refetch()
       setScheduleRecipientsRaw('')
     },
-    onError: (err: any) => window.alert(err?.message ?? 'No se pudo crear el envío programado'),
+    onError: (err) => window.alert(err?.message ?? 'No se pudo crear el envío programado'),
   })
 
   const toggleScheduleMutation = useMutation({
@@ -87,11 +88,6 @@ export function ReportSchedulesManager({
     },
   })
 
-  useEffect(() => {
-    if (scheduleModalOpen) {
-      setScheduleRecipientsRaw('')
-    }
-  }, [scheduleModalOpen])
 
   return (
     <Modal isOpen={scheduleModalOpen} onClose={() => setScheduleModalOpen(false)} title="Programar envíos" maxWidth="xl">
@@ -162,7 +158,7 @@ export function ReportSchedulesManager({
 
             {schedulesQuery.isLoading && <Loading />}
             {schedulesQuery.isError && (
-              <ErrorState message={(schedulesQuery.error as any)?.message ?? 'No se pudo cargar los envíos programados'} />
+              <ErrorState message={(schedulesQuery.error as Error)?.message ?? 'No se pudo cargar los envíos programados'} />
             )}
             {!schedulesQuery.isLoading && !schedulesQuery.isError && (schedulesQuery.data?.items?.length ?? 0) === 0 && (
               <EmptyState message="No hay envíos programados aún." />

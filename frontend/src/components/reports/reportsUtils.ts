@@ -1,4 +1,5 @@
-import { formatInteger, formatMoney } from '../../lib/numberFormat'
+import { formatMoney } from '../../lib/numberFormat'
+import { getChartColor } from './chartTheme'
 
 export type SalesStatus = 'ALL' | 'DRAFT' | 'CONFIRMED' | 'FULFILLED' | 'CANCELLED'
 export type ReportFrequency = 'DAILY' | 'WEEKLY' | 'MONTHLY'
@@ -116,7 +117,6 @@ export type OrderDetailItem = {
 
 export function buildTopCustomerMix(
   orders: OrderDetailItem[],
-  getChartColor: (idx: number, scheme: string) => string,
 ): Array<{ label: string; total: number; ordersCount: number; color: string }> {
   const totalsByCustomer = new Map<string, { label: string; total: number; ordersCount: number }>()
   for (const order of orders) {
@@ -154,7 +154,6 @@ export function buildTopCustomerMix(
 
 export function buildStatusMix(
   orders: OrderDetailItem[],
-  getChartColor: (idx: number, scheme: string) => string,
 ): Array<{ label: string; total: number; ordersCount: number; color: string }> {
   const palette: Record<string, string> = {
     DRAFT: '#94a3b8',
@@ -179,8 +178,5 @@ export function buildStatusMix(
 
   return Array.from(totalsByStatus.values())
     .sort((a, b) => b.total - a.total)
-    .map((item, idx) => ({
-      ...item,
-      color: palette[Object.keys(totalsByStatus)[idx]] ?? item.color,
-    }))
+    .filter((item) => item.total > 0 || item.ordersCount > 0)
 }
