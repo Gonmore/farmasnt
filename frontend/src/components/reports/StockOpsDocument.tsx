@@ -13,8 +13,8 @@ export type StockOpsDocumentSummary = {
   rejected: number
 }
 
-export type StockOpsDocumentCityItem = {
-  city: string
+export type StockOpsDocumentDepartmentItem = {
+  department: string
   total: number
   open: number
   fulfilled: number
@@ -81,7 +81,7 @@ export type StockOpsDocumentReturnsSummary = {
 
 export type StockOpsDocumentReturnWarehouseItem = {
   warehouse: string
-  city: string
+  department: string
   returnsCount: number
   itemsCount: number
   quantity: number
@@ -92,7 +92,7 @@ type Props = {
   from: string
   to: string
   summary: StockOpsDocumentSummary
-  byCity: StockOpsDocumentCityItem[]
+  byDepartment: StockOpsDocumentDepartmentItem[]
   flows: StockOpsDocumentFlowItem[]
   fulfilled: StockOpsDocumentFulfilledItem[]
   traces: StockOpsDocumentTraceDetail[]
@@ -110,14 +110,14 @@ function formatMinutes(minutes: number | null | undefined): string {
   return `${hours}h ${String(mins).padStart(2, '0')}m`
 }
 
-export function StockOpsDocument({ title, from, to, summary, byCity, flows, fulfilled, traces, returnsSummary, returnsByWarehouse }: Props) {
+export function StockOpsDocument({ title, from, to, summary, byDepartment, flows, fulfilled, traces, returnsSummary, returnsByWarehouse }: Props) {
   const statusPieData = [
     { name: 'Abiertas', value: summary.open, color: '#3b82f6' },
     { name: 'Atendidas', value: summary.fulfilled, color: '#10b981' },
     { name: 'Canceladas', value: summary.cancelled, color: '#f59e0b' },
   ].filter((item) => item.value > 0)
 
-  const cityChartData = byCity.slice(0, 12)
+  const cityChartData = byDepartment.slice(0, 12)
   const returnsChartData = returnsByWarehouse.slice(0, 12).map((item) => ({
     warehouse: item.warehouse.length > 22 ? `${item.warehouse.slice(0, 22)}…` : item.warehouse,
     devoluciones: item.returnsCount,
@@ -172,12 +172,12 @@ export function StockOpsDocument({ title, from, to, summary, byCity, flows, fulf
         </div>
 
         <div className="rounded-2xl border border-slate-200 bg-white px-4 py-5">
-          <div className="mb-4 text-sm font-semibold uppercase tracking-wider text-slate-600">Solicitudes por ciudad</div>
+          <div className="mb-4 text-sm font-semibold uppercase tracking-wider text-slate-600">Solicitudes por departamento</div>
           <div className="flex justify-center">
               <BarChart width={760} height={300} data={cityChartData} layout="vertical" margin={{ top: 10, right: 20, left: 10, bottom: 10 }}>
                 <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" />
                 <XAxis type="number" tick={{ fontSize: 11, fill: '#475569' }} />
-                <YAxis type="category" dataKey="city" width={110} tick={{ fontSize: 11, fill: '#475569' }} />
+                <YAxis type="category" dataKey="department" width={110} tick={{ fontSize: 11, fill: '#475569' }} />
                 <Tooltip />
                 <Bar dataKey="fulfilled" name="Atendidas" stackId="a" fill="#10b981" isAnimationActive={false} />
                 <Bar dataKey="open" name="Abiertas" stackId="a" fill="#3b82f6" isAnimationActive={false} />
@@ -235,11 +235,11 @@ export function StockOpsDocument({ title, from, to, summary, byCity, flows, fulf
 
       <div className="mb-8 grid grid-cols-2 gap-6">
         <div className="rounded-2xl border border-slate-200 bg-white px-4 py-5">
-          <div className="mb-4 text-sm font-semibold uppercase tracking-wider text-slate-600">Detalle por ciudad</div>
+          <div className="mb-4 text-sm font-semibold uppercase tracking-wider text-slate-600">Detalle por departamento</div>
           <table className="w-full table-fixed border-collapse text-sm">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wider text-slate-500">
-                <th className="w-[24%] px-3 py-2">Ciudad</th>
+                <th className="w-[24%] px-3 py-2">Departamento</th>
                 <th className="w-[10%] px-3 py-2 text-right">Total</th>
                 <th className="w-[10%] px-3 py-2 text-right">Ab.</th>
                 <th className="w-[10%] px-3 py-2 text-right">At.</th>
@@ -250,9 +250,9 @@ export function StockOpsDocument({ title, from, to, summary, byCity, flows, fulf
               </tr>
             </thead>
             <tbody>
-              {byCity.map((item) => (
-                <tr key={item.city} className="border-b border-slate-100 align-top">
-                  <td className="px-3 py-3">{item.city}</td>
+              {byDepartment.map((item) => (
+                <tr key={item.department} className="border-b border-slate-100 align-top">
+                  <td className="px-3 py-3">{item.department}</td>
                     <td className="px-3 py-3 text-right tabular-nums">{formatInteger(item.total)}</td>
                     <td className="px-3 py-3 text-right tabular-nums">{formatInteger(item.open)}</td>
                     <td className="px-3 py-3 text-right tabular-nums">{formatInteger(item.fulfilled)}</td>
@@ -301,7 +301,7 @@ export function StockOpsDocument({ title, from, to, summary, byCity, flows, fulf
           <thead>
             <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wider text-slate-500">
               <th className="w-[32%] px-3 py-2">Sucursal</th>
-              <th className="w-[18%] px-3 py-2">Ciudad</th>
+              <th className="w-[18%] px-3 py-2">Departamento</th>
               <th className="w-[16%] px-3 py-2 text-right">Devoluciones</th>
               <th className="w-[16%] px-3 py-2 text-right">Items</th>
               <th className="w-[18%] px-3 py-2 text-right">Unidades</th>
@@ -309,9 +309,9 @@ export function StockOpsDocument({ title, from, to, summary, byCity, flows, fulf
           </thead>
           <tbody>
             {returnsByWarehouse.map((item) => (
-              <tr key={`${item.warehouse}-${item.city}`} className="border-b border-slate-100 align-top">
+              <tr key={`${item.warehouse}-${item.department}`} className="border-b border-slate-100 align-top">
                 <td className="px-3 py-3">{item.warehouse}</td>
-                <td className="px-3 py-3">{item.city}</td>
+                <td className="px-3 py-3">{item.department}</td>
                 <td className="px-3 py-3 text-right tabular-nums">{formatInteger(item.returnsCount)}</td>
                 <td className="px-3 py-3 text-right tabular-nums">{formatInteger(item.itemsCount)}</td>
                 <td className="px-3 py-3 text-right tabular-nums">{formatInteger(item.quantity)}</td>

@@ -1,6 +1,6 @@
 # Bitácora de desarrollo — PharmaFlow Bolivia (farmaSNT)
 
-> Última actualización: 28 Sep 2026
+> Última actualización: 29 Sep 2026
 
 > Este documento suma (a alto nivel) decisiones, hitos y cambios relevantes que se fueron incorporando al repositorio para llegar al estado actual del MVP.
 
@@ -2135,6 +2135,74 @@ Tenant Admin (Clientes)
 - TypeScript check OK en backend (`npx tsc --noEmit`).
 - Sin migraciones Prisma nuevas.
 
+## **[29 Sep 2026] Migración de reportes de nivel ciudad a nivel departamento + detalle de transacciones mensuales**
+
+### Contexto
+- Todos los reportes read-only migrados del nivel **ciudad** al nivel **departamento**, agregando el detalle de transacciones (líneas de venta) al reporte mensual de ventas.
+
+### Cambios
+
+#### Backend
+- **`backend/src/adapters/http/routes/salesReports.ts`**:
+  - Endpoint `GET /api/v1/reports/sales/by-city` ? `GET /api/v1/reports/sales/by-department`.
+  - Query agrupa por `department` (field `SalesOrder.deliveryDepartment` o `Customer.department`).
+  - Tipo `SalesByCityRow` ? `SalesByDepartmentRow`; campo `city` ? `department`.
+  - Endpoint nuevo `GET /api/v1/reports/sales/monthly-details` retorna líneas de venta por orden (orderId, orderNumber, orderStatus, createdAt, customerName, customerDepartment, productId, productSku, productName, quantity, unitPrice, lineTotal, warehouseCode).
+  - `GET /api/v1/reports/sales/by-customer`: ya retornaba `department` desde el schema; sin cambios en el endpoint.
+
+- **`backend/src/adapters/http/routes/stockReports.ts`**:
+  - Endpoint `GET /api/v1/reports/stock/movement-requests/by-city` ? `GET /api/v1/reports/stock/movement-requests/by-department`.
+  - Query agrupa por `requestedDepartment`; tipo `StockMovementRequestsByCityRow` ? `StockMovementRequestsByDepartmentRow`.
+  - `returnsByWarehouse`: ahora selecciona `warehouse.department` en lugar de `warehouse.city`; tipo `StockReturnsByWarehouseRow` actualizado.
+
+#### Frontend
+- **`frontend/src/components/reports/SalesByDepartmentDocument.tsx`** (renombrado desde `SalesByCityDocument.tsx`):
+  - Tipos `SalesByDepartmentDocumentItem`, `SalesByDepartmentDocumentOrder`, `SalesByDepartmentDocumentDetail` (campo `city` ? `department`).
+  - Etiquetas: "Ciudades Activas" ? "Departamentos Activos", "Ciudad Líder" ? "Departamento Líder", "Distribucion por ciudad" ? "Distribucion por departamento", "Ranking de ciudades" ? "Ranking de departamentos".
+
+- **`frontend/src/components/reports/StockOpsDocument.tsx`**:
+  - Tipo `StockOpsDocumentCityItem` ? `StockOpsDocumentDepartmentItem` (campo `city` ? `department`).
+  - Tipo `StockOpsDocumentReturnWarehouseItem`: campo `city` ? `department`.
+  - Props `byCity` ? `byDepartment`; etiquetas "Solicitudes por ciudad" ? "Solicitudes por departamento", "Detalle por ciudad" ? "Detalle por departamento".
+
+- **`frontend/src/components/reports/index.ts`**: actualizado export de `SalesByDepartmentDocument`; export type para `StockOpsDocumentDepartmentItem` y `StockOpsDocumentReturnWarehouseItem`.
+
+- **`frontend/src/pages/reports/SalesReportsPage.tsx`**:
+  - Tab `CITIES` ? `DEPARTMENTS`; label de botón `Ciudades` ? `Departamentos`.
+  - `fetchSalesByCity` ? `fetchSalesByDepartment` (API `/by-department`); tipo `SalesByCityItem` ? `SalesByDepartmentItem`.
+  - `fetchOrdersByCity` ? `fetchOrdersByDepartment` (param `deliveryDepartment`).
+  - `buildSalesByCityStructuredReport` ? `buildSalesByDepartmentStructuredReport`; `cityItems`/`cityDetails` ? `departmentItems`/`departmentDetails`.
+  - Consulta y gráficos actualizados a `department`.
+  - XLSX export usa `Departamento` en lugar de `Ciudad`.
+  - **Nueva tabla de detalle de transacciones** en tab `MONTH`: consulta a `/monthly-details` y muestra línea por línea (orden, estado, fecha, cliente, departamento, sucursal, SKU, producto, cantidad, precio, total).
+
+- **`frontend/src/pages/reports/StockReportsPage.tsx`**:
+  - `fetchMovementRequestsByCity` ? `fetchMovementRequestsByDepartment` (API `/by-department`).
+  - Tipo `MovementRequestsByCityItem` ? `MovementRequestsByDepartmentItem` (campo `city` ? `department`).
+  - Tabla, gráfico y exportaciones XLSX/CSV actualizados a `Departamento`.
+  - `ReturnsByWarehouseItem`: campo `warehouse.city` ? `warehouse.department`.
+
+- **`frontend/src/components/MovementQuickActions.tsx`**:
+  - `fetchMovementRequestsByCity` ? `fetchMovementRequestsByDepartment`; tipo y query actualizados.
+  - Badge label "Sin ciudad" ? "Sin departamento".
+
+### Operación
+- TypeScript check OK en backend (`npx tsc --noEmit`).
+- TypeScript check OK en frontend (`npx tsc --noEmit`).
+- Build OK en frontend (`npm run build`).
+- Build OK en backend (`npm run build`).
+
+### Mejora: Detalle de transacciones del reporte mensual (mes)
+
+#### Contexto
+- El reporte de ventas "Mes" mostraba el detalle de transacciones con problemas de UI: solapamiento de columnas, sin agrupación por orden, y números con demasiados ceros decimales.
+
+#### Cambios (frontend)
+- **`SalesReportsPage.tsx`**:
+  - La tabla de detalle de transacciones ahora **agrupa las líneas por orden** (orden, estado, fecha, cliente, departamento en header de grupo; líneas detalladas debajo con SKU, producto, cant., precio, total; subtotal por orden al final).
+  - Anchos de columna recalculados para que no se solapen (suman 100%).
+  - Se usa `toNumber()` + `formatInteger()`/`money()` para formatear cantidades y montos, evitando ceros superpuestos.
+
 
 ## **[18 Sep 2026] Branch Admin: crear vendedores para su sucursal**
 
@@ -2231,3 +2299,55 @@ Tenant Admin (Clientes)
 - Sin migraciones Prisma nuevas.
 
 
+## **[29 Sep 2026] Reporte de ventas mensual — detalle de transacciones + migración ciudad?departamento**
+
+### Contexto
+- Se migraron todos los reportes de ventas de agrupación por ciudad a **departamento**.
+- Se agregó una nueva tabla de detalle de transacciones (líneas de venta) al reporte mensual, con separación por almacén y departamento, subtotales por orden y totales por sucursal.
+- El detalle también se incluye en los reportes exportados (Excel y PDF/email).
+
+### Bug corregido
+- El endpoint `monthly-details` retornaba error 500 (`syntax error at or near "FROM"`) por una **coma trailing** después de `w.name as "warehouseName"` antes del `FROM` en la query SQL. Esto provocaba que la tabla de detalle nunca se mostrara en pantalla ni en exports.
+- También faltaba `c.department as "customerDepartment"` en el SELECT, necesario para la columna de departamento del cliente.
+
+### Cambios
+
+#### Backend (`backend/src/adapters/http/routes/salesReports.ts`)
+- **`GET /api/v1/reports/sales/monthly-details`**: corregida query SQL (removida coma trailing, agregada columna `c.department as "customerDepartment"`).
+
+#### Frontend (`frontend/src/pages/reports/SalesReportsPage.tsx`)
+- Tab `CITIES` ? `DEPARTMENTS` (título, queries, labels, tabla, exports).
+- Drill-down por ciudad ? por departamento (`deliveryDepartment` param).
+- Título context-aware: tenant admin ? "Reporte de ventas general"; sucursal ? "Reporte de ventas sucursal {name}".
+- Agregados estados de carga/error para `monthlyDetailsQuery`.
+- Tabla de detalle mensual: separación por almacén, sub-agrupación por departamento (cuando aplica), ordenes agrupadas con subtotales, totales por sucursal, formateo numérico con `toNumber()` + `formatInteger()`/`money()`.
+- Export Excel: hoja "Detalle transacciones" con datos agrupados por almacén y orden.
+- Export PDF y email: `SalesMonthDocument` ahora acepta `detailItems` y renderiza la tabla de detalle.
+
+#### Frontend (`frontend/src/components/reports/SalesMonthDocument.tsx`)
+- Agregado `detailItems` opcional; renderiza tabla de transacciones agrupada por almacén (y departamento cuando aplica) con subtotales y totales.
+
+### Operación
+- TypeScript check OK en frontend y backend.
+- Build OK en frontend.
+- Backend y frontend containers reiniciados.
+
+
+## **[30 Sep 2026] Contraer/expandir grupos de almacén en detalle de transacciones (reporte Mensual)**
+
+### Contexto
+- En el reporte Mensual, la tabla de detalle de transacciones puede contener muchas filas agrupadas por almacén. Se agregó la opción de **contraer/expandir** cada grupo de almacén para facilitar la navegación.
+
+### Cambios
+
+#### Frontend (`frontend/src/pages/reports/SalesReportsPage.tsx`)
+- Agregado `collapsedWarehouses` (`Set<string>`) en state para trackear grupos contraídos.
+- Header de cada grupo de almacén ahora es clicable: muestra `ChevronDownIcon` que rota según estado.
+- El total del almacén se muestra siempre en el header (visible incluso cuando está contraído).
+- El contenido detallado (tablas por departamento/orden) se muestra/oculta según el estado de colapso.
+- Importado `ChevronDownIcon` desde `@heroicons/react/24/outline`.
+
+### Operación
+- TypeScript check OK en frontend.
+- Build OK en frontend.
+- Frontend container reiniciado.

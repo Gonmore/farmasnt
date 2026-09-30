@@ -154,8 +154,8 @@ type MovementRequestsSummary = {
   rejected: number
 }
 
-type MovementRequestsByCityItem = MovementRequestsSummary & {
-  city: string | null
+type MovementRequestsByDepartmentItem = MovementRequestsSummary & {
+  department: string | null
 }
 
 type MovementRequestsFlowItem = {
@@ -242,7 +242,7 @@ type ReturnsSummary = {
 }
 
 type ReturnsByWarehouseItem = {
-  warehouse: { id: string; code: string | null; name: string | null; city: string | null }
+  warehouse: { id: string; code: string | null; name: string | null; department: string | null }
   returnsCount: number
   itemsCount: number
   quantity: string
@@ -503,14 +503,14 @@ async function fetchMovementRequestsSummary(token: string, q: { from?: string; t
   return apiFetch(`/api/v1/reports/stock/movement-requests/summary${suffix}`, { token })
 }
 
-async function fetchMovementRequestsByCity(
+async function fetchMovementRequestsByDepartment(
   token: string,
   q: { from?: string; to?: string; take: number },
-): Promise<{ items: MovementRequestsByCityItem[] }> {
+): Promise<{ items: MovementRequestsByDepartmentItem[] }> {
   const params = new URLSearchParams({ take: String(q.take) })
   if (q.from) params.set('from', q.from)
   if (q.to) params.set('to', q.to)
-  return apiFetch(`/api/v1/reports/stock/movement-requests/by-city?${params}`, { token })
+  return apiFetch(`/api/v1/reports/stock/movement-requests/by-department?${params}`, { token })
 }
 
 async function fetchMovementRequestFlows(
@@ -740,9 +740,9 @@ export function StockReportsPage() {
     enabled: !!auth.accessToken && tab === 'OPS',
   })
 
-  const movementRequestsByCityQuery = useQuery({
-    queryKey: ['reports', 'stock', 'movementRequestsByCity', { from, to }],
-    queryFn: () => fetchMovementRequestsByCity(auth.accessToken!, { from, to, take: 100 }),
+      const movementRequestsByDepartmentQuery = useQuery({
+    queryKey: ['reports', 'stock', 'movementRequestsByDepartment', { from, to }],
+    queryFn: () => fetchMovementRequestsByDepartment(auth.accessToken!, { from, to, take: 100 }),
     enabled: !!auth.accessToken && tab === 'OPS',
   })
 
@@ -801,8 +801,8 @@ export function StockReportsPage() {
       rejected: 0,
     }
 
-    const byCity = (movementRequestsByCityQuery.data?.items ?? []).map((item) => ({
-      city: item.city ?? '(sin ciudad)',
+    const byDepartment = (movementRequestsByDepartmentQuery.data?.items ?? []).map((item) => ({
+      department: item.department ?? '(sin departamento)',
       total: item.total,
       open: item.open,
       fulfilled: item.fulfilled,
@@ -878,13 +878,13 @@ export function StockReportsPage() {
 
     const returnsByWarehouse = (returnsByWarehouseQuery.data?.items ?? []).map((item) => ({
       warehouse: `${item.warehouse.code ?? ''} ${item.warehouse.name ?? ''}`.trim() || item.warehouse.id,
-      city: item.warehouse.city ?? '-',
+      department: item.warehouse.department ?? '-',
       returnsCount: item.returnsCount,
       itemsCount: item.itemsCount,
       quantity: toNumber(item.quantity),
     }))
 
-    return { summary, byCity, flows, fulfilled, traces, returnsSummary, returnsByWarehouse }
+    return { summary, byDepartment, flows, fulfilled, traces, returnsSummary, returnsByWarehouse }
   }
 
   const buildInputsStructuredReport = async () => {
@@ -1078,7 +1078,7 @@ export function StockReportsPage() {
 
       if (tab === 'OPS') {
         const report = await buildOpsStructuredReport()
-        blob = await pdfBlobFromReactNode(<StockOpsDocument title={title} from={from} to={to} summary={report.summary} byCity={report.byCity} flows={report.flows} fulfilled={report.fulfilled} traces={report.traces} returnsSummary={report.returnsSummary} returnsByWarehouse={report.returnsByWarehouse} />, { title, subtitle: `Período: ${from} a ${to}`, companyName: tenant.branding?.tenantName ?? 'Empresa', headerColor: '#3B82F6', logoUrl: tenant.branding?.logoUrl ?? undefined, captureWidthPx: 1240 })
+        blob = await pdfBlobFromReactNode(<StockOpsDocument title={title} from={from} to={to} summary={report.summary} byDepartment={report.byDepartment} flows={report.flows} fulfilled={report.fulfilled} traces={report.traces} returnsSummary={report.returnsSummary} returnsByWarehouse={report.returnsByWarehouse} />, { title, subtitle: `Período: ${from} a ${to}`, companyName: tenant.branding?.tenantName ?? 'Empresa', headerColor: '#3B82F6', logoUrl: tenant.branding?.logoUrl ?? undefined, captureWidthPx: 1240 })
       } else if (tab === 'EXISTENCIAS') {
         const report = await buildExistenciasStructuredReport()
         blob = await pdfBlobFromReactNode(<StockExistenciasDocument title={title} from={from} to={to} items={report.items} warehouses={report.warehouses} />, { title, subtitle: `Período: ${from} a ${to}`, companyName: tenant.branding?.tenantName ?? 'Empresa', headerColor: '#3B82F6', logoUrl: tenant.branding?.logoUrl ?? undefined, captureWidthPx: 1240 })
@@ -1192,7 +1192,7 @@ export function StockReportsPage() {
             from={from}
             to={to}
             summary={report.summary}
-            byCity={report.byCity}
+            byDepartment={report.byDepartment}
             flows={report.flows}
             fulfilled={report.fulfilled}
             traces={report.traces}
@@ -1345,13 +1345,13 @@ export function StockReportsPage() {
         },
         {
           name: 'Solicitudes por sucursal',
-          rows: report.byCity.map((item) => ({ Ciudad: item.city, Total: item.total, Abiertas: item.open, Atendidas: item.fulfilled, Canceladas: item.cancelled, Pendientes: item.pending, Aceptadas: item.accepted, Rechazadas: item.rejected })),
+          rows: report.byDepartment.map((item) => ({ Departamento: item.department, Total: item.total, Abiertas: item.open, Atendidas: item.fulfilled, Canceladas: item.cancelled, Pendientes: item.pending, Aceptadas: item.accepted, Rechazadas: item.rejected })),
         },
         { name: 'Flujos', rows: report.flows.map((item) => ({ Origen: item.origin, Destino: item.destination, Completadas: item.requestsCount, TiempoPromedioMin: item.avgMinutes ?? 0 })) },
         { name: 'Atendidas', rows: report.fulfilled.map((item) => ({ Solicitud: item.id, Destino: item.destination, Origen: item.origin, Solicitante: item.requestedByName, Solicitada: new Date(item.createdAt).toLocaleString(), Atendida: new Date(item.fulfilledAt).toLocaleString(), TiempoMin: item.minutesToFulfill, Items: item.itemsCount, Envios: item.movementsCount })) },
         { name: 'Trace solicitado', rows: report.traces.flatMap((trace) => trace.requestedItems.map((item) => ({ Solicitud: trace.requestId, Destino: trace.destination, Solicitada: new Date(trace.requestedAt).toLocaleString(), Producto: item.product, Presentacion: item.presentation, CantidadSolicitada: item.requestedQuantity }))) },
         { name: 'Trace enviado', rows: report.traces.flatMap((trace) => trace.sentLines.map((item) => ({ Solicitud: trace.requestId, DestinoSolicitud: trace.destination, Fecha: new Date(item.createdAt).toLocaleString(), Origen: item.origin, Destino: item.destination, Producto: item.product, Lote: item.batchNumber ?? '—', Vence: item.expiresAt ? formatDateOnlyUtc(item.expiresAt) : '—', CantidadEnviada: item.quantity }))) },
-        { name: 'Devoluciones', rows: report.returnsByWarehouse.map((item) => ({ Sucursal: item.warehouse, Ciudad: item.city, Devoluciones: item.returnsCount, Items: item.itemsCount, Unidades: item.quantity })) },
+        { name: 'Devoluciones', rows: report.returnsByWarehouse.map((item) => ({ Sucursal: item.warehouse, Departamento: item.department, Devoluciones: item.returnsCount, Items: item.itemsCount, Unidades: item.quantity })) },
         { name: 'Meta', rows: [{ Reporte: title, Desde: from, Hasta: to, Generado: new Date().toLocaleString() }] },
       ])
     } catch (err) {
@@ -2367,13 +2367,13 @@ export function StockReportsPage() {
                     { name: 'Rechazadas', value: s.rejected, color: '#EF4444' },
                   ].filter((d) => d.value > 0)
 
-                  const cityItems = movementRequestsByCityQuery.data?.items ?? []
-                  const cityBarData = cityItems.map((c) => ({
-                    city: c.city ?? '(sin ciudad)',
-                    total: c.total,
-                    fulfilled: c.fulfilled,
-                    open: c.open,
-                    cancelled: c.cancelled,
+                  const departmentBarData = movementRequestsByDepartmentQuery.data?.items ?? []
+                  const cityBarData = departmentBarData.map((d) => ({
+                    department: d.department ?? '(sin departamento)',
+                    total: d.total,
+                    fulfilled: d.fulfilled,
+                    open: d.open,
+                    cancelled: d.cancelled,
                   }))
 
                   const flowItems = movementRequestFlowsQuery.data?.items ?? []
@@ -2437,15 +2437,15 @@ export function StockReportsPage() {
                         )}
                       </div>
 
-                      {/* Gráfica: solicitudes por ciudad */}
+                      {/* Gráfica: solicitudes por departamento */}
                       {cityBarData.length > 0 && (
                         <div className="mb-6 w-full min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
-                          <h3 className="mb-3 text-sm font-semibold text-slate-900 dark:text-white">Solicitudes por ciudad</h3>
+                          <h3 className="mb-3 text-sm font-semibold text-slate-900 dark:text-white">Solicitudes por departamento</h3>
                           <ResponsiveContainer width="100%" height={Math.max(260, cityBarData.length * 40)}>
                             <BarChart data={cityBarData} layout="vertical" margin={{ left: 80 }}>
                               <CartesianGrid {...chartGridStyle} />
                               <XAxis type="number" {...chartAxisStyle} />
-                              <YAxis type="category" dataKey="city" width={75} {...chartAxisStyle} />
+                              <YAxis type="category" dataKey="department" width={75} {...chartAxisStyle} />
                               <Tooltip {...chartTooltipStyle} />
                               <Legend />
                               <Bar dataKey="fulfilled" name="Atendidas" fill="#10B981" stackId="a" />
@@ -2474,33 +2474,33 @@ export function StockReportsPage() {
                         </div>
                       )}
 
-                      {/* Tabla: por ciudad */}
+                      {/* Tabla: por departamento */}
                       <div className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
-                        <h3 className="mb-2 text-sm font-semibold text-slate-900 dark:text-white">Detalle por ciudad</h3>
+                        <h3 className="mb-2 text-sm font-semibold text-slate-900 dark:text-white">Detalle por departamento</h3>
 
-                        {movementRequestsByCityQuery.isLoading && <Loading />}
-                        {movementRequestsByCityQuery.isError && (
+                        {movementRequestsByDepartmentQuery.isLoading && <Loading />}
+                        {movementRequestsByDepartmentQuery.isError && (
                           <ErrorState
-                            message={(movementRequestsByCityQuery.error as any)?.message ?? 'Error cargando solicitudes por ciudad'}
+                            message={(movementRequestsByDepartmentQuery.error as any)?.message ?? 'Error cargando solicitudes por departamento'}
                           />
                         )}
-                        {!movementRequestsByCityQuery.isLoading && !movementRequestsByCityQuery.isError && (movementRequestsByCityQuery.data?.items?.length ?? 0) === 0 && (
+                        {!movementRequestsByDepartmentQuery.isLoading && !movementRequestsByDepartmentQuery.isError && (movementRequestsByDepartmentQuery.data?.items?.length ?? 0) === 0 && (
                           <EmptyState message="No hay solicitudes en el período." />
                         )}
-                        {!movementRequestsByCityQuery.isLoading && !movementRequestsByCityQuery.isError && (movementRequestsByCityQuery.data?.items?.length ?? 0) > 0 && (
+                        {!movementRequestsByDepartmentQuery.isLoading && !movementRequestsByDepartmentQuery.isError && (movementRequestsByDepartmentQuery.data?.items?.length ?? 0) > 0 && (
                           <Table
                             columns={[
-                              { header: 'Ciudad', accessor: (r: MovementRequestsByCityItem) => r.city ?? '(sin ciudad)' },
-                              { header: 'Total', accessor: (r: MovementRequestsByCityItem) => r.total },
-                              { header: 'Abiertas', accessor: (r: MovementRequestsByCityItem) => r.open },
-                              { header: 'Atendidas', accessor: (r: MovementRequestsByCityItem) => r.fulfilled },
-                              { header: 'Canceladas', accessor: (r: MovementRequestsByCityItem) => r.cancelled },
-                              { header: 'Pend.', accessor: (r: MovementRequestsByCityItem) => r.pending },
-                              { header: 'Acept.', accessor: (r: MovementRequestsByCityItem) => r.accepted },
-                              { header: 'Rech.', accessor: (r: MovementRequestsByCityItem) => r.rejected },
+                              { header: 'Departamento', accessor: (r: MovementRequestsByDepartmentItem) => r.department ?? '(sin departamento)' },
+                              { header: 'Total', accessor: (r: MovementRequestsByDepartmentItem) => r.total },
+                              { header: 'Abiertas', accessor: (r: MovementRequestsByDepartmentItem) => r.open },
+                              { header: 'Atendidas', accessor: (r: MovementRequestsByDepartmentItem) => r.fulfilled },
+                              { header: 'Canceladas', accessor: (r: MovementRequestsByDepartmentItem) => r.cancelled },
+                              { header: 'Pend.', accessor: (r: MovementRequestsByDepartmentItem) => r.pending },
+                              { header: 'Acept.', accessor: (r: MovementRequestsByDepartmentItem) => r.accepted },
+                              { header: 'Rech.', accessor: (r: MovementRequestsByDepartmentItem) => r.rejected },
                             ]}
-                            data={movementRequestsByCityQuery.data?.items ?? []}
-                            keyExtractor={(r: MovementRequestsByCityItem) => String(r.city ?? 'null')}
+                            data={movementRequestsByDepartmentQuery.data?.items ?? []}
+                            keyExtractor={(r: MovementRequestsByDepartmentItem) => String(r.department ?? 'null')}
                           />
                         )}
                       </div>
@@ -2714,7 +2714,7 @@ export function StockReportsPage() {
                                 accessor: (r: ReturnsByWarehouseItem) =>
                                   `${r.warehouse.code ?? ''} ${r.warehouse.name ?? ''}`.trim() || r.warehouse.id,
                               },
-                              { header: 'Ciudad', accessor: (r: ReturnsByWarehouseItem) => r.warehouse.city ?? '-' },
+                              { header: 'Departamento', accessor: (r: ReturnsByWarehouseItem) => r.warehouse.department ?? '-' },
                               { header: 'Devol.', accessor: (r: ReturnsByWarehouseItem) => r.returnsCount },
                               { header: 'Ítems', accessor: (r: ReturnsByWarehouseItem) => r.itemsCount },
                               {

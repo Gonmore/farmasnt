@@ -1,6 +1,9 @@
 import { Area, AreaChart, CartesianGrid, Tooltip, XAxis, YAxis } from 'recharts'
 import { ExportLegend } from './ExportLegend'
 import { formatInteger, formatMoney } from '../../lib/numberFormat'
+import { orderStatusLabel, toNumber } from './reportsUtils'
+import type { SalesMonthlyDetailItem } from '../../pages/reports/SalesReportsPage'
+import React from 'react'
 
 export type SalesMonthDocumentItem = {
   day: string
@@ -10,6 +13,8 @@ export type SalesMonthDocumentItem = {
   amount: number
 }
 
+export type SalesMonthDetailItem = SalesMonthlyDetailItem
+
 type Props = {
   title: string
   from: string
@@ -17,13 +22,14 @@ type Props = {
   currency: string
   statusLabel: string
   items: SalesMonthDocumentItem[]
+  detailItems?: SalesMonthDetailItem[]
 }
 
 function money(n: number): string {
   return formatMoney(n)
 }
 
-export function SalesMonthDocument({ title, from, to, currency, statusLabel, items }: Props) {
+export function SalesMonthDocument({ title, from, to, currency, statusLabel, items, detailItems }: Props) {
   const totalAmount = items.reduce((sum, item) => sum + item.amount, 0)
   const totalOrders = items.reduce((sum, item) => sum + item.ordersCount, 0)
   const totalLines = items.reduce((sum, item) => sum + item.linesCount, 0)
@@ -117,6 +123,113 @@ export function SalesMonthDocument({ title, from, to, currency, statusLabel, ite
           </tbody>
         </table>
       </div>
+
+      {detailItems && detailItems.length > 0 && (() => {
+        const warehouseGroups: Record<string, SalesMonthlyDetailItem[]> = {}
+        detailItems.forEach((item) => {
+          const key = item.warehouseId || item.warehouseCode || 'sin-warehouse'
+          if (!warehouseGroups[key]) warehouseGroups[key] = []
+          warehouseGroups[key].push(item)
+        })
+        const warehouseEntries = Object.values(warehouseGroups).sort((a, b) => {
+          const aName = a[0]?.warehouseName ?? a[0]?.warehouseCode ?? '-'
+          const bName = b[0]?.warehouseName ?? b[0]?.warehouseCode ?? '-'
+          return aName.localeCompare(bName)
+        })
+
+        return (
+          <>
+            <div className="mt-8 text-lg font-bold tracking-tight">Detalle de transacciones (líneas de venta)</div>
+            <div className="space-y-6">
+                {warehouseEntries.map((wsItems) => {
+                const wsName = wsItems[0]?.warehouseName ?? wsItems[0]?.warehouseCode ?? '-'
+                const wsCode = wsItems[0]?.warehouseCode ?? '-'
+                const deptGroups: Record<string, SalesMonthlyDetailItem[]> = {}
+                wsItems.forEach((item) => {
+                  const dept = item.customerDepartment ?? '(sin dept.)'
+                  if (!deptGroups[dept]) deptGroups[dept] = []
+                  deptGroups[dept].push(item)
+                })
+                const depts = Object.keys(deptGroups).sort()
+                const hasMultipleDepts = depts.length > 1
+                const wsTotal = wsItems.reduce((sum, r) => sum + toNumber(r.lineTotal), 0)
+
+                const orderGroups: Record<string, { order: SalesMonthlyDetailItem; lines: SalesMonthlyDetailItem[] }> = {}
+                wsItems.forEach((item) => {
+                  if (!orderGroups[item.orderId]) orderGroups[item.orderId] = { order: item, lines: [] }
+                  orderGroups[item.orderId].lines.push(item)
+                })
+                const orderEntries = Object.values(orderGroups).sort(
+                  (a, b) => new Date(b.order.createdAt).getTime() - new Date(a.order.createdAt).getTime()
+                )
+
+                return (
+                  <div key={wsCode} className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                    <div className="border-b border-slate-200 bg-slate-50 px-5 py-4">
+                      <div className="text-base font-semibold">{wsName}</div>
+                      <div className="mt-1 text-sm text-slate-600">{wsCode}</div>
+                    </div>
+                    <div className="px-5 py-4">
+                      <table className="w-full table-fixed border-collapse text-sm">
+                        <thead>
+                          <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wider text-slate-500">
+                            <th className="w-[6%] px-3 py-2">Orden</th>
+                            <th className="w-[8%] px-3 py-2">Estado</th>
+                            <th className="w-[9%] px-3 py-2">Fecha</th>
+                            <th className="w-[16%] px-3 py-2">Cliente</th>
+                            {hasMultipleDepts && <th className="w-[9%] px-3 py-2">Depto.</th>}
+                            <th className="w-[6%] px-3 py-2">SKU</th>
+                            <th className="w-[18%] px-3 py-2">Producto</th>
+                            <th className="w-[6%] px-3 py-2 text-right">Cant.</th>
+                            <th className="w-[7%] px-3 py-2 text-right">Precio</th>
+                            <th className="w-[9%] px-3 py-2 text-right">Total</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {orderEntries.map((og) => (
+                            <React.Fragment key={og.order.orderId}>
+                              <tr className="bg-slate-50">
+                                <td colSpan={hasMultipleDepts ? 11 : 10} className="px-3 py-1 text-xs text-slate-700">
+                                  Orden {og.order.orderNumber} · {orderStatusLabel(og.order.orderStatus)} · {new Date(og.order.createdAt).toLocaleDateString()} · {og.order.customerName}
+                                </td>
+                              </tr>
+                              {og.lines
+                                .slice()
+                                .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+                                .map((r) => (
+                                  <tr key={r.lineId} className="border-b border-slate-100 align-top">
+                                    <td className="px-3 py-2 font-mono text-xs">{r.orderNumber}</td>
+                                    <td className="px-3 py-2">{orderStatusLabel(r.orderStatus)}</td>
+                                    <td className="px-3 py-2">{new Date(r.createdAt).toLocaleDateString()}</td>
+                                    <td className="px-3 py-2">{r.customerName}</td>
+                                    {hasMultipleDepts && <td className="px-3 py-2">{r.customerDepartment ?? '-'}</td>}
+                                    <td className="px-3 py-2 font-mono text-xs">{r.productSku ?? '-'}</td>
+                                    <td className="px-3 py-2">{r.productName}</td>
+                                    <td className="px-3 py-2 text-right tabular-nums">{formatInteger(toNumber(r.quantity))}</td>
+                                    <td className="px-3 py-2 text-right tabular-nums">{money(toNumber(r.unitPrice))}</td>
+                                    <td className="px-3 py-2 text-right tabular-nums">{money(toNumber(r.lineTotal))}</td>
+                                  </tr>
+                                ))}
+                            </React.Fragment>
+                          ))}
+                          <tr className="bg-slate-50">
+                            <td colSpan={hasMultipleDepts ? 10 : 9} className="px-3 py-1 text-right text-xs font-semibold text-slate-700">
+                              Total sucursal:
+                            </td>
+                            <td className="px-3 py-1 text-right tabular-nums font-semibold text-slate-900">
+                              {money(wsTotal)} {currency}
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </>
+        )
+      })()}
     </div>
   )
 }

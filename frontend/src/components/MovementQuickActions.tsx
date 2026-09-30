@@ -18,8 +18,8 @@ export type QuickActionBadgeInfo = {
   details?: QuickActionBadgeDetail[]
 }
 
-type MovementRequestsByCityItem = {
-  city: string | null
+type MovementRequestsByDepartmentItem = {
+  department: string | null
   total: number
   open: number
   fulfilled: number
@@ -36,9 +36,9 @@ type PendingReceptionRequest = {
   }>
 }
 
-async function fetchMovementRequestsByCity(token: string): Promise<{ items: MovementRequestsByCityItem[] }> {
+async function fetchMovementRequestsByDepartment(token: string): Promise<{ items: MovementRequestsByDepartmentItem[] }> {
   const params = new URLSearchParams({ take: '100' })
-  return apiFetch(`/api/v1/reports/stock/movement-requests/by-city?${params.toString()}`, { token })
+  return apiFetch(`/api/v1/reports/stock/movement-requests/by-department?${params.toString()}`, { token })
 }
 
 async function listPendingReceptionRequests(token: string, warehouseId?: string): Promise<{ items: PendingReceptionRequest[] }> {
@@ -174,9 +174,9 @@ export function MovementQuickActions({ currentPath, badges }: { currentPath: str
   const permissions = usePermissions()
   const branchWarehouseId = permissions.hasPermission('scope:branch') && !permissions.isTenantAdmin ? permissions.user?.warehouseId ?? undefined : undefined
 
-  const movementRequestsByCityQuery = useQuery({
-    queryKey: ['movementRequestsByCity', 'quickActions'],
-    queryFn: () => fetchMovementRequestsByCity(auth.accessToken!),
+  const movementRequestsByDepartmentQuery = useQuery({
+    queryKey: ['movementRequestsByDepartment', 'quickActions'],
+    queryFn: () => fetchMovementRequestsByDepartment(auth.accessToken!),
     enabled: !!auth.accessToken,
     refetchInterval: 15_000,
   })
@@ -191,19 +191,19 @@ export function MovementQuickActions({ currentPath, badges }: { currentPath: str
   const internalBadges = useMemo<Record<string, QuickActionBadgeInfo | undefined>>(() => {
     const nextBadges: Record<string, QuickActionBadgeInfo | undefined> = {}
 
-    const openByCity = (movementRequestsByCityQuery.data?.items ?? [])
+    const openByDepartment = (movementRequestsByDepartmentQuery.data?.items ?? [])
       .filter((item) => Number(item.open ?? 0) > 0)
       .sort((a, b) => Number(b.open ?? 0) - Number(a.open ?? 0))
 
-    const openTotal = openByCity.reduce((sum, item) => sum + Number(item.open ?? 0), 0)
+    const openTotal = openByDepartment.reduce((sum, item) => sum + Number(item.open ?? 0), 0)
     if (openTotal > 0) {
       nextBadges['/stock/fulfill-requests'] = {
         count: openTotal,
         tone: 'warning',
         ariaLabel: `${openTotal} solicitudes pendientes de atención`,
         hoverTitle: 'Pendientes por sucursal',
-        details: openByCity.map((item) => ({
-          label: String(item.city ?? '').trim() || 'Sin ciudad',
+        details: openByDepartment.map((item) => ({
+          label: String(item.department ?? '').trim() || 'Sin departamento',
           count: Number(item.open ?? 0),
         })),
       }
@@ -219,7 +219,7 @@ export function MovementQuickActions({ currentPath, badges }: { currentPath: str
     }
 
     return nextBadges
-  }, [movementRequestsByCityQuery.data?.items, pendingReceptionRequestsQuery.data?.items])
+  }, [movementRequestsByDepartmentQuery.data?.items, pendingReceptionRequestsQuery.data?.items])
 
   const resolvedBadges = useMemo(
     () => ({ ...internalBadges, ...(badges ?? {}) }),

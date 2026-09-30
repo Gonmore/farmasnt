@@ -90,9 +90,9 @@ Cambios recientes en stock y reportes:
 - `GET /api/v1/products/:id/batches` devuelve `warehouseCity` por ubicación para soportar reglas de cliente por ciudad en frontend.
 - `GET /api/v1/products/:id/batches` también devuelve `originWarehouseId`, `originWarehouseCode`, `originWarehouseName`, `originLocationId` y `originLocationCode` para restringir ediciones del lote al almacén de ingreso original.
 - `GET /api/v1/reports/stock/existencias` devuelve stock físico, reservado, disponible, entradas, salidas, bajas, muestras y traspasos para el período.
-- `GET /api/v1/reports/stock/movement-requests/by-city` y `GET /api/v1/stock/movement-requests?status=OPEN|SENT` siguen siendo los endpoints base para los badges operativos del menú compartido de stock.
+- `GET /api/v1/reports/stock/movement-requests/by-department` y `GET /api/v1/stock/movement-requests?status=OPEN|SENT` siguen siendo los endpoints base para los badges operativos del menú compartido de stock.
 - El filtro por defecto de **Reportes > Ventas** en frontend pasó a `status=ALL` (antes solo `FULFILLED` por defecto, ocultando ventas en otros estados).
-- El tope de `take` en `reports/sales/top-products`, `reports/sales/margins`, `reports/sales/by-customer`, `reports/sales/by-city` y `GET /api/v1/sales/orders` se elevó a 1000 para evitar que los reportes agregados y sus drill-down recorten filas. Es un límite fijo temporal; se recomienda migrar a paginación real (`cursor`) en una futura iteración en lugar de seguir subiendo el número.
+- El tope de `take` en `reports/sales/top-products`, `reports/sales/margins`, `reports/sales/by-customer`, `reports/sales/by-department` y `GET /api/v1/sales/orders` se elevó a 1000 para evitar que los reportes agregados y sus drill-down recorten filas. Es un límite fijo temporal; se recomienda migrar a paginación real (`cursor`) en una futura iteración en lugar de seguir subiendo el número.
 
 Base URL (dev): `http://127.0.0.1:6000`
 
@@ -3111,7 +3111,7 @@ Response 200
 }
 ```
 
-#### GET /api/v1/reports/sales/by-city
+#### GET /api/v1/reports/sales/by-department
 Requiere: módulo `SALES` + permiso `sales:order:read`.
 
 Query
@@ -3121,13 +3121,48 @@ Query
 - `take` (1..1000, default 20)
 
 Nota
-- El tope se elevó de 200 a 1000 para evitar que el reporte recorte ciudades; a futuro conviene reemplazarlo por paginación real.
+- El tope se elevó de 200 a 1000 para evitar que el reporte recorte departamentos; a futuro conviene reemplazarlo por paginación real.
 
 Response 200
 ```json
 {
   "items": [
-    { "city": "La Paz", "ordersCount": 3, "quantity": "12", "amount": "450" }
+    { "department": "La Paz", "ordersCount": 3, "quantity": "12", "amount": "450" }
+  ]
+}
+```
+
+#### GET /api/v1/reports/sales/monthly-details
+Requiere: módulo `SALES` + permiso `sales:order:read`.
+
+Query
+- `from` (date-time, opcional)
+- `to` (date-time, opcional)
+- `status` (opcional)
+- `warehouseId` (UUID, opcional)
+- `locationId` (UUID, opcional)
+
+Response 200
+```json
+{
+  "items": [
+    {
+      "orderId": "uuid",
+      "orderNumber": "V2025-0001",
+      "orderStatus": "FULFILLED",
+      "createdAt": "2025-01-15T10:30:00.000Z",
+      "customerName": "Farmacia Ejemplo",
+      "customerDepartment": "La Paz",
+      "lineId": "uuid",
+      "productSku": "PROD-001",
+      "productName": "Paracetamol 500mg",
+      "quantity": "10",
+      "unitPrice": "5.50",
+      "lineTotal": "55.00",
+      "warehouseId": "uuid",
+      "warehouseCode": "SUC001",
+      "warehouseName": "Sucursal Principal"
+    }
   ]
 }
 ```
@@ -3345,7 +3380,7 @@ Response 200
 { "total": 10, "open": 2, "fulfilled": 6, "cancelled": 2, "pending": 3, "accepted": 2, "rejected": 1 }
 ```
 
-#### GET /api/v1/reports/stock/movement-requests/by-city
+#### GET /api/v1/reports/stock/movement-requests/by-department
 Requiere: módulo `WAREHOUSE` + permiso `report:stock:read`.
 
 Query
@@ -3357,7 +3392,7 @@ Response 200
 ```json
 {
   "items": [
-    { "city": "Santa Cruz", "total": 5, "open": 1, "fulfilled": 3, "cancelled": 1, "pending": 2, "accepted": 2, "rejected": 1 }
+    { "department": "Santa Cruz", "total": 5, "open": 1, "fulfilled": 3, "cancelled": 1, "pending": 2, "accepted": 2, "rejected": 1 }
   ]
 }
 ```

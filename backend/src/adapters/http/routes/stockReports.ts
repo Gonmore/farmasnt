@@ -66,8 +66,8 @@ type StockMovementRequestsSummaryRow = {
   rejected: bigint
 }
 
-type StockMovementRequestsByCityRow = {
-  city: string | null
+type StockMovementRequestsByDepartmentRow = {
+  department: string | null
   total: bigint
   open: bigint
   sent: bigint
@@ -92,6 +92,7 @@ type StockMovementRequestsFlowRow = {
 type StockMovementRequestsFulfilledRow = {
   requestId: string
   requestedCity: string | null
+  requestedDepartment: string | null
   warehouseId: string | null
   warehouseCode: string | null
   warehouseName: string | null
@@ -149,7 +150,7 @@ type StockReturnsByWarehouseRow = {
   warehouseId: string
   warehouseCode: string | null
   warehouseName: string | null
-  warehouseCity: string | null
+  warehouseDepartment: string | null
   returnsCount: bigint
   itemsCount: bigint
   quantity: string | null
@@ -968,7 +969,7 @@ export async function registerStockReportRoutes(app: FastifyInstance): Promise<v
   )
 
   app.get(
-    '/api/v1/reports/stock/movement-requests/by-city',
+     '/api/v1/reports/stock/movement-requests/by-department',
     {
       preHandler: [requireAuth(), requireModuleEnabled(db, 'WAREHOUSE'), requireStockReportOrBranchAccess()],
     },
@@ -981,9 +982,9 @@ export async function registerStockReportRoutes(app: FastifyInstance): Promise<v
       if (branchDepartmentsOfMissing(request)) return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
 
       const { from, to, take } = parsed.data
-      const rows = await db.$queryRaw<StockMovementRequestsByCityRow[]>`
+      const rows = await db.$queryRaw<StockMovementRequestsByDepartmentRow[]>`
         SELECT
-          smr."requestedCity" as city,
+          smr."requestedDepartment" as department,
           count(*) as total,
           count(*) FILTER (WHERE smr.status = 'OPEN'::"StockMovementRequestStatus") as open,
           count(*) FILTER (WHERE smr.status = 'SENT'::"StockMovementRequestStatus") as sent,
@@ -997,14 +998,14 @@ export async function registerStockReportRoutes(app: FastifyInstance): Promise<v
           AND (${from ?? null}::timestamptz IS NULL OR smr."createdAt" >= ${from ?? null})
           AND (${to ?? null}::timestamptz IS NULL OR smr."createdAt" < ${to ?? null})
           AND (${branchOwnWh ?? null}::text IS NULL OR smr."warehouseId" = ${branchOwnWh ?? null}::text)
-        GROUP BY smr."requestedCity"
+         GROUP BY smr."requestedDepartment"
         ORDER BY count(*) DESC NULLS LAST
         LIMIT ${take}
       `
 
       return reply.send({
-        items: rows.map((r) => ({
-          city: r.city,
+         items: rows.map((r) => ({
+          department: r.department,
           total: Number(r.total),
           open: Number(r.open),
           fulfilled: Number(r.fulfilled),
@@ -1153,7 +1154,7 @@ export async function registerStockReportRoutes(app: FastifyInstance): Promise<v
         WITH req AS (
           SELECT
             smr.id as "requestId",
-            smr."requestedCity" as "requestedCity",
+            smr."requestedDepartment" as "requestedCity",
             smr."warehouseId" as "warehouseId",
             w.code as "warehouseCode",
             w.name as "warehouseName",
@@ -1221,7 +1222,7 @@ export async function registerStockReportRoutes(app: FastifyInstance): Promise<v
       return reply.send({
         items: rows.map((r) => ({
           id: r.requestId,
-          requestedCity: r.requestedCity,
+          requestedCity: r.requestedDepartment ?? r.requestedCity,
           destinationWarehouse: r.warehouseId ? { id: r.warehouseId, code: r.warehouseCode, name: r.warehouseName } : null,
           requestedByName: r.requestedByName,
           createdAt: r.createdAt.toISOString(),
@@ -1261,8 +1262,8 @@ export async function registerStockReportRoutes(app: FastifyInstance): Promise<v
           ...(branchOwnWh ? { warehouseId: branchOwnWh } : {}),
         },
         include: {
-          warehouse: { select: { id: true, code: true, name: true, city: true } },
-          toLocation: { select: { id: true, code: true, warehouse: { select: { id: true, code: true, name: true, city: true } } } },
+           warehouse: { select: { id: true, code: true, name: true, city: true, department: true } },
+           toLocation: { select: { id: true, code: true, warehouse: { select: { id: true, code: true, name: true, city: true, department: true } } } },
           items: {
             include: {
               product: { select: { id: true, sku: true, name: true, genericName: true } },
@@ -1331,7 +1332,8 @@ export async function registerStockReportRoutes(app: FastifyInstance): Promise<v
           id: req.id,
           status: req.status,
           confirmationStatus: (req as any).confirmationStatus,
-          requestedCity: req.requestedCity,
+           requestedCity: (req as any).requestedDepartment ?? req.requestedCity,
+           requestedDepartment: (req as any).requestedDepartment ?? null,
           warehouseId: (req as any).warehouseId ?? null,
           warehouse: (req as any).warehouse ?? null,
           toLocationId: (req as any).toLocationId ?? null,
@@ -1469,7 +1471,7 @@ export async function registerStockReportRoutes(app: FastifyInstance): Promise<v
           w.id as "warehouseId",
           w.code as "warehouseCode",
           w.name as "warehouseName",
-          w.city as "warehouseCity",
+          w.department as "warehouseDepartment",
           count(distinct sr.id) as "returnsCount",
           count(sri.id) as "itemsCount",
           sum(sri.quantity)::text as quantity
@@ -1481,14 +1483,14 @@ export async function registerStockReportRoutes(app: FastifyInstance): Promise<v
           AND (${from ?? null}::timestamptz IS NULL OR sr."createdAt" >= ${from ?? null})
           AND (${to ?? null}::timestamptz IS NULL OR sr."createdAt" < ${to ?? null})
           AND (${ownWhId ?? null}::text IS NULL OR w.id = ${ownWhId ?? null})
-        GROUP BY w.id, w.code, w.name, w.city
+        GROUP BY w.id, w.code, w.name, w.department
         ORDER BY count(distinct sr.id) DESC NULLS LAST
         LIMIT ${take}
       `
 
       return reply.send({
         items: rows.map((r) => ({
-          warehouse: { id: r.warehouseId, code: r.warehouseCode, name: r.warehouseName, city: r.warehouseCity },
+          warehouse: { id: r.warehouseId, code: r.warehouseCode, name: r.warehouseName, department: r.warehouseDepartment },
           returnsCount: Number(r.returnsCount),
           itemsCount: Number(r.itemsCount),
           quantity: r.quantity ?? '0',

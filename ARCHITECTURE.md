@@ -268,7 +268,8 @@ frontend/src/
 |---|---|---|
 | `pages/reports/SalesReportsPage.tsx` | `GET /api/v1/reports/sales/summary` | `routes/salesReports.ts:108` |
 | | `GET /api/v1/reports/sales/by-customer` | `routes/salesReports.ts:177` |
-| | `GET /api/v1/reports/sales/by-city` | `routes/salesReports.ts:251` |
+| | `GET /api/v1/reports/sales/by-department` | `routes/salesReports.ts:251` |
+| | `GET /api/v1/reports/sales/monthly-details` | `routes/salesReports.ts:781` |
 | | `GET /api/v1/reports/sales/funnel` | `routes/salesReports.ts:327` |
 | | `GET /api/v1/reports/sales/by-month` | `routes/salesReports.ts:453` |
 | | `GET /api/v1/reports/sales/margins` | `routes/salesReports.ts:522` |
@@ -287,7 +288,7 @@ frontend/src/
 | | `GET /api/v1/reports/stock/expiry-alerts` | `routes/stockReports.ts:416` |
 | | `GET /api/v1/reports/stock/rotation` | `routes/stockReports.ts:485` |
 | | `GET /api/v1/reports/stock/movements-expanded` | `routes/stockReports.ts:1527` |
-| | `GET /api/v1/reports/stock/movement-requests/by-city` | `routes/stockReports.ts:970` |
+| | `GET /api/v1/reports/stock/movement-requests/by-department` | `routes/stockReports.ts:970` |
 | | `GET /api/v1/reports/stock/movement-requests/flows` | `routes/stockReports.ts:1020` |
 | | `GET /api/v1/reports/stock/movement-requests/fulfilled` | `routes/stockReports.ts:1137` |
 | | `GET /api/v1/reports/stock/movement-requests/:id/trace` | `routes/stockReports.ts:1243` |
