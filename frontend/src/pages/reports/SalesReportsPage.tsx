@@ -148,6 +148,23 @@ function toNumber(value: string | number | null | undefined): number {
   return Number.isFinite(n) ? n : 0
 }
 
+function fillDateRange(from: string, to: string, items: SalesSummaryItem[]): SalesSummaryItem[] {
+  const result: SalesSummaryItem[] = []
+  const existing = new Map(items.map((i) => [i.day, i]))
+  const startDate = new Date(from)
+  const endDate = new Date(to)
+  for (let d = new Date(startDate); d < endDate; d.setDate(d.getDate() + 1)) {
+    const day = toIsoDate(d)
+    const existingItem = existing.get(day)
+    if (existingItem) {
+      result.push(existingItem)
+    } else {
+      result.push({ day, ordersCount: 0, linesCount: 0, quantity: '0', amount: '0' })
+    }
+  }
+  return result
+}
+
 function statusLabel(s: SalesStatus): string {
   if (s === 'ALL') return 'TODOS'
   if (s === 'DRAFT') return 'BORRADOR'
@@ -458,10 +475,14 @@ export function SalesReportsPage() {
    const auth = useAuth()
    const tenant = useTenant()
    const permissions = usePermissions()
-   const currency = tenant.branding?.currency || 'BOB'
+    const currency = tenant.branding?.currency || 'BOB'
 
   const navGroups = useNavigation()
   const location = useLocation()
+
+  // Autonomía de sucursal: usuarios con scope:branch solo ven SU almacén propio.
+  const isBranchScoped = permissions.hasPermission('scope:branch') && !permissions.isTenantAdmin
+  const ownWarehouseId = permissions.warehouseId ?? null
 
   const today = new Date()
   const [tab, setTab] = useState<ReportTab>('MONTH')
@@ -470,6 +491,14 @@ export function SalesReportsPage() {
   const [status, setStatus] = useState<SalesStatus>('ALL')
   const [warehouseId, setWarehouseId] = useState<string>('')
   const [locationId, setLocationId] = useState<string>('')
+
+  // Forzar el almacén propio para usuarios scope:branch en el primer render después de cargar permisos
+  useEffect(() => {
+    if (isBranchScoped && ownWarehouseId && !warehouseId) {
+      setWarehouseId(ownWarehouseId)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isBranchScoped, ownWarehouseId])
 
   // Estados para drill-down
   const [drillDownOpen, setDrillDownOpen] = useState(false)
@@ -523,16 +552,35 @@ export function SalesReportsPage() {
   const [exportingPdf, setExportingPdf] = useState(false)
   const [exportingExcel, setExportingExcel] = useState(false)
 
+  const salesWarehousesQuery = useQuery({
+    queryKey: ['warehouses', 'list'],
+    queryFn: () => fetchSalesWarehousesList(auth.accessToken!),
+    enabled: !!auth.accessToken,
+  })
+
+  const salesWarehouseLocationsQuery = useQuery({
+    queryKey: ['warehouseLocations', warehouseId],
+    queryFn: () => fetchSalesWarehouseLocationsList(auth.accessToken!, warehouseId),
+    enabled: !!auth.accessToken && !!warehouseId,
+  })
+
+  const warehouseName = (warehouseId && salesWarehousesQuery.data?.items?.find((w) => w.id === warehouseId)?.name) || null
+
   const title = useMemo(() => {
     const period = `${from} a ${to}`
-    if (tab === 'MONTH') return permissions.isTenantAdmin ? `Reporte de ventas general (${period})` : `Reporte de ventas sucursal ${permissions.user?.warehouse?.name ?? ''} (${period})`
+    if (tab === 'MONTH') {
+      if (permissions.isTenantAdmin) {
+        return warehouseName ? `Reporte de ventas - ${warehouseName} (${period})` : `Reporte de ventas general (${period})`
+      }
+      return `Reporte de ventas sucursal ${permissions.user?.warehouse?.name ?? ''} (${period})`
+    }
     if (tab === 'CUSTOMERS') return `Ventas por cliente (${period})`
     if (tab === 'DEPARTMENTS') return `Ventas por departamento (${period})`
     if (tab === 'TOP_PRODUCTS') return `Productos más vendidos (${period})`
     if (tab === 'COMPARISON') return `Comparativa de períodos (${period})`
     if (tab === 'MARGINS') return `Márgenes y utilidades (${period})`
     return `Embudo Ventas → Entregas → Cobros (${period})`
-  }, [from, to, tab, permissions.isTenantAdmin, permissions.user?.warehouse?.name])
+  }, [from, to, tab, warehouseName, permissions.isTenantAdmin, permissions.user?.warehouse?.name])
 
   // Query para drill-down por departamento
   const drillDownDepartmentQuery = useQuery({
@@ -709,7 +757,8 @@ export function SalesReportsPage() {
   }
 
   const buildMonthStructuredReport = async () => {
-    const monthItems = (summaryQuery.data?.items ?? []).map((item) => ({
+    const filledItems = fillDateRange(from, to, summaryQuery.data?.items ?? [])
+    const monthItems = filledItems.map((item) => ({
       day: item.day,
       ordersCount: item.ordersCount,
       linesCount: item.linesCount,
@@ -1050,13 +1099,14 @@ export function SalesReportsPage() {
             to={to}
             currency={currency}
             statusLabel={statusLabel(status)}
+            warehouseName={warehouseName}
             items={monthItems}
             detailItems={detailItems}
           />,
           {
             filename: exportFilename,
             title,
-            subtitle: `Período: ${from} a ${to} | Moneda: ${currency}`,
+            subtitle: `Período: ${from} a ${to}${warehouseName ? ` | Sucursal: ${warehouseName}` : ''} | Moneda: ${currency}`,
             companyName: tenant.branding?.tenantName ?? 'Empresa',
             headerColor: '#10B981',
             logoUrl: tenant.branding?.logoUrl ?? undefined,
@@ -1130,6 +1180,7 @@ export function SalesReportsPage() {
             Reporte: title,
             Desde: from,
             Hasta: to,
+            ...(warehouseName ? { Sucursal: warehouseName } : {}),
             Estado: statusLabel(status),
             Moneda: currency,
             Generado: new Date().toLocaleString(),
@@ -1463,20 +1514,6 @@ export function SalesReportsPage() {
     enabled: !!auth.accessToken && tab === 'MARGINS',
   })
 
-  const salesWarehousesQuery = useQuery({
-    queryKey: ['warehouses', 'list'],
-    queryFn: () => fetchSalesWarehousesList(auth.accessToken!),
-    enabled: !!auth.accessToken,
-  })
-
-  const salesWarehouseLocationsQuery = useQuery({
-    queryKey: ['warehouseLocations', warehouseId],
-    queryFn: () => fetchSalesWarehouseLocationsList(auth.accessToken!, warehouseId),
-    enabled: !!auth.accessToken && !!warehouseId,
-  })
-
-
-
   const exportFilename = useMemo(() => {
     const base = tab.toLowerCase()
     return `reporte-ventas-${base}-${from}-${to}.pdf`
@@ -1516,8 +1553,8 @@ export function SalesReportsPage() {
         const { monthItems } = await buildMonthStructuredReport()
         const detailItems = (monthlyDetailsQuery.data?.items ?? []).length > 0 ? monthlyDetailsQuery.data?.items : undefined
         blob = await pdfBlobFromReactNode(
-          <SalesMonthDocument title={title} from={from} to={to} currency={currency} statusLabel={statusLabel(status)} items={monthItems} detailItems={detailItems} />,
-          { title, subtitle: `Período: ${from} a ${to} | Moneda: ${currency}`, companyName: tenant.branding?.tenantName ?? 'Empresa', headerColor: '#10B981', logoUrl: tenant.branding?.logoUrl ?? undefined, captureWidthPx: 1200 },
+          <SalesMonthDocument title={title} from={from} to={to} currency={currency} statusLabel={statusLabel(status)} warehouseName={warehouseName} items={monthItems} detailItems={detailItems} />,
+          { title, subtitle: `Período: ${from} a ${to}${warehouseName ? ` | Sucursal: ${warehouseName}` : ''} | Moneda: ${currency}`, companyName: tenant.branding?.tenantName ?? 'Empresa', headerColor: '#10B981', logoUrl: tenant.branding?.logoUrl ?? undefined, captureWidthPx: 1200 },
         )
       } else if (tab === 'FUNNEL') {
         const { funnelItems, totals } = await buildFunnelStructuredReport()
@@ -1705,11 +1742,12 @@ export function SalesReportsPage() {
               label="Sucursal"
               value={warehouseId}
               onChange={(e) => {
-                setWarehouseId(e.target.value)
+                if (!isBranchScoped) setWarehouseId(e.target.value)
                 setLocationId('')
               }}
+              disabled={isBranchScoped}
               options={[
-                { value: '', label: 'Todas las sucursales' },
+                { value: '', label: isBranchScoped && !warehouseName ? 'Cargando...' : 'Todas las sucursales' },
                 ...(salesWarehousesQuery.data?.items ?? []).map((w) => ({ value: w.id, label: `${w.code} - ${w.name}` })),
               ]}
             />
@@ -1769,38 +1807,40 @@ export function SalesReportsPage() {
               {!summaryQuery.isLoading && !summaryQuery.isError && (summaryQuery.data?.items?.length ?? 0) === 0 && (
                 <EmptyState message="No hay ventas en el rango seleccionado." />
               )}
-              {!summaryQuery.isLoading && !summaryQuery.isError && (summaryQuery.data?.items?.length ?? 0) > 0 && (
+               {!summaryQuery.isLoading && !summaryQuery.isError && (summaryQuery.data?.items?.length ?? 0) > 0 && (() => {
+                 const filledItems = fillDateRange(from, to, summaryQuery.data?.items ?? [])
+                return (
                 <>
                   {/* KPIs resumidos */}
                   <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-3">
                     <KPICard
                       icon="💰"
                       label="Total Facturado"
-                      value={`${money((summaryQuery.data?.items ?? []).reduce((sum, i) => sum + toNumber(i.amount), 0))} ${currency}`}
+                      value={`${money(filledItems.reduce((sum, i) => sum + toNumber(i.amount), 0))} ${currency}`}
                       color="success"
                       subtitle="En el período"
                     />
                     <KPICard
                       icon="🧾"
                       label="Órdenes"
-                      value={(summaryQuery.data?.items ?? []).reduce((sum, i) => sum + i.ordersCount, 0)}
+                      value={filledItems.reduce((sum, i) => sum + i.ordersCount, 0)}
                       color="primary"
                       subtitle="Total procesadas"
                     />
                     <KPICard
                       icon="📦"
                       label="Líneas de Venta"
-                      value={(summaryQuery.data?.items ?? []).reduce((sum, i) => sum + i.linesCount, 0)}
+                      value={filledItems.reduce((sum, i) => sum + i.linesCount, 0)}
                       color="info"
                       subtitle="Items vendidos"
                     />
                   </div>
 
                   {/* Gráfico mejorado con área y gradiente */}
-                  <div className="mx-auto h-[400px] w-full min-w-0 max-w-5xl overflow-hidden rounded-lg bg-gradient-to-br from-slate-50 to-white p-4 dark:from-slate-900 dark:to-slate-800">
+                  <div key={`chart-${filledItems.map((i) => i.day).join(',') || 'empty'}`} className="mx-auto h-[400px] w-full min-w-0 max-w-5xl overflow-hidden rounded-lg bg-gradient-to-br from-slate-50 to-white p-4 dark:from-slate-900 dark:to-slate-800">
                     <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={300}>
                       <AreaChart
-                        data={(summaryQuery.data?.items ?? []).map((i) => ({
+                        data={filledItems.map((i) => ({
                           day: new Date(i.day).toLocaleDateString('es-ES', { month: 'short', day: 'numeric' }),
                           amount: toNumber(i.amount),
                           ordersCount: i.ordersCount,
@@ -1832,6 +1872,7 @@ export function SalesReportsPage() {
                           fillOpacity={1}
                           fill="url(#colorAmount)"
                           name="Monto Facturado"
+                          isAnimationActive={false}
                         />
                         <Area
                           yAxisId="right"
@@ -1842,13 +1883,15 @@ export function SalesReportsPage() {
                           fillOpacity={1}
                           fill="url(#colorOrders)"
                           name="Cantidad de Órdenes"
+                          isAnimationActive={false}
                         />
                       </AreaChart>
                     </ResponsiveContainer>
                   </div>
                 </>
-              )}
-              {!summaryQuery.isLoading && !summaryQuery.isError && monthlyDetailsQuery.isLoading && (
+              )
+            })()}
+            {!summaryQuery.isLoading && !summaryQuery.isError && monthlyDetailsQuery.isLoading && (
                 <div className="mt-4"><Loading message="Cargando detalle..." /></div>
               )}
               {!summaryQuery.isLoading && !summaryQuery.isError && monthlyDetailsQuery.isError && (

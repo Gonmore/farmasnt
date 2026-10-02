@@ -21,6 +21,7 @@ type Props = {
   to: string
   currency: string
   statusLabel: string
+  warehouseName?: string | null
   items: SalesMonthDocumentItem[]
   detailItems?: SalesMonthDetailItem[]
 }
@@ -29,7 +30,7 @@ function money(n: number): string {
   return formatMoney(n)
 }
 
-export function SalesMonthDocument({ title, from, to, currency, statusLabel, items, detailItems }: Props) {
+export function SalesMonthDocument({ title, from, to, currency, statusLabel, warehouseName, items, detailItems }: Props) {
   const totalAmount = items.reduce((sum, item) => sum + item.amount, 0)
   const totalOrders = items.reduce((sum, item) => sum + item.ordersCount, 0)
   const totalLines = items.reduce((sum, item) => sum + item.linesCount, 0)
@@ -44,7 +45,7 @@ export function SalesMonthDocument({ title, from, to, currency, statusLabel, ite
     <div className="mx-auto w-[1200px] bg-white px-10 py-8 text-slate-900">
       <div className="mb-6 rounded-2xl border border-slate-200 bg-slate-50 px-6 py-5">
         <div className="text-2xl font-bold tracking-tight">{title}</div>
-        <div className="mt-2 text-sm text-slate-600">Periodo: {from} a {to}</div>
+        <div className="mt-2 text-sm text-slate-600">Periodo: {from} a {to}{warehouseName && ` · Sucursal: ${warehouseName}`}</div>
         <div className="text-sm text-slate-600">Estado considerado: {statusLabel}</div>
       </div>
 
