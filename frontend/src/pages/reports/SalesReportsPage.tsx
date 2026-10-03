@@ -18,7 +18,7 @@ import {
   AreaChart,
 } from 'recharts'
 import { MainLayout, PageContainer, Button, IconButton, Input, Select, Loading, ErrorState, EmptyState, Modal, Table } from '../../components'
-import { KPICard, ReportSection, SalesByDepartmentDocument, SalesByCustomerDocument, SalesComparisonDocument, SalesFunnelDocument, SalesMarginsDocument, SalesMonthDocument, SalesTopProductsDocument, reportColors, getChartColor, chartTooltipStyle, chartGridStyle, chartAxisStyle } from '../../components/reports'
+import { KPICard, ReportSection, ExportLegend, SalesBranchDocument, SalesByDepartmentDocument, SalesByCustomerDocument, SalesComparisonDocument, SalesFunnelDocument, SalesMarginsDocument, SalesMonthDocument, SalesTopProductsDocument, reportColors, getChartColor, chartTooltipStyle, chartGridStyle, chartAxisStyle } from '../../components/reports'
 import { useNavigation, usePermissions } from '../../hooks'
 import { apiFetch } from '../../lib/api'
 import { blobToBase64, exportElementToPdf, exportModalContentToPdf, exportReactNodeToPdf, pdfBlobFromElement, pdfBlobFromReactNode } from '../../lib/exportPdf'
@@ -91,6 +91,40 @@ type MarginsResponse = {
   totals: { revenue: number; costTotal: number; profit: number; avgMargin: number }
 }
 
+type SalesBranchCustomerItem = {
+  customerId: string
+  customerName: string
+  city: string | null
+  department: string | null
+  ordersCount: number
+  quantity: string
+  amount: string
+}
+
+type SalesBranchProductItem = {
+  productId: string
+  sku: string | null
+  productName: string
+  presentationId: string | null
+  presentationName: string
+  quantity: string
+  amount: string
+}
+
+type SalesBranchSummary = {
+  totalRevenue: string
+  totalOrders: number
+  totalUnits: string
+  distinctCustomers: number
+  distinctProducts: number
+}
+
+type SalesBranchMonthlyResponse = {
+  summary: SalesBranchSummary
+  customers: SalesBranchCustomerItem[]
+  products: SalesBranchProductItem[]
+}
+
 type ScheduleItem = {
   id: string
   reportKey: string
@@ -107,7 +141,7 @@ type ScheduleItem = {
 
 type ScheduleListResponse = { items: ScheduleItem[] }
 
-type ReportTab = 'MONTH' | 'CUSTOMERS' | 'DEPARTMENTS' | 'TOP_PRODUCTS' | 'FUNNEL' | 'COMPARISON' | 'MARGINS'
+type ReportTab = 'MONTH' | 'CUSTOMERS' | 'DEPARTMENTS' | 'TOP_PRODUCTS' | 'FUNNEL' | 'COMPARISON' | 'MARGINS' | 'BRANCH'
 
 // Tipo para órdenes detalladas (drill-down)
 type OrderDetailItem = {
@@ -133,8 +167,16 @@ function startOfMonth(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), 1)
 }
 
-function startOfNextMonth(d: Date): Date {
-  return new Date(d.getFullYear(), d.getMonth() + 1, 1)
+function endOfMonth(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999)
+}
+
+function toApiFrom(dateStr: string): string {
+  return `${dateStr}T00:00:00.000`
+}
+
+function toApiTo(dateStr: string): string {
+  return `${dateStr}T23:59:59.999`
 }
 
 function money(n: number): string {
@@ -247,8 +289,8 @@ function buildStatusMix(orders: OrderDetailItem[]): Array<{ label: string; total
 
 async function fetchSalesSummary(token: string, q: { from?: string; to?: string; status?: SalesStatus; warehouseId?: string; locationId?: string }): Promise<{ items: SalesSummaryItem[] }> {
   const params = new URLSearchParams()
-  if (q.from) params.set('from', q.from)
-  if (q.to) params.set('to', q.to)
+  if (q.from) params.set('from', toApiFrom(q.from))
+  if (q.to) params.set('to', toApiTo(q.to))
   if (q.status && q.status !== 'ALL') params.set('status', q.status)
   if (q.warehouseId) params.set('warehouseId', q.warehouseId)
   if (q.locationId) params.set('locationId', q.locationId)
@@ -260,8 +302,8 @@ async function fetchSalesByCustomer(
   q: { from?: string; to?: string; take: number; status?: SalesStatus; warehouseId?: string; locationId?: string },
 ): Promise<{ items: SalesByCustomerItem[] }> {
   const params = new URLSearchParams({ take: String(q.take) })
-  if (q.from) params.set('from', q.from)
-  if (q.to) params.set('to', q.to)
+  if (q.from) params.set('from', toApiFrom(q.from))
+  if (q.to) params.set('to', toApiTo(q.to))
   if (q.status && q.status !== 'ALL') params.set('status', q.status)
   if (q.warehouseId) params.set('warehouseId', q.warehouseId)
   if (q.locationId) params.set('locationId', q.locationId)
@@ -273,8 +315,8 @@ async function fetchSalesByDepartment(
   q: { from?: string; to?: string; take: number; status?: SalesStatus; warehouseId?: string; locationId?: string },
 ): Promise<{   items: SalesByDepartmentItem[] }> {
   const params = new URLSearchParams({ take: String(q.take) })
-  if (q.from) params.set('from', q.from)
-  if (q.to) params.set('to', q.to)
+  if (q.from) params.set('from', toApiFrom(q.from))
+  if (q.to) params.set('to', toApiTo(q.to))
   if (q.status && q.status !== 'ALL') params.set('status', q.status)
   if (q.warehouseId) params.set('warehouseId', q.warehouseId)
   if (q.locationId) params.set('locationId', q.locationId)
@@ -305,12 +347,25 @@ async function fetchSalesMonthlyDetails(
   q: { from?: string; to?: string; take: number; status?: SalesStatus; warehouseId?: string; locationId?: string },
 ): Promise<{ items: SalesMonthlyDetailItem[] }> {
   const params = new URLSearchParams({ take: String(q.take) })
-  if (q.from) params.set('from', q.from)
-  if (q.to) params.set('to', q.to)
+  if (q.from) params.set('from', toApiFrom(q.from))
+  if (q.to) params.set('to', toApiTo(q.to))
   if (q.status && q.status !== 'ALL') params.set('status', q.status)
   if (q.warehouseId) params.set('warehouseId', q.warehouseId)
   if (q.locationId) params.set('locationId', q.locationId)
   return apiFetch(`/api/v1/reports/sales/monthly-details?${params}`, { token })
+}
+
+async function fetchSalesBranchMonthlySummary(
+  token: string,
+  q: { from?: string; to?: string; take: number; status?: SalesStatus; warehouseId?: string; locationId?: string },
+): Promise<SalesBranchMonthlyResponse> {
+  const params = new URLSearchParams({ take: String(q.take) })
+  if (q.from) params.set('from', toApiFrom(q.from))
+  if (q.to) params.set('to', toApiTo(q.to))
+  if (q.status && q.status !== 'ALL') params.set('status', q.status)
+  if (q.warehouseId) params.set('warehouseId', q.warehouseId)
+  if (q.locationId) params.set('locationId', q.locationId)
+  return apiFetch(`/api/v1/reports/sales/branch-monthly-summary?${params}`, { token })
 }
 
 async function fetchTopProducts(
@@ -318,8 +373,8 @@ async function fetchTopProducts(
   q: { from?: string; to?: string; take: number; status?: SalesStatus; warehouseId?: string; locationId?: string },
 ): Promise<{ items: SalesTopProductItem[] }> {
   const params = new URLSearchParams({ take: String(q.take) })
-  if (q.from) params.set('from', q.from)
-  if (q.to) params.set('to', q.to)
+  if (q.from) params.set('from', toApiFrom(q.from))
+  if (q.to) params.set('to', toApiTo(q.to))
   if (q.status && q.status !== 'ALL') params.set('status', q.status)
   if (q.warehouseId) params.set('warehouseId', q.warehouseId)
   if (q.locationId) params.set('locationId', q.locationId)
@@ -332,8 +387,8 @@ async function fetchOrdersByDepartment(
   q: { from?: string; to?: string; department: string; status?: SalesStatus; warehouseId?: string; locationId?: string },
 ): Promise<{ items: OrderDetailItem[] }> {
   const params = new URLSearchParams({ take: '1000' })
-  if (q.from) params.set('from', q.from)
-  if (q.to) params.set('to', q.to)
+  if (q.from) params.set('from', toApiFrom(q.from))
+  if (q.to) params.set('to', toApiTo(q.to))
   if (q.department) params.set('deliveryDepartment', q.department)
   if (q.status && q.status !== 'ALL') params.set('status', q.status)
   if (q.warehouseId) params.set('warehouseId', q.warehouseId)
@@ -347,8 +402,8 @@ async function fetchOrdersByCustomer(
   q: { from?: string; to?: string; customerId: string; status?: SalesStatus; warehouseId?: string; locationId?: string },
 ): Promise<{ items: OrderDetailItem[] }> {
   const params = new URLSearchParams({ take: '1000' })
-  if (q.from) params.set('from', q.from)
-  if (q.to) params.set('to', q.to)
+  if (q.from) params.set('from', toApiFrom(q.from))
+  if (q.to) params.set('to', toApiTo(q.to))
   if (q.customerId) params.set('customerId', q.customerId)
   if (q.status && q.status !== 'ALL') params.set('status', q.status)
   if (q.warehouseId) params.set('warehouseId', q.warehouseId)
@@ -362,8 +417,8 @@ async function fetchOrdersByProduct(
   q: { from?: string; to?: string; productId: string; status?: SalesStatus; warehouseId?: string; locationId?: string },
 ): Promise<{ items: OrderDetailItem[] }> {
   const params = new URLSearchParams({ take: '1000' })
-  if (q.from) params.set('from', q.from)
-  if (q.to) params.set('to', q.to)
+  if (q.from) params.set('from', toApiFrom(q.from))
+  if (q.to) params.set('to', toApiTo(q.to))
   if (q.productId) params.set('productId', q.productId)
   if (q.status && q.status !== 'ALL') params.set('status', q.status)
   if (q.warehouseId) params.set('warehouseId', q.warehouseId)
@@ -373,8 +428,8 @@ async function fetchOrdersByProduct(
 
 async function fetchFunnel(token: string, q: { from?: string; to?: string; warehouseId?: string; locationId?: string }): Promise<FunnelResponse> {
   const params = new URLSearchParams()
-  if (q.from) params.set('from', q.from)
-  if (q.to) params.set('to', q.to)
+  if (q.from) params.set('from', toApiFrom(q.from))
+  if (q.to) params.set('to', toApiTo(q.to))
   if (q.warehouseId) params.set('warehouseId', q.warehouseId)
   if (q.locationId) params.set('locationId', q.locationId)
   return apiFetch(`/api/v1/reports/sales/funnel?${params}`, { token })
@@ -385,8 +440,8 @@ async function fetchSalesByMonth(
   q: { from?: string; to?: string; status?: SalesStatus; warehouseId?: string; locationId?: string },
 ): Promise<{ items: SalesByMonthItem[] }> {
   const params = new URLSearchParams()
-  if (q.from) params.set('from', q.from)
-  if (q.to) params.set('to', q.to)
+  if (q.from) params.set('from', toApiFrom(q.from))
+  if (q.to) params.set('to', toApiTo(q.to))
   if (q.status && q.status !== 'ALL') params.set('status', q.status)
   if (q.warehouseId) params.set('warehouseId', q.warehouseId)
   if (q.locationId) params.set('locationId', q.locationId)
@@ -398,8 +453,8 @@ async function fetchProductMargins(
   q: { from?: string; to?: string; take: number; status?: SalesStatus; warehouseId?: string; locationId?: string },
 ): Promise<MarginsResponse> {
   const params = new URLSearchParams({ take: String(q.take) })
-  if (q.from) params.set('from', q.from)
-  if (q.to) params.set('to', q.to)
+  if (q.from) params.set('from', toApiFrom(q.from))
+  if (q.to) params.set('to', toApiTo(q.to))
   if (q.status && q.status !== 'ALL') params.set('status', q.status)
   if (q.warehouseId) params.set('warehouseId', q.warehouseId)
   if (q.locationId) params.set('locationId', q.locationId)
@@ -487,7 +542,7 @@ export function SalesReportsPage() {
   const today = new Date()
   const [tab, setTab] = useState<ReportTab>('MONTH')
   const [from, setFrom] = useState<string>(toIsoDate(startOfMonth(today)))
-  const [to, setTo] = useState<string>(toIsoDate(startOfNextMonth(today)))
+  const [to, setTo] = useState<string>(toIsoDate(endOfMonth(today)))
   const [status, setStatus] = useState<SalesStatus>('ALL')
   const [warehouseId, setWarehouseId] = useState<string>('')
   const [locationId, setLocationId] = useState<string>('')
@@ -579,6 +634,12 @@ export function SalesReportsPage() {
     if (tab === 'TOP_PRODUCTS') return `Productos más vendidos (${period})`
     if (tab === 'COMPARISON') return `Comparativa de períodos (${period})`
     if (tab === 'MARGINS') return `Márgenes y utilidades (${period})`
+    if (tab === 'BRANCH') {
+      if (permissions.isTenantAdmin) {
+        return warehouseName ? `Reporte mensual sucursal - ${warehouseName} (${period})` : `Reporte mensual general (${period})`
+      }
+      return `Reporte mensual sucursal ${permissions.user?.warehouse?.name ?? ''} (${period})`
+    }
     return `Embudo Ventas → Entregas → Cobros (${period})`
   }, [from, to, tab, warehouseName, permissions.isTenantAdmin, permissions.user?.warehouse?.name])
 
@@ -1164,6 +1225,37 @@ export function SalesReportsPage() {
         return
       }
 
+      if (tab === 'BRANCH') {
+        const data = branchMonthlyQuery.data
+        if (!data) {
+          window.alert('No hay datos para exportar')
+          return
+        }
+        await exportReactNodeToPdf(
+          <SalesBranchDocument
+            title={title}
+            from={from}
+            to={to}
+            currency={currency}
+            statusLabel={statusLabel(status)}
+            warehouseName={warehouseName}
+            summary={data.summary}
+            customers={data.customers}
+            products={data.products}
+          />,
+          {
+            filename: exportFilename,
+            title,
+            subtitle: `Período: ${from} a ${to}${warehouseName ? ` | Sucursal: ${warehouseName}` : ''} | Moneda: ${currency}`,
+            companyName: tenant.branding?.tenantName ?? 'Empresa',
+            headerColor: '#10B981',
+            logoUrl: tenant.branding?.logoUrl ?? undefined,
+            captureWidthPx: 1200,
+          },
+        )
+        return
+      }
+
       await exportLegacyPdf()
     } finally {
       setExportingPdf(false)
@@ -1431,28 +1523,75 @@ export function SalesReportsPage() {
             ],
           },
           metaSheet,
-        ])
-      } else if (tab === 'COMPARISON') {
-        const { comparisonItems } = await buildComparisonStructuredReport()
-        exportToXlsx(`reporte-ventas-comparacion-${from}-${to}.xlsx`, [
-          {
-            name: 'Comparacion mensual',
-            rows: comparisonItems.map((item, idx) => {
-              const prev = comparisonItems[idx - 1]
-              const variation = prev && prev.total > 0 ? ((item.total - prev.total) / prev.total) * 100 : null
-              return {
-                Mes: item.month,
-                Ordenes: item.orderCount,
-                Lineas: item.linesCount,
-                Unidades: item.quantity,
-                [`Total (${currency})`]: item.total,
-                'Variacion %': variation,
-              }
-            }),
-          },
-          metaSheet,
-        ])
-      } else {
+         ])
+       } else if (tab === 'COMPARISON') {
+         const { comparisonItems } = await buildComparisonStructuredReport()
+         exportToXlsx(`reporte-ventas-comparacion-${from}-${to}.xlsx`, [
+           {
+             name: 'Comparacion mensual',
+             rows: comparisonItems.map((item, idx) => {
+               const prev = comparisonItems[idx - 1]
+               const variation = prev && prev.total > 0 ? ((item.total - prev.total) / prev.total) * 100 : null
+               return {
+                 Mes: item.month,
+                 Ordenes: item.orderCount,
+                 Lineas: item.linesCount,
+                 Unidades: item.quantity,
+                 [`Total (${currency})`]: item.total,
+                 'Variacion %': variation,
+               }
+             }),
+           },
+           metaSheet,
+         ])
+       } else if (tab === 'BRANCH') {
+         const data = branchMonthlyQuery.data
+         if (!data) {
+           window.alert('No hay datos para exportar')
+           return
+         }
+         const summary = data.summary
+         exportToXlsx(`reporte-ventas-sucursal-${from}-${to}.xlsx`, [
+           {
+             name: 'Resumen',
+             rows: [
+               { 'Facturación total': money(toNumber(summary.totalRevenue)), Moneda: currency },
+               { 'Órdenes': summary.totalOrders },
+               { 'Unidades vendidas': formatInteger(toNumber(summary.totalUnits)) },
+               { 'Clientes': summary.distinctCustomers },
+               { 'Productos distintos': summary.distinctProducts },
+             ],
+           },
+           {
+             name: 'Clientes',
+             rows: data.customers
+               .slice()
+               .sort((a, b) => toNumber(b.amount) - toNumber(a.amount))
+               .map((c) => ({
+                 Cliente: c.customerName,
+                 Ciudad: c.city ?? '-',
+                 Departamento: c.department ?? '-',
+                 Órdenes: c.ordersCount,
+                 Unidades: formatInteger(toNumber(c.quantity)),
+                 [`Total (${currency})`]: money(toNumber(c.amount)),
+               })),
+           },
+           {
+             name: 'Productos',
+             rows: data.products
+               .slice()
+               .sort((a, b) => toNumber(b.amount) - toNumber(a.amount))
+               .map((p) => ({
+                 SKU: p.sku ?? '-',
+                 Producto: p.productName,
+                 Presentación: p.presentationName,
+                 Unidades: formatInteger(toNumber(p.quantity)),
+                 [`Total (${currency})`]: money(toNumber(p.amount)),
+               })),
+           },
+           metaSheet,
+         ])
+       } else {
         window.alert('La exportación estructurada a Excel ya está disponible para todas las pestañas de ventas.')
         return
       }
@@ -1474,6 +1613,12 @@ export function SalesReportsPage() {
     queryKey: ['reports', 'sales', 'monthlyDetails', { from, to, status, warehouseId, locationId }],
     queryFn: () => fetchSalesMonthlyDetails(auth.accessToken!, { from, to, take: 5000, status, warehouseId: warehouseId || undefined, locationId: locationId || undefined }),
     enabled: !!auth.accessToken && tab === 'MONTH',
+  })
+
+  const branchMonthlyQuery = useQuery({
+    queryKey: ['reports', 'sales', 'branchMonthly', { from, to, status, warehouseId, locationId }],
+    queryFn: () => fetchSalesBranchMonthlySummary(auth.accessToken!, { from, to, take: 5000, status, warehouseId: warehouseId || undefined, locationId: locationId || undefined }),
+    enabled: !!auth.accessToken && tab === 'BRANCH',
   })
 
   const byCustomerQuery = useQuery({
@@ -1567,6 +1712,13 @@ export function SalesReportsPage() {
         blob = await pdfBlobFromReactNode(
           <SalesComparisonDocument title={title} from={from} to={to} currency={currency} statusLabel={statusLabel(status)} items={comparisonItems} />,
           { title, subtitle: `Período: ${from} a ${to} | Moneda: ${currency}`, companyName: tenant.branding?.tenantName ?? 'Empresa', headerColor: '#10B981', logoUrl: tenant.branding?.logoUrl ?? undefined, captureWidthPx: 1200 },
+        )
+      } else if (tab === 'BRANCH') {
+        const data = branchMonthlyQuery.data
+        if (!data) throw new Error('No hay datos para enviar')
+        blob = await pdfBlobFromReactNode(
+          <SalesBranchDocument title={title} from={from} to={to} currency={currency} statusLabel={statusLabel(status)} warehouseName={warehouseName} summary={data.summary} customers={data.customers} products={data.products} />,
+          { title, subtitle: `Período: ${from} a ${to}${warehouseName ? ` | Sucursal: ${warehouseName}` : ''} | Moneda: ${currency}`, companyName: tenant.branding?.tenantName ?? 'Empresa', headerColor: '#10B981', logoUrl: tenant.branding?.logoUrl ?? undefined, captureWidthPx: 1200 },
         )
       } else {
         blob = await pdfBlobFromElement(reportRef.current, { title })
@@ -1667,6 +1819,9 @@ export function SalesReportsPage() {
               <Button size="sm" variant={tab === 'MARGINS' ? 'primary' : 'outline'} onClick={() => setTab('MARGINS')}>
                 💹 Márgenes
               </Button>
+              <Button size="sm" variant={tab === 'BRANCH' ? 'primary' : 'outline'} onClick={() => setTab('BRANCH')}>
+                🏪 Sucursal
+              </Button>
             </div>
             
             {/* Acciones - botones ghost */}
@@ -1730,7 +1885,7 @@ export function SalesReportsPage() {
                 onClick={() => {
                   const now = new Date()
                   setFrom(toIsoDate(startOfMonth(now)))
-                  setTo(toIsoDate(startOfNextMonth(now)))
+                   setTo(toIsoDate(endOfMonth(now)))
                 }}
               >
                 Reset mes
@@ -2757,6 +2912,136 @@ export function SalesReportsPage() {
                         ]}
                         onRowClick={(r) => openDrillDown('product', r.productId, `Órdenes de ${r.name}`)}
                       />
+                    </div>
+                  </>
+                )
+              })()}
+            </ReportSection>
+          )}
+
+          {tab === 'BRANCH' && (
+            <ReportSection
+              title="🏪 Reporte Mensual de Sucursal"
+              subtitle="Resumen de ventas por sucursal con desglose de clientes y productos"
+              icon="🏪"
+            >
+              {branchMonthlyQuery.isLoading && <Loading />}
+              {branchMonthlyQuery.isError && <ErrorState message={(branchMonthlyQuery.error as any)?.message ?? 'Error cargando reporte'} />}
+              {!branchMonthlyQuery.isLoading && !branchMonthlyQuery.isError && branchMonthlyQuery.data && (() => {
+                const { summary, customers, products } = branchMonthlyQuery.data
+                return (
+                  <>
+                    <div className="mb-6 grid grid-cols-5 gap-4">
+                      <KPICard icon="💰" label="Facturación total" value={`${money(toNumber(summary?.totalRevenue))} ${currency}`} color="success" subtitle={currency} />
+                      <KPICard icon="🧾" label="Órdenes" value={summary?.totalOrders ?? 0} color="primary" subtitle="Total procesadas" />
+                      <KPICard icon="📦" label="Unidades vendidas" value={formatInteger(toNumber(summary?.totalUnits))} color="info" />
+                      <KPICard icon="👥" label="Clientes" value={summary?.distinctCustomers ?? 0} color="warning" />
+                      <KPICard icon="🧪" label="Productos distintos" value={summary?.distinctProducts ?? 0} color="info" />
+                    </div>
+
+                    <div className="mb-8 grid grid-cols-[560px_minmax(0,1fr)] gap-6">
+                      <div className="rounded-2xl border border-slate-200 bg-white px-4 py-5">
+                        <div className="mb-4 text-sm font-semibold uppercase tracking-wider text-slate-600">Top clientes</div>
+                        {customers.length > 0 ? (
+                          (() => {
+                            const chartItems = customers.slice(0, 10).map((item) => ({
+                              name: item.customerName.length > 18 ? `${item.customerName.slice(0, 18)}…` : item.customerName,
+                              amount: toNumber(item.amount),
+                              ordersCount: item.ordersCount,
+                            }))
+                            return (
+                              <>
+                                <div className="flex justify-center">
+                                  <BarChart width={520} height={320} data={chartItems} margin={{ top: 10, right: 20, left: 10, bottom: 70 }}>
+                                    <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" />
+                                    <XAxis dataKey="name" angle={-35} textAnchor="end" interval={0} height={80} tick={{ fontSize: 11, fill: '#475569' }} />
+                                    <YAxis yAxisId="left" tick={{ fontSize: 11, fill: '#475569' }} />
+                                    <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11, fill: '#475569' }} />
+                                    <Tooltip {...chartTooltipStyle} formatter={(v: any, name: any) => [name === 'amount' ? `${money(Number(v ?? 0))} ${currency}` : Number(v ?? 0), name === 'amount' ? 'Facturado' : 'Órdenes']} />
+                                    <Bar yAxisId="left" dataKey="amount" name="Facturado" radius={[6, 6, 0, 0]} isAnimationActive={false}>
+                                      {chartItems.map((_, idx) => (
+                                        <Cell key={idx} fill={getChartColor(idx, 'rainbow')} />
+                                      ))}
+                                    </Bar>
+                                    <Bar yAxisId="right" dataKey="ordersCount" name="Órdenes" fill="#1d4ed8" radius={[6, 6, 0, 0]} isAnimationActive={false} />
+                                  </BarChart>
+                                </div>
+                                <ExportLegend items={[{ label: 'Facturado', color: getChartColor(0, 'rainbow') }, { label: 'Órdenes', color: '#1d4ed8' }]} />
+                              </>
+                            )
+                          })()
+                        ) : (
+                          <EmptyState message="No hay clientes para mostrar." />
+                        )}
+                      </div>
+
+                      <div className="rounded-2xl border border-slate-200 bg-white px-4 py-5">
+                        <div className="mb-4 text-sm font-semibold uppercase tracking-wider text-slate-600">Ranking de clientes</div>
+                        {customers.length === 0 ? (
+                          <EmptyState message="No hay clientes para mostrar." />
+                        ) : (
+                          <table className="w-full table-fixed border-collapse text-sm">
+                            <thead>
+                              <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wider text-slate-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400">
+                                <th className="px-3 py-2">Cliente</th>
+                                <th className="px-3 py-2">Ciudad</th>
+                                <th className="px-3 py-2">Departamento</th>
+                                <th className="px-3 py-2 text-right">Órdenes</th>
+                                <th className="px-3 py-2 text-right">Unidades</th>
+                                <th className="px-3 py-2 text-right">Total</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {customers
+                                .slice()
+                                .sort((a, b) => toNumber(b.amount) - toNumber(a.amount))
+                                .map((item) => (
+                                  <tr key={item.customerId} className="border-b border-slate-100 dark:border-slate-700 align-top">
+                                    <td className="px-3 py-3 font-medium">{item.customerName}</td>
+                                    <td className="px-3 py-3">{item.city ?? '-'}</td>
+                                    <td className="px-3 py-3">{item.department ?? '-'}</td>
+                                    <td className="px-3 py-3 text-right tabular-nums">{formatInteger(item.ordersCount)}</td>
+                                    <td className="px-3 py-3 text-right tabular-nums">{formatInteger(toNumber(item.quantity))}</td>
+                                    <td className="px-3 py-3 text-right font-semibold text-emerald-700 tabular-nums">{money(toNumber(item.amount))} {currency}</td>
+                                  </tr>
+                                ))}
+                            </tbody>
+                          </table>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900 px-4 py-5">
+                      <div className="mb-4 text-sm font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-400">Productos y presentaciones vendidos</div>
+                      {products.length === 0 ? (
+                        <EmptyState message="No hay productos para mostrar." />
+                      ) : (
+                        <table className="w-full table-fixed border-collapse text-sm">
+                          <thead>
+                            <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wider text-slate-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400">
+                              <th className="px-3 py-2">SKU</th>
+                              <th className="px-3 py-2">Producto</th>
+                              <th className="px-3 py-2">Presentación</th>
+                              <th className="px-3 py-2 text-right">Unidades</th>
+                              <th className="px-3 py-2 text-right">Total</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {products
+                              .slice()
+                              .sort((a, b) => toNumber(b.amount) - toNumber(a.amount))
+                              .map((item) => (
+                                <tr key={`${item.productId}-${item.presentationId ?? 'unidad'}`} className="border-b border-slate-100 dark:border-slate-700 align-top">
+                                  <td className="px-3 py-3 font-mono text-xs">{item.sku ?? '-'}</td>
+                                  <td className="px-3 py-3">{item.productName}</td>
+                                  <td className="px-3 py-3">{item.presentationName}</td>
+                                  <td className="px-3 py-3 text-right tabular-nums">{formatInteger(toNumber(item.quantity))}</td>
+                                  <td className="px-3 py-3 text-right font-semibold text-emerald-700 tabular-nums">{money(toNumber(item.amount))} {currency}</td>
+                                </tr>
+                              ))}
+                          </tbody>
+                        </table>
+                      )}
                     </div>
                   </>
                 )

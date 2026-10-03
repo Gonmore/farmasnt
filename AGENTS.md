@@ -99,7 +99,7 @@ bash deploy.sh
 - Formateo numérico con `thousandSeparator` por tenant
 - Orden alfabético por nombre en catálogo e inventario
 - Formato `Warehouse:Location` (código sin prefijo `SUC-` + ubicación) en origen/destino
-- Fechas: `from` inclusivo, `to` exclusivo (para reportar un mes completo usar primer día del mes siguiente)
+- Fechas: `from` inclusivo (00:00:00), `to` inclusivo (23:59:59). El frontend envía las fechas con componente de tiempo: `from` con `T00:00:00.000` y `to` con `T23:59:59.999` usando las funciones `toApiFrom()` y `toApiTo()`. El mes por defecto usa el primer día del mes como `from` y el último día del mes como `to`.
 
 ## Reglas de negocio críticas
 1. **Multi-tenant**: todas las queries filtran por `tenantId`

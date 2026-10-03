@@ -122,6 +122,34 @@ type SalesMonthlyDetailRow = {
   warehouseName: string | null
 }
 
+type SalesBranchSummaryRow = {
+  totalRevenue: string | null
+  totalOrders: bigint
+  totalUnits: string | null
+  distinctCustomers: bigint
+  distinctProducts: bigint
+}
+
+type SalesBranchCustomerRow = {
+  customerId: string
+  customerName: string
+  city: string | null
+  department: string | null
+  ordersCount: bigint
+  quantity: string | null
+  amount: string | null
+}
+
+type SalesBranchProductRow = {
+  productId: string
+  sku: string | null
+  productName: string
+  presentationId: string | null
+  presentationName: string | null
+  quantity: string | null
+  amount: string | null
+}
+
 export async function registerSalesReportRoutes(app: FastifyInstance): Promise<void> {
   const db = prisma()
   const mailer = getMailer()
@@ -879,6 +907,191 @@ export async function registerSalesReportRoutes(app: FastifyInstance): Promise<v
       }))
 
       return reply.send({ items })
+    },
+  )
+
+  app.get(
+    '/api/v1/reports/sales/branch-monthly-summary',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'SALES'), requirePermission(Permissions.ReportSalesRead)],
+    },
+    async (request, reply) => {
+      const parsed = salesSummaryQuerySchema.safeParse(request.query)
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
+
+      const tenantId = request.auth!.tenantId
+      const { from, to, status, warehouseId, locationId } = parsed.data
+
+      const summaryRows = await db.$queryRaw<SalesBranchSummaryRow[]>`
+        SELECT
+          sum(sol.quantity * sol."unitPrice")::text as "totalRevenue",
+          count(distinct so.id) as "totalOrders",
+          sum(sol.quantity)::text as "totalUnits",
+          count(distinct so."customerId") as "distinctCustomers",
+          count(distinct sol."productId") as "distinctProducts"
+        FROM "SalesOrder" so
+        JOIN "SalesOrderLine" sol
+          ON sol."salesOrderId" = so.id
+          AND sol."tenantId" = so."tenantId"
+        WHERE so."tenantId" = ${tenantId}
+          AND (${status ?? null}::text IS NULL OR so.status = ${status ?? null}::"SalesOrderStatus")
+          AND (${from ?? null}::timestamptz IS NULL OR so."createdAt" >= ${from ?? null})
+          AND (${to ?? null}::timestamptz IS NULL OR so."createdAt" < ${to ?? null})
+          AND (${warehouseId ?? null}::text IS NULL OR EXISTS (
+            SELECT 1 FROM "StockMovement" sm
+            JOIN "Location" l ON l.id = sm."fromLocationId"
+            WHERE sm."tenantId" = so."tenantId"
+              AND sm."referenceType" = 'SALES_ORDER'
+              AND sm."referenceId" = so."number"
+              AND l."warehouseId" = ${warehouseId ?? null}
+          ))
+          AND (${locationId ?? null}::text IS NULL OR EXISTS (
+            SELECT 1 FROM "StockMovement" sm2
+            WHERE sm2."tenantId" = so."tenantId"
+              AND sm2."referenceType" = 'SALES_ORDER'
+              AND sm2."referenceId" = so."number"
+              AND sm2."fromLocationId" = ${locationId ?? null}
+          ))
+      `
+
+      const customerRows = await db.$queryRaw<SalesBranchCustomerRow[]>`
+        SELECT
+          c.id as "customerId",
+          c.name as "customerName",
+          c.city as "city",
+          c."department" as "department",
+          count(distinct so.id) as "ordersCount",
+          sum(CASE WHEN ${warehouseId ?? null}::text IS NULL AND ${locationId ?? null}::text IS NULL THEN sol.quantity ELSE COALESCE(loc_match."matchedQty", 0) END)::text as "quantity",
+          sum(CASE WHEN ${warehouseId ?? null}::text IS NULL AND ${locationId ?? null}::text IS NULL THEN sol.quantity * sol."unitPrice" ELSE COALESCE(loc_match."matchedQty", 0) * sol."unitPrice" END)::text as "amount"
+        FROM "SalesOrder" so
+        JOIN "Customer" c
+          ON c.id = so."customerId"
+          AND c."tenantId" = so."tenantId"
+        JOIN "SalesOrderLine" sol
+          ON sol."salesOrderId" = so.id
+          AND sol."tenantId" = so."tenantId"
+        LEFT JOIN LATERAL (
+          SELECT SUM(sm.quantity) as "matchedQty"
+          FROM "StockMovement" sm
+          JOIN "Location" l ON l.id = sm."fromLocationId"
+          WHERE sm."tenantId" = so."tenantId"
+            AND sm."referenceType" = 'SALES_ORDER'
+            AND sm."referenceId" = so."number"
+            AND sm."productId" = sol."productId"
+            AND (${warehouseId ?? null}::text IS NULL OR l."warehouseId" = ${warehouseId ?? null})
+            AND (${locationId ?? null}::text IS NULL OR sm."fromLocationId" = ${locationId ?? null})
+        ) loc_match ON true
+        WHERE so."tenantId" = ${tenantId}
+          AND (${status ?? null}::text IS NULL OR so.status = ${status ?? null}::"SalesOrderStatus")
+          AND (${from ?? null}::timestamptz IS NULL OR so."createdAt" >= ${from ?? null})
+          AND (${to ?? null}::timestamptz IS NULL OR so."createdAt" < ${to ?? null})
+          AND (${warehouseId ?? null}::text IS NULL OR EXISTS (
+            SELECT 1 FROM "StockMovement" sm
+            JOIN "Location" l ON l.id = sm."fromLocationId"
+            WHERE sm."tenantId" = so."tenantId"
+              AND sm."referenceType" = 'SALES_ORDER'
+              AND sm."referenceId" = so."number"
+              AND l."warehouseId" = ${warehouseId ?? null}
+          ))
+          AND (${locationId ?? null}::text IS NULL OR EXISTS (
+            SELECT 1 FROM "StockMovement" sm2
+            WHERE sm2."tenantId" = so."tenantId"
+              AND sm2."referenceType" = 'SALES_ORDER'
+              AND sm2."referenceId" = so."number"
+              AND sm2."fromLocationId" = ${locationId ?? null}
+          ))
+        GROUP BY c.id, c.name, c.city, c."department"
+        ORDER BY sum(sol.quantity * sol."unitPrice") DESC NULLS LAST
+      `
+
+      const productRows = await db.$queryRaw<SalesBranchProductRow[]>`
+        SELECT
+          p.id as "productId",
+          p.sku as "sku",
+          p.name as "productName",
+          pp.id as "presentationId",
+          COALESCE(pp.name, 'Unidad') as "presentationName",
+          sum(CASE WHEN ${warehouseId ?? null}::text IS NULL AND ${locationId ?? null}::text IS NULL THEN sol.quantity ELSE COALESCE(loc_match."matchedQty", 0) END)::text as "quantity",
+          sum(CASE WHEN ${warehouseId ?? null}::text IS NULL AND ${locationId ?? null}::text IS NULL THEN sol.quantity * sol."unitPrice" ELSE COALESCE(loc_match."matchedQty", 0) * sol."unitPrice" END)::text as "amount"
+        FROM "SalesOrder" so
+        JOIN "SalesOrderLine" sol
+          ON sol."salesOrderId" = so.id
+          AND sol."tenantId" = so."tenantId"
+        JOIN "Product" p
+          ON p.id = sol."productId"
+          AND p."tenantId" = sol."tenantId"
+        LEFT JOIN "ProductPresentation" pp
+          ON pp.id = sol."presentationId"
+          AND pp."tenantId" = sol."tenantId"
+        LEFT JOIN LATERAL (
+          SELECT SUM(sm.quantity) as "matchedQty"
+          FROM "StockMovement" sm
+          JOIN "Location" l ON l.id = sm."fromLocationId"
+          WHERE sm."tenantId" = so."tenantId"
+            AND sm."referenceType" = 'SALES_ORDER'
+            AND sm."referenceId" = so."number"
+            AND sm."productId" = sol."productId"
+            AND (${warehouseId ?? null}::text IS NULL OR l."warehouseId" = ${warehouseId ?? null})
+            AND (${locationId ?? null}::text IS NULL OR sm."fromLocationId" = ${locationId ?? null})
+        ) loc_match ON true
+        WHERE so."tenantId" = ${tenantId}
+          AND (${status ?? null}::text IS NULL OR so.status = ${status ?? null}::"SalesOrderStatus")
+          AND (${from ?? null}::timestamptz IS NULL OR so."createdAt" >= ${from ?? null})
+          AND (${to ?? null}::timestamptz IS NULL OR so."createdAt" < ${to ?? null})
+          AND (${warehouseId ?? null}::text IS NULL OR EXISTS (
+            SELECT 1 FROM "StockMovement" sm
+            JOIN "Location" l ON l.id = sm."fromLocationId"
+            WHERE sm."tenantId" = so."tenantId"
+              AND sm."referenceType" = 'SALES_ORDER'
+              AND sm."referenceId" = so."number"
+              AND l."warehouseId" = ${warehouseId ?? null}
+          ))
+          AND (${locationId ?? null}::text IS NULL OR EXISTS (
+            SELECT 1 FROM "StockMovement" sm2
+            WHERE sm2."tenantId" = so."tenantId"
+              AND sm2."referenceType" = 'SALES_ORDER'
+              AND sm2."referenceId" = so."number"
+              AND sm2."fromLocationId" = ${locationId ?? null}
+          ))
+        GROUP BY p.id, p.sku, p.name, pp.id, COALESCE(pp.name, 'Unidad')
+        ORDER BY sum(sol.quantity * sol."unitPrice") DESC NULLS LAST
+      `
+
+      const s = summaryRows[0] ?? {
+        totalRevenue: null,
+        totalOrders: 0n,
+        totalUnits: null,
+        distinctCustomers: 0n,
+        distinctProducts: 0n,
+      }
+
+      return reply.send({
+        summary: {
+          totalRevenue: s.totalRevenue ?? '0',
+          totalOrders: Number(s.totalOrders),
+          totalUnits: s.totalUnits ?? '0',
+          distinctCustomers: Number(s.distinctCustomers),
+          distinctProducts: Number(s.distinctProducts),
+        },
+        customers: customerRows.map((r) => ({
+          customerId: r.customerId,
+          customerName: r.customerName,
+          city: r.city,
+          department: r.department,
+          ordersCount: Number(r.ordersCount),
+          quantity: r.quantity ?? '0',
+          amount: r.amount ?? '0',
+        })),
+        products: productRows.map((r) => ({
+          productId: r.productId,
+          sku: r.sku ?? null,
+          productName: r.productName,
+          presentationId: r.presentationId ?? null,
+          presentationName: r.presentationName ?? 'Unidad',
+          quantity: r.quantity ?? '0',
+          amount: r.amount ?? '0',
+        })),
+      })
     },
   )
 

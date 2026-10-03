@@ -144,7 +144,7 @@ Códigos usados por los guards:
   - `GET /api/v1/reports/stock/provider-activity` — actividad de warehouses tipo `PROVIDER`: lotes creados, traspasos enviados (count + qty), ajustes (count + qty out).
   - `GET /api/v1/reports/stock/sales-branch-activity` — actividad de warehouses tipo `SALES`: lotes recibidos, solicitudes aceptadas/rechazadas/pendientes, cotizaciones creadas, órdenes creadas, monto de ventas.
 - Ambas filtran por `WarehouseType` (`PROVIDER` / `SALES`) y aceptan query params `from` / `to` (date-time opcional).
-- **Filtro de fechas**: `from` es inclusivo (`>=`), `to` es exclusivo (`<`). Para reportar un mes completo, usar `from=YYYY-MM-DD` (primer día) y `to=YYYY-MM-DD` (primer día del mes siguiente). Ej: `from=2026-07-01&to=2026-08-01` reporta todo julio.
+- **Filtro de fechas**: `from` es inclusivo (`>=`), `to` es exclusivo (`<`). Para reportar un mes completo usando solo fecha (sin componente de tiempo), usar `from=YYYY-MM-DD` (primer día) y `to=YYYY-MM-DD` (primer día del mes siguiente). Ej: `from=2026-07-01&to=2026-08-01` reporta todo julio. Si se requiere incluir el último día con un solo filtro de fecha, el frontend envía `from` como `YYYY-MM-DDT00:00:00.000` y `to` como `YYYY-MM-DDT23:59:59.999`, logrando rango inclusivo de día completo.
 - Si `from` o `to` no se envían, no se aplica filtro de fecha (todos los registros).
 - La UI (`StockReportsPage.tsx`) agrega pestañas "Proveedor" y "Ventas Suc." con KPIs y tablas, usando queries react-query.
 
@@ -3057,8 +3057,10 @@ Requiere: módulo `SALES` + permiso `sales:order:read`.
 
 Query
 - `from` (date-time, opcional)
-- `to` (date-time, opcional)
+- `to` (date-time, exclusivo)
 - `status` (DRAFT|CONFIRMED|FULFILLED|CANCELLED, opcional)
+- `warehouseId` (uuid, opcional) — filtra por sucursal. Para usuarios `scope:branch`, el backend fuerza el `warehouseId` al almacén propio del usuario.
+- `locationId` (uuid, opcional)
 
 Response 200
 ```json
@@ -3068,6 +3070,9 @@ Response 200
   ]
 }
 ```
+
+Nota
+- El frontend llena automáticamente todos los días del rango `from`–`to` en el gráfico de evolución, mostrando ceros en días sin ventas.
 
 #### GET /api/v1/reports/sales/top-products
 Requiere: módulo `SALES` + permiso `sales:order:read`.
@@ -3163,6 +3168,35 @@ Response 200
       "warehouseCode": "SUC001",
       "warehouseName": "Sucursal Principal"
     }
+  ]
+}
+```
+
+#### GET /api/v1/reports/sales/branch-monthly-summary
+Requiere: módulo `SALES` + permiso `sales:order:read`.
+
+Query
+- `from` (date-time, inclusivo — frontend envía `YYYY-MM-DDT00:00:00.000`)
+- `to` (date-time, exclusivo en backend — frontend envía `YYYY-MM-DDT23:59:59.999` para incluir el día completo)
+- `status` (DRAFT|CONFIRMED|FULFILLED|CANCELLED, opcional)
+- `warehouseId` (UUID, opcional) — filtra por sucursal
+- `locationId` (UUID, opcional)
+
+Response 200
+```json
+{
+  "summary": {
+    "totalRevenue": "125000.00",
+    "totalOrders": 42,
+    "totalUnits": "1200",
+    "distinctCustomers": 18,
+    "distinctProducts": 24
+  },
+  "customers": [
+    { "customerId": "uuid", "customerName": "Farmacia ABC", "city": "La Paz", "department": "La Paz", "ordersCount": 8, "quantity": "150", "amount": "12500.00" }
+  ],
+  "products": [
+    { "productId": "uuid", "sku": "PROD-001", "productName": "Paracetamol 500mg", "presentationId": "uuid", "presentationName": "Caja 30 u.", "quantity": "600", "amount": "3000.00" }
   ]
 }
 ```

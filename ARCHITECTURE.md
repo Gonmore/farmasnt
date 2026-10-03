@@ -1,7 +1,7 @@
 ﻿# Architecture — PharmaFlow Bolivia (farmaSNT)
 
 > Fuente de verdad para la estructura del proyecto y el mapeo frontend ↔ backend.  
-> Última actualización: 07 Sep 2026
+> Última actualización: 02 Oct 2026
 
 ---
 
@@ -266,7 +266,7 @@ frontend/src/
 
 | Frontend | Backend | Archivo backend |
 |---|---|---|
-| `pages/reports/SalesReportsPage.tsx` | `GET /api/v1/reports/sales/summary` | `routes/salesReports.ts:108` |
+| `pages/reports/SalesReportsPage.tsx` | `GET /api/v1/reports/sales/summary` | `routes/salesReports.ts:108` | Chart llena todos los días del rango con ceros; branch-scoped users default a su sucursal propia. |
 | | `GET /api/v1/reports/sales/by-customer` | `routes/salesReports.ts:177` |
 | | `GET /api/v1/reports/sales/by-department` | `routes/salesReports.ts:251` |
 | | `GET /api/v1/reports/sales/monthly-details` | `routes/salesReports.ts:781` |
@@ -275,6 +275,7 @@ frontend/src/
 | | `GET /api/v1/reports/sales/margins` | `routes/salesReports.ts:522` |
 | | `GET /api/v1/reports/sales/top-products` | `routes/salesReports.ts:618` |
 | | `GET /api/v1/reports/sales/top-products-by-presentation` | `routes/salesReports.ts:690` |
+| | `GET /api/v1/reports/sales/branch-monthly-summary` | `routes/salesReports.ts:~880` | Nuevo tab BRANCH en SalesReportsPage: KPIs + tabla clientes + tabla productos/presentaciones. |
 | | `POST /api/v1/reports/sales/email` | `routes/salesReports.ts:758` |
 | | `GET /api/v1/reports/sales/schedules` | `routes/reportSchedules.ts:42` |
 | | `POST /api/v1/reports/sales/schedules` | `routes/reportSchedules.ts:56` |
@@ -304,7 +305,7 @@ frontend/src/
 | | `GET /api/v1/reports/stock/sales-branch-activity` | `routes/stockReports.ts:1738` |
 | `pages/DashboardPage.tsx` | `GET /api/v1/dashboards/executive-summary` | `routes/dashboards.ts:10` |
 
-> **Nota de filtrado de fechas**: los reportes que aceptan `from` / `to` usan semántica de rango hábil: `from` es inclusive (`>=`), `to` es exclusivo (`<`). Para reportar un mes completo (ej. julio), enviar `from=2026-07-01` y `to=2026-08-01`. Si `from`/`to` son omáltos (null), no se filtra por fecha.
+> **Nota de filtrado de fechas**: los reportes que aceptan `from` / `to` usan semántica de rango hábil: `from` es inclusive (`>=`), `to` es exclusivo (`<`). El frontend envía `from` con componente de tiempo `T00:00:00.000` y `to` con `T23:59:59.999`, de modo que al seleccionar `to=2026-07-31` se incluyen todas las ventas del 31 de julio. El mes por defecto usa el primer día del mes como `from` y el último día del mes como `to`. Si `from`/`to` son omáltos (null), no se filtra por fecha.
 | `pages/stock/InventoryPage.tsx` (ver stock) | `GET /api/v1/reports/stock/balances-expanded?warehouseId=...` | `routes/stockReports.ts:231` |
 
 ### 3.6 Auditoría
@@ -381,6 +382,8 @@ frontend/src/
 9. **Over-fulfillment permitido**: al atender una solicitud de movimiento (`POST /api/v1/stock/movement-requests/bulk-fulfill`), el backend **permite** enviar una cantidad mayor a la solicitada. El único límite es el stock disponible en el almacén origen. El `remainingQuantity` del ítem puede quedar negativo y la solicitud se marca `SENT` normalmente.
 10. **Multi-sucursal en la misma ciudad**: cuando un tenant tiene más de un warehouse en la misma ciudad (Febsa: `SUC-LPZ` SALES + `SUC-NACIONAL` PROVIDER, ambas en `LA PAZ`), el sistema **no debe filtrar por `Warehouse.city` en operaciones**. El discriminante es `warehouseId`. `Notification.warehouseId` (nuevo en v2.3.0) se usa en el filtrado de la campana para evitar que un usuario de SUC-LPZ SALES vea notificaciones del SUC-NACIONAL PROVIDER. Las notificaciones legacy sin `warehouseId` poblado se siguen filtrando por `city` (compatibilidad).
 11. **Unicidad de clientes (doble criterio, v2.4.1)**: un cliente es duplicado si comparte (NIT + ciudad) **o** (nombre + ciudad) con otro cliente del mismo tenant. Las funciones `findDuplicateCustomerByNit` y `findDuplicateCustomerByName` filtran por ciudad. El endpoint `GET /api/v1/customers?conflicts=true` detecta conflictos usando dos agrupaciones independientes: `(normalizedNIT, normalizedCity)` y `(normalizedName, normalizedCity)`; un cliente está en conflicto si aparece en un grupo con >1 miembro en **cualquiera** de las dos agrupaciones. Cada duplicado bloquea la creación/edición con `409 Conflict` y un mensaje específico.
+12. **Reportes de ventas — autonomía de sucursal y visualización completa**: usuarios con `scope:branch` (BRANCH_ADMIN, BRANCH_PROVIDER) ven **solo su propia sucursal** en reportes de ventas (`GET /api/v1/reports/sales/*`); el selector de sucursal se deshabilita y el `warehouseId` se fuerza al almacén propio del usuario. Los tenant admins pueden seleccionar cualquier sucursal o "Todas las sucursales". El gráfico de evolución diaria (`summary`) llena todos los días del rango seleccionado, mostrando ceros en días sin ventas.
+13. **Reporte mensual de sucursal**: el tab `BRANCH` en `SalesReportsPage` muestra KPIs consolidados (facturación, órdenes, unidades vendidas, clientes, productos distintos) más tablas desglosadas de clientes y productos/presentaciones. El reporte se exporta a PDF (SalesBranchDocument) y Excel, integrando `warehouseName` en el header.
 
 ---
 

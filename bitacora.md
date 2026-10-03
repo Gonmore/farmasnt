@@ -1,8 +1,47 @@
 # Bitácora de desarrollo — PharmaFlow Bolivia (farmaSNT)
 
-> Última actualización: 29 Sep 2026
+> Última actualización: 02 Oct 2026
 
 > Este documento suma (a alto nivel) decisiones, hitos y cambios relevantes que se fueron incorporando al repositorio para llegar al estado actual del MVP.
+
+## **[02 Oct 2026] Mejoras en reportes de ventas: gráfico con rango completo, autonomía de sucursal y exportaciones**
+
+### Contexto
+- El reporte de ventas (MONTH) no mostraba los días sin ventas en el gráfico, y los administradores de sucursal veían por defecto "Todas las sucursales" en lugar de su propia sucursal.
+- Las exportaciones PDF/Excel no incluían la sucursal seleccionada en el contenido del documento.
+
+### Cambios
+
+#### Frontend — Gráfico con rango completo
+- **`frontend/src/pages/reports/SalesReportsPage.tsx`**:
+  - Agregada función `fillDateRange(from, to, items)` que genera todos los días en el rango `from`–`to`, llenando los días sin ventas con valores cero.
+  - El gráfico de evolución diaria (`AreaChart`) y los KPIs ahora usan `filledItems` (datos con días completos), no solo los días con ventas del backend.
+  - Agregado `key` prop al contenedor del gráfico para forzar remount de recharts cuando los datos cambian.
+  - Agregado `isAnimationActive={false}` a ambos `Area` components para evitar frames de animación obsoletos.
+
+#### Frontend — Autonomía de sucursal en reportes de ventas
+- **`frontend/src/pages/reports/SalesReportsPage.tsx`**:
+  - Agregadas variables `isBranchScoped` y `ownWarehouseId` desde `usePermissions()`.
+  - `useEffect` que fuerza `warehouseId` al almacén propio del usuario para usuarios con `scope:branch` al montar.
+  - El selector de sucursal se deshabilita para usuarios `scope:branch` (no pueden cambiarlo).
+  - El `title` del reporte ahora incluye el nombre de la sucursal para tenant admins cuando se selecciona una sucursal específica.
+
+#### Frontend — Exportaciones incluyen sucursal
+- **`frontend/src/components/reports/SalesMonthDocument.tsx`**:
+  - Nueva prop `warehouseName?: string | null`.
+  - Muestra `· Sucursal: {warehouseName}` en el header del documento PDF.
+- **`frontend/src/pages/reports/SalesReportsPage.tsx`**:
+  - PDF export (`handleExportPdf`): pasa `warehouseName` a `SalesMonthDocument` y la incluye en el `subtitle`.
+  - Excel export (`handleExportExcel`): agrega `Sucursal` al `metaSheet`.
+  - Email export: pasa `warehouseName` y la incluye en el `subtitle`.
+
+### Operación
+- `npx tsc --noEmit` limpio en frontend.
+- `npm run build` OK en frontend.
+- `npx tsc --noEmit` limpio en backend.
+- Sin cambios de backend ni migraciones Prisma.
+
+---
 
 ## **[25 Sep 2026] Criterio de unicidad de clientes (doble condición) + código único del cliente (customerCode)**
 
@@ -2351,3 +2390,85 @@ Tenant Admin (Clientes)
 - TypeScript check OK en frontend.
 - Build OK en frontend.
 - Frontend container reiniciado.
+
+---
+
+## **[02 Oct 2026] Nuevo reporte: Reporte Mensual de Sucursal (tab BRANCH)**
+
+### Contexto
+- Se necesitaba un reporte consolidado por sucursal para presentar a gerencia, que muestre: total de facturación, clientes con sus órdenes y montos, productos vendidos con sus presentaciones, unidades totales vendidas y productos distintos.
+
+### Cambios
+
+#### Backend (`backend/src/adapters/http/routes/salesReports.ts`)
+- Nuevo endpoint: `GET /api/v1/reports/sales/branch-monthly-summary`.
+- Query params: `from`, `to`, `status`, `warehouseId`, `locationId` (mismo esquema que reportes existentes; respeta branch-scoping vía `resolveBranchWarehouseId` y department-scoping vía `branchDepartmentsOf`).
+- Response: `{ summary, customers, products }`:
+  - `summary`: `totalRevenue`, `totalOrders`, `totalUnits`, `distinctCustomers`, `distinctProducts`.
+  - `customers[]`: `customerId`, `customerName`, `city`, `department`, `ordersCount`, `quantity`, `amount`.
+  - `products[]`: `productId`, `sku`, `productName`, `presentationId`, `presentationName`, `quantity`, `amount`.
+- Reutiliza el patrón `loc_match` (lateral join) de los reportes existentes para el filtrado de `warehouseId`/`locationId`.
+
+#### Frontend (`frontend/src/pages/reports/SalesReportsPage.tsx`)
+- Nuevo tab `BRANCH` en `ReportTab` type.
+- Función `fetchSalesBranchMonthlySummary()` que llama al nuevo endpoint.
+- Query `branchMonthlyQuery` habilitada solo cuando `tab === 'BRANCH'`.
+- Título del reporte: `Reporte mensual sucursal - {warehouseName} ({period})` o `Reporte mensual general ({period})`.
+- Render del tab `BRANCH`: 5 KPI cards (facturación, órdenes, unidades, clientes, productos distintos), gráfico de barras de top clientes, tabla de ranking de clientes (con órdenes, unidades, total), tabla de productos/presentaciones (con SKU, producto, presentación, unidades, total).
+- Branch-scoped: el `useEffect` fuerza `warehouseId` al almacén propio del usuario; `<Select>` sucursal disabled.
+
+#### Frontend (`frontend/src/components/reports/SalesBranchDocument.tsx`)
+- Nuevo componente de documento para PDF: KPIs grid + gráfico de barras top clientes + tabla clientes + tabla productos/presentaciones.
+- Props: `{ title, from, to, currency, statusLabel, warehouseName, summary, customers, products }`.
+
+#### Frontend (`frontend/src/components/reports/index.ts`)
+- Export del nuevo `SalesBranchDocument` y sus tipos (`SalesBranchCustomerItem`, `SalesBranchProductItem`, `SalesBranchSummary`).
+- Export de `ExportLegend` (anteriormente no estaba en el barrel).
+
+#### Exportaciones
+- PDF: `handleExportPdf` con caso `tab === 'BRANCH'` que renderiza `SalesBranchDocument`.
+- Excel: `handleExportExcel` con caso `tab === 'BRANCH'` que genera 3 hojas (Resumen, Clientes, Productos) + hoja Meta.
+- Email: `emailMutation` con caso `tab === 'BRANCH'` que genera el blob de `SalesBranchDocument` y lo envía.
+
+### Operación
+- `npx tsc --noEmit` OK en backend.
+- `npx tsc --noEmit` OK en frontend.
+- `npm run build` OK en frontend.
+- Docker rebuild exitoso.
+
+---
+
+## **[02 Oct 2026] Fix: rango de fechas inclusivo + layout PDF + dark mode**
+
+### Contexto
+- El rango de fechas `to` era exclusivo en el backend (`createdAt < to`), por lo que seleccionar `to: 30/09/2026` excluía todas las ventas del día 30.
+- El reporte mensual de sucursal (tab BRANCH) exportado a PDF tenía un layout de 2-columnas donde la tabla de clientes quedaba muy delgada.
+- Las tablas inline del frontend no tenían clases de dark mode, causando bajo contraste en modo oscuro.
+
+### Cambios
+
+#### Backend — sin cambios
+- El backend mantiene `to` como exclusivo (`<`), pero el frontend ahora envía `to` con `T23:59:59.999`, logrando el efecto de fecha inclusiva.
+
+#### Frontend (`frontend/src/pages/reports/SalesReportsPage.tsx`)
+- Nuevas funciones helper:
+  - `endOfMonth(d: Date)`: devuelve el último día del mes a las 23:59:59.999.
+  - `toApiFrom(dateStr)`: convierte `YYYY-MM-DD` ? `YYYY-MM-DDT00:00:00.000`.
+  - `toApiTo(dateStr)`: convierte `YYYY-MM-DD` ? `YYYY-MM-DDT23:59:59.999`.
+- Default `to` cambiado de `startOfNextMonth` a `endOfMonth`.
+- "Reset mes" usa `endOfMonth` en lugar de `startOfNextMonth`.
+- Todas las funciones `fetch*` pasan `from` y `to` por `toApiFrom`/`toApiTo` antes de enviar al backend.
+- Layout del tab BRANCH: KPIs grid ? gráfico barra top clientes ? tabla ranking clientes ? tabla productos/presentaciones (todo full-width, apilado verticalmente).
+  - Clases `dark:` agregadas a todas las tablas y contenedores del tab BRANCH para soporte de modo oscuro.
+
+### Operación
+- `npx tsc --noEmit` limpio en backend y frontend.
+- `npm run build` OK en frontend.
+- Docker rebuild exitoso (`backend-farmasnt-dev` + `frontend-farmasnt-dev` healthy).
+- Documentación actualizada: `API_REFERENCE.md`, `ARCHITECTURE.md`, `AGENTS.md`, `bitacora.md`.
+
+### Cambios en documentación
+- **`API_REFERENCE.md`**: endpoint `branch-monthly-summary` documenta ahora `from` incluyivo (`T00:00:00`) y `to` con `T23:59:59.999`; nota de filtrado de fechas actualizada.
+- **`ARCHITECTURE.md`**: línea 308 — nota de filtrado de fechas actualizada para reflejar el nuevo comportamiento inclusivo.
+- **`AGENTS.md`**: línea 102 — convención de fechas actualizada (`from` inclusivo 00:00:00, `to` inclusivo 23:59:59, helpers `toApiFrom`/`toApiTo`).
+- **`bitacora.md`**: entrada agregada.
