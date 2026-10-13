@@ -642,10 +642,10 @@ export function SellerCatalogPage() {
         validityDays: Number(validityDays) || 7,
         paymentMode,
         deliveryDays: Number(deliveryDays) || 1,
-        deliveryCity: deliveryMode === 'custom' ? (deliveryCity.trim() || undefined) : undefined,
-        deliveryZone: deliveryMode === 'custom' ? (deliveryZone.trim() || undefined) : undefined,
-        deliveryAddress: deliveryMode === 'custom' ? (deliveryAddress.trim() || undefined) : undefined,
-        deliveryMapsUrl: deliveryMode === 'custom' ? (deliveryMapsUrl.trim() || undefined) : undefined,
+        deliveryCity: deliveryMode === 'custom' ? deliveryCity.trim() : undefined,
+        deliveryZone: deliveryMode === 'custom' ? deliveryZone.trim() : undefined,
+        deliveryAddress: deliveryMode === 'custom' ? deliveryAddress.trim() : undefined,
+        deliveryMapsUrl: deliveryMode === 'custom' ? deliveryMapsUrl.trim() : undefined,
         globalDiscountPct: clampPct(Number(globalDiscountPct)),
         proposalValue: proposalValue.trim() || undefined,
         note: undefined,
@@ -1222,16 +1222,23 @@ export function SellerCatalogPage() {
                   />
                   <span>Usar ubicación del cliente</span>
                 </label>
-                <label className="flex items-center gap-2 cursor-pointer select-none">
-                  <input
-                    type="radio"
-                    name="deliveryMode"
-                    checked={deliveryMode === 'custom'}
-                    onChange={() => setDeliveryMode('custom')}
-                    disabled={modalReadOnly}
-                  />
-                  <span>Elegir otra ubicación</span>
-                </label>
+                 <label className="flex items-center gap-2 cursor-pointer select-none">
+                   <input
+                     type="radio"
+                     name="deliveryMode"
+                     checked={deliveryMode === 'custom'}
+                     onChange={() => {
+                       setDeliveryMode('custom')
+                       setDeliveryCity('')
+                       setDeliveryZone('')
+                       setDeliveryAddress('')
+                       setDeliveryMapsUrl('')
+                       deliveryTouchedRef.current = true
+                     }}
+                     disabled={modalReadOnly}
+                   />
+                   <span>Elegir otra ubicación</span>
+                 </label>
               </div>
             </div>
 

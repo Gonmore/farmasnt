@@ -2708,9 +2708,11 @@ movements: (movementsByRequest.get(r.id) || []).map((m) => ({
           })
         })
 
-        // Auto-apply stock transfers against movement requests by city.
-        // NOTE: Explicit request-fulfillment endpoints handle their own allocation and MUST opt-out.
-        const skipAutoApply = String(input.referenceType ?? '').toUpperCase() === 'REQUEST_BULK_FULFILL'
+        // Only auto-apply transfers that are explicitly linked to a movement request
+        // via referenceType='MOVEMENT_REQUEST'. Manual transfers (referenceType=null)
+        // and explicit fulfillments (REQUEST_FULFILL / REQUEST_BULK_FULFILL) are handled
+        // by their dedicated endpoints, which update remainingQuantity directly.
+        const skipAutoApply = normalizedReferenceType !== 'MOVEMENT_REQUEST'
 
         if (!skipAutoApply && input.type === 'TRANSFER' && result.createdMovement?.toLocationId) {
           const movementQty = Number(result.createdMovement.quantity)
@@ -2721,7 +2723,18 @@ movements: (movementsByRequest.get(r.id) || []).map((m) => ({
             })
 
             const toWhId = toLoc?.warehouseId ?? null
-            if (toWhId) {
+            // Only auto-apply inter-warehouse transfers: stock arriving from a
+            // DIFFERENT warehouse. Same-warehouse transfers (stock moving between
+            // locations within the same warehouse) must NOT reduce request
+            // pending quantities, since no new stock is arriving.
+            const fromWhId = result.createdMovement.fromLocationId
+              ? (await db.location.findFirst({
+                  where: { id: result.createdMovement.fromLocationId, tenantId },
+                  select: { warehouseId: true },
+                }))?.warehouseId ?? null
+              : null
+
+            if (toWhId && fromWhId && toWhId !== fromWhId) {
               let remainingToApply = movementQty
               const openItems = await db.stockMovementRequestItem.findMany({
                 where: {

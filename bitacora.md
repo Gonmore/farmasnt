@@ -4,7 +4,59 @@
 
 > Este documento suma (a alto nivel) decisiones, hitos y cambios relevantes que se fueron incorporando al repositorio para llegar al estado actual del MVP.
 
-## **[02 Oct 2026] Mejoras en reportes de ventas: gráfico con rango completo, autonomía de sucursal y exportaciones**
+## **[13 Oct 2026] Fix: auto-apply incorrecto de transferencias inter-ubicación + corrección de datos en FinSNT (SOL260156)**
+
+### Contexto
+- El auto-receive (`autoApply = true`) en `POST /api/v1/stock/movements` se disparaba para **cualquier** movimiento `TRANSFER` cuyo `referenceType` no fuera `REQUEST_BULK_FULFILL`. Esto incluía transferencias entre ubicaciones del **mismo warehouse** (ej. `INVT ? PRIV` dentro de SUC-CBB) y movimientos manuales/entreSucursal sin vincular a una solicitud de movimiento.
+- Como resultado, una transferencia inter-ubicación (`MS2026-2199`, 1650 unidades de ATOR-10MG) fue **auto-recibida** en FinSNT (tenant `317c5606`), duplicando el saldo de destino y afectando el kardex del lote.
+- Además, 2 solicitudes `SENT` en FinSNT (`SOL260116` y `SOL260122`) tenían `remainingQuantity` negativo por ajustes de bulk-fulfill previos.
+
+### Causa raíz
+- **Condición de skip invertida**: `!== 'REQUEST_BULK_FULFILL'` en lugar de `!== 'MOVEMENT_REQUEST'`. El auto-apply debía dispararse **solo** para movimientos `TRANSFER` con `referenceType: 'MOVEMENT_REQUEST'` (vinculados a una solicitud), no para transferencias manuales ni entre ubicaciones del mismo almacén.
+- **Falta de chequeo de same-warehouse**: no se verificaba si `toWarehouseId !== fromWarehouseId`, por lo que transferencias intra-almacén activaban el auto-receive.
+
+### Cambios
+
+#### Backend (`backend/src/adapters/http/routes/stock.ts`, ~line 2715 y ~2737)
+- **Condición de skip corregida**: `skipAutoApply = normalizedReferenceType !== 'MOVEMENT_REQUEST'` (antes: `String(input.referenceType ?? '').toUpperCase() === 'REQUEST_BULK_FULFILL'`). Ahora el auto-receive del movimiento `IN` hermano solo se dispara para movimientos `TRANSFER` **explícitamente enlazados a una solicitud de movimiento**.
+- **Exclusión de same-warehouse**: agregado guard `!toWhId || !fromWhId || toWhId === fromWhId` antes del auto-apply. Las transferencias entre ubicaciones del mismo warehouse **no** generan movimiento `IN` de recepción automática.
+- **Endpoint `/stock/movement-requests/bulk-fulfill`** (~line 3326): se confirmó que llama a `createStockMovementTx` directamente (sin pasar por el path de auto-apply), por lo que no hay doble-decremento para movimientos con `referenceType: 'MOVEMENT_REQUEST'`.
+
+#### Backend (`backend/src/adapters/http/routes/salesQuotes.ts`, líneas 932 y 1826)
+- Restaurada lógica `remainingQuantity = requestedQuantity` en endpoints POST (creación) y PUT (actualización) de líneas de cotización. Se corrigieron 52 ítems `OPEN` que tenían `remainingQuantity` desincronizado.
+
+#### Frontend (`frontend/src/pages/catalog/SellerCatalogPage.tsx`)
+- `Radio.Group` onChange: limpia campos de entrega (`deliveryCity`, `deliveryAddress`, `deliveryDepartment`), setea `deliveryTouchedRef.current = true` y envía valores `trim()`ados sin `|| undefined`.
+
+#### Frontend (`frontend/src/pages/sales/QuoteDetailPage.tsx`)
+- Envío de `payload.deliveryCity?.trim()` sin coercion `|| undefined`, preservando el valor vacío string para detección de toggle.
+
+#### Frontend (`frontend/src/components/MapSelector.tsx`)
+- Nuevo componente `ResolvedLocationMarker` con estado `resolvedPosition` para mostrar marcador de posición geocodificado.
+
+### Corrección de datos (FinSNT — tenant `317c5606-4481-498e-8091-04b41bbdc81d`)
+- **SOL260156** (ATOR-10MG, itemId `c601c30d-9790-45ab-a6d0-f8e6058bbe19`, productId `fee36f3c`):
+  - Movimiento `MS2026-2199`: `TRANSFER` de 1650 unidades, `referenceType=null`, **misma sucursal** (SUC-CBB: loc `62e0ae90` ? loc `723476e3`). El bug de auto-apply decrementó erróneamente `remainingQuantity` en 1650.
+  - **Corregido en producción** (13 Oct 2026): `UPDATE "StockMovementRequestItem" SET "remainingQuantity" = "remainingQuantity" + 1650 WHERE itemId = 'c601c30d-9790-45ab-a6d0-f8e6058bbe19'` — restaurado de 30380 ? 32030 (coincide con `requestedQuantity`).
+  - Verificado: no existen movimientos `MOVEMENT_REQUEST` o `REQUEST_FULFILL` legítimos para este producto en SUC-CBB, por lo que el decremento de 1650 era 100% del bug.
+- **SOL260116** (`remainingQuantity = -1000`) y **SOL260122** (`remainingQuantity = -5000`):
+  - Solicitudes `SENT` con `remainingQuantity` negativo por bulk-fulfill previo (sobre-fulfillment permitido). No afectadas por este bug. No se corrigieron.
+
+### Otras solicitudes afectadas (pendientes de corrección manual)
+- 4 solicitudes `OPEN` en SUC-CBB con items afectados por transferencias manuales internas (referenceType=null) y BULK_TRANSFER inter-sucursal, creadas entre 2026-09-01 y 2026-10-08:
+  - **SOL260008** (6 items): Medifor 850mg, Losartan 50mg (x3), Cardil 12.5, Cardil 6.25, Imoss 40mg
+  - **SOL260047** (5 items): Atorlip 10mg, Imoss 40mg, Metotrexato 2.5mg, Risperidona 3mg, Acido folico 5mg
+  - **SOL260070** (4 items): Acido folico 5mg, Amlodipino 10mg, Diclofenaco 100mg, Metotrexato 2.5mg
+  - **SOL260150** (4 items): Metotrexato 2.5mg, Imoss 40mg, Diclofenaco 100mg, Amlodipino 10mg
+  - Estas solicitudes requieren revisión manual antes de corregir, ya que algunos items pueden haber tenido decrementos parciales tanto del bug como de fulfillments legítimos.
+
+### Operación
+- `npx tsc --noEmit` limpio en `backend` y `frontend`.
+- `npm run build` OK en `frontend`.
+- Docker build exitoso (`backend-farmasnt-dev` + `frontend-farmasnt-dev` healthy).
+- **Data fix en producción**: ejecutar SQL correccional contra la base de datos en `192.168.10.57` **antes** o **después** de `deploy.sh` (no incluido en deploy automático). Ver script `/tmp/12_fix_balance.sql` (regenerar con parámetros de FinSNT).
+
+
 
 ### Contexto
 - El reporte de ventas (MONTH) no mostraba los días sin ventas en el gráfico, y los administradores de sucursal veían por defecto "Todas las sucursales" en lugar de su propia sucursal.

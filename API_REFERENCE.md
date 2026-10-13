@@ -1,5 +1,12 @@
 ﻿# API Reference — PharmaFlow Bolivia (MVP)
 
+## Versión 2.4.2
+
+Esta versión **corrige el auto-receive de transferencias inter-ubicación** y **restaura `remainingQuantity`** en cotizaciones.
+
+- **Fix auto-apply**: el auto-receive (`autoApply=true` en `POST /api/v1/stock/movements`) ahora solo se dispara para movimientos `TRANSFER` con `referenceType: 'MOVEMENT_REQUEST'` y `toWarehouseId !== fromWarehouseId`. Las transferencias entre ubicaciones del mismo warehouse o movimientos sin vincular a solicitud de movimiento ya no generan movimiento `IN` automático. Ver sección "Auto-receive (auto-apply) de transferencias inter-sucursal" en `POST /api/v1/stock/movements`.
+- **Fix remainingQuantity**: en `POST /api/v1/sales/quotes` (creación) y `PUT /api/v1/sales/quotes/:id` (actualización), `remainingQuantity` se reinicia a `requestedQuantity` al crear/editar líneas. No se persisten valores negativos o desincronizados de ítems previamente atendidos.
+
 ## Versión 2.3.0
 
 Esta versión **discrimina por `warehouseId` (no por ciudad)** en todos los endpoints operativos para soportar múltiples sucursales en la misma ciudad (Febsa: `SUC-LPZ` SALES y `SUC-NACIONAL` PROVIDER, ambas en LA PAZ). Cambios principales:
@@ -1601,7 +1608,12 @@ Notas de reglas
 - `409` si intenta descontar stock de un lote vencido (`batch.expiresAt` < hoy UTC).
 - `referenceType='PRODUCT_SAMPLE'` para salidas de producto de muestra: la nota es obligatoria, y `fromLocationId` debe pertenecer a una ubicación tipo `SAMPLES`.
 
-Nota de uso (operación por “existencias”)
+### Auto-receive (auto-apply) de transferencias inter-sucursal
+- El endpoint `POST /api/v1/stock/movements` acepta query param opcional `?autoApply=true`. Cuando se envía un movimiento `TRANSFER` con `referenceType: 'MOVEMENT_REQUEST'` (vinculado a una solicitud de movimiento), y el almacén origen y destino son distintos, el backend **automáticamente crea** el movimiento `IN` de recepción en el almacén destino.
+- **Restricciones** (desde 13 Oct 2026):
+  - El auto-receive **solo** se dispara para movimientos `TRANSFER` con `referenceType: 'MOVEMENT_REQUEST'`. Cualquier otro `referenceType` (incl. `null`, `MANUAL`, `BULK_TRANSFER`) o transferencias entre ubicaciones del **mismo warehouse** no generan auto-receive.
+  - `toWarehouseId !== fromWarehouseId` es obligatorio para disparar auto-receive.
+- El endpoint `POST /api/v1/stock/movement-requests/bulk-fulfill` llama a `createStockMovementTx` directamente, no al path de auto-apply, evitando doble-decremento.
 - Para mover existencias reales (lote + ubicación), primero listar balances con `GET /api/v1/reports/stock/balances-expanded` (filtrando por `warehouseId`, `productId` o `locationId`).
 - Luego usar `productId`, `batchId` y `locationId` del registro como origen (`fromLocationId`) y definir el destino (`toLocationId`) con `type: "TRANSFER"`.
 

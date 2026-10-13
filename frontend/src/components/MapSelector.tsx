@@ -74,6 +74,15 @@ function LocationMarker({ onLocationSelect }: { onLocationSelect: (mapsUrl: stri
   )
 }
 
+function ResolvedLocationMarker({ position }: { position: L.LatLng | null }) {
+  if (!position) return null
+  return (
+    <Marker position={position}>
+      <Popup>Ubicación ingresada</Popup>
+    </Marker>
+  )
+}
+
 const MapSelector: React.FC<MapSelectorProps> = ({
   countryCode,
   city,
@@ -85,6 +94,7 @@ const MapSelector: React.FC<MapSelectorProps> = ({
 }) => {
   const [mapCenter, setMapCenter] = useState<[number, number]>(getFallbackCenter(countryCode))
   const [mapZoom, setMapZoom] = useState(12)
+  const [resolvedPosition, setResolvedPosition] = useState<L.LatLng | null>(null)
 
   const geocodeAddress = useCallback(async (address: string, city: string, zone?: string, countryCode?: string) => {
     const fullAddress = [address, zone, city, countryCode ? countryCodeToName(countryCode) : null].filter(Boolean).join(', ')
@@ -135,9 +145,11 @@ const MapSelector: React.FC<MapSelectorProps> = ({
       if (coordinates) {
         setMapCenter(coordinates)
         setMapZoom(16)
+        setResolvedPosition(L.latLng(coordinates[0], coordinates[1]))
       } else {
         setMapCenter(getFallbackCenter(countryCode))
         setMapZoom(12)
+        setResolvedPosition(null)
       }
     }
 
@@ -166,6 +178,7 @@ const MapSelector: React.FC<MapSelectorProps> = ({
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
         <LocationMarker onLocationSelect={onLocationSelect} />
+        <ResolvedLocationMarker position={resolvedPosition} />
       </MapContainer>
     </div>
   )
