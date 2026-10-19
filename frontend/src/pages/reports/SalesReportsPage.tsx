@@ -792,8 +792,8 @@ export function SalesReportsPage() {
           productName: item.name,
           sku: item.sku,
           orderCount: customerGroups.reduce((sum, c) => sum + c.orders, 0),
-          quantity: toNumber(item.quantity),
-          amount: toNumber(item.amount),
+          quantity: String(toNumber(item.quantity)),
+          amount: money(toNumber(item.amount)),
           customerGroups: customerGroups.map((c) => ({
             customerId: c.customerId,
             customerName: c.customerName,
