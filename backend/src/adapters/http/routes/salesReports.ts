@@ -43,6 +43,7 @@ type TopProductRow = {
   productId: string
   sku: string
   name: string
+  orderCount: number
   quantity: string | null
   amount: string | null
 }
@@ -683,6 +684,7 @@ export async function registerSalesReportRoutes(app: FastifyInstance): Promise<v
           p.id as "productId",
           p.sku as "sku",
           p.name as "name",
+          count(DISTINCT so.id) as "orderCount",
           sum(CASE WHEN ${warehouseId ?? null}::text IS NULL AND ${locationId ?? null}::text IS NULL THEN sol.quantity ELSE COALESCE(loc_match."matchedQty", 0) END)::text as "quantity",
           sum(CASE WHEN ${warehouseId ?? null}::text IS NULL AND ${locationId ?? null}::text IS NULL THEN sol.quantity * sol."unitPrice" ELSE COALESCE(loc_match."matchedQty", 0) * sol."unitPrice" END)::text as "amount"
         FROM "SalesOrder" so
@@ -730,6 +732,7 @@ export async function registerSalesReportRoutes(app: FastifyInstance): Promise<v
         productId: r.productId,
         sku: r.sku,
         name: r.name,
+        orderCount: Number(r.orderCount ?? 0),
         quantity: r.quantity ?? '0',
         amount: r.amount ?? '0',
       }))

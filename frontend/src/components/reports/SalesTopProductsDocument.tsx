@@ -6,8 +6,17 @@ import { formatInteger, formatMoney } from '../../lib/numberFormat'
 export type SalesTopProductsDocumentItem = {
   sku: string
   name: string
+  orderCount: number
   quantity: number
   amount: number
+}
+
+export type SalesTopProductsDocumentCustomerGroup = {
+  customerId: string
+  customerName: string
+  orders: number
+  quantity: string
+  total: string
 }
 
 export type SalesTopProductsDocumentOrder = {
@@ -24,6 +33,10 @@ export type SalesTopProductsDocumentOrder = {
 export type SalesTopProductsDocumentDetail = {
   productName: string
   sku: string
+  orderCount: number
+  quantity: string
+  amount: string
+  customerGroups: SalesTopProductsDocumentCustomerGroup[]
   orders: SalesTopProductsDocumentOrder[]
 }
 
@@ -121,13 +134,14 @@ export function SalesTopProductsDocument({ title, from, to, currency, statusLabe
           <ExportLegend items={chartLegendItems} />
         </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-5">
+         <div className="rounded-2xl border border-slate-200 bg-white px-4 py-5">
           <div className="mb-4 text-sm font-semibold uppercase tracking-wider text-slate-600">Ranking de productos</div>
           <table className="w-full table-fixed border-collapse text-sm">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wider text-slate-500">
                 <th className="px-3 py-2">SKU</th>
                 <th className="px-3 py-2">Producto</th>
+                <th className="px-3 py-2 text-right">Órdenes</th>
                 <th className="px-3 py-2 text-right">Cantidad</th>
                 <th className="px-3 py-2 text-right">Total</th>
               </tr>
@@ -137,6 +151,7 @@ export function SalesTopProductsDocument({ title, from, to, currency, statusLabe
                 <tr key={`${item.sku}-${item.name}`} className="border-b border-slate-100 align-top">
                   <td className="px-3 py-3 font-mono text-xs">{item.sku}</td>
                   <td className="px-3 py-3 font-medium">{item.name}</td>
+                  <td className="px-3 py-3 text-right tabular-nums">{item.orderCount ?? 0}</td>
                   <td className="px-3 py-3 text-right tabular-nums">{formatInteger(item.quantity)}</td>
                   <td className="px-3 py-3 text-right font-semibold text-emerald-700 tabular-nums">{money(item.amount)} {currency}</td>
                 </tr>
@@ -146,7 +161,7 @@ export function SalesTopProductsDocument({ title, from, to, currency, statusLabe
         </div>
       </div>
 
-      <div className="mb-4 text-lg font-bold tracking-tight">Detalle de ordenes por producto</div>
+      <div className="mb-4 text-lg font-bold tracking-tight">Detalle de ventas por producto</div>
       <div className="space-y-6">
         {details.map((detail) => {
           const detailTotal = detail.orders.reduce((sum, order) => sum + order.total, 0)
@@ -154,8 +169,35 @@ export function SalesTopProductsDocument({ title, from, to, currency, statusLabe
             <section key={`${detail.sku}-${detail.productName}`} className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
               <div className="border-b border-slate-200 bg-slate-50 px-5 py-4">
                 <div className="text-base font-semibold">{detail.productName}</div>
-                <div className="mt-1 text-sm text-slate-600">SKU {detail.sku} · {detail.orders.length} ordenes, total {money(detailTotal)} {currency}</div>
+                <div className="mt-1 text-sm text-slate-600">SKU {detail.sku} · {detail.orders.length} ordenes, {detail.orderCount} órdenes con productos, total {money(detailTotal)} {currency}</div>
               </div>
+
+              {detail.customerGroups && detail.customerGroups.length > 0 && (
+                <div className="border-b border-slate-200 px-5 py-4">
+                  <div className="mb-3 text-sm font-semibold text-slate-600">Ventas por cliente</div>
+                  <table className="w-full table-fixed border-collapse text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200 bg-white text-left text-xs uppercase tracking-wider text-slate-500">
+                        <th className="w-[40%] px-4 py-3">Cliente</th>
+                        <th className="w-[15%] px-4 py-3 text-right">Órdenes</th>
+                        <th className="w-[20%] px-4 py-3 text-right">Cantidad</th>
+                        <th className="w-[25%] px-4 py-3 text-right">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {detail.customerGroups.map((c) => (
+                        <tr key={c.customerId} className="border-b border-slate-100 align-top">
+                          <td className="px-4 py-3">{c.customerName}</td>
+                          <td className="px-4 py-3 text-right tabular-nums">{c.orders}</td>
+                          <td className="px-4 py-3 text-right tabular-nums">{formatInteger(Number(c.quantity))}</td>
+                          <td className="px-4 py-3 text-right font-semibold text-emerald-700 tabular-nums">{money(Number(c.total))} {currency}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
               <table className="w-full table-fixed border-collapse text-sm">
                 <thead>
                   <tr className="border-b border-slate-200 bg-white text-left text-xs uppercase tracking-wider text-slate-500">

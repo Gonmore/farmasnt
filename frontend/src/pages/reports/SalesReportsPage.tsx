@@ -58,6 +58,7 @@ type SalesTopProductItem = {
   productId: string
   sku: string
   name: string
+  orderCount: number
   quantity: string
   amount: string
 }
@@ -154,6 +155,16 @@ type OrderDetailItem = {
   createdAt: string
   deliveredAt: string | null
   paidAt: string | null
+  lineQuantity: number | null
+  lineTotal: number | null
+}
+
+type CustomerGroupItem = {
+  customerId: string
+  customerName: string
+  orders: number
+  quantity: string
+  total: string
 }
 
 function toIsoDate(d: Date): string {
@@ -233,7 +244,7 @@ function buildTopCustomerMix(orders: OrderDetailItem[]): Array<{ label: string; 
       total: 0,
       ordersCount: 0,
     }
-    entry.total += toNumber(order.total)
+    entry.total += order.lineTotal != null ? toNumber(order.lineTotal) : toNumber(order.total)
     entry.ordersCount += 1
     totalsByCustomer.set(order.customerId, entry)
   }
@@ -258,6 +269,30 @@ function buildTopCustomerMix(orders: OrderDetailItem[]): Array<{ label: string; 
   }
 
   return result.filter((item) => item.total > 0)
+}
+
+function buildCustomerGroups(orders: OrderDetailItem[]): CustomerGroupItem[] {
+  const byCustomer = new Map<string, { customerName: string; orderCount: number; quantity: number; total: number }>()
+  for (const order of orders) {
+    const key = order.customerId || '__no-customer__'
+    const entry = byCustomer.get(key) ?? {
+      customerName: order.customerName || 'Cliente sin nombre',
+      orderCount: 0,
+      quantity: 0,
+      total: 0,
+    }
+    entry.orderCount += 1
+    entry.quantity += toNumber(order.lineQuantity)
+    entry.total += toNumber(order.lineTotal)
+    byCustomer.set(key, entry)
+  }
+  return Array.from(byCustomer.entries()).map(([customerId, item]) => ({
+    customerId,
+    customerName: item.customerName,
+    orders: item.orderCount,
+    quantity: String(item.quantity),
+    total: String(item.total),
+  })).sort((a, b) => toNumber(b.total) - toNumber(a.total))
 }
 
 function buildStatusMix(orders: OrderDetailItem[]): Array<{ label: string; total: number; ordersCount: number; color: string }> {
@@ -741,9 +776,10 @@ export function SalesReportsPage() {
   const buildTopProductsStructuredReport = async () => {
     if (!auth.accessToken) throw new Error('Sesión no disponible para exportar')
 
-    const productItems = (topProductsQuery.data?.items ?? []).map((item) => ({
+       const productItems = (topProductsQuery.data?.items ?? []).map((item) => ({
       sku: item.sku,
       name: item.name,
+      orderCount: item.orderCount ?? 0,
       quantity: toNumber(item.quantity),
       amount: toNumber(item.amount),
     }))
@@ -751,9 +787,20 @@ export function SalesReportsPage() {
     const productDetails = await Promise.all(
       (topProductsQuery.data?.items ?? []).map(async (item) => {
         const response = await fetchOrdersByProduct(auth.accessToken!, { from, to, productId: item.productId, status })
+        const customerGroups = buildCustomerGroups(response.items)
         return {
           productName: item.name,
           sku: item.sku,
+          orderCount: customerGroups.reduce((sum, c) => sum + c.orders, 0),
+          quantity: toNumber(item.quantity),
+          amount: toNumber(item.amount),
+          customerGroups: customerGroups.map((c) => ({
+            customerId: c.customerId,
+            customerName: c.customerName,
+            orders: c.orders,
+            quantity: c.quantity,
+            total: c.total,
+          })),
           orders: response.items.map((order) => ({
             id: order.id,
             number: order.number,
@@ -895,6 +942,19 @@ export function SalesReportsPage() {
           Ordenes: item.ordersCount,
           [`Facturacion (${currency})`]: item.total,
           'Participacion %': total > 0 ? (item.total / total) * 100 : 0,
+        })),
+      })
+    }
+
+    if (drillDownType === 'product') {
+      const customerGroups = buildCustomerGroups(items)
+      sheets.push({
+        name: 'Ventas por cliente',
+        rows: customerGroups.map((c) => ({
+          Cliente: c.customerName,
+          Órdenes: c.orders,
+          Cantidad: toNumber(c.quantity),
+          [`Total (${currency})`]: toNumber(c.total),
         })),
       })
     }
@@ -2573,6 +2633,7 @@ export function SalesReportsPage() {
                         },
                         { header: '🔖 SKU', accessor: (r) => <span className="font-mono text-xs">{r.sku}</span> },
                         { header: '📦 Producto', accessor: (r) => <span className="font-medium">{r.name}</span> },
+                        { header: '📋 Órdenes', accessor: (r) => formatInteger(r.orderCount ?? 0) },
                         { header: '📊 Cantidad', accessor: (r) => <span className="tabular-nums">{formatInteger(toNumber(r.quantity))}</span> },
                         {
                           header: `💰 Total (${currency})`,
@@ -3278,201 +3339,237 @@ export function SalesReportsPage() {
                     </div>
                   </div>
 
-                  {(drillDownType === 'department' || drillDownType === 'product') && topCustomerMix.length > 0 ? (
-                    <div className="grid grid-cols-1 gap-4 xl:grid-cols-[380px_minmax(0,1fr)]">
-                      <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900">
-                        <div className="mb-3 text-sm font-semibold text-slate-900 dark:text-white">
-                          Participación por cliente
-                        </div>
-                        <div className="flex justify-center">
-                          <PieChart width={340} height={260}>
-                            <Pie
-                              data={topCustomerMix.map((item) => ({ name: item.label, value: item.total }))}
-                              dataKey="value"
-                              nameKey="name"
-                              cx="50%"
-                              cy="50%"
-                              innerRadius={55}
-                              outerRadius={95}
-                              paddingAngle={4}
-                              label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}
-                              isAnimationActive={false}
-                            >
-                              {topCustomerMix.map((item) => (
-                                <Cell key={item.label} fill={item.color} />
-                              ))}
-                            </Pie>
-                            <Tooltip
-                              {...chartTooltipStyle}
-                              formatter={(value: number | string | undefined) => [`${money(Number(value ?? 0))} ${currency}`, 'Facturación']}
-                            />
-                          </PieChart>
-                        </div>
-                      </div>
+                   {(drillDownType === 'department' || drillDownType === 'product') && topCustomerMix.length > 0 ? (
+                     <div className="grid grid-cols-1 gap-4 xl:grid-cols-[380px_minmax(0,1fr)]">
+                       <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900">
+                         <div className="mb-3 text-sm font-semibold text-slate-900 dark:text-white">
+                           Participación por cliente
+                         </div>
+                         <div className="flex justify-center">
+                           <PieChart width={340} height={260}>
+                             <Pie
+                               data={topCustomerMix.map((item) => ({ name: item.label, value: item.total }))}
+                               dataKey="value"
+                               nameKey="name"
+                               cx="50%"
+                               cy="50%"
+                               innerRadius={55}
+                               outerRadius={95}
+                               paddingAngle={4}
+                               label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}
+                               isAnimationActive={false}
+                             >
+                               {topCustomerMix.map((item) => (
+                                 <Cell key={item.label} fill={item.color} />
+                               ))}
+                             </Pie>
+                             <Tooltip
+                               {...chartTooltipStyle}
+                               formatter={(value: number | string | undefined) => [`${money(Number(value ?? 0))} ${currency}`, 'Facturación']}
+                             />
+                           </PieChart>
+                         </div>
+                       </div>
 
-                      <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
-                        <div className="mb-3 text-sm font-semibold text-slate-900 dark:text-white">
-                          {drillDownType === 'department' ? 'Top clientes del departamento' : 'Top clientes del producto'}
-                        </div>
-                        <div className="space-y-3">
-                          {topCustomerMix.map((item) => {
-                            const pct = topCustomerTotal > 0 ? (item.total / topCustomerTotal) * 100 : 0
-                            const pctSafe = Number.isFinite(pct) ? pct : 0
-                            return (
-                              <div key={item.label} className="rounded-lg border border-slate-100 p-3 dark:border-slate-800">
-                                <div className="mb-2 flex items-start justify-between gap-3">
-                                  <div>
-                                    <div className="flex items-center gap-2 text-sm font-medium text-slate-900 dark:text-white">
-                                      <span className="inline-block h-3 w-3 rounded-sm" style={{ backgroundColor: item.color }} />
-                                      <span>{item.label}</span>
-                                    </div>
-                                    <div className="text-xs text-slate-500 dark:text-slate-400">
-                                      {item.ordersCount} órdenes
-                                    </div>
-                                  </div>
-                                  <div className="text-right">
-                                    <div className="text-sm font-semibold text-green-600 dark:text-green-400">
-                                      {money(item.total)} {currency}
-                                    </div>
-                                    <div className="text-xs text-slate-500 dark:text-slate-400">
-                                      {pctSafe.toFixed(1)}%
-                                    </div>
-                                  </div>
-                                </div>
-                                <div className="h-2 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
-                                  <div className="h-full rounded-full" style={{ width: `${pctSafe}%`, backgroundColor: item.color }} />
-                                </div>
+                       <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+                         <div className="mb-3 text-sm font-semibold text-slate-900 dark:text-white">
+                           {drillDownType === 'department' ? 'Top clientes del departamento' : 'Top clientes del producto'}
+                         </div>
+                         <div className="space-y-3">
+                           {topCustomerMix.map((item) => {
+                             const pct = topCustomerTotal > 0 ? (item.total / topCustomerTotal) * 100 : 0
+                             const pctSafe = Number.isFinite(pct) ? pct : 0
+                             return (
+                               <div key={item.label} className="rounded-lg border border-slate-100 p-3 dark:border-slate-800">
+                                 <div className="mb-2 flex items-start justify-between gap-3">
+                                   <div>
+                                     <div className="flex items-center gap-2 text-sm font-medium text-slate-900 dark:text-white">
+                                       <span className="inline-block h-3 w-3 rounded-sm" style={{ backgroundColor: item.color }} />
+                                       <span>{item.label}</span>
+                                     </div>
+                                     <div className="text-xs text-slate-500 dark:text-slate-400">
+                                       {item.ordersCount} órdenes
+                                     </div>
+                                   </div>
+                                   <div className="text-right">
+                                     <div className="text-sm font-semibold text-green-600 dark:text-green-400">
+                                       {money(item.total)} {currency}
+                                     </div>
+                                     <div className="text-xs text-slate-500 dark:text-slate-400">
+                                       {pctSafe.toFixed(1)}%
+                                     </div>
+                                   </div>
+                                 </div>
+                                 <div className="h-2 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
+                                   <div className="h-full rounded-full" style={{ width: `${pctSafe}%`, backgroundColor: item.color }} />
+                                 </div>
+                               </div>
+                             )
+                           })}
+                         </div>
+                       </div>
+                     </div>
+                   ) : null}
+
+                   {drillDownType === 'customer' && customerStatusMix.length > 0 ? (
+                     <div className="grid grid-cols-1 gap-4 xl:grid-cols-[380px_minmax(0,1fr)]">
+                       <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900">
+                         <div className="mb-3 text-sm font-semibold text-slate-900 dark:text-white">
+                           Participación por estado
+                         </div>
+                         <div className="flex justify-center">
+                           <PieChart width={340} height={260}>
+                             <Pie
+                               data={customerStatusMix.map((item) => ({ name: item.label, value: item.total }))}
+                               dataKey="value"
+                               nameKey="name"
+                               cx="50%"
+                               cy="50%"
+                               innerRadius={55}
+                               outerRadius={95}
+                               paddingAngle={4}
+                               label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}
+                               isAnimationActive={false}
+                             >
+                               {customerStatusMix.map((item) => (
+                                 <Cell key={item.label} fill={item.color} />
+                               ))}
+                             </Pie>
+                             <Tooltip
+                               {...chartTooltipStyle}
+                               formatter={(value: number | string | undefined) => [`${money(Number(value ?? 0))} ${currency}`, 'Facturación']}
+                             />
+                           </PieChart>
+                         </div>
+                       </div>
+
+                       <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+                         <div className="mb-3 text-sm font-semibold text-slate-900 dark:text-white">
+                           Resumen por estado
+                         </div>
+                         <div className="space-y-3">
+                           {customerStatusMix.map((item) => {
+                             const pct = customerStatusTotal > 0 ? (item.total / customerStatusTotal) * 100 : 0
+                             const pctSafe = Number.isFinite(pct) ? pct : 0
+                             return (
+                               <div key={item.label} className="rounded-lg border border-slate-100 p-3 dark:border-slate-800">
+                                 <div className="mb-2 flex items-start justify-between gap-3">
+                                   <div>
+                                     <div className="flex items-center gap-2 text-sm font-medium text-slate-900 dark:text-white">
+                                       <span className="inline-block h-3 w-3 rounded-sm" style={{ backgroundColor: item.color }} />
+                                       <span>{item.label}</span>
+                                     </div>
+                                     <div className="text-xs text-slate-500 dark:text-slate-400">
+                                       {item.ordersCount} órdenes
+                                     </div>
+                                   </div>
+                                   <div className="text-right">
+                                     <div className="text-sm font-semibold text-green-600 dark:text-green-400">
+                                       {money(item.total)} {currency}
+                                     </div>
+                                     <div className="text-xs text-slate-500 dark:text-slate-400">
+                                       {pctSafe.toFixed(1)}%
+                                     </div>
+                                   </div>
+                                 </div>
+                                 <div className="h-2 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
+                                   <div className="h-full rounded-full" style={{ width: `${pctSafe}%`, backgroundColor: item.color }} />
+                                 </div>
+                               </div>
+                             )
+                           })}
+                         </div>
+                       </div>
+                     </div>
+                   ) : null}
+
+                    {/* Tabla de órdenes (departamento/cliente) o tabla agrupada por cliente (producto) */}
+                    <div className="rounded-lg border border-slate-200 dark:border-slate-700">
+                      {drillDownType === 'product' ? (
+                        (() => {
+                          const customerGroups = buildCustomerGroups(items)
+                          if (customerGroups.length === 0) return null
+                          return (
+                            <>
+                              <div className="bg-blue-50 dark:bg-blue-900/20 px-4 py-2 text-xs text-blue-700 dark:text-blue-300">
+                                💡 Agrupado por cliente: órdenes, unidades y facturación del producto seleccionado
                               </div>
-                            )
-                          })}
-                        </div>
-                      </div>
+                              <table className="w-full table-fixed border-collapse text-sm">
+                                <thead>
+                                  <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wider text-slate-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400">
+                                    <th className="px-3 py-2">Cliente</th>
+                                    <th className="px-3 py-2 text-right">Órdenes</th>
+                                    <th className="px-3 py-2 text-right">Cantidad</th>
+                                    <th className="px-3 py-2 text-right">TOTAL</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {customerGroups
+                                    .sort((a, b) => toNumber(b.total) - toNumber(a.total))
+                                    .map((c) => (
+                                      <tr key={c.customerId} className="border-b border-slate-100 dark:border-slate-700 align-top">
+                                        <td className="px-3 py-3">{c.customerName}</td>
+                                        <td className="px-3 py-3 text-right tabular-nums">{c.orders}</td>
+                                        <td className="px-3 py-3 text-right tabular-nums">{formatInteger(toNumber(c.quantity))}</td>
+                                        <td className="px-3 py-3 text-right font-semibold text-emerald-700 tabular-nums">{money(toNumber(c.total))} {currency}</td>
+                                      </tr>
+                                    ))}
+                                </tbody>
+                              </table>
+                            </>
+                          )
+                        })()
+                      ) : (
+                        <Table
+                          columns={[
+                            { header: '# Orden', accessor: (o) => <span className="font-mono text-xs">{o.number}</span>, width: '12%' },
+                            { header: 'Cliente', accessor: (o) => o.customerName, width: '30%', className: 'wrap' },
+                            {
+                              header: 'Estado', 
+                              accessor: (o) => {
+                                const statusColors: Record<string, string> = {
+                                  'DRAFT': 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
+                                  'CONFIRMED': 'bg-blue-100 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300',
+                                  'FULFILLED': 'bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-300',
+                                  'CANCELLED': 'bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-300',
+                                }
+                                return (
+                                  <span className={`rounded px-2 py-1 text-xs font-medium ${statusColors[o.status] || ''}`}>
+                                    {statusLabel(o.status as SalesStatus)}
+                                  </span>
+                                )
+                              },
+                              width: '16%'
+                            },
+                            { 
+                              header: `Total (${currency})`, 
+                              accessor: (o) => (
+                                <span className="font-semibold text-green-600 dark:text-green-400">
+                                  {money(o.total || 0)}
+                                </span>
+                              ),
+                              width: '16%'
+                            },
+                            { header: 'Fecha', accessor: (o) => new Date(o.createdAt).toLocaleDateString(), width: '12%' },
+                            { 
+                              header: '✓ Entrega', 
+                              accessor: (o) => o.deliveredAt ? '✅' : '⏳',
+                              width: '7%'
+                            },
+                            { 
+                              header: '💰 Pago', 
+                              accessor: (o) => o.paidAt ? '✅' : '⏳',
+                              width: '7%'
+                            },
+                          ]}
+                          data={items}
+                          keyExtractor={(o) => o.id}
+                        />
+                      )}
                     </div>
-                  ) : null}
-
-                  {drillDownType === 'customer' && customerStatusMix.length > 0 ? (
-                    <div className="grid grid-cols-1 gap-4 xl:grid-cols-[380px_minmax(0,1fr)]">
-                      <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900">
-                        <div className="mb-3 text-sm font-semibold text-slate-900 dark:text-white">
-                          Participación por estado
-                        </div>
-                        <div className="flex justify-center">
-                          <PieChart width={340} height={260}>
-                            <Pie
-                              data={customerStatusMix.map((item) => ({ name: item.label, value: item.total }))}
-                              dataKey="value"
-                              nameKey="name"
-                              cx="50%"
-                              cy="50%"
-                              innerRadius={55}
-                              outerRadius={95}
-                              paddingAngle={4}
-                              label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}
-                              isAnimationActive={false}
-                            >
-                              {customerStatusMix.map((item) => (
-                                <Cell key={item.label} fill={item.color} />
-                              ))}
-                            </Pie>
-                            <Tooltip
-                              {...chartTooltipStyle}
-                              formatter={(value: number | string | undefined) => [`${money(Number(value ?? 0))} ${currency}`, 'Facturación']}
-                            />
-                          </PieChart>
-                        </div>
-                      </div>
-
-                      <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
-                        <div className="mb-3 text-sm font-semibold text-slate-900 dark:text-white">
-                          Resumen por estado
-                        </div>
-                        <div className="space-y-3">
-                          {customerStatusMix.map((item) => {
-                            const pct = customerStatusTotal > 0 ? (item.total / customerStatusTotal) * 100 : 0
-                            const pctSafe = Number.isFinite(pct) ? pct : 0
-                            return (
-                              <div key={item.label} className="rounded-lg border border-slate-100 p-3 dark:border-slate-800">
-                                <div className="mb-2 flex items-start justify-between gap-3">
-                                  <div>
-                                    <div className="flex items-center gap-2 text-sm font-medium text-slate-900 dark:text-white">
-                                      <span className="inline-block h-3 w-3 rounded-sm" style={{ backgroundColor: item.color }} />
-                                      <span>{item.label}</span>
-                                    </div>
-                                    <div className="text-xs text-slate-500 dark:text-slate-400">
-                                      {item.ordersCount} órdenes
-                                    </div>
-                                  </div>
-                                  <div className="text-right">
-                                    <div className="text-sm font-semibold text-green-600 dark:text-green-400">
-                                      {money(item.total)} {currency}
-                                    </div>
-                                    <div className="text-xs text-slate-500 dark:text-slate-400">
-                                      {pctSafe.toFixed(1)}%
-                                    </div>
-                                  </div>
-                                </div>
-                                <div className="h-2 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
-                                  <div className="h-full rounded-full" style={{ width: `${pctSafe}%`, backgroundColor: item.color }} />
-                                </div>
-                              </div>
-                            )
-                          })}
-                        </div>
-                      </div>
-                    </div>
-                  ) : null}
-
-                  {/* Tabla de órdenes */}
-                  <div className="rounded-lg border border-slate-200 dark:border-slate-700">
-                    <Table
-                      columns={[
-                        { header: '# Orden', accessor: (o) => <span className="font-mono text-xs">{o.number}</span>, width: '12%' },
-                        { header: 'Cliente', accessor: (o) => o.customerName, width: '30%', className: 'wrap' },
-                        { 
-                          header: 'Estado', 
-                          accessor: (o) => {
-                            const statusColors: Record<string, string> = {
-                              'DRAFT': 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
-                              'CONFIRMED': 'bg-blue-100 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300',
-                              'FULFILLED': 'bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-300',
-                              'CANCELLED': 'bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-300',
-                            }
-                            return (
-                              <span className={`rounded px-2 py-1 text-xs font-medium ${statusColors[o.status] || ''}`}>
-                                {statusLabel(o.status as SalesStatus)}
-                              </span>
-                            )
-                          },
-                          width: '16%'
-                        },
-                        { 
-                          header: `Total (${currency})`, 
-                          accessor: (o) => (
-                            <span className="font-semibold text-green-600 dark:text-green-400">
-                              {money(o.total || 0)}
-                            </span>
-                          ),
-                          width: '16%'
-                        },
-                        { header: 'Fecha', accessor: (o) => new Date(o.createdAt).toLocaleDateString(), width: '12%' },
-                        { 
-                          header: '✓ Entrega', 
-                          accessor: (o) => o.deliveredAt ? '✅' : '⏳',
-                          width: '7%'
-                        },
-                        { 
-                          header: '💰 Pago', 
-                          accessor: (o) => o.paidAt ? '✅' : '⏳',
-                          width: '7%'
-                        },
-                      ]}
-                      data={items}
-                      keyExtractor={(o) => o.id}
-                    />
                   </div>
-                </div>
-              )
-            })()}
+                )
+              })()}
 
             <div className="flex justify-end flex-shrink-0 border-t border-slate-200 pt-3 dark:border-slate-700 gap-2 pdf-hide">
               <Button variant="outline" size="sm" onClick={handleExportDrillDownExcel}>

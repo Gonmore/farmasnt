@@ -1,5 +1,13 @@
 ﻿# API Reference — PharmaFlow Bolivia (MVP)
 
+## Versión 2.5.0
+
+Esta versión **mejora el reporte de productos más vendidos**: agrega conteo de órdenes, separa cantidad de unidades vendidas, y en el drill-down agrupa por cliente.
+
+- **Top productos mejorado**: `GET /api/v1/reports/sales/top-products` ahora devuelve `orderCount` (cantidad de órdenes distintas que incluyen el producto). La tabla de ranking muestra 3 columnas: Órdenes, Cantidad (unidades) y Total (facturación). El ranking sigue ordenado por `amount` (TOTAL).
+- **Drill-down por producto agrupado por cliente**: al hacer click en un producto, se muestra una tabla agrupada por cliente con: Cliente, Órdenes, Cantidad (unidades del producto), TOTAL (facturación del producto). Ordenado por TOTAL descendente.
+- **`GET /api/v1/sales/orders`** con `productId`: incluye `lineQuantity` y `lineTotal` (cantidad y monto de las líneas del producto en la orden).
+
 ## Versión 2.4.2
 
 Esta versión **corrige el auto-receive de transferencias inter-ubicación** y **restaura `remainingQuantity`** en cotizaciones.
@@ -2623,9 +2631,16 @@ Query
 - `take` (1..1000, default 20)
 - `cursor` (uuid, opcional)
 - `status` (DRAFT|CONFIRMED|FULFILLED|CANCELLED, opcional)
+- `customerId` (uuid, opcional)
+- `customerSearch` (string, opcional)
+- `productId` (uuid, opcional) — filtra órdenes que contienen líneas del producto.
+- `deliveryCity` / `deliveryDepartment` (string, opcionales)
+- `from` / `to` (date-time, opcionales)
+- `warehouseId` / `locationId` (uuid, opcionales)
 
 Nota
-- El tope de `take` se elevó a 1000 (antes 100) para que los drill-down de reportes de ventas puedan traer todas las órdenes de una ciudad/cliente/producto en un solo llamado. Es un límite fijo temporal; a futuro se recomienda reemplazarlo por paginación real (`cursor`) en vez de seguir subiendo el número.
+- El tope de `take` se elevó a 1000 (antes 100) para que los drill-down de reportes de ventas pueden traer todas las órdenes de una ciudad/cliente/producto en un solo llamado. Es un límite fijo temporal; a futuro se recomienda reemplazarlo por paginación real (`cursor`) en vez de seguir subiendo el número.
+- Cuando se filtra por `productId`, la respuesta incluye `lineQuantity` y `lineTotal` (cantidad y monto de las líneas de ese producto en la orden). Cuando no se filtra, ambos campos son `null`.
 
 Response 200
 ```json
@@ -2645,12 +2660,19 @@ Response 200
       "deliveryCity": "...",
       "deliveryZone": "...",
       "deliveryAddress": "...",
-      "deliveryMapsUrl": "..."
+      "deliveryMapsUrl": "...",
+      "total": 500.00,
+      "createdAt": "...",
+      "deliveredAt": "..." | null,
+      "paidAt": "..." | null,
+      "lineQuantity": 5 | null,
+      "lineTotal": 250.00 | null
     }
   ],
   "nextCursor": "..."
 }
 ```
+
 
 ### GET /api/v1/sales/orders/:id
 Requiere permiso: `sales:order:read`.
@@ -3102,10 +3124,15 @@ Response 200
 ```json
 {
   "items": [
-    { "productId": "...", "sku": "SKU-001", "name": "Producto", "quantity": "10", "amount": "350" }
+    { "productId": "...", "sku": "SKU-001", "name": "Producto", "orderCount": 3, "quantity": "10", "amount": "350" }
   ]
 }
-```
+```**
+
+- `orderCount`: cantidad de órdenes distintas que incluyen este producto en el período.
+- `quantity`: unidades vendidas del producto en el período.
+- `amount`: facturación total del producto en el período.
+- El ranking se ordena por `amount` descendente (TOTAL).
 
 #### GET /api/v1/reports/sales/by-customer
 Requiere: módulo `SALES` + permiso `sales:order:read`.

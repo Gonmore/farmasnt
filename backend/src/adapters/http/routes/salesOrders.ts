@@ -818,6 +818,7 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
             select: {
               quantity: true,
               unitPrice: true,
+              productId: true,
             },
           },
         },
@@ -851,6 +852,12 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
         deliveryAddress: o.deliveryAddress,
         deliveryMapsUrl: o.deliveryMapsUrl,
         total: o.lines.reduce((sum: number, l: any) => sum + (toNumber(l.quantity) * toNumber(l.unitPrice)), 0),
+        lineQuantity: parsed.data.productId
+          ? o.lines.filter((l: any) => l.productId === parsed.data.productId).reduce((sum: number, l: any) => sum + toNumber(l.quantity), 0)
+          : null,
+        lineTotal: parsed.data.productId
+          ? o.lines.filter((l: any) => l.productId === parsed.data.productId).reduce((sum: number, l: any) => sum + (toNumber(l.quantity) * toNumber(l.unitPrice)), 0)
+          : null,
       }))
 
       const nextCursor = items.length === parsed.data.take ? items[items.length - 1]!.id : null

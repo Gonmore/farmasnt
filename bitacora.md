@@ -1,8 +1,46 @@
 # Bitácora de desarrollo — PharmaFlow Bolivia (farmaSNT)
 
-> Última actualización: 02 Oct 2026
+> Última actualización: 19 Oct 2026
 
 > Este documento suma (a alto nivel) decisiones, hitos y cambios relevantes que se fueron incorporando al repositorio para llegar al estado actual del MVP.
+
+## **[19 Oct 2026] Reporte de productos más vendidos: columna Órdenes + drill-down agrupado por cliente**
+
+### Contexto
+- El reporte "Productos Más Vendidos" mostraba solo "Cantidad" (que era la suma de unidades vendidas) y "Total" (facturación), pero no diferenciaba cuántas órdenes distintas incluían el producto.
+- Al hacer click en un producto, el drill-down mostraba órdenes individuales (con el total completo de la orden, no solo la línea del producto), sin una visión agrupada por cliente.
+
+### Cambios
+
+#### Backend — `GET /api/v1/reports/sales/top-products` (`salesReports.ts:670`)
+- Agregado `count(DISTINCT so.id) as "orderCount"` al SQL; la respuesta JSON incluye `orderCount` (cantidad de órdenes distintas que incluyen el producto en el período).
+
+#### Backend — `GET /api/v1/sales/orders` (`salesOrders.ts:712`)
+- El `select` de `lines` ahora incluye `productId`.
+- La respuesta agrega `lineQuantity` (unidades del producto en la orden) y `lineTotal` (monto del producto en la orden) cuando se filtra con `productId`; ambos son `null` cuando no se filtra.
+
+#### Frontend — `SalesReportsPage.tsx`
+- Type `SalesTopProductItem`: agregado `orderCount`.
+- Type `OrderDetailItem`: agregados `lineQuantity` y `lineTotal`.
+- Función `buildCustomerGroups(items)`: nueva función que agrupa órdenes por cliente para drill-down de producto, calculando Cliente, Órdenes, Cantidad (unidades del producto) y TOTAL (facturación del producto).
+- Tabla de ranking del reporte TOP_PRODUCTS: agregada columna "Órdenes" entre "Producto" y "Cantidad".
+- Modal de drill-down para `product`: en lugar de mostrar órdenes individuales, muestra tabla agrupada por cliente (Cliente, Órderes, Cantidad, TOTAL), ordenada por TOTAL descendente.
+- Export Excel (`handleExportDrillDownExcel`): agregado sheet "Ventas por cliente" para drill-down de producto.
+- `buildTopCustomerMix`: usa `lineTotal` cuando está disponible (drill-down de producto), mostrando facturación real del producto por cliente.
+
+#### Frontend — `SalesTopProductsDocument.tsx` (PDF)
+- Tipos actualizados: `SalesTopProductsDocumentItem` (agregué `orderCount`), `SalesTopProductsDocumentDetail` (agregué `orderCount`, `quantity`, `amount`, `customerGroups`).
+- Tabla de ranking del PDF: agregada columna "Órdenes".
+- Detalle por producto: tabla "Ventas por cliente" con columnas Cliente, Órdenes, Cantidad, Total.
+
+#### Docs
+- `API_REFERENCE.md`: versión 2.5.0; documentados `orderCount` en `top-products` y `lineQuantity`/`lineTotal` en `sales/orders`.
+- `ARCHITECTURE.md`: regla #15 sobre el reporte de productos.
+
+### Operación
+- `npx tsc --noEmit` limpio en backend y frontend.
+- `npm run build` OK en frontend.
+- No se requieren migraciones Prisma.
 
 ## **[13 Oct 2026] Fix: auto-apply incorrecto de transferencias inter-ubicación + corrección de datos en FinSNT (SOL260156)**
 
