@@ -131,23 +131,17 @@ export function MovementRequestDocument({ request, companyName, logoUrl, from, t
         {request.code || '—'}
       </div>
 
-      <div className="relative mb-6 flex items-end justify-between" style={{ zIndex: 10 }}>
-        <div className="flex items-end gap-4">
-          {logoUrl ? (
-            <img src={logoUrl} alt="Logo empresa" className="h-16 w-16 rounded bg-slate-100 object-contain" />
-          ) : (
-            <div className="flex h-16 w-16 items-center justify-center rounded bg-slate-100 text-xs text-slate-500">Logo</div>
-          )}
+      <div className="relative" style={{ zIndex: 10, paddingTop: '150px' }}>
+        <div className="mb-8 flex items-end justify-between">
           <div>
-            <div className="text-2xl font-bold tracking-tight text-slate-900">{companyName || 'Empresa'}</div>
+            <div className="text-3xl font-bold tracking-tight text-slate-900">{companyName || 'Empresa'}</div>
             <div className="mt-1 text-sm text-slate-600">Detalle de solicitud de movimiento de stock</div>
           </div>
+          <div className="text-right">
+            {from && to && <div className="text-sm text-slate-600">Periodo: {from} a {to}</div>}
+            <div className="mt-1 text-sm text-slate-600">Generado: {new Date().toLocaleString('es-BO')}</div>
+          </div>
         </div>
-        <div className="text-right">
-          {from && to && <div className="text-sm text-slate-600">Periodo: {from} a {to}</div>}
-          <div className="mt-1 text-sm text-slate-600">Generado: {new Date().toLocaleString('es-BO')}</div>
-        </div>
-      </div>
 
       <div className="mb-6 rounded-2xl border border-slate-200 bg-slate-50 px-6 py-5">
         <div className="mb-3 text-xl font-bold">Solicitud {request.code || '—'}</div>
@@ -346,6 +340,7 @@ export function MovementRequestDocument({ request, companyName, logoUrl, from, t
           Solicitud elaborada por: {request.requestedByName}
         </div>
       )}
-    </div>
-  )
-}
+        </div>
+      </div>
+    )
+  }
