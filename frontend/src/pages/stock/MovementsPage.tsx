@@ -2416,28 +2416,34 @@ const stockRows = useMemo(() => {
                     const effectiveStatus: MovementRequest['status'] =
                       !hasOutMovements && (r.status === 'SENT' || r.status === 'FULFILLED') ? 'OPEN' : r.status
 
-                    const lines = (r.items ?? [])
-                      .filter((it) => it.remainingQuantity > 0 || effectiveStatus !== 'OPEN')
-                      .slice(0, 4)
-                      .map((it) => {
-                        const name = it.productName ?? it.productSku ?? it.productId
-                        const remaining = Number(it.remainingQuantity)
-                        const requested = Number(it.requestedQuantity)
-                        let display = ''
-                        const presName = it.presentation?.name ?? it.presentationName
-                        if (it.presentationQuantity && presName) {
-                          const presQty = Number(it.presentationQuantity)
-                          const unitsPer = Number(it.presentation?.unitsPerPresentation ?? it.unitsPerPresentation ?? 1)
-                          display = `${presQty.toFixed(0)} ${presName}${Number.isFinite(unitsPer) && unitsPer > 0 ? ` (${unitsPer.toFixed(0)}u)` : ''} de ${name}`
-                        } else {
-                          const suffix = effectiveStatus === 'OPEN' ? `Pendiente: ${remaining} / ${requested}` : `Solicitado: ${requested}`
-                          display = `${name} — ${suffix} unidades`
-                        }
-                        return display
-                      })
+                    const allItems = (r.items ?? []).filter(
+                      (it) => Number(it.remainingQuantity) > 0 || effectiveStatus !== 'OPEN'
+                    )
+
+                    const lines = allItems.map((it) => {
+                      const name = it.productName ?? it.productSku ?? it.productId
+                      const remaining = Number(it.remainingQuantity)
+                      const requested = Number(it.requestedQuantity)
+                      let display = ''
+                      const presName = it.presentation?.name ?? it.presentationName
+                      if (it.presentationQuantity && presName) {
+                        const presQty = Number(it.presentationQuantity)
+                        const unitsPer = Number(it.presentation?.unitsPerPresentation ?? it.unitsPerPresentation ?? 1)
+                        display = `${presQty.toFixed(0)} ${presName}${Number.isFinite(unitsPer) && unitsPer > 0 ? ` (${unitsPer.toFixed(0)}u)` : ''} de ${name}`
+                      } else {
+                        const suffix = effectiveStatus === 'OPEN' ? `Pendiente: ${remaining} / ${requested}` : `Solicitado: ${requested}`
+                        display = `${name} — ${suffix} unidades`
+                      }
+                      return display
+                    })
+
+                    const productCount = allItems.length
 
                     return lines.length ? (
                       <div className="text-sm text-slate-700 dark:text-slate-200">
+                        <div className="font-medium text-slate-900 dark:text-slate-100 mb-1">
+                          {productCount} {productCount === 1 ? 'producto solicitado' : 'productos solicitados'}
+                        </div>
                         {lines.map((l) => (
                           <div key={l}>{l}</div>
                         ))}
