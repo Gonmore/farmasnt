@@ -124,23 +124,24 @@ export function MovementRequestDocument({ request, companyName, logoUrl, from, t
 
   return (
     <div className="relative mx-auto w-[1200px] bg-white px-10 py-8 text-slate-900">
-      {logoUrl && (
-        <div className="absolute left-10 top-6 h-16 w-16 rounded bg-slate-100" style={{ backgroundImage: `url(${logoUrl})`, backgroundSize: 'contain', backgroundPosition: 'center', backgroundRepeat: 'no-repeat' }}>
-          {!logoUrl && <span className="text-xs">Logo</span>}
-        </div>
-      )}
-
       <div
         className="absolute inset-0 flex items-center justify-center opacity-5"
-        style={{ transform: 'rotate(-25deg)', fontSize: '120px', fontWeight: 800, letterSpacing: '0.3em' }}
+        style={{ transform: 'rotate(-25deg)', fontSize: '120px', fontWeight: 800, letterSpacing: '0.3em', zIndex: 0 }}
       >
         {request.code || '—'}
       </div>
 
-      <div className="relative mb-6 flex items-end justify-between">
-        <div className="pt-16">
-          <div className="text-2xl font-bold tracking-tight text-slate-900">{companyName || 'Empresa'}</div>
-          <div className="mt-1 text-sm text-slate-600">Detalle de solicitud de movimiento de stock</div>
+      <div className="relative mb-6 flex items-end justify-between" style={{ zIndex: 10 }}>
+        <div className="flex items-end gap-4">
+          {logoUrl ? (
+            <img src={logoUrl} alt="Logo empresa" className="h-16 w-16 rounded bg-slate-100 object-contain" />
+          ) : (
+            <div className="flex h-16 w-16 items-center justify-center rounded bg-slate-100 text-xs text-slate-500">Logo</div>
+          )}
+          <div>
+            <div className="text-2xl font-bold tracking-tight text-slate-900">{companyName || 'Empresa'}</div>
+            <div className="mt-1 text-sm text-slate-600">Detalle de solicitud de movimiento de stock</div>
+          </div>
         </div>
         <div className="text-right">
           {from && to && <div className="text-sm text-slate-600">Periodo: {from} a {to}</div>}
