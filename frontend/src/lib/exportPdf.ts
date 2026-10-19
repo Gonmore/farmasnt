@@ -139,7 +139,22 @@ export async function pdfBlobFromElement(el: HTMLElement, opts?: PdfOptions): Pr
   if (opts?.logoUrl) {
     try {
       const logoSize = 30
-      pdf.addImage(opts.logoUrl, 'PNG', margin, 5, logoSize, logoSize, undefined, 'FAST')
+      const img = new Image()
+      img.crossOrigin = 'anonymous'
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve()
+        img.onerror = reject
+        img.src = opts.logoUrl!
+      })
+
+      const canvas = document.createElement('canvas')
+      const ctx = canvas.getContext('2d')!
+      canvas.width = img.naturalWidth
+      canvas.height = img.naturalHeight
+      ctx.drawImage(img, 0, 0)
+      const imgData = canvas.toDataURL('image/png')
+
+      pdf.addImage(imgData, 'PNG', margin, 5, logoSize, logoSize, undefined, 'FAST')
       logoWidth = logoSize + 10
     } catch (err) {
       console.warn('No se pudo cargar el logo:', err)
