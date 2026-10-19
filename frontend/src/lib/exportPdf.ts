@@ -134,17 +134,18 @@ export async function pdfBlobFromElement(el: HTMLElement, opts?: PdfOptions): Pr
   pdf.setFillColor(hexToRgb(lightenColor(headerColor, 20)).r, hexToRgb(lightenColor(headerColor, 20)).g, hexToRgb(lightenColor(headerColor, 20)).b)
   pdf.rect(0, headerHeight - 3, pageWidth, 3, 'F')
 
-  // Logo de la empresa (si existe)
+  // Logo de la empresa (si existe) - con fallback a logo local
   let logoWidth = 0
-  if (opts?.logoUrl) {
+  const logoUrlsToTry = [opts?.logoUrl, '/Logo_Azul.png'].filter(Boolean) as string[]
+  for (const logoUrlTry of logoUrlsToTry) {
     try {
       const logoSize = 30
       const img = new Image()
       img.crossOrigin = 'anonymous'
       await new Promise<void>((resolve, reject) => {
         img.onload = () => resolve()
-        img.onerror = reject
-        img.src = opts.logoUrl!
+        img.onerror = () => reject(new Error(`Failed to load image: ${logoUrlTry}`))
+        img.src = logoUrlTry
       })
 
       const canvas = document.createElement('canvas')
@@ -156,6 +157,7 @@ export async function pdfBlobFromElement(el: HTMLElement, opts?: PdfOptions): Pr
 
       pdf.addImage(imgData, 'PNG', margin, 5, logoSize, logoSize, undefined, 'FAST')
       logoWidth = logoSize + 10
+      break
     } catch (err) {
       console.warn('No se pudo cargar el logo:', err)
     }
