@@ -12,6 +12,9 @@ import { useNavigation, usePermissions } from '../../hooks'
 import { MovementQuickActions } from '../../components/MovementQuickActions'
 import { MovementHistoryTab } from '../../components/MovementHistoryTab'
 import { CustomerSelector } from '../../components/CustomerSelector'
+import { MovementRequestDocument } from '../../components/reports/MovementRequestDocument'
+import { blobToBase64, exportReactNodeToPdf } from '../../lib/exportPdf'
+import { useTenant } from '../../providers/TenantProvider'
 
 type MovementRequestItem = {
   id: string
@@ -307,6 +310,7 @@ export function MovementsPage() {
   const permissions = usePermissions()
   const navGroups = useNavigation()
   const queryClient = useQueryClient()
+  const { tenant } = useTenant()
 
   // Solo el Administrador de Sucursal Proveedor (BRANCH_PROVIDER) puede crear lotes (Entrada)
   // y ajustar existencias; el Administrador de Sucursal normal (BRANCH_ADMIN) no.
@@ -1275,6 +1279,45 @@ const stockRows = useMemo(() => {
             )}
 
             <div className="flex justify-end gap-2 pt-4 border-t">
+              <Button
+                variant="outline"
+                size="sm"
+                icon={<EyeIcon className="w-4 h-4" />}
+                onClick={async () => {
+                  const docRequest = exportReactNodeToPdf(
+                    <MovementRequestDocument
+                      request={{
+                        code: selectedRequest.code || '',
+                        status: selectedRequest.status,
+                        requestedByName: selectedRequest.requestedByName ?? null,
+                        requestedCity: selectedRequest.requestedCity,
+                        note: selectedRequest.note ?? null,
+                        createdAt: selectedRequest.createdAt,
+                        fulfilledAt: selectedRequest.fulfilledAt ?? null,
+                        fulfilledByName: selectedRequest.fulfilledByName ?? null,
+                        originWarehouse: selectedRequest.originWarehouse ?? null,
+                        toLocation: selectedRequest.toLocation ?? null,
+                        items: selectedRequest.items,
+                        movements: selectedRequest.movements ?? [],
+                      }}
+                      companyName={tenant?.branding?.tenantName ?? 'Empresa'}
+                      logoUrl={tenant?.branding?.logoUrl ?? undefined}
+                    />,
+                    {
+                      filename: `SOL-${selectedRequest.code || selectedRequest.id.slice(0, 8)}.pdf`,
+                      title: `Solicitud ${selectedRequest.code || '-'}`,
+                      subtitle: `Detalle de solicitud de movimiento`,
+                      companyName: tenant?.branding?.tenantName ?? 'Empresa',
+                      headerColor: '#10B981',
+                      logoUrl: tenant?.branding?.logoUrl ?? undefined,
+                      captureWidthPx: 1200,
+                    },
+                  )
+                  await docRequest
+                }}
+              >
+                Exportar PDF
+              </Button>
               <Button variant="outline" onClick={() => {
                 setShowRequestDetailModal(false)
                 setSelectedRequest(null)
