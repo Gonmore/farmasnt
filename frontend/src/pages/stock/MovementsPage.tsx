@@ -13,7 +13,7 @@ import { MovementQuickActions } from '../../components/MovementQuickActions'
 import { MovementHistoryTab } from '../../components/MovementHistoryTab'
 import { CustomerSelector } from '../../components/CustomerSelector'
 import { MovementRequestDocument } from '../../components/reports/MovementRequestDocument'
-import { blobToBase64, exportReactNodeToPdf } from '../../lib/exportPdf'
+import { exportReactNodeToPdf } from '../../lib/exportPdf'
 import { useTenant } from '../../providers/TenantProvider'
 
 type MovementRequestItem = {
@@ -310,7 +310,7 @@ export function MovementsPage() {
   const permissions = usePermissions()
   const navGroups = useNavigation()
   const queryClient = useQueryClient()
-  const { tenant } = useTenant()
+  const { branding } = useTenant()
 
   // Solo el Administrador de Sucursal Proveedor (BRANCH_PROVIDER) puede crear lotes (Entrada)
   // y ajustar existencias; el Administrador de Sucursal normal (BRANCH_ADMIN) no.
@@ -1300,16 +1300,17 @@ const stockRows = useMemo(() => {
                         items: selectedRequest.items,
                         movements: selectedRequest.movements ?? [],
                       }}
-                      companyName={tenant?.branding?.tenantName ?? 'Empresa'}
-                      logoUrl={tenant?.branding?.logoUrl ?? undefined}
+                      companyName={
+                        branding?.tenantName ?? 'Empresa'
+                      }
                     />,
                     {
                       filename: `SOL-${selectedRequest.code || selectedRequest.id.slice(0, 8)}.pdf`,
                       title: `Solicitud ${selectedRequest.code || '-'}`,
                       subtitle: `Detalle de solicitud de movimiento`,
-                      companyName: tenant?.branding?.tenantName ?? 'Empresa',
+                      companyName: branding?.tenantName ?? 'Empresa',
                       headerColor: '#10B981',
-                      logoUrl: tenant?.branding?.logoUrl ?? undefined,
+                      logoUrl: branding?.logoUrl ?? undefined,
                       captureWidthPx: 1200,
                     },
                   )

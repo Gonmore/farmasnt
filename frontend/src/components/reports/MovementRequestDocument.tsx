@@ -1,10 +1,10 @@
-import React from 'react'
-import { formatInteger, formatMoney } from '../../lib/numberFormat'
+import { formatInteger } from '../../lib/numberFormat'
 import { formatDateOnlyUtc } from '../../lib/date'
 import { getProductLabel } from '../../lib/productName'
 
 type MovementRequestDocumentItem = {
   id: string
+  productId?: string
   requestedQuantity: number
   remainingQuantity: number
   presentationId: string | null
@@ -52,7 +52,6 @@ type MovementRequestDocument = {
 type Props = {
   request: MovementRequestDocument
   companyName: string
-  logoUrl?: string
   from?: string
   to?: string
 }
@@ -109,7 +108,7 @@ function origenLabel(r: MovementRequestDocument): string {
   return '-'
 }
 
-export function MovementRequestDocument({ request, companyName, logoUrl, from, to }: Props) {
+export function MovementRequestDocument({ request, companyName, from, to }: Props) {
   const itemCount = request.items.length
   const totalRequested = request.items.reduce((sum, it) => sum + Number(it.requestedQuantity ?? 0), 0)
   const totalRemaining = request.items.reduce((sum, it) => sum + Number(it.remainingQuantity ?? 0), 0)
