@@ -17,6 +17,7 @@ type PaymentListItem = {
   version: number
   customerId: string
   customerName: string
+  customerDepartment: string | null
   paymentMode: string
   paymentReceiptType: string | null
   paymentReceiptRef: string | null
@@ -267,11 +268,11 @@ export function PaymentsPage() {
                   header: 'Cliente',
                   accessor: (p) => p.customerName.length > 15 ? `${p.customerName.slice(0, 15)}...` : p.customerName,
                 },
-                { header: 'Pago', accessor: (p) => <span className="truncate block" title={paymentModeLabel(p.paymentMode)}>{paymentModeLabel(p.paymentMode)}</span> },
                 {
-                  header: 'Entregado',
-                  accessor: (p) => p.deliveredAt ? 'ENTREGADO' : (p.deliveryDate ? new Date(p.deliveryDate).toLocaleDateString() : '-'),
+                  header: 'Departamento',
+                  accessor: (p) => p.customerDepartment ? p.customerDepartment.toUpperCase() : '-',
                 },
+                { header: 'Pago', accessor: (p) => <span className="truncate block" title={paymentModeLabel(p.paymentMode)}>{paymentModeLabel(p.paymentMode)}</span> },
                 {
                   header: 'Cobro',
                   accessor: (p) => {
@@ -614,6 +615,7 @@ function PaymentDetailModal({ payment, onClose, onNavigateToOrder }: PaymentDeta
       <div className="space-y-4 text-sm">
         <div className="grid gap-2 md:grid-cols-2">
           <div><strong>Estado:</strong> {payment.paidAt ? 'PAGADO' : 'PENDIENTE'}</div>
+          <div><strong>Cliente:</strong> {payment.customerName}{payment.customerDepartment ? ` (${payment.customerDepartment.toUpperCase()})` : ''}</div>
           <div><strong>Fecha de vencimiento:</strong> {new Date(payment.dueAt).toLocaleDateString()}</div>
           <div><strong>Monto total:</strong> {formatMoney(payment.total)}</div>
           <div><strong>Total pagado:</strong> {formatMoney(payment.paidAmount)}</div>

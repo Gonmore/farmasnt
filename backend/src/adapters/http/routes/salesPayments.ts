@@ -194,7 +194,7 @@ export function registerSalesPaymentRoutes(app: FastifyInstance) {
           deliveredAt: true,
           paidAt: true,
           paidAmount: true,
-          customer: { select: { id: true, name: true } },
+          customer: { select: { id: true, name: true, department: true } },
           lines: { select: { quantity: true, unitPrice: true } },
         },
       })
@@ -213,6 +213,7 @@ export function registerSalesPaymentRoutes(app: FastifyInstance) {
           version: o.version,
           customerId: o.customer.id,
           customerName: o.customer.name,
+          customerDepartment: o.customer.department ?? null,
           paymentMode: o.paymentMode,
           paymentReceiptType: o.paymentReceiptType,
           paymentReceiptRef: o.paymentReceiptRef,
