@@ -15,4 +15,6 @@ export { StockExistenciasDocument, StockExpiryDocument, StockInputsDocument, Sto
 export { StockOpsDocument } from './StockOpsDocument'
 export type { StockOpsDocumentDepartmentItem, StockOpsDocumentReturnWarehouseItem } from './StockOpsDocument'
 export { ReportSchedulesManager } from './ReportSchedulesManager'
+export { PaymentsMonthlyDocument } from './PaymentsMonthlyDocument'
+export type { PaymentsMonthlyGroup, PaymentsMonthlyDocumentProps } from './PaymentsMonthlyDocument'
 export * from './reportsUtils'

@@ -180,7 +180,7 @@ export function registerSalesPaymentRoutes(app: FastifyInstance) {
             cursor: { id: parsed.data.cursor },
           }
           : {}),
-        orderBy: [{ deliveryDate: 'asc' }, { id: 'asc' }],
+         orderBy: [{ deliveryDate: 'desc' }, { id: 'desc' }],
         select: {
           id: true,
           number: true,
@@ -403,6 +403,121 @@ export function registerSalesPaymentRoutes(app: FastifyInstance) {
       }
 
       return reply.send({ order: updated })
+    },
+  )
+
+  app.get(
+    '/api/v1/sales/payments/monthly',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'SALES'), requirePermission(Permissions.SalesOrderRead)],
+      schema: {
+        tags: ['Sales'],
+        summary: 'Monthly payments report grouped by department',
+        querystring: {
+          type: 'object',
+          properties: {
+            year: { type: 'number' },
+            month: { type: 'number' },
+          },
+          required: ['year', 'month'],
+          additionalProperties: false,
+        },
+      },
+    },
+    async (request, reply) => {
+      const query = request.query as { year?: string; month?: string }
+      const year = Number(query?.year)
+      const month = Number(query?.month)
+
+      if (Number.isNaN(year) || Number.isNaN(month) || year < 2000 || month < 1 || month > 12) {
+        return reply.status(400).send({ message: 'Query params year and month are required (year >= 2000, 1 <= month <= 12)' })
+      }
+
+      const tenantId = request.auth!.tenantId
+      const branchDepartments = branchDepartmentsOf(request)
+      if (branchDepartmentsOfMissing(request)) {
+        return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+      }
+
+      const startDate = new Date(Date.UTC(year, month - 1, 1))
+      const endDate = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999))
+
+      const whereClause: any = {
+        tenantId,
+        status: 'FULFILLED' as const,
+        paidAt: { gte: startDate, lte: endDate },
+      }
+
+      if (branchDepartments) {
+        whereClause.OR = [
+          { deliveryDepartment: { in: branchDepartments, mode: 'insensitive' as const } },
+          {
+            AND: [
+              { OR: [{ deliveryDepartment: null }, { deliveryDepartment: '' }] },
+              { customer: { department: { in: branchDepartments, mode: 'insensitive' as const } } },
+            ],
+          },
+        ]
+      }
+
+      const orders = await db.salesOrder.findMany({
+        where: whereClause,
+        orderBy: [{ deliveryDate: 'desc' as const }, { id: 'desc' as const }],
+        select: {
+          id: true,
+          number: true,
+          status: true,
+          paidAt: true,
+          paidAmount: true,
+          deliveryDepartment: true,
+          customer: { select: { id: true, name: true, department: true } },
+          lines: { select: { quantity: true, unitPrice: true } },
+        },
+      })
+
+      const groupsMap = new Map<string, any>()
+
+      for (const o of orders) {
+        const total = toNumber((o.lines as any).reduce((sum: number, l: any) => sum + toNumber(l.quantity) * toNumber(l.unitPrice), 0))
+        const paidAmount = toNumber(o.paidAmount)
+        const remaining = Math.max(0, total - paidAmount)
+
+        const dept = o.deliveryDepartment ?? (o.customer as any)?.department ?? null
+        const effectiveDept = dept?.trim() || null
+
+        const groupKey = effectiveDept ?? '__null__'
+        if (!groupsMap.has(groupKey)) {
+          groupsMap.set(groupKey, {
+            department: effectiveDept,
+            totalReceived: 0 as number,
+            paymentCount: 0,
+            orders: [] as any[],
+          })
+        }
+        const group = groupsMap.get(groupKey)
+        group.totalReceived += paidAmount
+        group.paymentCount += 1
+        group.orders.push({
+          number: o.number,
+          customerId: (o.customer as any).id,
+          customerName: (o.customer as any).name,
+          customerDepartment: (o.customer as any).department ?? null,
+          paidAmount,
+          paidAt: o.paidAt ? o.paidAt.toISOString() : null,
+          total,
+          remaining,
+        })
+      }
+
+      const groups = Array.from(groupsMap.values()).map((g) => ({
+        ...g,
+        totalReceived: Number(g.totalReceived.toFixed(2)),
+        orders: g.orders.sort((a: any, b: any) => (b.paidAt ?? '0').localeCompare(a.paidAt ?? '0')),
+      }))
+
+      const totalReceived = groups.reduce((sum, g) => sum + g.totalReceived, 0)
+
+      return reply.send({ year, month, totalReceived: Number(totalReceived.toFixed(2)), groups })
     },
   )
 }

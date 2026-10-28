@@ -1,10 +1,40 @@
 # Bitácora de desarrollo — PharmaFlow Bolivia (farmaSNT)
 
-> Última actualización: 19 Oct 2026
+> Última actualización: 28 Oct 2026
 
 > Este documento suma (a alto nivel) decisiones, hitos y cambios relevantes que se fueron incorporando al repositorio para llegar al estado actual del MVP.
 
-## **[19 Oct 2026] Reporte de productos más vendidos: columna Órdenes + drill-down agrupado por cliente**
+## **[28 Oct 2026] Reporte de pagos mensuales (Pagos por mes)**
+
+### Contexto
+- La página de Pagos no tenía un reporte de resumen mensual que agrupara los cobros por departamento. Se agregó la funcionalidad "Pagos por mes" que permite visualizar el total recibido, los departamentos con pagos, el detalle de órdenes y exportar a PDF con el logo de la empresa.
+
+### Cambios
+
+#### Backend — `GET /api/v1/sales/payments/monthly` (`salesPayments.ts`)
+- Nuevo endpoint que retorna `{ year, month, totalReceived, groups[] }` agrupado por `department` (resuelto de `deliveryDepartment` o `customer.department`).
+- Aplica filtro por `branchDepartments` (scope:branch): usuarios con alcance de sucursal ven solo sus departamentos.
+- Cada grupo incluye `totalReceived`, `paymentCount` y `orders[]` con `number`, `customerName`, `customerDepartment`, `paidAmount`, `paidAt`, `total`, `remaining`.
+- Schema de querystring como JSON Schema (no Zod) para evitar problema con `required: []` de Fastify.
+- Estado `409` si el usuario branch-scoped no tiene sucursal seleccionada.
+
+#### Frontend — `PaymentsPage.tsx`
+- Botón "Pagos por mes" en la barra de filtros.
+- Primer modal: selector de año (numérico) y mes (nombres en español: Enero..Diciembre) con botón "Generar".
+- Segundo modal (resultados): muestra total recibido, departamentos con pagos, tabla resumen por departamento (Departamento, Total recibido, # Pagos, Órdenes, # Clientes) con contraste adecuado en dark mode.
+- Botón "Exportar PDF" en el modal de resultados: pasa `logoUrl` y `companyName` (tenantName) desde el branding del tenant al exportPDF, garantizando el uso del **logo de la empresa** (con fallback a `/Logo_Azul.png`).
+
+#### Frontend — `PaymentsMonthlyDocument.tsx` (PDF)
+- Componente PDF con watermark "PAGOS" (rotado 25°, opacidad 3%), tabla resumen por departamento y detalle de órdenes.
+- El header del PDF (logo + companyName + title + subtitle) lo genera `exportPdf.ts`, por lo que el componente no incluye su propio header de empresa — elimina el spacing de 150px previo.
+
+#### Frontend — `components/reports/index.ts`
+- Exporta `PaymentsMonthlyDocument` y tipos `PaymentsMonthlyGroup`, `PaymentsMonthlyDocumentProps`.
+
+### Operación
+- `npx tsc --noEmit` limpio en backend y frontend.
+- Build OK en backend y frontend.
+- `GET /api/v1/sales/payments/monthly?year=2026&month=1` verificado localmente: retorna grupos correctos (COCHABAMBA, LA PAZ, SANTA CRUZ) con órdenes y pagos.
 
 ### Contexto
 - El reporte "Productos Más Vendidos" mostraba solo "Cantidad" (que era la suma de unidades vendidas) y "Total" (facturación), pero no diferenciaba cuántas órdenes distintas incluían el producto.

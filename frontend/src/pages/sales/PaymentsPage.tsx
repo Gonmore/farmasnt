@@ -8,6 +8,8 @@ import { useNavigation, useCursorPagination } from '../../hooks'
 import { useAuth } from '../../providers/AuthProvider'
 import { useTenant } from '../../providers/TenantProvider'
 import { EyeIcon, CheckCircleIcon, MagnifyingGlassIcon } from '@heroicons/react/24/outline'
+import { exportReactNodeToPdf } from '../../lib/exportPdf'
+import { PaymentsMonthlyDocument } from '../../components/reports/PaymentsMonthlyDocument'
 
 type PaymentStatus = 'DUE' | 'PAID' | 'ALL'
 
@@ -30,6 +32,29 @@ type PaymentListItem = {
   paidAmount: number
   remaining: number
   paidAt: string | null
+}
+
+type PaymentsMonthlyGroup = {
+  department: string | null
+  totalReceived: number
+  paymentCount: number
+  orders: Array<{
+    number: string
+    customerId: string
+    customerName: string
+    customerDepartment: string | null
+    paidAmount: number
+    paidAt: string | null
+    total: number
+    remaining: number
+  }>
+}
+
+type PaymentsMonthlyResponse = {
+  year: number
+  month: number
+  totalReceived: number
+  groups: PaymentsMonthlyGroup[]
 }
 
 type ListResponse = { items: PaymentListItem[]; nextCursor: string | null }
@@ -77,6 +102,13 @@ async function fetchPayments(token: string, status: PaymentStatus, take: number,
   if (q && q.trim()) params.append('q', q.trim())
   return apiFetch(`/api/v1/sales/payments?${params}`, { token })
 }
+
+async function fetchPaymentsMonthly(token: string, year: number, month: number): Promise<PaymentsMonthlyResponse> {
+  return apiFetch(`/api/v1/sales/payments/monthly?year=${year}&month=${month}`, { token })
+}
+
+const currentMonth = new Date().getMonth() + 1
+const currentYear = new Date().getFullYear()
 
 async function markPaid(
   token: string,
@@ -139,6 +171,17 @@ export function PaymentsPage() {
   const [receiptError, setReceiptError] = useState('')
   const [uploadingProof, setUploadingProof] = useState(false)
   const [paymentDetail, setPaymentDetail] = useState<PaymentListItem | null>(null)
+  const [monthReportOpen, setMonthReportOpen] = useState(false)
+  const [showMonthlyResult, setShowMonthlyResult] = useState(false)
+  const [reportYear, setReportYear] = useState(currentYear)
+  const [reportMonth, setReportMonth] = useState(currentMonth)
+
+  const monthReportQuery = useQuery({
+    queryKey: ['paymentsMonthly', reportYear, reportMonth],
+    queryFn: () => fetchPaymentsMonthly(auth.accessToken!, reportYear, reportMonth),
+    enabled: !!auth.accessToken && monthReportOpen,
+    staleTime: 60_000,
+  })
 
    const paymentsQuery = useQuery({
      queryKey: ['payments', status, take, pag.currentCursor, appliedSearch],
@@ -244,6 +287,13 @@ export function PaymentsPage() {
             Cobradas
           </Button>
           <div className="w-px self-stretch bg-slate-200 dark:bg-slate-700" />
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setMonthReportOpen(true)}
+          >
+            Pagos por mes
+          </Button>
           <Button
             size="sm"
             variant={status === 'ALL' ? 'primary' : 'ghost'}
@@ -570,6 +620,92 @@ export function PaymentsPage() {
             }}
           />
         )}
+
+        <Modal
+          isOpen={monthReportOpen}
+          onClose={() => setMonthReportOpen(false)}
+          title="Pagos por mes"
+          maxWidth="md"
+        >
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <Select
+                value={String(reportYear)}
+                onChange={(e) => setReportYear(Number(e.target.value))}
+                options={Array.from({ length: 5 }, (_, i) => {
+                  const y = currentYear - 2 + i
+                  return { value: String(y), label: String(y) }
+                })}
+              />
+              <Select
+                value={String(reportMonth)}
+                onChange={(e) => setReportMonth(Number(e.target.value))}
+                options={Array.from({ length: 12 }, (_, i) => {
+                  const names = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
+                  return { value: String(i + 1), label: names[i] }
+                })}
+              />
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button size="sm" variant="ghost" onClick={() => setMonthReportOpen(false)}>Cancelar</Button>
+              <Button
+                size="sm"
+                variant="primary"
+                onClick={async () => {
+                  const data = await monthReportQuery.refetch()
+                  if (data.data) setShowMonthlyResult(true)
+                }}
+                disabled={monthReportQuery.isLoading}
+              >
+                {monthReportQuery.isLoading ? 'Cargando...' : 'Generar'}
+              </Button>
+            </div>
+          </div>
+        </Modal>
+
+        {showMonthlyResult && monthReportQuery.data && (
+          <Modal
+            isOpen={true}
+            onClose={() => setShowMonthlyResult(false)}
+            title={`Pagos ${monthName(reportMonth)} ${reportYear}`}
+            maxWidth="5xl"
+            actions={
+              <>
+                <Button size="sm" variant="ghost" onClick={() => setShowMonthlyResult(false)}>Cerrar</Button>
+                <Button
+                  size="sm"
+                  variant="primary"
+                  onClick={async () => {
+                    const data = monthReportQuery.data
+                    if (!data) return
+                    await exportReactNodeToPdf(
+                      <PaymentsMonthlyDocument
+                        year={data.year}
+                        month={data.month}
+                        totalReceived={data.totalReceived}
+                        groups={data.groups}
+                        currency={currency}
+                      />,
+                      {
+                        filename: `pagos-mensuales-${data.year}-${data.month.toString().padStart(2, '0')}.pdf`,
+                        companyName: tenant?.branding?.tenantName ?? 'Empresa',
+                        title: 'Pagos por mes',
+                        subtitle: `${monthName(data.month)} ${data.year}`,
+                        logoUrl: tenant?.branding?.logoUrl ?? undefined,
+                        headerColor: '#3B82F6',
+                        captureWidthPx: 1200,
+                      },
+                    )
+                  }}
+                >
+                  Exportar PDF
+                </Button>
+              </>
+            }
+          >
+            <MonthlyReportResult data={monthReportQuery.data} currency={currency} />
+          </Modal>
+        )}
       </PageContainer>
     </MainLayout>
   )
@@ -691,5 +827,63 @@ function PaymentDetailModal({ payment, onClose, onNavigateToOrder }: PaymentDeta
         </div>
       </div>
     </Modal>
+  )
+}
+
+function monthName(month: number): string {
+  const names = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
+  return names[month - 1] ?? String(month)
+}
+
+function MonthlyReportResult({ data, currency }: { data: PaymentsMonthlyResponse; currency: string }) {
+  const departmentCount = data.groups.filter((g) => g.paymentCount > 0).length
+
+  return (
+    <div className="space-y-4 text-sm">
+      <div className="grid grid-cols-2 gap-4">
+        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-center dark:border-slate-700 dark:bg-slate-800">
+          <div className="text-xs font-semibold text-slate-500 uppercase dark:text-slate-400">Total recibido</div>
+          <div className="mt-1 text-2xl font-bold text-emerald-700">{formatMoney(data.totalReceived)} {currency}</div>
+        </div>
+        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-center dark:border-slate-700 dark:bg-slate-800">
+          <div className="text-xs font-semibold text-slate-500 uppercase dark:text-slate-400">Departamentos con pagos</div>
+          <div className="mt-1 text-2xl font-bold text-blue-700">{departmentCount}</div>
+        </div>
+      </div>
+
+      <div>
+        <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">Resumen por departamento</div>
+        <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
+          <table className="min-w-full text-sm">
+            <thead className="bg-slate-50 dark:bg-slate-800">
+              <tr>
+                <th className="px-3 py-2 text-left font-semibold text-slate-700 dark:text-slate-300">Departamento</th>
+                <th className="px-3 py-2 text-right font-semibold text-slate-700 dark:text-slate-300">Total recibido</th>
+                <th className="px-3 py-2 text-right font-semibold text-slate-700 dark:text-slate-300"># Pagos</th>
+                <th className="px-3 py-2 text-right font-semibold text-slate-700 dark:text-slate-300">Órdenes</th>
+                <th className="px-3 py-2 text-right font-semibold text-slate-700 dark:text-slate-300"># Clientes</th>
+                  </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
+              {data.groups
+                .filter((g) => g.paymentCount > 0)
+                .sort((a, b) => b.totalReceived - a.totalReceived)
+                .map((g) => {
+                  const uniqueCustomers = new Set(g.orders.map((o) => o.customerId)).size
+                  return (
+                    <tr key={g.department ?? '__null__'}>
+                      <td className="px-3 py-2 font-medium text-slate-900 dark:text-slate-200">{g.department ? g.department.toUpperCase() : '-'}</td>
+                      <td className="px-3 py-2 text-right font-medium text-emerald-700">{formatMoney(g.totalReceived)} {currency}</td>
+                      <td className="px-3 py-2 text-right text-slate-700 dark:text-slate-300">{g.paymentCount}</td>
+                      <td className="px-3 py-2 text-right text-slate-700 dark:text-slate-300">{g.orders.length}</td>
+                      <td className="px-3 py-2 text-right text-slate-700 dark:text-slate-300">{uniqueCustomers}</td>
+                    </tr>
+                  )
+                })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
   )
 }

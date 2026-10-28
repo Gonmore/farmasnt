@@ -253,9 +253,10 @@ frontend/src/
 | | `POST /api/v1/sales/orders/:id/return` | `routes/salesOrders.ts:1656` |
 | `pages/sales/DeliveriesPage.tsx` | `GET /api/v1/sales/deliveries` | `routes/salesOrders.ts:583` |
 | `pages/sales/PaymentsPage.tsx` | `POST /api/v1/sales/payments/proof-upload` | `routes/salesPayments.ts:91` |
-| | `GET /api/v1/sales/payments` | `routes/salesPayments.ts:137` |
-| | `POST /api/v1/sales/payments/:id/pay` | `routes/salesPayments.ts:219` |
-| | `GET /api/v1/sales/orders/:id/payments` | `routes/salesOrders.ts:968` | Historial de pagos de la orden (SalesOrderPayment), ordenado ASC por createdAt. Filtra por branchDepartments (scope:branch). |
+ | | `GET /api/v1/sales/payments` | `routes/salesPayments.ts:137` |
+ | | `POST /api/v1/sales/payments/:id/pay` | `routes/salesPayments.ts:219` |
+ | | `GET /api/v1/sales/orders/:id/payments` | `routes/salesOrders.ts:968` | Historial de pagos de la orden (SalesOrderPayment), ordenado ASC por createdAt. Filtra por branchDepartments (scope:branch). |
+ | | `GET /api/v1/sales/payments/monthly` | `routes/salesPayments.ts` | Reporte mensual de pagos agrupado por department (v2.5.1). Aplica filtro branchDepartments (scope:branch); 409 si no hay sucursal seleccionada. |
 | `pages/customers/CustomersPage.tsx` | `GET /api/v1/customers` | `routes/customers.ts:278` |
 | | `GET /api/v1/customers/:id` | `routes/customers.ts:342` |
 | | `POST /api/v1/customers` | `routes/customers.ts:178` |

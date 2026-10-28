@@ -2923,6 +2923,45 @@ Notas
 - Solo incluye órdenes `FULFILLED`.
 - Si el usuario está scopeado por sucursal y no tiene sucursal seleccionada, responde `409`.
 
+### GET /api/v1/sales/payments/monthly
+Requiere permiso: `sales:order:read`.
+
+Query
+- `year` (number, requerido) — año >= 2000.
+- `month` (number, requerido) — 1..12.
+
+Response 200
+```json
+{
+  "year": 2026,
+  "month": 1,
+  "totalReceived": 500.00,
+  "groups": [
+    {
+      "department": "COCHABAMBA",
+      "totalReceived": 300.00,
+      "paymentCount": 2,
+      "orders": [
+        {
+          "number": "OV-20260001",
+          "customerId": "...",
+          "customerName": "Farmacia X",
+          "customerDepartment": "COCHABAMBA",
+          "paidAmount": 300.00,
+          "paidAt": "2026-01-20T00:00:00.000Z",
+          "total": 300.00,
+          "remaining": 0
+        }
+      ]
+    }
+  ]
+}
+```
+
+Notas
+- Agrupa órdenes `FULFILLED` con `paidAt` en el período `[year-month-01T00:00:00.000Z, year-month-lastDayT23:59:59.999Z]` por `department` (resolviendo `deliveryDepartment` o `customer.department`).
+- El filtro `branchDepartments` (scope:branch) limita los resultados a los departamentos atendidos por la sucursal del usuario. Si no hay sucursal seleccionada, responde `409`.
+
 ### POST /api/v1/sales/payments/:id/pay
 Requiere permiso: `sales:order:write`.
 
