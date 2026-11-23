@@ -19,11 +19,13 @@ export function useNavigation(): NavGroup[] {
 
   const groups: NavGroup[] = [];
 
-  // Dashboard (todos)
-  groups.push({
-    title: 'Estado',
-    items: [{ to: '/', label: 'Estado' }],
-  });
+  // Dashboard (todos, excepto vendedores de sucursal)
+  if (!isBranchSeller) {
+    groups.push({
+      title: 'Estado',
+      items: [{ to: '/', label: 'Estado' }],
+    });
+  }
 
   // Platform Admin: solo gestión de tenants
   if (isPlatformAdmin) {
@@ -103,8 +105,9 @@ export function useNavigation(): NavGroup[] {
       salesItems.push({ to: '/sales/deliveries', label: '🚚 Entregas' })
     }
 
-    if (hasPermission('sales:order:read')) {
+    if (hasPermission('sales:order:read') && !isBranchSeller) {
       salesItems.push({ to: '/sales/payments', label: '💳 Pagos' })
+    })
     }
 
     groups.push({

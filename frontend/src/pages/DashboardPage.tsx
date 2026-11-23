@@ -379,7 +379,7 @@ export function DashboardPage() {
   const auth = useAuth();
   const navGroups = useNavigation();
   const queryClient = useQueryClient();
-  const { isPlatformAdmin, isTenantAdmin, roles, isLoading } = usePermissions();
+  const { isPlatformAdmin, isTenantAdmin, roles, isLoading, isBranchSeller } = usePermissions();
   const [socketStatus, setSocketStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
   const [events, setEvents] = useState<Array<{ at: string; type: string; payload: unknown }>>([]);
   const [isExtensionModalOpen, setIsExtensionModalOpen] = useState(false);
@@ -388,7 +388,7 @@ export function DashboardPage() {
     if (isPlatformAdmin) return <Navigate to="/platform/tenants" replace />
     if (!isTenantAdmin) {
       if (roles.some((r) => r.code === 'LOGISTICA')) return <Navigate to="/sales/deliveries" replace />
-      if (roles.some((r) => r.code === 'VENTAS')) return <Navigate to="/catalog/seller" replace />
+      if (roles.some((r) => r.code === 'VENTAS') || isBranchSeller) return <Navigate to="/catalog/seller" replace />
     }
   }
 

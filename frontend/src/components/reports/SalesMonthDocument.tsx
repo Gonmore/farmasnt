@@ -174,23 +174,21 @@ export function SalesMonthDocument({ title, from, to, currency, statusLabel, war
                       <table className="w-full table-fixed border-collapse text-sm">
                         <thead>
                           <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wider text-slate-500">
-                            <th className="w-[6%] px-3 py-2">Orden</th>
-                            <th className="w-[8%] px-3 py-2">Estado</th>
-                            <th className="w-[9%] px-3 py-2">Fecha</th>
-                            <th className="w-[16%] px-3 py-2">Cliente</th>
-                            {hasMultipleDepts && <th className="w-[9%] px-3 py-2">Depto.</th>}
-                            <th className="w-[6%] px-3 py-2">SKU</th>
-                            <th className="w-[18%] px-3 py-2">Producto</th>
-                            <th className="w-[6%] px-3 py-2 text-right">Cant.</th>
-                            <th className="w-[7%] px-3 py-2 text-right">Precio</th>
-                            <th className="w-[9%] px-3 py-2 text-right">Total</th>
+                            <th className="w-[7%] px-3 py-2">Orden</th>
+                            <th className="w-[12%] px-3 py-2">Estado / Fecha</th>
+                            <th className="w-[20%] px-3 py-2">Cliente / Depto.</th>
+                            <th className="w-[24%] px-3 py-2">Producto / SKU</th>
+                            <th className="w-[12%] px-3 py-2">Vendedor</th>
+                            <th className="w-[7%] px-3 py-2 text-right">Cant.</th>
+                            <th className="w-[8%] px-3 py-2 text-right">Precio</th>
+                            <th className="w-[10%] px-3 py-2 text-right">Total</th>
                           </tr>
                         </thead>
                         <tbody>
                           {orderEntries.map((og) => (
                             <React.Fragment key={og.order.orderId}>
                               <tr className="bg-slate-50">
-                                <td colSpan={hasMultipleDepts ? 11 : 10} className="px-3 py-1 text-xs text-slate-700">
+                                <td colSpan={8} className="px-3 py-1 text-xs text-slate-700">
                                   Orden {og.order.orderNumber} · {orderStatusLabel(og.order.orderStatus)} · {new Date(og.order.createdAt).toLocaleDateString()} · {og.order.customerName}
                                 </td>
                               </tr>
@@ -200,12 +198,19 @@ export function SalesMonthDocument({ title, from, to, currency, statusLabel, war
                                 .map((r) => (
                                   <tr key={r.lineId} className="border-b border-slate-100 align-top">
                                     <td className="px-3 py-2 font-mono text-xs">{r.orderNumber}</td>
-                                    <td className="px-3 py-2">{orderStatusLabel(r.orderStatus)}</td>
-                                    <td className="px-3 py-2">{new Date(r.createdAt).toLocaleDateString()}</td>
-                                    <td className="px-3 py-2">{r.customerName}</td>
-                                    {hasMultipleDepts && <td className="px-3 py-2">{r.customerDepartment ?? '-'}</td>}
-                                    <td className="px-3 py-2 font-mono text-xs">{r.productSku ?? '-'}</td>
-                                    <td className="px-3 py-2">{r.productName}</td>
+                                    <td className="px-3 py-2">
+                                      <div>{orderStatusLabel(r.orderStatus)}</div>
+                                      <div className="text-xs text-slate-500">{new Date(r.createdAt).toLocaleDateString()}</div>
+                                    </td>
+                                    <td className="px-3 py-2">
+                                      <div>{r.customerName}</div>
+                                      <div className="text-xs text-slate-500">{r.customerDepartment ?? '-'}</div>
+                                    </td>
+                                    <td className="px-3 py-2">
+                                      <div>{r.productName}</div>
+                                      <div className="text-xs font-mono text-slate-500">{r.productSku ?? '-'}</div>
+                                    </td>
+                                    <td className="px-3 py-2">{r.sellerName ?? '-'}</td>
                                     <td className="px-3 py-2 text-right tabular-nums">{formatInteger(toNumber(r.quantity))}</td>
                                     <td className="px-3 py-2 text-right tabular-nums">{money(toNumber(r.unitPrice))}</td>
                                     <td className="px-3 py-2 text-right tabular-nums">{money(toNumber(r.lineTotal))}</td>
@@ -214,7 +219,7 @@ export function SalesMonthDocument({ title, from, to, currency, statusLabel, war
                             </React.Fragment>
                           ))}
                           <tr className="bg-slate-50">
-                            <td colSpan={hasMultipleDepts ? 10 : 9} className="px-3 py-1 text-right text-xs font-semibold text-slate-700">
+                            <td colSpan={7} className="px-3 py-1 text-right text-xs font-semibold text-slate-700">
                               Total sucursal:
                             </td>
                             <td className="px-3 py-1 text-right tabular-nums font-semibold text-slate-900">

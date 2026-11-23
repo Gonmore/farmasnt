@@ -3368,6 +3368,40 @@ Response 200 sin body.
 ##### DELETE /api/v1/reports/sales/schedules/:id
 Response 200 sin body.
 
+Notas
+- `sellerName`: nombre del usuario que creó la orden (`User.fullName` o email); puede ser `null`.
+
+
+### GET /api/v1/reports/sales/by-seller
+Requiere: módulo `SALES` + permiso `sales:order:read`.
+
+Query
+- `from` (date-time, opcional)
+- `to` (date-time, opcional)
+- `take` (1..1000, default 25)
+- `status` (DRAFT|CONFIRMED|FULFILLED|CANCELLED, opcional)
+- `warehouseId` (UUID, opcional)
+- `locationId` (UUID, opcional)
+
+Response 200
+```json
+{
+  "items": [
+    {
+      "sellerId": "uuid",
+      "sellerName": "Andres Chavez",
+      "ordersCount": 12,
+      "quantity": "340",
+      "amount": "12500.00"
+    }
+  ]
+}
+```
+
+Notas
+- `sellerName` se resuelve desde `SalesOrder.createdBy` (`User.fullName` o email; fallback `Sin vendedor`).
+- Respeta filtros de período/sucursal/estado y scope de sucursal.
+
 ### Stock
 
 ### GET /api/v1/reports/stock/balances-expanded

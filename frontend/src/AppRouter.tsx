@@ -284,7 +284,7 @@ export function AppRouter() {
         <Route
           path="/sales/payments"
           element={
-            <ProtectedRoute requiredPermissions={['sales:order:read']}>
+            <ProtectedRoute requiredPermissions={['sales:order:read']} denyRoleCodes={['BRANCH_SELLER']}>
               <PaymentsPage />
             </ProtectedRoute>
           }

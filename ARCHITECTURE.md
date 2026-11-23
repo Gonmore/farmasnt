@@ -269,8 +269,9 @@ frontend/src/
 |---|---|---|
 | `pages/reports/SalesReportsPage.tsx` | `GET /api/v1/reports/sales/summary` | `routes/salesReports.ts:108` | Chart llena todos los días del rango con ceros; branch-scoped users default a su sucursal propia. |
 | | `GET /api/v1/reports/sales/by-customer` | `routes/salesReports.ts:177` |
-| | `GET /api/v1/reports/sales/by-department` | `routes/salesReports.ts:251` |
-| | `GET /api/v1/reports/sales/monthly-details` | `routes/salesReports.ts:781` |
+| | `GET /api/v1/reports/sales/by-department` | `routes/salesReports.ts` |
+| | `GET /api/v1/reports/sales/by-seller` | `routes/salesReports.ts` | Ventas por vendedor (órdenes, unidades, monto) por período/sucursal/estado. |
+| | `GET /api/v1/reports/sales/monthly-details` | `routes/salesReports.ts` | Detalle mensual por línea con `sellerName` (vendedor/creador), cliente/depto., producto/SKU y totales. |
 | | `GET /api/v1/reports/sales/funnel` | `routes/salesReports.ts:327` |
 | | `GET /api/v1/reports/sales/by-month` | `routes/salesReports.ts:453` |
 | | `GET /api/v1/reports/sales/margins` | `routes/salesReports.ts:522` |

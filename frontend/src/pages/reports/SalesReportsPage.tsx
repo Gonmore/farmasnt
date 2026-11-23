@@ -54,6 +54,14 @@ type SalesByDepartmentItem = {
   amount: string
 }
 
+type SalesBySellerItem = {
+  sellerId: string | null
+  sellerName: string
+  ordersCount: number
+  quantity: string
+  amount: string
+}
+
 type SalesTopProductItem = {
   productId: string
   sku: string
@@ -151,6 +159,8 @@ type OrderDetailItem = {
   status: string
   customerId: string
   customerName: string
+  deliveryDepartment?: string | null
+  processedBy?: string | null
   total: number
   createdAt: string
   deliveredAt: string | null
@@ -358,6 +368,19 @@ async function fetchSalesByDepartment(
   return apiFetch(`/api/v1/reports/sales/by-department?${params}`, { token })
 }
 
+async function fetchSalesBySeller(
+  token: string,
+  q: { from?: string; to?: string; take: number; status?: SalesStatus; warehouseId?: string; locationId?: string },
+): Promise<{ items: SalesBySellerItem[] }> {
+  const params = new URLSearchParams({ take: String(q.take) })
+  if (q.from) params.set('from', toApiFrom(q.from))
+  if (q.to) params.set('to', toApiTo(q.to))
+  if (q.status && q.status !== 'ALL') params.set('status', q.status)
+  if (q.warehouseId) params.set('warehouseId', q.warehouseId)
+  if (q.locationId) params.set('locationId', q.locationId)
+  return apiFetch(`/api/v1/reports/sales/by-seller?${params}`, { token })
+}
+
 export type SalesMonthlyDetailItem = {
   orderId: string
   orderNumber: string
@@ -374,7 +397,7 @@ export type SalesMonthlyDetailItem = {
   warehouseCode: string | null
   warehouseId: string | null
   warehouseName: string | null
-  lineId: string
+  sellerName: string | null
 }
 
 async function fetchSalesMonthlyDetails(
@@ -613,7 +636,7 @@ export function SalesReportsPage() {
     const qsTo = sp.get('to')
     const qsStatus = sp.get('status')
 
-    if (qsTab && ['MONTH', 'CUSTOMERS', 'DEPARTMENTS', 'TOP_PRODUCTS', 'FUNNEL', 'COMPARISON', 'MARGINS'].includes(qsTab)) {
+    if (qsTab && ['MONTH', 'CUSTOMERS', 'DEPARTMENTS', 'TOP_PRODUCTS', 'FUNNEL', 'COMPARISON', 'MARGINS', 'BRANCH', 'SELLERS'].includes(qsTab)) {
       setTab(qsTab as ReportTab)
     }
     if (qsFrom && /^\d{4}-\d{2}-\d{2}$/.test(qsFrom)) setFrom(qsFrom)
@@ -666,6 +689,7 @@ export function SalesReportsPage() {
     }
     if (tab === 'CUSTOMERS') return `Ventas por cliente (${period})`
     if (tab === 'DEPARTMENTS') return `Ventas por departamento (${period})`
+    if (tab === 'SELLERS') return `Ventas por vendedor (${period})`
     if (tab === 'TOP_PRODUCTS') return `Productos más vendidos (${period})`
     if (tab === 'COMPARISON') return `Comparativa de períodos (${period})`
     if (tab === 'MARGINS') return `Márgenes y utilidades (${period})`
@@ -1133,6 +1157,36 @@ export function SalesReportsPage() {
         return
       }
 
+      if (tab === 'SELLERS') {
+        const items = (bySellerQuery.data?.items ?? []).map((r) => ({
+          sellerName: r.sellerName,
+          ordersCount: r.ordersCount,
+          quantity: toNumber(r.quantity),
+          amount: toNumber(r.amount),
+        }))
+        await exportReactNodeToPdf(
+          <SalesByDepartmentDocument
+            title={title}
+            from={from}
+            to={to}
+            currency={currency}
+            statusLabel={statusLabel(status)}
+            items={items.map((i) => ({ department: i.sellerName, ordersCount: i.ordersCount, quantity: i.quantity, amount: i.amount }))}
+            details={[]}
+          />,
+          {
+            filename: exportFilename,
+            title,
+            subtitle: `Período: ${from} a ${to} | Moneda: ${currency}`,
+            companyName: tenant.branding?.tenantName ?? 'Empresa',
+            headerColor: '#10B981',
+            logoUrl: tenant.branding?.logoUrl ?? undefined,
+            captureWidthPx: 1200,
+          },
+        )
+        return
+      }
+
       if (tab === 'CUSTOMERS') {
         const { customerItems, customerDetails } = await buildSalesByCustomerStructuredReport()
         await exportReactNodeToPdf(
@@ -1369,6 +1423,21 @@ export function SalesReportsPage() {
           },
           metaSheet,
         ])
+
+      } else if (tab === 'SELLERS') {
+        const items = bySellerQuery.data?.items ?? []
+        exportToXlsx(`reporte-ventas-vendedores-${from}-${to}.xlsx`, [
+          {
+            name: 'Vendedores',
+            rows: items.map((item) => ({
+              Vendedor: item.sellerName,
+              Ordenes: item.ordersCount,
+              Unidades: toNumber(item.quantity),
+              [`Total (${currency})`]: toNumber(item.amount),
+            })),
+          },
+          metaSheet,
+        ])
       } else if (tab === 'CUSTOMERS') {
         const { customerItems, customerDetails } = await buildSalesByCustomerStructuredReport()
         exportToXlsx(`reporte-ventas-clientes-${from}-${to}.xlsx`, [
@@ -1514,11 +1583,10 @@ export function SalesReportsPage() {
                   Sucursal: wsName,
                   ...(hasMultipleDepts ? { Departamento: dept } : {}),
                   Orden: r.orderNumber,
-                  Cliente: r.customerName,
-                  Estado: orderStatusLabel(r.orderStatus),
-                  Fecha: new Date(r.createdAt).toLocaleDateString(),
-                  SKU: r.productSku ?? '-',
-                  Producto: r.productName,
+                  'Estado / Fecha': `${orderStatusLabel(r.orderStatus)} ${new Date(r.createdAt).toLocaleDateString()}`,
+                  'Cliente / Depto.': `${r.customerName}${r.customerDepartment ? ` (${r.customerDepartment})` : ''}`,
+                  'Producto / SKU': `${r.productName}${r.productSku ? ` (${r.productSku})` : ''}`,
+                  Vendedor: r.sellerName ?? '-',
                   Cantidad: formatInteger(toNumber(r.quantity)),
                   [`Precio (${currency})`]: money(toNumber(r.unitPrice)),
                   [`Total (${currency})`]: money(toNumber(r.lineTotal)),
@@ -1531,11 +1599,10 @@ export function SalesReportsPage() {
                 Sucursal: wsName,
                 ...(hasMultipleDepts ? { Departamento: dept } : {}),
                 Orden: og.order.orderNumber,
-                Cliente: og.order.customerName,
-                Estado: '',
-                Fecha: '',
-                SKU: '',
-                Producto: '',
+                'Estado / Fecha': '',
+                'Cliente / Depto.': og.order.customerName,
+                'Producto / SKU': '',
+                Vendedor: '',
                 Cantidad: '',
                 [`Precio (${currency})`]: '',
                 [`Total (${currency})`]: money(linesTotal),
@@ -1691,6 +1758,12 @@ export function SalesReportsPage() {
     queryKey: ['reports', 'sales', 'byDepartment', { from, to, status, warehouseId, locationId }],
     queryFn: () => fetchSalesByDepartment(auth.accessToken!, { from, to, take: 1000, status, warehouseId: warehouseId || undefined, locationId: locationId || undefined }),
     enabled: !!auth.accessToken && tab === 'DEPARTMENTS',
+  })
+
+  const bySellerQuery = useQuery({
+    queryKey: ['reports', 'sales', 'bySeller', { from, to, status, warehouseId, locationId }],
+    queryFn: () => fetchSalesBySeller(auth.accessToken!, { from, to, take: 1000, status, warehouseId: warehouseId || undefined, locationId: locationId || undefined }),
+    enabled: !!auth.accessToken && tab === 'SELLERS',
   })
 
   const topProductsQuery = useQuery({
@@ -1866,6 +1939,9 @@ export function SalesReportsPage() {
               </Button>
               <Button size="sm" variant={tab === 'DEPARTMENTS' ? 'primary' : 'outline'} onClick={() => setTab('DEPARTMENTS')}>
                 🏙️ Departamentos
+              </Button>
+              <Button size="sm" variant={tab === 'SELLERS' ? 'primary' : 'outline'} onClick={() => setTab('SELLERS')}>
+                🧑‍💼 Vendedores
               </Button>
               <Button size="sm" variant={tab === 'TOP_PRODUCTS' ? 'primary' : 'outline'} onClick={() => setTab('TOP_PRODUCTS')}>
                 🧪 Productos
@@ -2126,16 +2202,13 @@ export function SalesReportsPage() {
 
                 const headerCells = [
                   { label: 'Orden', w: '8%' },
-                  { label: 'Estado', w: '9%' },
-                  { label: 'Fecha', w: '10%' },
-                  { label: 'Cliente', w: '18%' },
-                  { label: 'Depto.', w: '10%' },
-                  { label: 'Sucursal', w: '7%' },
-                  { label: 'SKU', w: '7%' },
-                  { label: 'Producto', w: '14%' },
-                  { label: 'Cant.', w: '4%' },
-                  { label: `Precio (${currency})`, w: '7%' },
-                  { label: `Total (${currency})`, w: '9%' },
+                  { label: 'Estado / Fecha', w: '12%' },
+                  { label: 'Cliente / Depto.', w: '20%' },
+                  { label: 'Producto / SKU', w: '24%' },
+                  { label: 'Vendedor', w: '12%' },
+                  { label: 'Cant.', w: '7%' },
+                  { label: 'Precio', w: '8%' },
+                  { label: 'Total', w: '9%' },
                 ]
 
                 return (
@@ -2199,27 +2272,33 @@ export function SalesReportsPage() {
                                       {orderEntries.map((og) => (
                                         <React.Fragment key={og.order.orderId}>
                                           <tr className="bg-slate-100 dark:bg-slate-800/50">
-                                            <td colSpan={11} className="px-3 py-1 text-xs text-slate-700 dark:text-slate-300">
+                                            <td colSpan={8} className="px-3 py-1 text-xs text-slate-700 dark:text-slate-300">
                                               Orden {og.order.orderNumber} · {orderStatusLabel(og.order.orderStatus)} · {new Date(og.order.createdAt).toLocaleDateString()} · {og.order.customerName}
                                             </td>
                                           </tr>
                                           {og.lines.map((r) => (
                                             <tr key={r.lineId} className="border-b border-slate-100 dark:border-slate-700 align-top">
                                               <td className="px-3 py-2 font-mono text-xs">{r.orderNumber}</td>
-                                              <td className="px-3 py-2">{orderStatusLabel(r.orderStatus)}</td>
-                                              <td className="px-3 py-2">{new Date(r.createdAt).toLocaleDateString()}</td>
-                                              <td className="px-3 py-2">{r.customerName}</td>
-                                              <td className="px-3 py-2">{r.customerDepartment ?? '-'}</td>
-                                              <td className="px-3 py-2">{r.warehouseCode ?? '-'}</td>
-                                              <td className="px-3 py-2 font-mono text-xs">{r.productSku ?? '-'}</td>
-                                              <td className="px-3 py-2">{r.productName}</td>
+                                              <td className="px-3 py-2">
+                                                <div>{orderStatusLabel(r.orderStatus)}</div>
+                                                <div className="text-xs text-slate-500 dark:text-slate-400">{new Date(r.createdAt).toLocaleDateString()}</div>
+                                              </td>
+                                              <td className="px-3 py-2">
+                                                <div>{r.customerName}</div>
+                                                <div className="text-xs text-slate-500 dark:text-slate-400">{r.customerDepartment ?? '-'}</div>
+                                              </td>
+                                              <td className="px-3 py-2">
+                                                <div>{r.productName}</div>
+                                                <div className="text-xs font-mono text-slate-500 dark:text-slate-400">{r.productSku ?? '-'}</div>
+                                              </td>
+                                              <td className="px-3 py-2">{r.sellerName ?? '-'}</td>
                                               <td className="px-3 py-2 text-right tabular-nums">{formatInteger(toNumber(r.quantity))}</td>
                                               <td className="px-3 py-2 text-right tabular-nums">{money(toNumber(r.unitPrice))}</td>
                                               <td className="px-3 py-2 text-right tabular-nums">{money(toNumber(r.lineTotal))}</td>
                                             </tr>
                                           ))}
                                           <tr className="bg-slate-50 dark:bg-slate-800/30">
-                                            <td colSpan={10} className="px-3 py-1 text-right text-xs font-semibold text-slate-700 dark:text-slate-300">
+                                            <td colSpan={7} className="px-3 py-1 text-right text-xs font-semibold text-slate-700 dark:text-slate-300">
                                               Subtotal:
                                             </td>
                                             <td className="px-3 py-1 text-right tabular-nums font-semibold text-slate-900 dark:text-white">
@@ -2255,20 +2334,26 @@ export function SalesReportsPage() {
                                     {orderEntries.map((og) => (
                                       <React.Fragment key={og.order.orderId}>
                                         <tr className="bg-slate-100 dark:bg-slate-800/50">
-                                          <td colSpan={11} className="px-3 py-1 text-xs text-slate-700 dark:text-slate-300">
+                                          <td colSpan={8} className="px-3 py-1 text-xs text-slate-700 dark:text-slate-300">
                                             Orden {og.order.orderNumber} · {orderStatusLabel(og.order.orderStatus)} · {new Date(og.order.createdAt).toLocaleDateString()} · {og.order.customerName}
                                           </td>
                                         </tr>
                                         {og.lines.map((r) => (
                                           <tr key={r.lineId} className="border-b border-slate-100 dark:border-slate-700 align-top">
                                             <td className="px-3 py-2 font-mono text-xs">{r.orderNumber}</td>
-                                            <td className="px-3 py-2">{orderStatusLabel(r.orderStatus)}</td>
-                                            <td className="px-3 py-2">{new Date(r.createdAt).toLocaleDateString()}</td>
-                                            <td className="px-3 py-2">{r.customerName}</td>
-                                            <td className="px-3 py-2">{r.customerDepartment ?? '-'}</td>
-                                            <td className="px-3 py-2">{r.warehouseCode ?? '-'}</td>
-                                            <td className="px-3 py-2 font-mono text-xs">{r.productSku ?? '-'}</td>
-                                            <td className="px-3 py-2">{r.productName}</td>
+                                            <td className="px-3 py-2">
+                                              <div>{orderStatusLabel(r.orderStatus)}</div>
+                                              <div className="text-xs text-slate-500 dark:text-slate-400">{new Date(r.createdAt).toLocaleDateString()}</div>
+                                            </td>
+                                            <td className="px-3 py-2">
+                                              <div>{r.customerName}</div>
+                                              <div className="text-xs text-slate-500 dark:text-slate-400">{r.customerDepartment ?? '-'}</div>
+                                            </td>
+                                            <td className="px-3 py-2">
+                                              <div>{r.productName}</div>
+                                              <div className="text-xs font-mono text-slate-500 dark:text-slate-400">{r.productSku ?? '-'}</div>
+                                            </td>
+                                            <td className="px-3 py-2">{r.sellerName ?? '-'}</td>
                                             <td className="px-3 py-2 text-right tabular-nums">{formatInteger(toNumber(r.quantity))}</td>
                                             <td className="px-3 py-2 text-right tabular-nums">{money(toNumber(r.unitPrice))}</td>
                                             <td className="px-3 py-2 text-right tabular-nums">{money(toNumber(r.lineTotal))}</td>
@@ -2277,7 +2362,7 @@ export function SalesReportsPage() {
                                       </React.Fragment>
                                     ))}
                                     <tr className="bg-slate-50 dark:bg-slate-800/30">
-                                      <td colSpan={10} className="px-3 py-1 text-right text-xs font-semibold text-slate-700 dark:text-slate-300">
+                                      <td colSpan={7} className="px-3 py-1 text-right text-xs font-semibold text-slate-700 dark:text-slate-300">
                                         Total sucursal:
                                       </td>
                                       <td className="px-3 py-1 text-right tabular-nums font-semibold text-slate-900 dark:text-white">
@@ -2408,6 +2493,47 @@ export function SalesReportsPage() {
                     />
                   </div>
                 </>
+              )}
+            </ReportSection>
+          )}
+
+          {tab === 'SELLERS' && (
+            <ReportSection
+              title="🧑‍💼 Ventas por Vendedor"
+              subtitle="Cantidad de ventas y monto facturado por vendedor"
+              icon="🧑‍💼"
+            >
+              {bySellerQuery.isLoading && <Loading />}
+              {bySellerQuery.isError && <ErrorState message={(bySellerQuery.error as any)?.message ?? 'Error cargando reporte'} />}
+              {!bySellerQuery.isLoading && !bySellerQuery.isError && (
+                (() => {
+                  const items = bySellerQuery.data?.items ?? []
+                  const totalAmount = items.reduce((sum, x) => sum + toNumber(x.amount), 0)
+                  const totalOrders = items.reduce((sum, x) => sum + Number(x.ordersCount ?? 0), 0)
+                  const totalQty = items.reduce((sum, x) => sum + toNumber(x.quantity), 0)
+                  return (
+                    <div className="space-y-6">
+                      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                        <KPICard icon="🧑‍💼" label="Vendedores" value={items.length} color="info" />
+                        <KPICard icon="📦" label="Órdenes" value={formatInteger(totalOrders)} color="primary" />
+                        <KPICard icon="💰" label={`Total (${currency})`} value={money(totalAmount)} color="success" />
+                      </div>
+                      <div className="rounded-lg border border-slate-200 dark:border-slate-700">
+                        <Table
+                          columns={[
+                            { header: 'Vendedor', accessor: (r) => r.sellerName, width: '40%', className: 'wrap' },
+                            { header: 'Órdenes', accessor: (r) => formatInteger(Number(r.ordersCount ?? 0)), width: '15%' },
+                            { header: 'Unidades', accessor: (r) => formatInteger(toNumber(r.quantity)), width: '15%' },
+                            { header: `Total (${currency})`, accessor: (r) => <span className="font-semibold text-green-600 dark:text-green-400">{money(toNumber(r.amount))}</span>, width: '30%' },
+                          ]}
+                          data={items}
+                          keyExtractor={(r) => r.sellerId ?? r.sellerName}
+                        />
+                      </div>
+                      <div className="text-xs text-slate-500 dark:text-slate-400">Unidades totales: {formatInteger(totalQty)} · El vendedor se toma de la orden (creador/asignado al procesar cotización).</div>
+                    </div>
+                  )
+                })()
               )}
             </ReportSection>
           )}
@@ -3522,10 +3648,10 @@ export function SalesReportsPage() {
                       ) : (
                         <Table
                           columns={[
-                            { header: '# Orden', accessor: (o) => <span className="font-mono text-xs">{o.number}</span>, width: '12%' },
-                            { header: 'Cliente', accessor: (o) => o.customerName, width: '30%', className: 'wrap' },
+                            { header: '# Orden', accessor: (o) => <span className="font-mono text-xs">{o.number}</span>, width: '11%' },
+                            { header: 'Cliente / Depto.', accessor: (o) => <div><div>{o.customerName}</div><div className="text-xs text-slate-500 dark:text-slate-400">{(o as any).deliveryDepartment ?? '-'}</div></div>, width: '24%', className: 'wrap' },
                             {
-                              header: 'Estado', 
+                              header: 'Estado / Fecha', 
                               accessor: (o) => {
                                 const statusColors: Record<string, string> = {
                                   'DRAFT': 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
@@ -3534,33 +3660,22 @@ export function SalesReportsPage() {
                                   'CANCELLED': 'bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-300',
                                 }
                                 return (
-                                  <span className={`rounded px-2 py-1 text-xs font-medium ${statusColors[o.status] || ''}`}>
-                                    {statusLabel(o.status as SalesStatus)}
-                                  </span>
+                                  <div>
+                                    <span className={`rounded px-2 py-1 text-xs font-medium ${statusColors[o.status] || ''}`}>{statusLabel(o.status as SalesStatus)}</span>
+                                    <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">{new Date(o.createdAt).toLocaleDateString()}</div>
+                                  </div>
                                 )
                               },
                               width: '16%'
                             },
+                            { header: 'Vendedor', accessor: (o) => (o as any).processedBy ?? '-', width: '14%', className: 'wrap' },
                             { 
                               header: `Total (${currency})`, 
-                              accessor: (o) => (
-                                <span className="font-semibold text-green-600 dark:text-green-400">
-                                  {money(o.total || 0)}
-                                </span>
-                              ),
-                              width: '16%'
+                              accessor: (o) => <span className="font-semibold text-green-600 dark:text-green-400">{money(o.total || 0)}</span>,
+                              width: '13%'
                             },
-                            { header: 'Fecha', accessor: (o) => new Date(o.createdAt).toLocaleDateString(), width: '12%' },
-                            { 
-                              header: '✓ Entrega', 
-                              accessor: (o) => o.deliveredAt ? '✅' : '⏳',
-                              width: '7%'
-                            },
-                            { 
-                              header: '💰 Pago', 
-                              accessor: (o) => o.paidAt ? '✅' : '⏳',
-                              width: '7%'
-                            },
+                            { header: 'Entrega', accessor: (o) => o.deliveredAt ? 'Sí' : 'Pendiente', width: '11%' },
+                            { header: 'Pago', accessor: (o) => o.paidAt ? 'Sí' : 'Pendiente', width: '11%' },
                           ]}
                           data={items}
                           keyExtractor={(o) => o.id}

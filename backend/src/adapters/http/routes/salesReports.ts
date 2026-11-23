@@ -31,6 +31,11 @@ const salesByDepartmentQuerySchema = dateRangeQuerySchema.extend({
   status: z.enum(['DRAFT', 'CONFIRMED', 'FULFILLED', 'CANCELLED']).optional(),
 }).merge(locationFilterQuerySchema)
 
+const salesBySellerQuerySchema = dateRangeQuerySchema.extend({
+  take: z.coerce.number().int().min(1).max(1000).default(25),
+  status: z.enum(['DRAFT', 'CONFIRMED', 'FULFILLED', 'CANCELLED']).optional(),
+}).merge(locationFilterQuerySchema)
+
 type SalesSummaryRow = {
   day: string
   ordersCount: bigint
@@ -70,6 +75,14 @@ type SalesByCustomerRow = {
 
 type SalesByDepartmentRow = {
   department: string | null
+  ordersCount: bigint
+  quantity: string | null
+  amount: string | null
+}
+
+type SalesBySellerRow = {
+  sellerId: string | null
+  sellerName: string | null
   ordersCount: bigint
   quantity: string | null
   amount: string | null
@@ -121,6 +134,7 @@ type SalesMonthlyDetailRow = {
   warehouseId: string | null
   warehouseCode: string | null
   warehouseName: string | null
+  sellerName: string | null
 }
 
 type SalesBranchSummaryRow = {
@@ -839,7 +853,8 @@ export async function registerSalesReportRoutes(app: FastifyInstance): Promise<v
            (sol.quantity * sol."unitPrice")::text as "lineTotal",
            w.id as "warehouseId",
            w.code as "warehouseCode",
-            w.name as "warehouseName"
+            w.name as "warehouseName",
+            COALESCE(NULLIF(u."fullName", ''), u.email) as "sellerName"
          FROM "SalesOrder" so
         JOIN "SalesOrderLine" sol
           ON sol."salesOrderId" = so.id
@@ -850,6 +865,9 @@ export async function registerSalesReportRoutes(app: FastifyInstance): Promise<v
         JOIN "Product" p
           ON p.id = sol."productId"
           AND p."tenantId" = sol."tenantId"
+        LEFT JOIN "User" u
+          ON u.id = so."createdBy"
+          AND u."tenantId" = so."tenantId"
         LEFT JOIN LATERAL (
           SELECT sm."fromLocationId" as "fromLocationId"
           FROM "StockMovement" sm
@@ -907,6 +925,7 @@ export async function registerSalesReportRoutes(app: FastifyInstance): Promise<v
         warehouseCode: r.warehouseCode ?? null,
         warehouseId: r.warehouseId ?? null,
         warehouseName: r.warehouseName ?? null,
+        sellerName: r.sellerName ?? null,
       }))
 
       return reply.send({ items })
@@ -1122,6 +1141,88 @@ export async function registerSalesReportRoutes(app: FastifyInstance): Promise<v
       }
 
       return reply.send({ ok: true })
+    },
+  )
+
+  app.get(
+    '/api/v1/reports/sales/by-seller',
+    {
+      preHandler: [requireAuth(), requireModuleEnabled(db, 'SALES'), requirePermission(Permissions.ReportSalesRead)],
+    },
+    async (request, reply) => {
+      const parsed = salesBySellerQuerySchema.safeParse(request.query)
+      if (!parsed.success) return reply.status(400).send({ message: 'Invalid query', issues: parsed.error.issues })
+
+      const tenantId = request.auth!.tenantId
+      const { from, to, take, status, warehouseId, locationId } = parsed.data
+
+      if (branchDepartmentsOfMissing(request)) return reply.status(409).send({ message: 'Seleccione su sucursal antes de continuar' })
+      const branchDepartments = branchDepartmentsOf(request)
+
+      const rows = await db.$queryRaw<SalesBySellerRow[]>`
+        SELECT
+          u.id as "sellerId",
+          COALESCE(NULLIF(u."fullName", ''), u.email, 'Sin vendedor') as "sellerName",
+          count(distinct so.id) as "ordersCount",
+          sum(CASE WHEN ${warehouseId ?? null}::text IS NULL AND ${locationId ?? null}::text IS NULL THEN sol.quantity ELSE COALESCE(loc_match."matchedQty", 0) END)::text as "quantity",
+          sum(CASE WHEN ${warehouseId ?? null}::text IS NULL AND ${locationId ?? null}::text IS NULL THEN sol.quantity * sol."unitPrice" ELSE COALESCE(loc_match."matchedQty", 0) * sol."unitPrice" END)::text as "amount"
+        FROM "SalesOrder" so
+        LEFT JOIN "User" u
+          ON u.id = so."createdBy"
+          AND u."tenantId" = so."tenantId"
+        LEFT JOIN "Customer" c
+          ON c.id = so."customerId"
+          AND c."tenantId" = so."tenantId"
+        JOIN "SalesOrderLine" sol
+          ON sol."salesOrderId" = so.id
+          AND sol."tenantId" = so."tenantId"
+        LEFT JOIN LATERAL (
+          SELECT SUM(sm.quantity) as "matchedQty"
+          FROM "StockMovement" sm
+          JOIN "Location" l ON l.id = sm."fromLocationId"
+          WHERE sm."tenantId" = so."tenantId"
+            AND sm."referenceType" = 'SALES_ORDER'
+            AND sm."referenceId" = so."number"
+            AND sm."productId" = sol."productId"
+            AND (${warehouseId ?? null}::text IS NULL OR l."warehouseId" = ${warehouseId ?? null})
+            AND (${locationId ?? null}::text IS NULL OR sm."fromLocationId" = ${locationId ?? null})
+        ) loc_match ON true
+        WHERE so."tenantId" = ${tenantId}
+          AND (${status ?? null}::text IS NULL OR so.status = ${status ?? null}::"SalesOrderStatus")
+          AND (${from ?? null}::timestamptz IS NULL OR so."createdAt" >= ${from ?? null})
+          AND (${to ?? null}::timestamptz IS NULL OR so."createdAt" < ${to ?? null})
+          AND (${branchDepartments ?? null}::text[] IS NULL OR
+            (so."deliveryDepartment" = ANY(${branchDepartments ?? null}::text[]) OR
+             (so."deliveryDepartment" IS NULL OR so."deliveryDepartment" = '') AND c."department" = ANY(${branchDepartments ?? null}::text[])))
+          AND (${warehouseId ?? null}::text IS NULL OR EXISTS (
+            SELECT 1 FROM "StockMovement" sm
+            JOIN "Location" l ON l.id = sm."fromLocationId"
+            WHERE sm."tenantId" = so."tenantId"
+              AND sm."referenceType" = 'SALES_ORDER'
+              AND sm."referenceId" = so."number"
+              AND l."warehouseId" = ${warehouseId ?? null}
+          ))
+          AND (${locationId ?? null}::text IS NULL OR EXISTS (
+            SELECT 1 FROM "StockMovement" sm2
+            WHERE sm2."tenantId" = so."tenantId"
+              AND sm2."referenceType" = 'SALES_ORDER'
+              AND sm2."referenceId" = so."number"
+              AND sm2."fromLocationId" = ${locationId ?? null}
+          ))
+        GROUP BY u.id, COALESCE(NULLIF(u."fullName", ''), u.email, 'Sin vendedor')
+        ORDER BY sum(CASE WHEN ${warehouseId ?? null}::text IS NULL AND ${locationId ?? null}::text IS NULL THEN sol.quantity * sol."unitPrice" ELSE COALESCE(loc_match."matchedQty", 0) * sol."unitPrice" END) DESC NULLS LAST
+        LIMIT ${take}
+      `
+
+      const items = rows.map((r) => ({
+        sellerId: r.sellerId,
+        sellerName: r.sellerName ?? 'Sin vendedor',
+        ordersCount: Number(r.ordersCount),
+        quantity: r.quantity ?? '0',
+        amount: r.amount ?? '0',
+      }))
+
+      return reply.send({ items })
     },
   )
 }

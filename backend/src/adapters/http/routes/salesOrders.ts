@@ -319,7 +319,6 @@ async function fulfillOrderInTx(
       status: 'FULFILLED',
       ...(args.deliveredAt !== undefined ? { deliveredAt: args.deliveredAt } : {}),
       version: { increment: 1 },
-      createdBy: args.userId,
     },
     select: { id: true, number: true, status: true, version: true, paymentMode: true, deliveredAt: true, updatedAt: true, deliveryCity: true },
   })
@@ -1123,7 +1122,6 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
             quoteId: null,
             note: nextNote,
             version: { increment: 1 },
-            createdBy: userId,
           },
           select: { id: true, number: true, status: true, version: true, updatedAt: true },
         })
@@ -1704,7 +1702,7 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
 
           await tx.salesOrder.update({
             where: { id: order.id },
-            data: { status: 'FULFILLED', deliveredAt, version: { increment: 1 }, createdBy: userId },
+            data: { status: 'FULFILLED', deliveredAt, version: { increment: 1 } },
             select: { id: true, number: true, status: true, version: true, paymentMode: true, deliveredAt: true, updatedAt: true, deliveryCity: true },
           })
 
@@ -1909,7 +1907,7 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
 
       const updated = await db.salesOrder.update({
         where: { id },
-        data: { status: 'CONFIRMED', version: { increment: 1 }, createdBy: userId },
+        data: { status: 'CONFIRMED', version: { increment: 1 } },
         select: { id: true, number: true, status: true, version: true, updatedAt: true, deliveryCity: true },
       })
 
@@ -2265,7 +2263,7 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
 
           const updatedOrder = await tx.salesOrder.update({
             where: { id: order.id },
-            data: { status: 'FULFILLED', deliveredAt, version: { increment: 1 }, createdBy: userId },
+            data: { status: 'FULFILLED', deliveredAt, version: { increment: 1 } },
             select: { id: true, number: true, status: true, version: true, paymentMode: true, deliveredAt: true, updatedAt: true, deliveryCity: true },
           })
 
