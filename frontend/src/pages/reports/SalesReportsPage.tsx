@@ -150,7 +150,7 @@ type ScheduleItem = {
 
 type ScheduleListResponse = { items: ScheduleItem[] }
 
-type ReportTab = 'MONTH' | 'CUSTOMERS' | 'DEPARTMENTS' | 'TOP_PRODUCTS' | 'FUNNEL' | 'COMPARISON' | 'MARGINS' | 'BRANCH'
+type ReportTab = 'MONTH' | 'CUSTOMERS' | 'DEPARTMENTS' | 'TOP_PRODUCTS' | 'FUNNEL' | 'COMPARISON' | 'MARGINS' | 'BRANCH' | 'SELLERS'
 
 // Tipo para órdenes detalladas (drill-down)
 type OrderDetailItem = {
@@ -398,6 +398,7 @@ export type SalesMonthlyDetailItem = {
   warehouseId: string | null
   warehouseName: string | null
   sellerName: string | null
+  lineId?: string
 }
 
 async function fetchSalesMonthlyDetails(
@@ -2277,7 +2278,7 @@ export function SalesReportsPage() {
                                             </td>
                                           </tr>
                                           {og.lines.map((r) => (
-                                            <tr key={r.lineId} className="border-b border-slate-100 dark:border-slate-700 align-top">
+                                            <tr key={r.lineId ?? `${r.orderId}-${r.productSku ?? r.productName}`} className="border-b border-slate-100 dark:border-slate-700 align-top">
                                               <td className="px-3 py-2 font-mono text-xs">{r.orderNumber}</td>
                                               <td className="px-3 py-2">
                                                 <div>{orderStatusLabel(r.orderStatus)}</div>
@@ -2339,7 +2340,7 @@ export function SalesReportsPage() {
                                           </td>
                                         </tr>
                                         {og.lines.map((r) => (
-                                          <tr key={r.lineId} className="border-b border-slate-100 dark:border-slate-700 align-top">
+                                          <tr key={r.lineId ?? `${r.orderId}-${r.productSku ?? r.productName}`} className="border-b border-slate-100 dark:border-slate-700 align-top">
                                             <td className="px-3 py-2 font-mono text-xs">{r.orderNumber}</td>
                                             <td className="px-3 py-2">
                                               <div>{orderStatusLabel(r.orderStatus)}</div>

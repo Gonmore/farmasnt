@@ -151,8 +151,6 @@ export function SalesMonthDocument({ title, from, to, currency, statusLabel, war
                   if (!deptGroups[dept]) deptGroups[dept] = []
                   deptGroups[dept].push(item)
                 })
-                const depts = Object.keys(deptGroups).sort()
-                const hasMultipleDepts = depts.length > 1
                 const wsTotal = wsItems.reduce((sum, r) => sum + toNumber(r.lineTotal), 0)
 
                 const orderGroups: Record<string, { order: SalesMonthlyDetailItem; lines: SalesMonthlyDetailItem[] }> = {}
@@ -196,7 +194,7 @@ export function SalesMonthDocument({ title, from, to, currency, statusLabel, war
                                 .slice()
                                 .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
                                 .map((r) => (
-                                  <tr key={r.lineId} className="border-b border-slate-100 align-top">
+                                  <tr key={r.lineId ?? `${r.orderId}-${r.productSku ?? r.productName}`} className="border-b border-slate-100 align-top">
                                     <td className="px-3 py-2 font-mono text-xs">{r.orderNumber}</td>
                                     <td className="px-3 py-2">
                                       <div>{orderStatusLabel(r.orderStatus)}</div>
