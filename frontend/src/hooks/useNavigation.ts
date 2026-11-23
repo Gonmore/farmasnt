@@ -107,7 +107,6 @@ export function useNavigation(): NavGroup[] {
 
     if (hasPermission('sales:order:read') && !isBranchSeller) {
       salesItems.push({ to: '/sales/payments', label: '💳 Pagos' })
-    })
     }
 
     groups.push({
