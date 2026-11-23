@@ -1,4 +1,4 @@
-﻿-- Add explicit seller to SalesOrder. Keep createdBy as audit/actor field.
+-- Add explicit seller to SalesOrder. Keep createdBy as audit/actor field.
 ALTER TABLE "SalesOrder" ADD COLUMN "sellerId" TEXT;
 
 CREATE INDEX "SalesOrder_sellerId_idx" ON "SalesOrder"("sellerId");
