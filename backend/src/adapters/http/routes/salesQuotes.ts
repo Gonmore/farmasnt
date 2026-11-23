@@ -1153,7 +1153,8 @@ export async function salesQuotesRoutes(app: FastifyInstance) {
               deliveryZone: quote.deliveryZone ?? null,
               deliveryAddress: quote.deliveryAddress ?? null,
               deliveryMapsUrl: quote.deliveryMapsUrl ?? null,
-              createdBy: chosenSellerId || quote.createdBy || userId,
+              createdBy: userId,
+              sellerId: chosenSellerId || quote.createdBy || userId,
             },
             select: { id: true, number: true, status: true, version: true, createdAt: true },
           })

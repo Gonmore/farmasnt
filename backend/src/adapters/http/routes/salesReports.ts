@@ -866,7 +866,7 @@ export async function registerSalesReportRoutes(app: FastifyInstance): Promise<v
           ON p.id = sol."productId"
           AND p."tenantId" = sol."tenantId"
         LEFT JOIN "User" u
-          ON u.id = so."createdBy"
+          ON u.id = COALESCE(so."sellerId", so."createdBy")
           AND u."tenantId" = so."tenantId"
         LEFT JOIN LATERAL (
           SELECT sm."fromLocationId" as "fromLocationId"
@@ -1168,7 +1168,7 @@ export async function registerSalesReportRoutes(app: FastifyInstance): Promise<v
           sum(CASE WHEN ${warehouseId ?? null}::text IS NULL AND ${locationId ?? null}::text IS NULL THEN sol.quantity * sol."unitPrice" ELSE COALESCE(loc_match."matchedQty", 0) * sol."unitPrice" END)::text as "amount"
         FROM "SalesOrder" so
         LEFT JOIN "User" u
-          ON u.id = so."createdBy"
+          ON u.id = COALESCE(so."sellerId", so."createdBy")
           AND u."tenantId" = so."tenantId"
         LEFT JOIN "Customer" c
           ON c.id = so."customerId"

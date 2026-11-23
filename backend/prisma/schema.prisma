@@ -220,6 +220,7 @@ model User {
   auditEvents  AuditEvent[] @relation("AuditActor")
   tenantAccess UserTenantAccess[]
   payments     SalesOrderPayment[] @relation("UserPayments")
+  soldOrders   SalesOrder[] @relation("SalesOrderSeller")
 
   @@unique([tenantId, email])
   @@index([tenantId])
@@ -853,9 +854,11 @@ model SalesOrder {
   createdAt  DateTime         @default(now())
   updatedAt  DateTime         @updatedAt
   createdBy  String?
+  sellerId   String?
 
   customer Customer @relation(fields: [customerId], references: [id], onDelete: Restrict)
   quote    Quote?   @relation(fields: [quoteId], references: [id], onDelete: Restrict)
+  seller   User?    @relation("SalesOrderSeller", fields: [sellerId], references: [id], onDelete: SetNull)
   lines    SalesOrderLine[]
   reservations SalesOrderReservation[]
   payments   SalesOrderPayment[]
@@ -866,6 +869,7 @@ model SalesOrder {
   @@index([customerId])
   @@index([quoteId])
   @@index([status])
+  @@index([sellerId])
 }
 
 model SalesOrderPayment {

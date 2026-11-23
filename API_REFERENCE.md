@@ -3369,7 +3369,7 @@ Response 200 sin body.
 Response 200 sin body.
 
 Notas
-- `sellerName`: nombre del usuario que creó la orden (`User.fullName` o email); puede ser `null`.
+- `sellerName`: nombre del vendedor asignado a la orden (`SalesOrder.sellerId`, fallback `createdBy`; `User.fullName` o email); puede ser `null`.
 
 
 ### GET /api/v1/reports/sales/by-seller
@@ -3399,7 +3399,7 @@ Response 200
 ```
 
 Notas
-- `sellerName` se resuelve desde `SalesOrder.createdBy` (`User.fullName` o email; fallback `Sin vendedor`).
+- `sellerName` se resuelve desde `SalesOrder.sellerId` con fallback a `createdBy` (`User.fullName` o email; fallback `Sin vendedor`).
 - Respeta filtros de período/sucursal/estado y scope de sucursal.
 
 ### Stock

@@ -641,6 +641,7 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
           version: true,
           updatedAt: true,
           createdBy: true,
+          sellerId: true,
           deliveryDate: true,
           deliveryCity: true, deliveryDepartment: true,
           deliveryZone: true,
@@ -650,11 +651,11 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
         },
       })
 
-      const authorIds = Array.from(new Set(items.map((o: any) => o.createdBy).filter(Boolean))) as string[]
-      const authors = authorIds.length
-        ? await db.user.findMany({ where: { tenantId, id: { in: authorIds } }, select: { id: true, fullName: true, email: true } })
+      const sellerIds = Array.from(new Set(items.map((o: any) => o.sellerId ?? o.createdBy).filter(Boolean))) as string[]
+      const sellers = sellerIds.length
+        ? await db.user.findMany({ where: { tenantId, id: { in: sellerIds } }, select: { id: true, fullName: true, email: true } })
         : []
-      const authorMap = new Map(authors.map((u: any) => [u.id, (u.fullName ?? '').trim() || u.email] as const))
+      const sellerMap = new Map(sellers.map((u: any) => [u.id, (u.fullName ?? '').trim() || u.email] as const))
 
       const mapped = items.map((o: any) => ({
         id: o.id,
@@ -664,7 +665,8 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
         updatedAt: o.updatedAt.toISOString(),
         customerId: o.customer.id,
         customerName: o.customer.name,
-        processedBy: o.createdBy ? authorMap.get(o.createdBy) ?? null : null,
+        sellerId: o.sellerId ?? null,
+        processedBy: (o.sellerId ?? o.createdBy) ? sellerMap.get(o.sellerId ?? o.createdBy) ?? null : null,
         deliveryDate: o.deliveryDate ? o.deliveryDate.toISOString() : null,
         deliveryCity: o.deliveryCity,
         deliveryDepartment: o.deliveryDepartment,
@@ -902,6 +904,7 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
           createdAt: true,
           updatedAt: true,
           createdBy: true,
+          sellerId: true,
           deliveredAt: true,
           paidAt: true,
           paidAmount: true,
@@ -934,15 +937,17 @@ export async function registerSalesOrderRoutes(app: FastifyInstance): Promise<vo
 
       if (!order) return reply.status(404).send({ message: 'Not found' })
 
+      const sellerUserId = (order as any).sellerId ?? order.createdBy ?? null
       const processedBy = await (async () => {
-        if (!order.createdBy) return null
-        const u = await db.user.findFirst({ where: { id: order.createdBy, tenantId }, select: { fullName: true, email: true } })
+        if (!sellerUserId) return null
+        const u = await db.user.findFirst({ where: { id: sellerUserId, tenantId }, select: { fullName: true, email: true } })
         if (!u) return null
         return (u.fullName ?? '').trim() || u.email
       })()
 
       return reply.send({
         ...order,
+        sellerId: (order as any).sellerId ?? null,
         processedBy,
         lines: order.lines.map((l: any) => ({
           id: l.id,
